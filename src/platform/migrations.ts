@@ -4,5 +4,9 @@
  * source of truth for review and for the Node Plan B.
  */
 import init0001 from '../../migrations/0001_init.sql';
+import confirm0002 from '../../migrations/0002_confirm.sql';
 
-export const MIGRATIONS = [{ id: 1, sql: init0001 }] as const;
+export const MIGRATIONS = [
+  { id: 1, sql: init0001 },
+  { id: 2, sql: confirm0002 },
+] as const;
