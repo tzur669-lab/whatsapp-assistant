@@ -1073,3 +1073,148 @@ Test each of these:
 - InfoQ — Oracle free tier cut (July 2026): https://www.infoq.com/news/2026/07/oracle-cloud-free-tier-limits/
 - Tailscale — Funnel (Plan B ingress): https://tailscale.com/docs/features/tailscale-funnel.md
 - Claude Code — Settings and permissions: https://docs.claude.com/en/docs/claude-code/settings
+
+**Surveyed for §16 (2026-09-25)**
+
+- Manvi WhatsApp reminder bot: https://github.com/viswabnath/whatsapp-reminder-bot
+- iCal → WhatsApp reminders: https://github.com/Zab-17/ical-whatsapp-reminder-
+- WhatsApp family assistant: https://github.com/avivbes1/Personal-Assistant-Public
+- Cloud API production gotchas: https://dev.to/diegomoreira/shipping-whatsapp-cloud-api-to-production-the-gotchas-the-docs-dont-tell-you-47e6
+- Cloud API mistakes: https://wapilot.io/top-10-whatsapp-cloud-api-mistakes
+- Webhook reliability: https://richautomate.in/blog/whatsapp-webhook-reliability-engineering-guide-2026
+- RRULE vs cron: https://rrule.net/guides/rrule-vs-cron
+- Recurrence for persistent agents (DST, missed runs): https://zylos.ai/research/2026-09-13-calendar-recurrence-semantics-agent-schedulers/
+- ivrit.ai Whisper (Hebrew fine-tune): https://huggingface.co/ivrit-ai/whisper-large-v3
+- Whisper WER by condition: https://vexascribe.com/how-accurate-is-whisper
+
+---
+
+## 16. Backlog (compiled 2026-09-25)
+
+Assembled from a review of the code as it stands plus a survey of open-source
+personal WhatsApp assistants and WhatsApp Cloud API field reports (§15).
+Ordered by what breaks first, not by what is most interesting to build.
+
+### P0 — broken, or will break in production
+
+**B1. Nothing writes `outbound_messages`, and status webhooks are discarded.**
+The table has existed since migration 0001 and no code inserts into it.
+`handleInbound` logs a delivery status and drops it. This matters more than it
+looks: the Cloud API answers `200` with a valid `wamid` for messages it never
+delivers — most famously while the app is still in Development mode, but also on
+re-engagement and undeliverable errors. Today a reminder is marked `sent` on the
+strength of that 200 alone. Without the status webhook there is no way to tell
+*accepted* from *delivered*, and that is the failure mode every field report
+leads with.
+*Do:* write an outbound row per send; have the `status` webhook update it; mark a
+reminder delivered on `delivered`, not on `accepted`; surface `failed` in
+`/status` and retry it.
+
+**B2. Meta error codes are all treated alike.** A send failure is recorded as
+`E_WA_SEND_<http status>`. But 131047 (re-engagement required), 131026
+(undeliverable), 130429 (throughput) and 131048 (spam rate limit) each call for a
+different response — route to the calendar, stop retrying, back off, stop sending
+entirely. Retrying a 131026 five times spends five messages out of a thousand to
+learn nothing.
+*Do:* map the codes in `src/channels/whatsapp/send.ts`; retry only what is
+retryable.
+
+**B3. The pre-commit secret scan has never run.** Every commit in this repo has
+printed `gitleaks not installed — skipping secret scan`. The guardrail described
+in PLAN §8 and §11.6 is not in force locally.
+*Do:* install gitleaks, or make the hook fail rather than skip.
+
+**B4. The 10 ms CPU budget has never been measured.** PLAN §4 says to measure it
+and it has not been measured once. The synchronous SHA-256, the Zod validation
+and the bidi rendering all draw on it. Exceeding it does not bill — it fails the
+request.
+*Do:* measure a full turn on staging. If it is close, precompute the hash into a
+column rather than optimizing blind.
+
+### P1 — the difference between a demo and something used daily
+
+**B5. A clarification cannot be answered.** `PromptInput.clarifyingSlots` exists,
+is threaded through the prompt, and is never set by anything. So the most common
+exchange in the whole system — "תזכיר לי מחר להתקשר לאבא" → "באיזו שעה?" → "8" —
+fails: the second message is parsed with no memory of the question, matches no
+tool, and answers "לא הבנתי". Every comparable bot keeps at least a few turns of
+context. This is the highest-value fix on the list.
+*Do:* store the open question (tool, slots already resolved, what was asked) for
+a few minutes; on the next free-text message re-parse with `clarifyingSlots` set
+and **merge** rather than replace. Same gates as a confirmation: same sender, not
+expired, one outstanding question at a time.
+
+**B6. No recurring reminders.** "כל יום ראשון", "כל בוקר", "בכל 1 לחודש" — the
+most requested feature in every comparable project, and absent here.
+*Do:* store an RRULE-shaped rule plus **one materialized next occurrence**, and
+re-materialize on delivery. Full RRULE expansion is the wrong shape for a 10 ms
+budget, and a pure rule with no materialized row cannot be claimed under a lease.
+Note the DST trap: "every day at 08:00" means the wall clock, so the next
+occurrence has to be recomputed through the zone each time, never by adding 24 h.
+
+**B7. No morning digest.** The field reports rate a daily brief as the single
+most valued feature: today's calendar, what is due, what is overdue. It is also
+nearly free here — every piece exists — and it lands inside the 24-hour window
+because the user replies to it.
+*Do:* one cron at a configurable local hour, one message, and skip it entirely
+when there is nothing to say, so it does not decay into noise.
+
+**B8. No way to see or edit a reminder after the Undo window.** Ten minutes after
+setting one, the only options are cancel and re-create. `/status` reports a count
+and nothing else.
+*Do:* `reminders.list` already exists — add reschedule-by-description, and a
+numbered edit off the list.
+
+### P2 — quality and speed
+
+**B9. Hebrew ASR could be materially better.** Whisper's word error rate is
+highest on one- and two-word utterances, which is exactly what a spoken reminder
+is. `ivrit-ai/whisper-large-v3` is a Hebrew fine-tune that beats vanilla Whisper
+on Hebrew, but Groq does not serve it, so it would mean a second provider and a
+second failure mode. The cheaper first step is Whisper's `prompt` parameter,
+which biases spelling for names and times at no cost (PLAN §13, still unmeasured).
+*Do:* try the prompt first, against recorded clips via `--replay`. Reach for a
+second provider only if that is not enough.
+
+**B10. Phase 3 thresholds still unmet, still quota-blocked.** 89.1% intent against
+a 97% target. Unchanged since the prompt work; the daily budget has been
+recovering (9 of 12 cases on 2026-09-25) but a full 156-case run costs ~157K of
+the 200K daily.
+*Do:* certify on the first day the budget allows, and settle §13's open question
+with whole numbers rather than partial ones.
+
+**B11. Nothing is measured end to end.** No latency budget, no cold-start number,
+no idea what a turn costs in wall time.
+*Do:* log a turn-level breakdown that is redaction-safe by construction
+(receive → parse → resolve → execute → send).
+
+### P3 — connected to what is actually used
+
+**B12. Shabbat and Israeli holidays.** A reminder that fires at 19:00 on Friday is
+the kind of thing that makes a tool feel foreign. A good deal of Israeli
+scheduling also lives on the Hebrew calendar.
+*Do:* a setting, off by default — hold non-urgent reminders over Shabbat and
+chagim and deliver at motzaei Shabbat. Needs a Hebrew-calendar source; check it
+against the CPU budget before committing to it.
+
+**B13. iCal feed subscription.** One comparable project's entire value is
+importing any `.ics` — university, work, Canvas, Notion. It reaches far more
+calendars than a Google grant does, needs no OAuth, and is one fetch and a parse.
+*Do:* pull on the daily cron, into the same event shape `calendar.list_events`
+already renders.
+
+**B14. Birthdays and contacts.** Common in comparable bots. Needs a Google
+Contacts scope — a §14 security decision first — or a local list with no new
+scope at all. The local list is the better trade.
+
+### Deliberately not doing
+
+- **Web search and general chat.** Meta's AI-provider policy permits task-scoped
+  bots; a general-purpose assistant is a different and worse position to be in
+  (§2). It would also put arbitrary web text in front of the parser.
+- **Multi-user.** Every gate here assumes one allowlisted sender. Generalizing
+  that is not a feature, it is a different threat model.
+- **Vague-time defaults** ("בבוקר" → 09:00). Comparable bots guess. We CLARIFY
+  instead (R11), because a reminder at the wrong hour is worse than one extra
+  message. Revisit only with evidence from real use.
+- **Google Tasks.** Stores the due date only and discards the time (§2).
