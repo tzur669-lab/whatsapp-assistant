@@ -746,10 +746,15 @@ Each phase ends with its exit criteria met and tests green.
 - [x] 586 tests green, including a voice case in the log canary.
 - [ ] *Exit:* a recorded Hebrew reminder reaches the right slot values. Blocked on Phase 4's tools, and on the same live smoke test as Phase 1.
 
-**Phase 4 — Reminders end to end**
+**Phase 4 — Reminders end to end** — *code complete 2026-09-24*
 
-- [ ] `reminders.*` tools, alarm scheduler, window planning, snooze, late delivery, Undo.
-- *Exit:* reminders survive redeploys, never duplicate, and out-of-window ones plan the Calendar fallback (after Phase 5).
+- [x] `reminders.create` / `list` / `cancel` with `resolve` / `preview` / `execute` / `undo`.
+- [x] Durable Object `alarm()` on the claim/lease protocol; re-armed from `nextDueAt()`.
+- [x] Window and budget planning, snooze (10 min / 1 hour / done), late-delivery note, Tier 1 Undo.
+- [x] The pipeline now runs the full turn: commands -> confirmations -> NLU -> policy -> tool.
+- [x] `/status`, `/pause`, `/resume`, `/budget` answer from real state.
+- [x] 684 tests green, including 19 that drive the real Durable Object through a fake platform.
+- [ ] *Exit:* reminders survive redeploys and never duplicate — proven in tests, still to be confirmed on staging. The Calendar fallback needs Phase 5.
 
 **Phase 5 — Google connect + read**
 
@@ -999,6 +1004,16 @@ Test each of these:
 | 2026-09-24 | Every answer to a voice note leads with `שמעתי: <transcript>`, even when recognition was perfect. Typed text is already on the user's screen; a transcript is not, and acting on words nobody has seen is the failure this feature could introduce |
 | 2026-09-24 | Media download refuses redirects rather than following them. The download url comes from a response body while the request carries the Meta access token, so the destination must stay the one that was validated. Host allowlist matched on whole labels — `fbcdn.net.evil.example` is not `fbcdn.net` |
 | 2026-09-24 | `transcript`, `mediaId` and `mediaUrl` joined the logger's ban list. A transcript is message content by another route, and a media id resolves straight back to the audio |
+| 2026-09-24 | Policy runs on the **resolved** input, not on the draft. The far-future rule needs an instant to judge, and a request that cannot be resolved never reaches policy at all — it becomes a question first |
+| 2026-09-24 | Every `execute` re-validates its own input against a Zod schema, including after a confirmation. The input crosses a JSON boundary and comes back as `unknown`; the stored hash guards tampering, this guards everything else, and it is what makes the erased types in `tools/types.ts` honest rather than a cast |
+| 2026-09-24 | A plain "כן" confirms through `confirmResolved`, which skips the nonce gate and no other. The nonce stops a *guessed button id* from executing something; on this path the sender supplied no id at all — it came from looking up their own single open action. The nonce could not be produced anyway, since only its hash is stored |
+| 2026-09-24 | Snooze offers reuse the `undo_actions` table with a longer expiry. It is the same object — a one-shot, sender-bound, nonce-checked action stored for later — and a second table would duplicate all five gates for nothing |
+| 2026-09-24 | When the 24-hour window is shut the alarm **holds** the reminder instead of attempting a send: no attempt is burned, and it arrives late with a note once the user writes back. A send that cannot succeed is not a send that failed |
+| 2026-09-24 | The `counters` table's key column holds a *period* key, not only a month: the message budget is monthly, the NLU fallback count `/status` reports is daily. Two periods, one table, no migration — the keys cannot collide, being different lengths |
+| 2026-09-24 | Rate-limit usage is counted from `audit_log` rather than a separate counter, so the number the limiter sees is the one an audit would show. Only actions that actually happened count; a refused or unconfirmed request is not usage |
+| 2026-09-24 | The budget warning rides on the message that crosses the threshold instead of arriving as its own. One command still produces one reply (invariant 10), and a warning nobody asked for is not worth a second notification |
+| 2026-09-24 | `AssistantDO` takes an optional third constructor parameter for `fetch`. The platform always constructs it with (state, env); the seam is what lets the alarm, delivery, retries and the give-up path be driven in tests without workerd and without the network |
+| 2026-09-24 | Week ranges are Israeli: Sunday–Saturday, weekend = Friday–Saturday. Boundaries resolve through the zone rather than UTC arithmetic, so the week containing a DST change is still seven calendar days — 169 hours, not 168 |
 
 ---
 

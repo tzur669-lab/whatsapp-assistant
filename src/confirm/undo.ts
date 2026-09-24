@@ -12,7 +12,17 @@
 import type { SqlDriver } from '../core/sql.js';
 import { sha256Hex } from './pending.js';
 
-const EXPIRY_MS = 10 * 60 * 1000;
+/** Tier 1's window: long enough to notice a mistake, short enough to be safe. */
+export const UNDO_EXPIRY_MS = 10 * 60 * 1000;
+
+/**
+ * A snooze offer rides on the same table. It is the same object — a one-shot,
+ * sender-bound, nonce-checked action stored for later — and giving it its own
+ * table would duplicate all five gates for no gain. It lives longer because a
+ * reminder is often seen well after it arrives.
+ */
+export const SNOOZE_EXPIRY_MS = 6 * 60 * 60 * 1000;
+
 const ID_BYTES = 12;
 const NONCE_BYTES = 16;
 
@@ -37,11 +47,17 @@ export class UndoActions {
     private readonly now: () => number,
   ) {}
 
-  offer(params: { tool: string; compensating: unknown; principal: string }): UndoOffer {
+  offer(params: {
+    tool: string;
+    compensating: unknown;
+    principal: string;
+    /** Defaults to the Tier 1 undo window. */
+    expiryMs?: number;
+  }): UndoOffer {
     const id = randomHex(ID_BYTES);
     const nonce = randomHex(NONCE_BYTES);
     const createdAt = this.now();
-    const expiresAt = createdAt + EXPIRY_MS;
+    const expiresAt = createdAt + (params.expiryMs ?? UNDO_EXPIRY_MS);
 
     this.sql.exec(
       `INSERT INTO undo_actions

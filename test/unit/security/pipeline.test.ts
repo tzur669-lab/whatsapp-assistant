@@ -94,7 +94,7 @@ describe('handleInbound', () => {
 
   it('records a stale message as stale without executing anything', async () => {
     await handleInbound(textEvent({ text: 'תזכיר לי מחר', sentAtMs: NOW - 20 * 60_000 }), deps());
-    const entry = log.captured.find((l) => l.event === 'nlu_not_implemented');
+    const entry = log.captured.find((l) => l.event === 'nlu_not_configured');
     expect(entry?.fields['stale']).toBe(true);
   });
 

@@ -2,29 +2,67 @@
  * The single Durable Object. Every state change in the system is serialized
  * through this one instance, which is what rules out double-executed
  * confirmations and racing webhook retries (PLAN §3.3).
+ *
+ * It owns three things the portable core deliberately does not: the clock, the
+ * storage handle, and the alarm. Everything else is plain TypeScript underneath
+ * (CLAUDE.md invariant 11).
  */
 import { Repository } from '../core/repo.js';
 import { handleInbound } from '../core/pipeline.js';
+import type { PipelineOutcome, Services } from '../core/pipeline.js';
+import { snoozeButtons, SNOOZE_TOOL } from '../core/orchestrator.js';
+import { SNOOZE_EXPIRY_MS } from '../confirm/undo.js';
 import { createLogger, hashPrincipal } from '../security/redact.js';
 import { WhatsAppSender } from '../channels/whatsapp/send.js';
 import { createVoiceTranscriber } from '../channels/whatsapp/voice.js';
 import { createGroqWhisperProvider, WHISPER_MODEL } from '../voice/groq-whisper.js';
-import type { InboundEvent } from '../channels/types.js';
+import { buildNluChain } from '../nlu/index.js';
+import { ReminderStore } from '../tools/reminder-store.js';
+import type { ClaimedReminder } from '../tools/reminder-store.js';
+import { PendingActions } from '../confirm/pending.js';
+import { UndoActions } from '../confirm/undo.js';
+import { budgetState, isWindowOpen, RECHECK_BEFORE_MS } from '../policy/window.js';
+import { reminderText } from '../render/reminders.js';
+import { statusText } from '../render/status.js';
+import { localPartsOf } from '../time/tz.js';
+import type { InboundEvent, OutboundMessage } from '../channels/types.js';
 import type { AppEnv } from '../core/env.js';
 import { DurableObjectSqlDriver } from './sql-repo.js';
 import { MIGRATIONS } from './migrations.js';
 
 const RETENTION_INBOUND_MS = 30 * 24 * 60 * 60 * 1000;
 
+/** Late enough to be worth mentioning. Below this, nobody would notice. */
+const LATE_THRESHOLD_MS = 60_000;
+
+/** A floor on alarm scheduling, so a due-now reminder does not spin. */
+const MIN_ALARM_DELAY_MS = 1_000;
+
 export class AssistantDO implements DurableObject {
   private readonly repo: Repository;
+  private readonly sql: DurableObjectSqlDriver;
+  private readonly reminders: ReminderStore;
+  private readonly pending: PendingActions;
+  private readonly deferred: UndoActions;
   private readonly log = createLogger({ component: 'assistant_do' });
 
   constructor(
     private readonly ctx: DurableObjectState,
     private readonly env: AppEnv,
+    /**
+     * The platform always constructs this with exactly (state, env); the third
+     * parameter exists so tests can drive the whole object — alarm, delivery,
+     * retries — without workerd and without the network.
+     */
+    private readonly fetchImpl: typeof fetch = fetch,
   ) {
-    this.repo = new Repository(new DurableObjectSqlDriver(ctx.storage));
+    this.sql = new DurableObjectSqlDriver(ctx.storage);
+    this.repo = new Repository(this.sql);
+    const now = () => Date.now();
+    this.reminders = new ReminderStore(this.sql, now);
+    this.pending = new PendingActions(this.sql, now);
+    this.deferred = new UndoActions(this.sql, now);
+
     // blockConcurrencyWhile keeps requests queued until the schema is ready.
     void this.ctx.blockConcurrencyWhile(async () => {
       const version = this.repo.migrate(MIGRATIONS);
@@ -42,34 +80,69 @@ export class AssistantDO implements DurableObject {
     }
 
     if (url.pathname === '/do/maintenance' && request.method === 'POST') {
-      this.runMaintenance();
+      await this.runMaintenance();
       return new Response(null, { status: 204 });
     }
 
     return new Response('not found', { status: 404 });
   }
 
+  /**
+   * Deliver everything that is due (PLAN §6.7).
+   *
+   * The claim/lease protocol is what makes this safe to re-enter: a row is
+   * claimed before it is sent and marked sent afterwards, so a crash in between
+   * leaves a lease that expires rather than a reminder that vanishes or fires
+   * twice.
+   */
+  async alarm(): Promise<void> {
+    const now = Date.now();
+    const principal = await this.selfPrincipal();
+
+    // Outside the 24-hour window nothing but a paid template gets through, so a
+    // send here is not a send that fails — it is one that must not be attempted.
+    // The reminder is held and looked at again, and arrives late with a note.
+    if (!this.canDeliver(principal, now)) {
+      this.log.info('delivery_deferred', { reason: 'window_or_budget' });
+      await this.armAlarm(now + RECHECK_BEFORE_MS);
+      return;
+    }
+
+    const due = this.reminders.claimDue();
+    this.log.info('alarm_fired', { claimed: due.length });
+
+    for (const reminder of due) {
+      await this.deliver(reminder, now);
+    }
+
+    // Reminders that ran out of attempts are reported once, then closed.
+    for (const abandoned of this.reminders.takeFailed()) {
+      await this.send({
+        to: this.selfWaId(),
+        text: reminderText.deliveryGaveUp(
+          {
+            id: abandoned.id,
+            text: abandoned.text,
+            local: localPartsOf(abandoned.dueAtUtc, abandoned.tz),
+          },
+          'he',
+        ),
+      });
+    }
+
+    await this.armAlarm();
+  }
+
   /** Daily cron entry point (PLAN §6.7). */
-  runMaintenance(): void {
-    const cutoff = Date.now() - RETENTION_INBOUND_MS;
-    this.repo.purgeInboundBefore(cutoff);
+  async runMaintenance(): Promise<void> {
+    this.repo.purgeInboundBefore(Date.now() - RETENTION_INBOUND_MS);
+    this.pending.expireStale();
+    this.deferred.expireStale();
+    await this.armAlarm();
     this.log.info('maintenance_done', {});
   }
 
-  /**
-   * Built per request rather than held on the instance: it closes over secrets,
-   * and a long-lived Durable Object should not keep them alive between calls.
-   */
-  private voiceTranscriber() {
-    return createVoiceTranscriber({
-      accessToken: this.env.WA_ACCESS_TOKEN,
-      provider: createGroqWhisperProvider({
-        apiKey: this.env.GROQ_API_KEY,
-        model: WHISPER_MODEL,
-      }),
-      log: this.log,
-    });
-  }
+  // -- inbound ---------------------------------------------------------------
 
   private async processEvent(event: InboundEvent): Promise<void> {
     const principal =
@@ -82,24 +155,170 @@ export class AssistantDO implements DurableObject {
       log: this.log,
       now: () => Date.now(),
       principal,
+      services: this.services(),
       ...(this.env.GROQ_API_KEY ? { transcribe: this.voiceTranscriber() } : {}),
     });
 
-    if (outcome.action !== 'reply' || event.kind === 'status') return;
+    if (outcome.action === 'reply' && event.kind !== 'status') {
+      await this.reply(event.from, outcome);
+    }
 
+    // A new or cancelled reminder moves when the next alarm should fire.
+    if (outcome.action === 'reply' && outcome.rescheduleAlarm) {
+      await this.armAlarm();
+    }
+  }
+
+  private async reply(to: string, outcome: Extract<PipelineOutcome, { action: 'reply' }>): Promise<void> {
+    await this.send({
+      to,
+      text: outcome.text,
+      ...(outcome.buttons ? { buttons: outcome.buttons } : {}),
+    });
+  }
+
+  // -- delivery --------------------------------------------------------------
+
+  private async deliver(reminder: ClaimedReminder, now: number): Promise<void> {
+    const lines = [reminderText.due(reminder.text, 'he')];
+
+    if (reminder.lateByMs > LATE_THRESHOLD_MS) {
+      lines.push(reminderText.lateNote(Math.round(reminder.lateByMs / 60_000), 'he'));
+    }
+
+    // The snooze offer is written down before the send, and is one-shot: the
+    // same gates as a confirmation, for the same reason (PLAN §6.5).
+    const offer = this.deferred.offer({
+      tool: SNOOZE_TOOL,
+      compensating: { reminderId: reminder.id, text: reminder.text, tz: reminder.tz },
+      principal: reminder.principal,
+      expiryMs: SNOOZE_EXPIRY_MS,
+    });
+
+    const sent = await this.send({
+      to: this.selfWaId(),
+      text: lines.join('\n'),
+      buttons: snoozeButtons(offer.id, offer.nonce, 'he'),
+    });
+
+    if (sent) {
+      this.reminders.markSent(reminder.id, sent.wamid);
+      this.repo.audit({
+        ts: now,
+        principal: reminder.principal,
+        tool: 'reminders.deliver',
+        tier: 0,
+        decision: 'ALLOW',
+        outcome: 'ok',
+        externalRef: reminder.id,
+      });
+    } else {
+      // The attempt was already counted by the claim, so this only releases it.
+      this.reminders.markFailed(reminder.id);
+    }
+  }
+
+  /**
+   * Whether a WhatsApp send can be attempted at all.
+   *
+   * The budget is checked first: unlike a shut window it will not fix itself
+   * when the user writes back (PLAN §5, §6.7).
+   */
+  private canDeliver(principal: string, now: number): boolean {
+    const sent = this.repo.counters(Repository.monthKey(now)).waSent;
+    if (budgetState(sent).level === 'exhausted') return false;
+    return isWindowOpen(this.repo.lastInboundAt(principal), now);
+  }
+
+  // -- outbound --------------------------------------------------------------
+
+  /** The one place a message leaves the system, and the one place it is counted. */
+  private async send(message: OutboundMessage): Promise<{ wamid: string } | null> {
     const sender = new WhatsAppSender({
       phoneNumberId: this.env.WA_PHONE_NUMBER_ID,
       accessToken: this.env.WA_ACCESS_TOKEN,
+      fetchImpl: this.fetchImpl,
     });
 
     try {
-      const { wamid } = await sender.send({ to: event.from, text: outcome.text });
-      this.log.info('reply_sent', { inReplyTo: event.wamid, wamid });
+      const result = await sender.send(this.withBudgetWarning(message));
+      this.repo.bumpCounter(Repository.monthKey(Date.now()), 'wa_sent');
+      this.log.info('message_sent', { wamid: result.wamid, buttons: message.buttons?.length ?? 0 });
+      return result;
     } catch (error) {
-      this.log.error('reply_failed', {
-        inReplyTo: event.wamid,
-        errorCode: error instanceof Error ? error.message : 'E_UNKNOWN',
-      });
+      const code = error instanceof Error ? error.message : 'E_UNKNOWN';
+      this.log.error('send_failed', { errorCode: code });
+      this.repo.setLastErrorCode(code);
+      return null;
     }
+  }
+
+  /**
+   * The budget warning rides on the message that crosses the threshold rather
+   * than arriving as its own. One command still produces one reply (invariant
+   * 10), and a warning nobody asked for is not worth a second notification.
+   */
+  private withBudgetWarning(message: OutboundMessage): OutboundMessage {
+    const state = budgetState(this.repo.counters(Repository.monthKey(Date.now())).waSent);
+    if (!state.shouldWarn) return message;
+    return { ...message, text: `${message.text}\n\n${statusText.budgetWarning(state)}` };
+  }
+
+  // -- wiring ----------------------------------------------------------------
+
+  private services(): Services {
+    return {
+      reminders: this.reminders,
+      pending: this.pending,
+      deferred: this.deferred,
+      nlu: buildNluChain({ groqApiKey: this.env.GROQ_API_KEY, fetchImpl: this.fetchImpl }),
+    };
+  }
+
+  /**
+   * Built per request rather than held on the instance: it closes over secrets,
+   * and a long-lived Durable Object should not keep them alive between calls.
+   */
+  private voiceTranscriber() {
+    return createVoiceTranscriber({
+      accessToken: this.env.WA_ACCESS_TOKEN,
+      provider: createGroqWhisperProvider({
+        apiKey: this.env.GROQ_API_KEY,
+        model: WHISPER_MODEL,
+        fetchImpl: this.fetchImpl,
+      }),
+      log: this.log,
+      fetchImpl: this.fetchImpl,
+    });
+  }
+
+  /** Set the alarm to the next reminder, or clear it when there is nothing. */
+  private async armAlarm(notBefore?: number): Promise<void> {
+    const next = this.reminders.nextDueAt();
+
+    if (next === null) {
+      if (notBefore === undefined) {
+        await this.ctx.storage.deleteAlarm();
+        return;
+      }
+      await this.ctx.storage.setAlarm(notBefore);
+      return;
+    }
+
+    const at = Math.max(notBefore ?? 0, next, Date.now() + MIN_ALARM_DELAY_MS);
+    await this.ctx.storage.setAlarm(at);
+  }
+
+  // -- identity --------------------------------------------------------------
+  //
+  // This is a single-user assistant: reminders go back to the one allowlisted
+  // number, which is configuration, never anything that arrived over chat.
+
+  private selfPrincipal(): Promise<string> {
+    return hashPrincipal(this.selfWaId(), this.env.LOG_HASH_KEY);
+  }
+
+  private selfWaId(): string {
+    return (this.env.ALLOWLIST_WA_IDS ?? '').split(',')[0]?.trim() ?? '';
   }
 }

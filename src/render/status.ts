@@ -108,4 +108,10 @@ export const statusText = {
   },
 
   noReminders: 'אין תזכורות ממתינות.',
+
+  /** A tool hit its own hourly or daily cap. The cap is code, not chat (§6.4). */
+  rateLimited: 'הגעת למגבלת השימוש של הפעולה הזאת. כדאי לנסות שוב מאוחר יותר.',
+
+  /** The tool parsed correctly but has no executable body yet. */
+  notAvailableYet: 'הפעולה הזאת עדיין לא זמינה.',
 } as const;

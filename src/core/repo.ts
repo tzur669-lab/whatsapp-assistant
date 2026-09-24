@@ -133,7 +133,33 @@ export class Repository {
     return `${year}-${month}`;
   }
 
-  /** Add to a counter for the given month, creating the row if needed. */
+  /**
+   * Day key for counters that reset daily, in the user's zone.
+   *
+   * The `counters` table's key column is named `month` for historical reasons
+   * but holds a *period* key: a month for the message budget, a day for the
+   * NLU fallback count that `/status` reports. One table, two periods, no
+   * migration — the keys cannot collide, since they are different lengths.
+   */
+  static dayKey(atMs: number, timeZone = 'Asia/Jerusalem'): string {
+    return new Intl.DateTimeFormat('en-CA', {
+      timeZone,
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    }).format(new Date(atMs));
+  }
+
+  /** The most recent error code, for `/status`. Never an error message. */
+  lastErrorCode(): string | null {
+    return this.getSetting('last_error_code');
+  }
+
+  setLastErrorCode(code: string): void {
+    this.setSetting('last_error_code', code.slice(0, 64));
+  }
+
+  /** Add to a counter for the given period, creating the row if needed. */
   bumpCounter(month: string, field: 'wa_sent' | 'llm_calls' | 'llm_tokens' | 'fallbacks', by = 1): number {
     this.sql.exec(
       `INSERT INTO counters (month, wa_sent, llm_calls, llm_tokens, fallbacks)
@@ -167,6 +193,32 @@ export class Repository {
 
   setPaused(paused: boolean): void {
     this.setSetting('paused', paused ? '1' : '0');
+  }
+
+  /**
+   * How often a tool has run recently, for the policy engine's rate limits.
+   *
+   * Counted from the audit log rather than a separate counter, so the number
+   * the limiter sees is the same one an audit would show. Only actions that
+   * actually happened count: a refused or unconfirmed request is not usage.
+   */
+  toolUsage(principal: string, tool: string, nowMs: number): { perHour: number; perDay: number } {
+    const rows = this.sql.exec(
+      `SELECT
+         SUM(CASE WHEN ts >= ? THEN 1 ELSE 0 END) AS per_hour,
+         COUNT(*) AS per_day
+       FROM audit_log
+       WHERE principal = ? AND tool = ? AND outcome = 'ok' AND ts >= ?`,
+      nowMs - 60 * 60 * 1000,
+      principal,
+      tool,
+      nowMs - 24 * 60 * 60 * 1000,
+    );
+    const row = rows[0];
+    return {
+      perHour: Number(row?.['per_hour'] ?? 0),
+      perDay: Number(row?.['per_day'] ?? 0),
+    };
   }
 
   audit(entry: {

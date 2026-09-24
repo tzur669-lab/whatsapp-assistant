@@ -121,6 +121,32 @@ export class PendingActions {
     return checked;
   }
 
+  /**
+   * Confirm an action the caller identified itself, with no nonce.
+   *
+   * Used for a plain "כן", where there is no button id to carry one — and the
+   * nonce could not be produced anyway, since only its hash is stored.
+   *
+   * Skipping that one gate is sound here and nowhere else: the id was not
+   * supplied by the sender. It came from `resolvePlainText`, which looked up
+   * this principal's own pending actions and returned an id only when exactly
+   * one was open. The nonce exists to stop a *guessed* button id from
+   * executing something; there is no id to guess on this path. Every other
+   * gate — exists, pending, not expired, same sender, input unchanged — still
+   * runs.
+   */
+  confirmResolved(id: string, principal: string): ConfirmResult {
+    const checked = this.check(id, null, principal);
+    if (!checked.ok) return checked;
+
+    this.sql.exec(
+      `UPDATE pending_actions SET status = 'executed', executed_at = ? WHERE id = ? AND status = 'pending'`,
+      this.now(),
+      id,
+    );
+    return checked;
+  }
+
   /** Validate and mark cancelled. Same checks: a cancel is also an instruction. */
   cancel(id: string, nonce: string, principal: string): { ok: true } | { ok: false; reason: ConfirmFailure } {
     const checked = this.check(id, nonce, principal);
@@ -172,15 +198,21 @@ export class PendingActions {
     return rows.map((row) => String(row['id']));
   }
 
-  /** Every gate, in order. Nothing is mutated here. */
-  private check(id: string, nonce: string, principal: string): ConfirmResult {
+  /**
+   * Every gate, in order. Nothing is mutated here.
+   *
+   * `nonce === null` means the caller found this id itself rather than reading
+   * it off a message; see `confirmResolved` for why that is the only case where
+   * the nonce gate may be skipped.
+   */
+  private check(id: string, nonce: string | null, principal: string): ConfirmResult {
     const row = this.sql.exec('SELECT * FROM pending_actions WHERE id = ?', id)[0];
     if (!row) return { ok: false, reason: 'not_found' };
 
     if (row['status'] !== 'pending') return { ok: false, reason: 'not_pending' };
     if (Number(row['expires_at']) <= this.now()) return { ok: false, reason: 'expired' };
     if (String(row['principal']) !== principal) return { ok: false, reason: 'wrong_sender' };
-    if (!timingSafeEqual(digest(nonce), String(row['nonce_hash']))) {
+    if (nonce !== null && !timingSafeEqual(digest(nonce), String(row['nonce_hash']))) {
       return { ok: false, reason: 'bad_nonce' };
     }
 
