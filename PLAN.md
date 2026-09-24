@@ -309,13 +309,13 @@ type TimeSpec = {
 | R2 | Date + time → local wall time → UTC. Nonexistent (spring-forward gap) or ambiguous (fall-back fold) time | CLARIFY |
 | R3 | Timed intent with no time | CLARIFY (never default) |
 | R4 | Numeric HH:MM uses the 24-hour clock (Israeli convention). `meridiem`/`part_of_day` adjusts it (8 + evening → 20:00) | resolve |
-| R5 | Resolved hour in 00:00–06:59 with no explicit night/morning marker ("unlikely hour guard"). Not applied to `in_duration` | CLARIFY |
+| R5 | Resolved hour in 00:00–05:59 with no explicit night/morning marker ("unlikely hour guard"). Not applied to `in_duration`. Settled 2026-09-24: "תעיר אותי ב-6" must not cost a round trip | CLARIFY |
 | R6 | Relative date ("tomorrow") said between 00:00–03:59 local | CLARIFY which calendar date |
 | R7 | Resolved instant earlier than now − 60 s | CLARIFY (offer the same time tomorrow) |
 | R8 | More than 365 days ahead | CONFIRM |
-| R9 | Weekday equal to today's weekday | CLARIFY. Otherwise use the nearest future occurrence (`next` behaves the same; configurable) |
+| R9 | Weekday equal to today's weekday | CLARIFY. Otherwise the nearest future occurrence. Settled 2026-09-24: `next` behaves the same, matching Israeli speech; `nextWeekdayMeansFollowingWeek` flips it |
 | R10 | Absolute date without a year → nearest future occurrence. If more than 300 days away | CLARIFY |
-| R11 | Event with no duration → configured default (60 min), **stated in the reply** | resolve |
+| R11 | Event with no duration. Settled 2026-09-24: there is no default — an event without a length is not a bookable event | CLARIFY |
 | R12 | Week starts Sunday. "סוף השבוע" = Fri–Sat | resolve |
 
 **Echo format**
@@ -644,10 +644,11 @@ Each phase ends with its exit criteria met and tests green.
 - [x] 109 tests green; ban-list scan and log canary in place.
 - [ ] *Exit:* my messages get an ack. Forged, unsigned, and foreign requests are rejected — covered by `test/security/ingress.test.ts`, still to be confirmed against the real Meta test number.
 
-**Phase 2 — Time resolver (no LLM)**
+**Phase 2 — Time resolver (no LLM)** — *complete 2026-09-24*
 
-- [ ] `DateSpec`/`TimeSpec` types, rules R1–R12, formatter + bidi isolates.
-- *Exit:* the full §11.1 table passes, including property tests.
+- [x] `DateSpec`/`TimeSpec` types, rules R1–R12, formatter + bidi isolates.
+- [x] Hebrew lexicon (`src/time/hebrew-lexicon.ts`), which doubles as the Phase 3 rules fallback.
+- [x] *Exit:* the §11.1 table passes, including property tests and lexicon cases. 222 tests green.
 
 **Phase 3 — NLU + evals**
 
@@ -695,13 +696,15 @@ Each phase ends with its exit criteria met and tests green.
 | Fri 25.9 00:30 | tomorrow 09:00 | CLARIFY (R6) |
 | Thu 24.9 09:00 | today 08:00 | CLARIFY (R7) |
 | Any | 03:00, no marker | CLARIFY (R5) |
+| Any | 06:00, no marker | resolve (R5 window ends at 05:59) |
+| Any | 2 + night | 02:00, not 14:00 |
 | Any | 8 + evening | 20:00 |
 | Sat 24.10.2026 | Sun 25.10 01:30 (fall-back fold) | CLARIFY (R2) |
 | Sat 24.10 | Sun 25.10 14:00 | +02:00 offset (after DST ends) |
 | Thu 26.3.2026 | Fri 27.3 02:30 (spring-forward gap) | CLARIFY (R2) |
 | Sun | weekday Sunday | CLARIFY (R9) |
 | 30.1 | absolute 29.2 no year | next valid 29.2 → CLARIFY (R10, >300 days) |
-| Any | event without duration | default 60 min + stated in reply |
+| Any | event without duration | CLARIFY (R11) |
 
 Also cover:
 
@@ -825,9 +828,9 @@ Test each of these:
 
 ## 13. Open decisions (confirm before or during implementation)
 
-- [ ] R5 unlikely-hour window: 00:00–06:59? (affects "ב-6" early alarms)
-- [ ] R9: should "יום X הבא" mean next week's X rather than the nearest one?
-- [ ] Default event duration (60 min?) and default reminder text when none given.
+- [x] R5 unlikely-hour window: **00:00–05:59** (2026-09-24).
+- [x] R9: "יום X הבא" means the **nearest future X** (2026-09-24).
+- [x] Default event duration: **none — CLARIFY instead** (2026-09-24). Default reminder text when none given is still open.
 - [ ] Should moving or deleting **assistant-created** events drop to Tier 1 (execute + Undo)?
 - [ ] Tier 3 PIN: enable from day one?
 - [ ] When to buy the dedicated number (before or after Phase 4)?
@@ -852,6 +855,11 @@ Test each of these:
 | 2026-09-24 | Added `@types/node` (dev-only) for the test layer. No runtime dependency beyond Hono + Zod |
 | 2026-09-24 | `pnpm eval` exits non-zero until Phase 3 lands, so an unimplemented eval can never read as a pass |
 | 2026-09-24 | No tz date library yet. Native `Intl` with `Asia/Jerusalem` is the Phase 2 starting point; measure CPU before adding one (§4) |
+| 2026-09-24 | R5 window set to 00:00–05:59; R9 resolves to the nearest future weekday; R11 has **no** default event duration and returns CLARIFY. All three are settings, not constants |
+| 2026-09-24 | R5 is evaluated before R2, so a bare small-hours number at a DST boundary is answered as an unlikely hour rather than as a DST question. R2 is still reached when the night is stated explicitly |
+| 2026-09-24 | `part_of_day: night` shifts only hours 6–11 into the evening. "2 בלילה" is 02:00; reading it as 14:00 was a real bug caught by the §11.1 table |
+| 2026-09-24 | Phase 2 uses no date library. `Intl.DateTimeFormat` with a cached formatter covers the zone; DST gaps and folds are detected by verifying candidate instants round-trip to the requested wall time |
+| 2026-09-24 | Hebrew lexicon matches word edges with explicit `֐-׿` lookarounds — JavaScript's `` is ASCII-only and never fires between Hebrew letters. U+05BE MAQAF is excluded from nikud stripping |
 
 ---
 
