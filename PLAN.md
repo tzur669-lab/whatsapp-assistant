@@ -620,6 +620,12 @@ real logger.
 | OAuth abuse (CSRF, open redirect) | `state` + PKCE, one-time start link, exact redirect URI, callback rejects without a live state |
 | Supply chain | Minimal dependencies, lockfile, pinned versions, update PRs, `pnpm audit` in CI |
 | Time bugs | Code-only resolution, DST tests, absolute-date echo |
+| Voice: acting on words nobody saw | Recognition is graded before use; a transcript the recognizer doubts becomes a question. Every reply echoes what was heard, so a mishearing is visible before it matters. An uncertain transcript sends any write to CONFIRM (§6.10) |
+| Voice: media download as an SSRF pivot | The download url comes from a response body while the request carries the Meta token. Host allowlist matched on whole labels, HTTPS only, no embedded credentials, redirects refused rather than followed, size and type checked from the metadata first (§6.1) |
+| Confirmation replay / forged button id | Every gate is checked atomically in the DO: exists, pending, not expired, same sender, nonce, input hash. A tap executes the stored row, never a re-parse. Tier 3 is offered no confirm button at all |
+| Lost update on a calendar write | The etag the action was previewed with travels as `If-Match`. A 412 writes nothing and says the event changed |
+| Reminder delivered twice | Claim/lease: a row is claimed under a lease before the send and marked after. A crash between them leaves a lease that expires, not a duplicate. Re-entering `alarm()` is tested |
+| Refresh token unusable after key rotation | Ciphertext carries its key version and the keyring holds every version present, so rotation is additive. A token that will not decrypt disconnects the integration visibly rather than failing silently |
 
 ### 7.2 Secrets inventory
 
@@ -774,12 +780,17 @@ Each phase ends with its exit criteria met and tests green.
 - [x] 779 tests green.
 - [ ] *Exit:* §11.3 passes in tests; the manual staging pass still needs a real Google project.
 
-**Phase 7 — Hardening + ops**
+**Phase 7 — Hardening + ops** — *code complete 2026-09-24*
 
-- [ ] Redaction + canary test, counters + `/budget`, `/pause`/`/resume`, `/status`.
-- [ ] Runbooks in `ops/`.
-- [ ] [O] Export backup, [O] uptime check.
-- *Exit:* §11.4–§11.6 pass; threat model reviewed.
+- [x] Redaction + canary test (now covering voice transcripts through the real logger).
+- [x] Counters, `/budget`, `/pause`, `/resume`, `/status` answering from real state.
+- [x] Runbooks in `ops/` rewritten for the surface that now exists, including the
+      `TOKEN_ENC_KEY` rotation procedure and what revoking does **not** undo.
+- [x] Threat model reviewed and extended: voice, media SSRF, confirmation replay,
+      lost updates, duplicate delivery, key rotation.
+- [x] 792 tests green. §11.4–§11.6 pass.
+- [ ] [O] Export backup, [O] uptime check — still optional, still not built.
+- [ ] *Exit:* met in code. The live checks (Meta handshake, Google consent) need staging.
 
 **Phase 8 — Production**
 
@@ -1040,6 +1051,8 @@ Test each of these:
 | 2026-09-24 | `ToolDefinition` gained `resolveAsync` for tools whose target lives behind the network. `resolve` stays synchronous so policy can rule on a request before anything is fetched |
 | 2026-09-24 | A move keeps the event's length: the user moved it, they did not resize it |
 | 2026-09-24 | The reminder calendar fallback is written **at creation**, not when the reminder comes due, and removed if the reminder is delivered on WhatsApp after all. A stand-in left behind would remind the user twice, which is worse than not at all. If Google is not connected the reminder is still scheduled — a missing fallback is not worth failing the request for |
+| 2026-09-24 | There is deliberately **no bulk re-encryption tool** for token rotation. There is exactly one token in this system, and a tool that decrypts every secret at once is a worse thing to own than a two-minute manual reconnect |
+| 2026-09-24 | Snooze offers expire after six hours and are one-shot, sender-bound and nonce-checked, like every other deferred action. A reminder that could be revived days later by an old button is not a reminder |
 
 ---
 
