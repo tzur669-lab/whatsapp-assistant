@@ -40,6 +40,24 @@ const ambiguitiesSchema = z
   .max(MAX_AMBIGUITIES)
   .default([]);
 
+/**
+ * Slots tolerated on an `unsupported` draft.
+ *
+ * `unsupported` means "no tool handles this", and its slots are never read. An
+ * empty-object rule looked tighter but turned correct classifications into hard
+ * failures: strict structured output requires the model to emit every slot key,
+ * and a message like "what's the weather tomorrow" legitimately contains a date.
+ * Rejecting the draft over an ignored field would punish the right answer.
+ */
+const ignoredSlots = remindersCreateSlots
+  .merge(remindersListSlots)
+  .merge(remindersCancelSlots)
+  .merge(calendarListEventsSlots)
+  .merge(calendarCreateEventSlots)
+  .merge(calendarMoveEventSlots)
+  .merge(calendarDeleteEventSlots)
+  .strict();
+
 const common = {
   language: languageSchema,
   missing: missingSchema,
@@ -59,7 +77,7 @@ export const intentDraftSchema = z.discriminatedUnion('intent', [
   z.object({ intent: z.literal('calendar.move_event'), slots: calendarMoveEventSlots, ...common }).strict(),
   z.object({ intent: z.literal('calendar.delete_event'), slots: calendarDeleteEventSlots, ...common }).strict(),
   // Anything outside the tool list, including prompt-injection attempts.
-  z.object({ intent: z.literal('unsupported'), slots: z.object({}).strict(), ...common }).strict(),
+  z.object({ intent: z.literal('unsupported'), slots: ignoredSlots, ...common }).strict(),
 ]);
 
 export type IntentDraft = z.infer<typeof intentDraftSchema>;

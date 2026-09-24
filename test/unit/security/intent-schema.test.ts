@@ -49,6 +49,31 @@ describe('accepts well-formed drafts', () => {
   it('accepts unsupported with empty slots', () => {
     expect(validateIntentDraft({ intent: 'unsupported', language: 'en', slots: {} }).ok).toBe(true);
   });
+
+  it('accepts unsupported carrying slots it will never read', () => {
+    // "What's the weather tomorrow" really does contain a date. The intent is
+    // what matters; an unsupported draft's slots are discarded either way, and
+    // rejecting over one would fail a correct classification.
+    const res = validateIntentDraft({
+      intent: 'unsupported',
+      language: 'he',
+      slots: { date: { kind: 'relative_days', offset: 1 }, attendees: [] },
+      missing: [],
+      ambiguities: [],
+    });
+    expect(res.ok).toBe(true);
+  });
+
+  it('still rejects an unknown slot name on unsupported', () => {
+    const res = validateIntentDraft({
+      intent: 'unsupported',
+      language: 'he',
+      slots: { shell_command: 'rm -rf /' },
+      missing: [],
+      ambiguities: [],
+    });
+    expect(res.ok).toBe(false);
+  });
 });
 
 describe('rejects anything outside the contract', () => {

@@ -198,7 +198,7 @@ describe('buildPrompt — the privacy boundary', () => {
   it('describes enum slots with their allowed values, so drafts stay valid', () => {
     const entry = toolCatalog(['reminders.list'])[0]!;
     expect(entry.slotTypes).toEqual([
-      'range: "today"|"tomorrow"|"this_week"|"next_week"|"weekend"?',
+      'range: "this_week"|"next_week"|"weekend"?',
     ]);
   });
 

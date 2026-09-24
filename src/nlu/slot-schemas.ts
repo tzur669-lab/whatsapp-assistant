@@ -62,8 +62,15 @@ export const timeSpecSchema = z
   })
   .strict();
 
-/** A named span the user asked about, e.g. "this week". Code turns it into dates. */
-export const rangeSchema = z.enum(['today', 'tomorrow', 'this_week', 'next_week', 'weekend']);
+/**
+ * A multi-day span the user asked about. Code turns it into dates.
+ *
+ * Single days are deliberately absent. `today` and `tomorrow` were in this enum
+ * and overlapped exactly with `relative_days` 0 and 1, so "what's on my calendar
+ * tomorrow" had two equally valid encodings and models picked either one. One
+ * meaning, one representation: a single day is always a `date`.
+ */
+export const rangeSchema = z.enum(['this_week', 'next_week', 'weekend']);
 
 /**
  * Spellings of an event or reminder the user referred to. Code matches these;

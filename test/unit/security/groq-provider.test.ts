@@ -88,10 +88,47 @@ describe('createGroqProvider', () => {
     expect(res).toEqual({ ok: false, error: { code: 'timeout' } });
   });
 
-  it('reports a network failure without throwing', async () => {
+  it('reports a network failure without throwing, distinct from a slow model', async () => {
     const fake = createFakeGroq([{ kind: 'network_error' }]);
     const res = await provider(fake).parse(INPUT);
-    expect(res).toEqual({ ok: false, error: { code: 'provider_error' } });
+    expect(res).toEqual({ ok: false, error: { code: 'network_error' } });
+  });
+
+  it('reports a connect timeout as a network fault, not a model timeout', async () => {
+    const fake = createFakeGroq([{ kind: 'connect_timeout' }]);
+    const res = await provider(fake).parse(INPUT);
+    expect(res).toEqual({ ok: false, error: { code: 'network_error' } });
+  });
+
+  it('constrains generation with the response schema', async () => {
+    const fake = createFakeGroq([{ kind: 'content', content: DRAFT_JSON }]);
+    await provider(fake).parse(INPUT);
+    const sent = JSON.stringify(fake.requests[0]);
+    expect(sent).toContain('json_schema');
+    expect(sent).toContain('intent_draft');
+  });
+
+  it('leaves room for reasoning tokens in the completion budget', async () => {
+    const fake = createFakeGroq([{ kind: 'content', content: DRAFT_JSON }]);
+    await provider(fake).parse(INPUT);
+    const body = fake.requests[0] as unknown as { max_completion_tokens: number };
+    expect(body.max_completion_tokens).toBeGreaterThanOrEqual(2048);
+  });
+
+  it('treats a null slot as absent, the way the schema mode reports it', async () => {
+    const withNulls = JSON.stringify({
+      intent: 'reminders.create',
+      language: 'he',
+      slots: { text: 'להתקשר לאבא', date: null, time: null },
+      missing: ['date', 'time'],
+      ambiguities: [],
+    });
+    const fake = createFakeGroq([{ kind: 'content', content: withNulls }]);
+    const res = await provider(fake).parse(INPUT);
+    expect(res.ok).toBe(true);
+    if (res.ok) {
+      expect((res.draft as { slots: Record<string, unknown> }).slots).toEqual({ text: 'להתקשר לאבא' });
+    }
   });
 
   it('reports an empty choices envelope as invalid json', async () => {

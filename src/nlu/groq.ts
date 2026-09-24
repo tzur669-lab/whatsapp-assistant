@@ -8,10 +8,30 @@
 import type { NluProvider, NluResponse } from './provider.js';
 import { buildPrompt } from './prompt.js';
 import type { PromptInput } from './prompt.js';
+import { buildResponseSchema, stripNulls } from './json-schema.js';
 
 const ENDPOINT = 'https://api.groq.com/openai/v1/chat/completions';
 const TIMEOUT_MS = 8_000;
-const MAX_COMPLETION_TOKENS = 512;
+
+/**
+ * Reasoning tokens are drawn from this same budget on the gpt-oss models, and a
+ * draft that runs out mid-object comes back as unparseable JSON. 512 was too
+ * small: a schema-constrained reply plus its reasoning routinely exceeded it,
+ * which showed up as invalid-JSON retries rather than as the truncation it was.
+ */
+const MAX_COMPLETION_TOKENS = 2_048;
+
+/**
+ * `strict: true`. Non-strict was measured and does not actually enforce the
+ * schema — a model asked for `reminders.list` with no range answered
+ * `range: "unspecified"`, a value absent from the enum. Strict mode enforces it,
+ * at the cost of requiring every key to be present; an absent slot arrives as
+ * `null` and `stripNulls` reconciles that with Zod.
+ */
+const RESPONSE_FORMAT = {
+  type: 'json_schema',
+  json_schema: { name: 'intent_draft', strict: true, schema: buildResponseSchema() },
+} as const;
 
 export type GroqConfig = {
   apiKey: string;
@@ -55,7 +75,7 @@ async function callOnce(
     temperature: 0,
     max_completion_tokens: MAX_COMPLETION_TOKENS,
     reasoning_effort: 'low',
-    response_format: { type: 'json_object' },
+    response_format: RESPONSE_FORMAT,
     messages: [
       { role: 'system', content: system },
       {
@@ -77,8 +97,15 @@ async function callOnce(
       signal: AbortSignal.timeout(TIMEOUT_MS),
     });
   } catch (error) {
-    const timedOut = error instanceof Error && (error.name === 'TimeoutError' || error.name === 'AbortError');
-    return { ok: false, error: { code: timedOut ? 'timeout' : 'provider_error' } };
+    // A failure to connect is a network fault, not a slow model. Counting the
+    // two together made the provider look slower than it is.
+    const name = error instanceof Error ? error.name : '';
+    const cause = (error as { cause?: { code?: string } } | undefined)?.cause?.code ?? '';
+    if (cause === 'UND_ERR_CONNECT_TIMEOUT' || cause === 'ENOTFOUND' || cause === 'ECONNREFUSED') {
+      return { ok: false, error: { code: 'network_error' } };
+    }
+    const timedOut = name === 'TimeoutError' || name === 'AbortError';
+    return { ok: false, error: { code: timedOut ? 'timeout' : 'network_error' } };
   }
 
   if (response.status === 429) {
@@ -111,7 +138,9 @@ async function callOnce(
 
   let draft: unknown;
   try {
-    draft = JSON.parse(stripFences(content));
+    // Under a structured-output schema an absent slot comes back as null rather
+    // than as an omitted key; Zod models absence as omission (PLAN §6.2).
+    draft = stripNulls(JSON.parse(stripFences(content)));
   } catch {
     return { ok: false, error: { code: 'invalid_json' } };
   }

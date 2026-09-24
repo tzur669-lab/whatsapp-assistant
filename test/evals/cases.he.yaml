@@ -304,8 +304,6 @@
   input: "אילו תזכורות יש לי להיום"
   expect:
     intent: reminders.list
-    slots:
-      range: today
     missing: []
 
 - id: he-list-004

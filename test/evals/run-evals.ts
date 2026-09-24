@@ -16,6 +16,7 @@
  */
 import { readFileSync, existsSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
+import { resolve } from 'node:path';
 import { parse as parseYaml } from 'yaml';
 import { createGroqProvider } from '../../src/nlu/groq.js';
 import { createRulesProvider } from '../../src/nlu/rules-fallback.js';
@@ -83,7 +84,7 @@ type Recording = { provider: string; prompt: string; drafts: { id: string; draft
 
 async function main(): Promise<void> {
   const args = parseArgs(process.argv.slice(2));
-  const cases = loadCases(args.filter);
+  const cases = sampleCases(loadCases(args.filter), args.sample);
 
   if (cases.length === 0) {
     fail('No eval cases matched. Check test/evals/cases.*.yaml.');
@@ -189,7 +190,7 @@ class DailyBudgetExhausted extends Error {
  * so the slowest attempt's latency is what gets reported. Retrying must not make
  * a slow provider look fast.
  */
-const TRANSIENT = new Set(['rate_limited', 'timeout', 'provider_error']);
+const TRANSIENT = new Set(['rate_limited', 'timeout', 'provider_error', 'network_error']);
 
 async function runCaseWithRetry(provider: NluProvider, testCase: EvalCase): Promise<CaseResult> {
   let worstLatency = 0;
@@ -360,7 +361,9 @@ function replay(path: string, cases: EvalCase[], verbose: boolean): void {
         latencyMs: 0,
         promptTokens: 0,
         cachedTokens: 0,
-        error: 'schema_invalid',
+        // A case with no recorded draft never got an answer at all. Reporting
+        // that as a schema rejection would blame the model for a dropped call.
+        error: validated ? 'schema_invalid' : 'no_response',
         ...(validated && !validated.ok ? { issues: validated.issues, rejected: raw } : {}),
       });
       continue;
@@ -502,6 +505,48 @@ function loadDevVars(): void {
   }
 }
 
+/**
+ * Take an even slice across categories rather than the first N cases.
+ *
+ * The daily token budget allows roughly one full run per model (PLAN §2), so
+ * iterating on the prompt has to work from a sample. A sample that is not
+ * stratified would be worse than useless here: the file is grouped by category,
+ * so the first 30 cases are all Hebrew reminders and would report nothing about
+ * injection handling or calendar writes.
+ *
+ * Case ids carry their category — `he-rem-001`, `en-inj-004` — so the prefix is
+ * the stratum.
+ */
+export function sampleCases(cases: EvalCase[], size: number | null): EvalCase[] {
+  if (!size || size >= cases.length) return cases;
+
+  const byCategory = new Map<string, EvalCase[]>();
+  for (const testCase of cases) {
+    const category = testCase.id.replace(/-\d+$/, '');
+    const bucket = byCategory.get(category);
+    if (bucket) bucket.push(testCase);
+    else byCategory.set(category, [testCase]);
+  }
+
+  // Round-robin across categories until the sample is full, so every category
+  // is represented before any is represented twice.
+  const buckets = [...byCategory.values()];
+  const picked: EvalCase[] = [];
+  for (let round = 0; picked.length < size; round++) {
+    let tookAny = false;
+    for (const bucket of buckets) {
+      const next = bucket[round];
+      if (!next) continue;
+      picked.push(next);
+      tookAny = true;
+      if (picked.length === size) break;
+    }
+    if (!tookAny) break;
+  }
+
+  return picked.sort((a, b) => a.id.localeCompare(b.id));
+}
+
 function loadCases(filter: string | null): EvalCase[] {
   const dir = fileURLToPath(new URL('.', import.meta.url));
   const cases: EvalCase[] = [];
@@ -524,6 +569,7 @@ function parseArgs(argv: string[]): {
   verbose: boolean;
   record: string | null;
   replay: string | null;
+  sample: number | null;
 } {
   const get = (flag: string): string | null => {
     const i = argv.indexOf(flag);
@@ -540,6 +586,7 @@ function parseArgs(argv: string[]): {
     verbose: argv.includes('--verbose'),
     record: get('--record'),
     replay: get('--replay'),
+    sample: get('--sample') ? Number(get('--sample')) : null,
   };
 }
 
@@ -580,6 +627,26 @@ function sameInstant(
       },
       { nowMs },
     );
+
+  // Time only: the case asserts the hour, not the day. Both sides are resolved
+  // against the same future date so that "already past" cannot fire on one side
+  // and not the other and turn a matching hour into a mismatch.
+  if (pinsTime && !pinsDate) {
+    const onNeutralDay = (slots: Record<string, unknown>) =>
+      resolveWhen(
+        {
+          date: { kind: 'relative_days', offset: 1 },
+          time: slots[timeKey] as TimeSpec | undefined,
+        },
+        { nowMs },
+      );
+    const et = onNeutralDay(expected);
+    const at = onNeutralDay(actual);
+    if (et.kind === 'resolved' && at.kind === 'resolved') {
+      return et.local.hour === at.local.hour && et.local.minute === at.local.minute;
+    }
+    return et.kind === at.kind;
+  }
 
   // Day only: compare the calendar date, with the same neutral hour on both sides.
   const useNeutral = pinsDate && !pinsTime;
@@ -625,4 +692,10 @@ function fail(message: string): never {
   process.exit(1);
 }
 
-await main();
+// Run only when invoked as a script. The scoring and sampling helpers are
+// imported by unit tests, which must not start an eval run.
+const invokedDirectly =
+  process.argv[1] !== undefined &&
+  fileURLToPath(import.meta.url) === resolve(process.argv[1]);
+
+if (invokedDirectly) await main();

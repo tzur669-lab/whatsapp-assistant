@@ -205,8 +205,6 @@
   input: "show me my reminders for today"
   expect:
     intent: reminders.list
-    slots:
-      range: today
     missing: []
 
 - id: en-cancel-001

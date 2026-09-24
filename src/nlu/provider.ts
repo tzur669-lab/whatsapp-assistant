@@ -25,6 +25,7 @@ export type NluErrorCode =
   | 'rate_limited'
   | 'provider_error'
   | 'invalid_json'
+  | 'network_error'
   | 'schema_invalid'
   | 'not_configured';
 

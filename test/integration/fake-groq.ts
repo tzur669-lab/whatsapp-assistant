@@ -6,6 +6,7 @@ export type FakeGroqScript =
   | { kind: 'content'; content: string }
   | { kind: 'status'; status: number }
   | { kind: 'network_error' }
+  | { kind: 'connect_timeout' }
   | { kind: 'timeout' }
   | { kind: 'bad_envelope' };
 
@@ -32,6 +33,12 @@ export function createFakeGroq(script: FakeGroqScript[]): FakeGroq {
       }
       case 'network_error':
         throw new TypeError('fetch failed');
+      case 'connect_timeout': {
+        // Shaped like undici's: the cause carries the code, not the name.
+        const error = new TypeError('fetch failed');
+        (error as unknown as { cause: { code: string } }).cause = { code: 'UND_ERR_CONNECT_TIMEOUT' };
+        throw error;
+      }
       case 'status':
         return new Response('{"error":"nope"}', { status: step.status });
       case 'bad_envelope':

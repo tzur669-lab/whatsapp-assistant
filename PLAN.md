@@ -844,7 +844,7 @@ Test each of these:
 - [ ] Tier 3 PIN: enable from day one?
 - [ ] When to buy the dedicated number (before or after Phase 4)?
 - [ ] [O] Encrypted export backup: yes/no, and which bucket?
-- [ ] Phase 3 thresholds are not met. Options: keep iterating on the prompt, relax §11.2's 97%/95% targets for a free-tier model, or accept a paid tier. The two hard gates (no invented slots, missing-slot detection) are not negotiable.
+- [ ] Phase 3 thresholds are not met. Options: keep iterating on the prompt, relax §11.2's 97%/95% targets for a free-tier model, or accept a paid tier. The two hard gates (no invented slots, missing-slot detection) are not negotiable. Structured output has since removed most schema rejections, so re-measure on `gpt-oss-120b` before deciding.
 - [ ] The 8 s NLU timeout is tight for the free tier: `qwen3.8-27b` exceeds it routinely and `gpt-oss-120b` exceeds it occasionally. Raise it, or treat a timeout as a fallback trigger only?
 
 ---
@@ -878,6 +878,13 @@ Test each of these:
 | 2026-09-24 | Evals score date and time slots by the **instant they resolve to**, not by JSON shape — `meridiem: "am"` and `part_of_day: "morning"` encode the same time. A case that pins only a date is compared on the day alone, so the harness never asserts more than the case states |
 | 2026-09-24 | `pnpm eval --record` / `--replay` store and re-score raw drafts. The daily budget allows roughly one full run per model per day, so tuning the scoring must not cost a day's quota |
 | 2026-09-24 | Model comparison, prompt v4, 156 cases: `gpt-oss-120b` leads (89.1% intent on v2, best of the three); `gpt-oss-20b` scores 73.7% intent / 59.6% slots; `qwen3.8-27b` times out against the 8 s budget often enough to be unusable. **Primary = `gpt-oss-120b`, secondary = `gpt-oss-20b`.** Thresholds are not yet met — see §13 |
+| 2026-09-24 | NLU uses Groq **structured output** (`response_format: json_schema`), as PLAN §6.2 always required. Three constraints measured against the live API: the root must be an object (`anyOf` at the top level is refused), `strict: false` does **not** enforce the schema (a model returned `range: "unspecified"`, a value absent from the enum), and `strict: true` enforces it but requires every property in `required`. Settled: strict mode, every slot present and nullable, `stripNulls` reconciling "null" with Zod's "absent" |
+| 2026-09-24 | The response schema is generated from the Zod schemas (`src/nlu/json-schema.ts`), no new dependency. It is a **narrowing, not a replacement** — Zod still validates, and is still what enforces per-intent slot combinations |
+| 2026-09-24 | `max_completion_tokens` raised 512 -> 2048. Reasoning tokens come out of the same budget on the gpt-oss models, and a draft truncated mid-object was being reported as invalid JSON rather than as the truncation it was |
+| 2026-09-24 | Connection failures are now `network_error`, separate from `timeout`. An undici `UND_ERR_CONNECT_TIMEOUT` was being counted against the model's latency |
+| 2026-09-24 | `range` no longer offers `today` / `tomorrow`. They duplicated `relative_days` 0 and 1 exactly, so a single day had two valid encodings and models picked either — scored as a failure, though both were right. One meaning, one representation |
+| 2026-09-24 | `unsupported` accepts, and ignores, any known slot. Requiring empty slots turned correct classifications into hard failures: strict output makes the model emit every slot key, and "what's the weather tomorrow" really does contain a date. An unknown slot name is still rejected |
+| 2026-09-24 | `pnpm eval --sample N` takes a stratified slice across categories, round-robin. The corpus is grouped by category, so a head-of-file sample would report only Hebrew reminders and nothing about injection handling. This is what makes prompt iteration fit the daily budget |
 
 ---
 
