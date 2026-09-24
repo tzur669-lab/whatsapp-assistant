@@ -86,8 +86,26 @@ function parseStatus(raw: unknown): InboundEvent | null {
   const sentAtMs = asTimestampMs(prop(raw, 'timestamp'));
   const recipient = asString(prop(raw, 'recipient_id')) ?? '';
   if (!wamid || !status || sentAtMs === null) return null;
-  return { kind: 'status', wamid, status, sentAtMs, recipient };
+
+  // One number out of the error object and one enum out of the pricing object.
+  // Everything else there can echo the message that failed (§6.8, §7.3).
+  const firstError = asArray(prop(raw, 'errors'))[0];
+  const errorCode = prop(firstError, 'code');
+  const pricingCategory = asString(prop(prop(raw, 'pricing'), 'category'));
+
+  return {
+    kind: 'status',
+    wamid,
+    status: status.slice(0, MAX_STATUS_CHARS),
+    sentAtMs,
+    recipient,
+    ...(typeof errorCode === 'number' && Number.isFinite(errorCode) ? { errorCode } : {}),
+    ...(pricingCategory ? { pricingCategory: pricingCategory.slice(0, MAX_STATUS_CHARS) } : {}),
+  };
 }
+
+/** Both fields are enums from Meta; cap them anyway — they arrive over the wire. */
+const MAX_STATUS_CHARS = 32;
 
 function prop(value: unknown, key: string): unknown {
   if (typeof value !== 'object' || value === null) return undefined;

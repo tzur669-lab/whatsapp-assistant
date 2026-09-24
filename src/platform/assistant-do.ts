@@ -13,7 +13,9 @@ import type { PipelineOutcome, Services } from '../core/pipeline.js';
 import { snoozeButtons, SNOOZE_TOOL } from '../core/orchestrator.js';
 import { SNOOZE_EXPIRY_MS } from '../confirm/undo.js';
 import { createLogger, hashPrincipal } from '../security/redact.js';
-import { WhatsAppSender } from '../channels/whatsapp/send.js';
+import { SendError, WhatsAppSender } from '../channels/whatsapp/send.js';
+import { classifyMetaError } from '../channels/whatsapp/errors.js';
+import type { WaFailure } from '../channels/whatsapp/errors.js';
 import { createVoiceTranscriber } from '../channels/whatsapp/voice.js';
 import { createGroqWhisperProvider, WHISPER_MODEL } from '../voice/groq-whisper.js';
 import { buildNluChain } from '../nlu/index.js';
@@ -43,6 +45,9 @@ const LATE_THRESHOLD_MS = 60_000;
 
 /** A floor on alarm scheduling, so a due-now reminder does not spin. */
 const MIN_ALARM_DELAY_MS = 1_000;
+
+/** What `send` knows afterwards: the id, or why it did not go (PLAN §6.8). */
+type SendOutcome = { ok: true; wamid: string } | { ok: false; failure: WaFailure };
 
 export class AssistantDO implements DurableObject {
   private readonly repo: Repository;
@@ -240,6 +245,7 @@ export class AssistantDO implements DurableObject {
   /** Daily cron entry point (PLAN §6.7). */
   async runMaintenance(): Promise<void> {
     this.repo.purgeInboundBefore(Date.now() - RETENTION_INBOUND_MS);
+    this.repo.purgeOutboundBefore(Date.now() - RETENTION_INBOUND_MS);
     this.pending.expireStale();
     this.questions.purgeExpired();
     this.deferred.expireStale();
@@ -270,7 +276,7 @@ export class AssistantDO implements DurableObject {
     }
 
     // A new or cancelled reminder moves when the next alarm should fire.
-    if (outcome.action === 'reply' && outcome.rescheduleAlarm) {
+    if (outcome.rescheduleAlarm) {
       await this.armAlarm();
     }
   }
@@ -301,13 +307,16 @@ export class AssistantDO implements DurableObject {
       expiryMs: SNOOZE_EXPIRY_MS,
     });
 
-    const sent = await this.send({
-      to: this.selfWaId(),
-      text: lines.join('\n'),
-      buttons: snoozeButtons(offer.id, offer.nonce, 'he'),
-    });
+    const sent = await this.send(
+      {
+        to: this.selfWaId(),
+        text: lines.join('\n'),
+        buttons: snoozeButtons(offer.id, offer.nonce, 'he'),
+      },
+      { kind: 'reminder', principal: reminder.principal, reminderId: reminder.id },
+    );
 
-    if (sent) {
+    if (sent.ok) {
       this.reminders.markSent(reminder.id, sent.wamid);
       // It arrived over WhatsApp after all, so the calendar stand-in would be a
       // second copy of the same reminder. Remove it (PLAN §6.7).
@@ -321,9 +330,14 @@ export class AssistantDO implements DurableObject {
         outcome: 'ok',
         externalRef: reminder.id,
       });
-    } else {
+    } else if (sent.failure.disposition === 'retry' || sent.failure.disposition === 'back_off') {
       // The attempt was already counted by the claim, so this only releases it.
       this.reminders.markFailed(reminder.id);
+    } else {
+      // A shut window or an undeliverable recipient answers the same way every
+      // time. Stop, report it once, and leave the calendar stand-in in place —
+      // which is the whole reason it is written at creation (PLAN §6.7, §6.8).
+      this.reminders.abandon(reminder.id);
     }
   }
 
@@ -356,7 +370,11 @@ export class AssistantDO implements DurableObject {
   // -- outbound --------------------------------------------------------------
 
   /** The one place a message leaves the system, and the one place it is counted. */
-  private async send(message: OutboundMessage): Promise<{ wamid: string } | null> {
+  private async send(
+    message: OutboundMessage,
+    /** What this message is, and which reminder it carries (PLAN §6.8). */
+    track: { kind: string; principal?: string; reminderId?: string } = { kind: 'reply' },
+  ): Promise<SendOutcome> {
     const sender = new WhatsAppSender({
       phoneNumberId: this.env.WA_PHONE_NUMBER_ID,
       accessToken: this.env.WA_ACCESS_TOKEN,
@@ -365,14 +383,33 @@ export class AssistantDO implements DurableObject {
 
     try {
       const result = await sender.send(this.withBudgetWarning(message));
-      this.repo.bumpCounter(Repository.monthKey(Date.now()), 'wa_sent');
+      const now = Date.now();
+      this.repo.bumpCounter(Repository.monthKey(now), 'wa_sent');
+
+      // Written down *because* the 200 is not a delivery. Until the status
+      // webhook arrives this row says `accepted`, which is all we know.
+      this.repo.recordOutbound({
+        wamid: result.wamid,
+        kind: track.kind,
+        sentAt: now,
+        ...(track.principal ? { principal: track.principal } : {}),
+        ...(track.reminderId ? { reminderId: track.reminderId } : {}),
+      });
+
       this.log.info('message_sent', { wamid: result.wamid, buttons: message.buttons?.length ?? 0 });
-      return result;
+      return { ok: true, wamid: result.wamid };
     } catch (error) {
-      const code = error instanceof Error ? error.message : 'E_UNKNOWN';
-      this.log.error('send_failed', { errorCode: code });
-      this.repo.setLastErrorCode(code);
-      return null;
+      const failure =
+        error instanceof SendError
+          ? error.failure
+          : classifyMetaError(null, null);
+
+      this.log.error('send_failed', {
+        errorCode: failure.errorCode,
+        disposition: failure.disposition,
+      });
+      this.repo.setLastErrorCode(failure.errorCode);
+      return { ok: false, failure };
     }
   }
 

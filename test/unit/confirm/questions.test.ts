@@ -9,6 +9,7 @@
  */
 import { describe, expect, it, beforeEach } from 'vitest';
 import { OpenQuestions, QUESTION_EXPIRY_MS } from '../../../src/confirm/questions.js';
+import { Repository } from '../../../src/core/repo.js';
 import { TestSqlDriver } from '../../integration/sqlite-driver.js';
 import { MIGRATIONS } from '../../../src/platform/migrations.js';
 
@@ -24,7 +25,9 @@ describe('OpenQuestions', () => {
   beforeEach(() => {
     now = NOW;
     driver = new TestSqlDriver();
-    for (const migration of MIGRATIONS) driver.exec(migration.sql);
+    // Through the repository, which splits each file into its statements — a
+    // raw exec runs only the first one.
+    new Repository(driver).migrate(MIGRATIONS);
     questions = new OpenQuestions(driver, () => now);
   });
 

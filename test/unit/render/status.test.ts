@@ -18,6 +18,7 @@ const report = (overrides = {}) => ({
   pendingReminders: 3,
   budget: budgetState(120),
   llmFallbacksToday: 0,
+  undeliveredToday: 0,
   lastErrorCode: null,
   paused: false,
   ...overrides,

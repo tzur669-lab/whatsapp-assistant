@@ -37,6 +37,7 @@ import { validateIntentDraft } from '../nlu/intent-schema.js';
 import { reAsk } from '../render/clarify.js';
 import { toolCatalog } from '../tools/registry.js';
 import { budgetState } from '../policy/window.js';
+import { classifyMetaError } from '../channels/whatsapp/errors.js';
 import { he } from '../render/he.js';
 import { statusText } from '../render/status.js';
 import { eventText } from '../render/events.js';
@@ -80,7 +81,12 @@ export type PipelineOutcome =
       /** The next reminder moved; the caller re-arms its alarm. */
       rescheduleAlarm?: boolean;
     }
-  | { action: 'none'; reason: 'duplicate' | 'status' | 'not_implemented' };
+  | {
+      action: 'none';
+      reason: 'duplicate' | 'status' | 'not_implemented';
+      /** A failed delivery put a reminder back in the queue (§6.8). */
+      rescheduleAlarm?: boolean;
+    };
 
 /** How the text reached us, and how much it can be trusted. */
 type TextSource = { kind: 'text' } | { kind: 'voice'; confidence: 'high' | 'uncertain' };
@@ -93,8 +99,7 @@ export async function handleInbound(
   const now = deps.now();
 
   if (event.kind === 'status') {
-    log.debug('delivery_status', { wamid: event.wamid, status: event.status });
-    return { action: 'none', reason: 'status' };
+    return recordDeliveryStatus(event, deps, now);
   }
 
   const fresh = repo.recordInbound({
@@ -129,6 +134,72 @@ export async function handleInbound(
   }
 
   return respondToText(event.text, { kind: 'text' }, event, deps, now, stale);
+}
+
+// -- delivery statuses --------------------------------------------------------
+
+/**
+ * A delivery status webhook (PLAN §6.8).
+ *
+ * This used to be logged and dropped, which left the system unable to tell an
+ * *accepted* message from a *delivered* one — and the Cloud API answers 200
+ * with a valid wamid for messages it never delivers. A reminder marked sent on
+ * the strength of that 200 alone was, until the status arrived, the end of the
+ * story: nothing would ever look at it again.
+ *
+ * No reply is ever sent from here. A status is Meta talking about a message,
+ * not the user talking to us, and answering it would put the assistant in a
+ * conversation with itself.
+ */
+function recordDeliveryStatus(
+  event: Extract<InboundEvent, { kind: 'status' }>,
+  deps: PipelineDeps,
+  now: number,
+): PipelineOutcome {
+  const { repo, log } = deps;
+
+  const failure = classifyMetaError(event.errorCode ?? null, null);
+
+  const applied = repo.applyDeliveryStatus({
+    wamid: event.wamid,
+    status: event.status,
+    atMs: now,
+    ...(event.status === 'failed' ? { errorCode: failure.errorCode } : {}),
+    ...(event.pricingCategory === undefined ? {} : { pricingCategory: event.pricingCategory }),
+  });
+
+  log.info('delivery_status', {
+    wamid: event.wamid,
+    status: event.status,
+    ...(event.status === 'failed' ? { errorCode: failure.errorCode } : {}),
+  });
+
+  if (event.status === 'failed') {
+    repo.setLastErrorCode(failure.errorCode);
+
+    const reminderId = applied.failedReminderId;
+    if (reminderId && deps.services) {
+      // A reminder that Meta accepted and then did not deliver. Retry only what
+      // is worth retrying: an undeliverable recipient or a shut window will
+      // answer the same way five times and spend five messages saying it.
+      const worthRetrying =
+        failure.disposition === 'retry' || failure.disposition === 'back_off';
+
+      const retrying = worthRetrying
+        ? (deps.services.reminders.reopenForRetry(reminderId)?.retrying ?? false)
+        : (deps.services.reminders.retireSent(reminderId), false);
+
+      log.warn('reminder_delivery_failed', {
+        errorCode: failure.errorCode,
+        disposition: failure.disposition,
+        retrying,
+      });
+
+      if (retrying) return { action: 'none', reason: 'status', rescheduleAlarm: true };
+    }
+  }
+
+  return { action: 'none', reason: 'status' };
 }
 
 // -- buttons ------------------------------------------------------------------
@@ -391,6 +462,7 @@ function renderCommand(kind: string, deps: PipelineDeps, now: number): string {
         pendingReminders: deps.services?.reminders.listUpcoming(deps.principal).length ?? 0,
         budget: budgetState(monthlySentOf(repo, now)),
         llmFallbacksToday: repo.counters(Repository.dayKey(now)).fallbacks,
+        undeliveredToday: repo.undeliveredSince(now - DAY_MS),
         lastErrorCode: repo.lastErrorCode(),
         paused: repo.isPaused(),
       });
@@ -419,6 +491,8 @@ function connectLinkFor(deps: PipelineDeps): string {
 
 /** Matches the TTL in `GoogleStore`. */
 const CONNECT_LINK_MINUTES = 10;
+
+const DAY_MS = 24 * 60 * 60 * 1000;
 
 // -- helpers ------------------------------------------------------------------
 

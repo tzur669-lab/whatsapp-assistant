@@ -181,6 +181,61 @@ export class ReminderStore {
     );
   }
 
+  /**
+   * Stop trying. For a failure that will not come right — an undeliverable
+   * recipient, a shut window, a bad token — where each retry spends one of a
+   * thousand free messages to learn what the first attempt already said (§6.8).
+   *
+   * The row lands in `failed`, so `takeFailed` reports it once, and the Google
+   * Calendar stand-in written at creation stays where it is.
+   */
+  abandon(id: string): void {
+    this.sql.exec(
+      `UPDATE reminders SET status = 'failed', lease_until = NULL, updated_at = ?
+       WHERE id = ? AND status = 'sending'`,
+      this.now(),
+      id,
+    );
+  }
+
+  /**
+   * A message Meta accepted and later reported as failed (PLAN §6.8).
+   *
+   * This is the case the whole outbound table exists for: until the status
+   * webhook arrived, this reminder was `sent` and nothing would ever look at it
+   * again. Returns whether it goes back in the queue or is given up on.
+   */
+  reopenForRetry(id: string): { retrying: boolean } | null {
+    const requeued = this.sql.exec(
+      `UPDATE reminders
+       SET status = 'scheduled', lease_until = NULL, wamid = NULL, updated_at = ?
+       WHERE id = ? AND status = 'sent' AND attempts < ?
+       RETURNING id`,
+      this.now(),
+      id,
+      MAX_ATTEMPTS,
+    );
+    if (requeued.length > 0) return { retrying: true };
+
+    return this.retireSent(id) ? { retrying: false } : null;
+  }
+
+  /**
+   * Give up on a delivered-then-failed reminder without another attempt, for a
+   * failure that will answer the same way every time. The row lands in `failed`,
+   * so it is reported once and the calendar stand-in stays put.
+   */
+  retireSent(id: string): boolean {
+    const rows = this.sql.exec(
+      `UPDATE reminders SET status = 'failed', lease_until = NULL, updated_at = ?
+       WHERE id = ? AND status = 'sent'
+       RETURNING id`,
+      this.now(),
+      id,
+    );
+    return rows.length > 0;
+  }
+
   /** Only the owner may cancel. Returns false if there was nothing to cancel. */
   cancel(id: string, principal: string): boolean {
     const rows = this.sql.exec(

@@ -506,11 +506,11 @@ Policy is code plus static config. **Nothing in chat can change it.**
 | Table | Key fields | Retention |
 |---|---|---|
 | `inbound_messages` | `wamid` PK, received_at, sent_at (from Meta), status, intent, error_code — **no body** | 30 days |
-| `clarifications` | id, intent_draft_json, missing, expires_at | 15 min |
+| `open_questions` | principal PK, tool, slots_json, asked, language, expires_at — see §6.11 | 10 min |
 | `pending_actions` | see §6.5 | 90 days |
 | `undo_actions` | id, compensating_json, nonce_hash, expires_at | 1 day |
 | `reminders` | id, text, due_at_utc, local_wall_time, tz, status, channel, attempts, lease_until, backup_event_id, wamid | 90 days after final state |
-| `outbound_messages` | wamid PK, kind, sent_at, delivery_status, pricing_category | 90 days |
+| `outbound_messages` | wamid PK, kind, sent_at, delivery_status, pricing_category, principal, reminder_id, status_at, error_code | 30 days |
 | `integrations` | provider, account, scopes, token_ciphertext, key_version, status, updated_at | until revoked |
 | `oauth_states` | id, state, pkce_verifier, expires_at | 10 min |
 | `audit_log` | ts, principal, tool, tier, decision, input_digest, outcome, external_ref | 1 year |
@@ -521,6 +521,57 @@ Policy is code plus static config. **Nothing in chat can change it.**
 - **Migrations:** `migrations/NNNN_name.sql`, applied at DO startup inside a transaction. The schema version is stored in `settings`.
 - **Encryption:** tokens are encrypted at the app level. Everything else stays minimal and is protected by platform storage.
 - [O] **Backup:** daily encrypted JSON export to object storage, keeping the 7 most recent. Disaster recovery without a backup is acceptable: redeploy + `/connect google`. Calendar data lives in Google.
+
+#### Outbound tracking and delivery statuses
+
+A `200` from the Cloud API means **accepted**, not **delivered**. It answers with
+a valid `wamid` for messages it never delivers — most famously while the app is
+still in Development mode, but also on re-engagement and on undeliverable
+recipients. Until this was built, `outbound_messages` had been in the schema
+since migration 0001 with nothing ever writing to it, and the delivery status
+webhook was logged and dropped. A reminder marked `sent` on the strength of that
+200 was the end of the story: nothing would ever look at it again.
+
+**What happens now.** Every send writes a row — `wamid`, what kind of message it
+was, who for, which reminder it carried, and `delivery_status = 'accepted'`,
+which is all the 200 actually says. The status webhook moves that row forward.
+
+Statuses arrive out of order, so progress only ever advances: a late `sent` can
+never overwrite a `delivered`. `failed` is the one exception and always wins,
+because a message that failed did not later succeed.
+
+**Failures are not all the same.** Every failure used to be recorded as
+`E_WA_SEND_<http status>` and retried identically, which is wrong in both
+directions. `src/channels/whatsapp/errors.ts` maps Meta's codes onto four
+dispositions:
+
+| Disposition | Codes | What it means |
+|---|---|---|
+| `retry` | 131056, anything unknown | Transient. Try again; the attempts cap bounds the optimism |
+| `back_off` | 130429, 131048, 80007 | Rate-limited or flagged. Sending more is what makes it worse |
+| `window_closed` | 131047, 131051 | Over 24 hours since the user wrote. No retry opens that window — only they do |
+| `give_up` | 131026, 131049, 100, 190, 133010 | Undeliverable, or our own bad request or token. It will answer the same way every time |
+
+A reminder that fails with `retry` or `back_off` goes back in the queue and the
+alarm is re-armed. One that fails with `window_closed` or `give_up` is retired
+after a single report, and the Google Calendar stand-in written at creation
+stays where it is — which is the whole reason it is written then rather than at
+delivery (§6.7). Four more attempts at 131026 would spend four of a thousand
+free messages to learn what the first one already said.
+
+**Only numbers are read from Meta's error objects.** `error.message`,
+`error_data.details` and `error_user_title` all echo the message that failed, so
+they are never parsed, never stored and never logged. The code becomes a stable
+`E_WA_<code>` string, which is what reaches the log, the `error_code` column,
+and `/status`.
+
+**`/status`** reports undelivered messages from the last 24 hours, and only when
+there are any: a healthy system should not have to read a zero every time it is
+asked how it is doing.
+
+**No reply is ever sent from a status.** It is Meta talking about a message, not
+the user talking to us, and answering it would put the assistant into a
+conversation with itself.
 
 ### 6.9 Observability and logging
 
@@ -1133,6 +1184,11 @@ Test each of these:
 | 2026-09-25 | One open question per sender, enforced by a primary key on `principal` rather than by convention — so "only one at a time" cannot be violated by a bug, only by a migration |
 | 2026-09-25 | A part of day answering "באיזו שעה?" asks again rather than defaulting to an hour. Having refused to guess the first time, guessing the second time would give R11 away for the sake of one fewer message |
 | 2026-09-25 | Test migration lists are now read from the `migrations/` directory rather than hand-listed. Two test files silently missed migration 0005 and failed on a table that existed |
+| 2026-09-25 | Every send now writes an `outbound_messages` row with `delivery_status = 'accepted'`, because a 200 from the Cloud API is an acceptance and not a delivery. The table had been in the schema since 0001 with nothing writing to it |
+| 2026-09-25 | Delivery statuses only ever advance; `failed` is the exception and always wins. Statuses arrive out of order, and a late `sent` must not hide a failure |
+| 2026-09-25 | Meta error codes are mapped to four dispositions (retry / back_off / window_closed / give_up) rather than all being retried alike. Retrying 131026 five times spends five of a thousand free messages to learn what the first attempt said |
+| 2026-09-25 | An unknown Meta code is treated as retryable. Optimism is safe only because attempts are capped at five — without that cap the default would have to be the opposite |
+| 2026-09-25 | Only the numeric code is read from a Meta error object. `error.message` and `error_data.details` echo the message that failed, so they are never parsed, stored or logged |
 
 ---
 
@@ -1178,26 +1234,13 @@ Ordered by what breaks first, not by what is most interesting to build.
 ### P0 — broken, or will break in production
 
 **B1. Nothing writes `outbound_messages`, and status webhooks are discarded.**
-The table has existed since migration 0001 and no code inserts into it.
-`handleInbound` logs a delivery status and drops it. This matters more than it
-looks: the Cloud API answers `200` with a valid `wamid` for messages it never
-delivers — most famously while the app is still in Development mode, but also on
-re-engagement and undeliverable errors. Today a reminder is marked `sent` on the
-strength of that 200 alone. Without the status webhook there is no way to tell
-*accepted* from *delivered*, and that is the failure mode every field report
-leads with.
-*Do:* write an outbound row per send; have the `status` webhook update it; mark a
-reminder delivered on `delivered`, not on `accepted`; surface `failed` in
-`/status` and retry it.
+✅ **Done 2026-09-25** — see §6.8. Every send is recorded as `accepted`; the
+status webhook advances it; a reminder that Meta accepted and then failed is
+requeued or retired by disposition; `/status` reports what never arrived.
 
-**B2. Meta error codes are all treated alike.** A send failure is recorded as
-`E_WA_SEND_<http status>`. But 131047 (re-engagement required), 131026
-(undeliverable), 130429 (throughput) and 131048 (spam rate limit) each call for a
-different response — route to the calendar, stop retrying, back off, stop sending
-entirely. Retrying a 131026 five times spends five messages out of a thousand to
-learn nothing.
-*Do:* map the codes in `src/channels/whatsapp/send.ts`; retry only what is
-retryable.
+**B2. Meta error codes are all treated alike.** ✅ **Done 2026-09-25** — see
+§6.8. Four dispositions, mapped in `src/channels/whatsapp/errors.ts`, and only
+what is retryable is retried.
 
 **B3. The pre-commit secret scan has never run.** Every commit in this repo has
 printed `gitleaks not installed — skipping secret scan`. The guardrail described

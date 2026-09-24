@@ -14,6 +14,37 @@ export type InboundRecord = {
   kind: string;
 };
 
+export type OutboundRecord = {
+  wamid: string;
+  /** `reply` | `reminder` | `system`. Never the message itself. */
+  kind: string;
+  sentAt: number;
+  principal?: string;
+  reminderId?: string;
+};
+
+export type DeliveryUpdate = {
+  wamid: string;
+  status: string;
+  atMs: number;
+  /** The stable `E_WA_*` code, never Meta's prose. */
+  errorCode?: string;
+  pricingCategory?: string;
+};
+
+/**
+ * How far a message has got. Meta's own order, with `accepted` in front for the
+ * 200 that is not a delivery.
+ */
+const STATUS_ORDER = ['accepted', 'sent', 'delivered', 'read'] as const;
+
+function rank(status: string): number {
+  const index = (STATUS_ORDER as readonly string[]).indexOf(status);
+  // An unknown status ranks above everything known, so a status Meta adds later
+  // is recorded rather than silently dropped.
+  return index === -1 ? STATUS_ORDER.length : index;
+}
+
 export class Repository {
   constructor(private readonly sql: SqlDriver) {}
 
@@ -102,6 +133,96 @@ export class Repository {
   /** Purge inbound records past their retention window (PLAN §6.8: 30 days). */
   purgeInboundBefore(cutoffMs: number): void {
     this.sql.exec('DELETE FROM inbound_messages WHERE received_at < ?', cutoffMs);
+  }
+
+  // -- outbound (PLAN §6.8) ---------------------------------------------------
+  //
+  // A 200 from the Cloud API means *accepted*, not *delivered*. It answers with
+  // a valid wamid for messages that never arrive — most famously while the app
+  // is still in Development mode, but also on re-engagement and undeliverable
+  // errors. So every send is written down here and the delivery status webhook
+  // is what moves it forward.
+
+  /** One row per message that left the system. Never its text. */
+  recordOutbound(record: OutboundRecord): void {
+    this.sql.exec(
+      `INSERT INTO outbound_messages
+         (wamid, kind, sent_at, delivery_status, principal, reminder_id)
+       VALUES (?, ?, ?, 'accepted', ?, ?)
+       ON CONFLICT(wamid) DO NOTHING`,
+      record.wamid,
+      record.kind,
+      record.sentAt,
+      record.principal ?? null,
+      record.reminderId ?? null,
+    );
+  }
+
+  /**
+   * Apply a delivery status webhook.
+   *
+   * Statuses arrive out of order — `delivered` can land before the `sent` that
+   * preceded it — so progress only ever moves forward. `failed` is the one
+   * exception and always wins: a message that failed did not later succeed, and
+   * a late `sent` must not hide it.
+   *
+   * Returns the row's reminder id when the message has now failed, which is the
+   * caller's cue to reschedule it. Null in every other case.
+   */
+  applyDeliveryStatus(update: DeliveryUpdate): { failedReminderId: string | null } {
+    const row = this.sql.exec(
+      'SELECT delivery_status, reminder_id FROM outbound_messages WHERE wamid = ?',
+      update.wamid,
+    )[0];
+
+    // A status for a message we have no record of. It is not an error — a
+    // redeploy loses nothing but this table is written per send, so an old
+    // message can outlive its row — and there is nothing to update.
+    if (!row) return { failedReminderId: null };
+
+    const current = String(row['delivery_status'] ?? 'accepted');
+    if (current === 'failed') return { failedReminderId: null };
+
+    const incoming = update.status;
+    if (incoming !== 'failed' && rank(incoming) <= rank(current)) {
+      return { failedReminderId: null };
+    }
+
+    this.sql.exec(
+      `UPDATE outbound_messages
+       SET delivery_status = ?, status_at = ?, error_code = ?, pricing_category = COALESCE(?, pricing_category)
+       WHERE wamid = ?`,
+      incoming,
+      update.atMs,
+      update.errorCode ?? null,
+      update.pricingCategory ?? null,
+      update.wamid,
+    );
+
+    const reminderId = row['reminder_id'];
+    return {
+      failedReminderId:
+        incoming === 'failed' && typeof reminderId === 'string' ? reminderId : null,
+    };
+  }
+
+  /** Messages that never arrived, since a cutoff. Surfaced by `/status`. */
+  undeliveredSince(cutoffMs: number): number {
+    const rows = this.sql.exec(
+      `SELECT COUNT(*) AS n FROM outbound_messages
+       WHERE delivery_status = 'failed' AND sent_at >= ?`,
+      cutoffMs,
+    );
+    return Number(rows[0]?.['n'] ?? 0);
+  }
+
+  getOutbound(wamid: string): SqlRow | null {
+    return this.sql.exec('SELECT * FROM outbound_messages WHERE wamid = ?', wamid)[0] ?? null;
+  }
+
+  /** Outbound rows age out with the inbound ones (PLAN §6.8: 30 days). */
+  purgeOutboundBefore(cutoffMs: number): void {
+    this.sql.exec('DELETE FROM outbound_messages WHERE sent_at < ?', cutoffMs);
   }
 
   touchWindow(principal: string, atMs: number): void {

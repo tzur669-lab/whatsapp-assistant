@@ -53,6 +53,13 @@ export type InboundStatus = {
   status: string;
   sentAtMs: number;
   recipient: string;
+  /**
+   * Meta's numeric code on a `failed` status. Only the number is carried: the
+   * rest of the error object echoes the message that failed (§6.8).
+   */
+  errorCode?: number;
+  /** `service` | `utility` | … — what the message was billed as, if stated. */
+  pricingCategory?: string;
 };
 
 export type InboundEvent =

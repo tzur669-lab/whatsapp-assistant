@@ -1,5 +1,5 @@
 import { describe, expect, it, beforeEach, afterEach } from 'vitest';
-import { readFileSync } from 'node:fs';
+import { readdirSync, readFileSync } from 'node:fs';
 import { Repository } from '../../../src/core/repo.js';
 import { handleInbound } from '../../../src/core/pipeline.js';
 import { TestSqlDriver } from '../../integration/sqlite-driver.js';
@@ -7,9 +7,13 @@ import { createFakeLogger } from '../../integration/fake-logger.js';
 import { he } from '../../../src/render/he.js';
 import type { InboundEvent } from '../../../src/channels/types.js';
 
-const MIGRATIONS = [
-  { id: 1, sql: readFileSync(new URL('../../../migrations/0001_init.sql', import.meta.url), 'utf8') },
-];
+const MIGRATIONS = readdirSync(new URL('../../../migrations/', import.meta.url))
+  .filter((file) => file.endsWith('.sql'))
+  .sort()
+  .map((file, i) => ({
+    id: i + 1,
+    sql: readFileSync(new URL(`../../../migrations/${file}`, import.meta.url), 'utf8'),
+  }));
 
 const NOW = Date.UTC(2026, 8, 24, 12, 0, 0);
 const PRINCIPAL = 'p_abcdef012345';

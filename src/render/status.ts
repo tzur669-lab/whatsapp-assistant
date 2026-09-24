@@ -18,6 +18,8 @@ export type StatusReport = {
   pendingReminders: number;
   budget: BudgetState;
   llmFallbacksToday: number;
+  /** Messages Meta accepted and then reported as undelivered (§6.8). */
+  undeliveredToday: number;
   lastErrorCode: string | null;
   paused: boolean;
 };
@@ -33,6 +35,12 @@ export const statusText = {
       `• הודעות החודש: ${isolateLtr(`${report.budget.sent}/${report.budget.remaining + report.budget.sent}`)}`,
       `• נפילות לפרסר גיבוי היום: ${isolateLtr(String(report.llmFallbacksToday))}`,
     ];
+
+    if (report.undeliveredToday > 0) {
+      // Worth its own line only when it is not zero: a healthy system should
+      // not have to read a zero every time it asks how it is doing.
+      lines.push(`• הודעות שלא נמסרו ביממה האחרונה: ${isolateLtr(String(report.undeliveredToday))}`);
+    }
 
     if (report.paused) {
       lines.push(`• המערכת מושהית. יש לשלוח ${isolate('/resume')} כדי להפעיל מחדש`);

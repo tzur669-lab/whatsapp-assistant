@@ -3,6 +3,8 @@
  * (CLAUDE.md invariant 10), so there is no batching here by design.
  */
 import type { ChannelAdapter, OutboundMessage } from '../types.js';
+import { classifyMetaError, metaErrorCode } from './errors.js';
+import type { WaFailure } from './errors.js';
 
 const GRAPH_VERSION = 'v21.0';
 const MAX_BUTTONS = 3;
@@ -37,8 +39,12 @@ export class WhatsAppSender implements ChannelAdapter {
     });
 
     if (!response.ok) {
-      // The response body may echo message content, so it is never logged.
-      throw new SendError(response.status);
+      // The body may echo the message that failed, so exactly one field is read
+      // from it — the numeric code — and the rest is discarded unread. That one
+      // number is the difference between a retry that will work and four that
+      // spend the monthly budget to learn nothing (§6.8).
+      const code = metaErrorCode(await response.json().catch(() => null));
+      throw new SendError(response.status, 'send_failed', code);
     }
 
     const json = (await response.json()) as { messages?: { id?: string }[] };
@@ -49,12 +55,18 @@ export class WhatsAppSender implements ChannelAdapter {
 }
 
 export class SendError extends Error {
+  readonly failure: WaFailure;
+
   constructor(
     readonly status: number,
     readonly detail = 'send_failed',
+    /** Meta's numeric code, when the body carried one. Never its text. */
+    readonly metaCode: number | null = null,
   ) {
-    super(`E_WA_SEND_${status}`);
+    const failure = classifyMetaError(metaCode, status || null);
+    super(failure.errorCode);
     this.name = 'SendError';
+    this.failure = failure;
   }
 }
 
