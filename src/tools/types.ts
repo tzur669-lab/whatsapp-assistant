@@ -25,6 +25,7 @@ import type { ToolName } from './registry.js';
 import type { ReminderStore } from './reminder-store.js';
 import type { Repository } from '../core/repo.js';
 import type { Logger } from '../security/redact.js';
+import type { CalendarClient } from '../google/calendar.js';
 
 /** One candidate when a description matched more than one thing. */
 export type TargetChoice = { id: string; label: string };
@@ -68,6 +69,11 @@ export type ToolContext = {
   lastInboundAt: number | null;
   /** Service messages used this month, for the same decision (§5). */
   monthlySent: number;
+  /**
+   * Present once Google is connected. Absent is not an error: a calendar tool
+   * answers "not connected" rather than failing (PLAN §6.6).
+   */
+  calendar?: CalendarClient;
 };
 
 export type ExecuteResult = {

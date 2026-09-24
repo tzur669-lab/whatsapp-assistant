@@ -16,7 +16,9 @@
       "vars": {
         "ENVIRONMENT": "staging",
         "WA_PHONE_NUMBER_ID": "",
-        "GOOGLE_CLIENT_ID": ""
+        "GOOGLE_CLIENT_ID": "",
+        // Must match the redirect URI registered with Google, exactly.
+        "PUBLIC_BASE_URL": ""
       },
       "durable_objects": {
         "bindings": [{ "name": "ASSISTANT", "class_name": "AssistantDO" }]
@@ -29,7 +31,9 @@
       "vars": {
         "ENVIRONMENT": "production",
         "WA_PHONE_NUMBER_ID": "",
-        "GOOGLE_CLIENT_ID": ""
+        "GOOGLE_CLIENT_ID": "",
+        // Must match the redirect URI registered with Google, exactly.
+        "PUBLIC_BASE_URL": ""
       },
       "durable_objects": {
         "bindings": [{ "name": "ASSISTANT", "class_name": "AssistantDO" }]

@@ -24,6 +24,8 @@ import type { NluProvider } from '../nlu/provider.js';
 import type { ReminderStore } from '../tools/reminder-store.js';
 import type { PendingActions } from '../confirm/pending.js';
 import type { UndoActions } from '../confirm/undo.js';
+import type { GoogleStore } from '../google/store.js';
+import type { CalendarClient } from '../google/calendar.js';
 import type { Lang } from '../render/format-time.js';
 import { matchCommand } from './router.js';
 import { runButton, runIntent, runPlainConfirmation } from './orchestrator.js';
@@ -33,6 +35,7 @@ import { toolCatalog } from '../tools/registry.js';
 import { budgetState } from '../policy/window.js';
 import { he } from '../render/he.js';
 import { statusText } from '../render/status.js';
+import { eventText } from '../render/events.js';
 import { localPartsOf, offsetMinutesAt, ZONE } from '../time/tz.js';
 import { STALE_MESSAGE_MS } from '../channels/whatsapp/limits.js';
 
@@ -43,6 +46,12 @@ export type Services = {
   deferred: UndoActions;
   /** The fallback chain, in order. Empty means no parsing is available. */
   nlu: NluProvider[];
+  /** Google's integration state. Absent only in tests that predate Phase 5. */
+  google?: GoogleStore;
+  /** Present once a grant exists; calendar tools answer "not connected" without it. */
+  calendar?: CalendarClient;
+  /** Where the one-time connect link points. */
+  publicBaseUrl?: string;
 };
 
 export type PipelineDeps = {
@@ -261,10 +270,12 @@ function renderCommand(kind: string, deps: PipelineDeps, now: number): string {
     case 'budget':
       return statusText.budget(budgetState(monthlySentOf(repo, now)));
 
+    case 'connect_google':
+      return connectLinkFor(deps);
+
     case 'status':
       return statusText.status({
-        // Google arrives in Phase 5; until then this is honestly "not connected".
-        connected: false,
+        connected: deps.services?.google?.isConnected() ?? false,
         pendingReminders: deps.services?.reminders.listUpcoming(deps.principal).length ?? 0,
         budget: budgetState(monthlySentOf(repo, now)),
         llmFallbacksToday: repo.counters(Repository.dayKey(now)).fallbacks,
@@ -273,10 +284,29 @@ function renderCommand(kind: string, deps: PipelineDeps, now: number): string {
       });
 
     default:
-      // /connect google lands in Phase 5.
       return statusText.notAvailableYet;
   }
 }
+
+/**
+ * The one-time link that starts the OAuth flow (PLAN §6.6).
+ *
+ * The link is a capability: anyone holding it can attach a Google account to
+ * this assistant. So it is 256 random bits, single use, and dies in ten
+ * minutes — and it is only ever sent to an allowlisted number.
+ */
+function connectLinkFor(deps: PipelineDeps): string {
+  const google = deps.services?.google;
+  const base = deps.services?.publicBaseUrl;
+  if (!google || !base) return statusText.notAvailableYet;
+
+  const link = google.createLink(deps.principal);
+  const url = `${base.replace(/\/$/, '')}/oauth/google/start?id=${link.id}`;
+  return eventText.connectLink(url, CONNECT_LINK_MINUTES, 'he');
+}
+
+/** Matches the TTL in `GoogleStore`. */
+const CONNECT_LINK_MINUTES = 10;
 
 // -- helpers ------------------------------------------------------------------
 
@@ -300,6 +330,7 @@ function turnOf(
       log: deps.log,
       lastInboundAt: deps.repo.lastInboundAt(deps.principal),
       monthlySent: monthlySentOf(deps.repo, now),
+      ...(services.calendar ? { calendar: services.calendar } : {}),
     },
     pending: services.pending,
     deferred: services.deferred,

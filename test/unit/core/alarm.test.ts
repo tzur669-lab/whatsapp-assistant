@@ -33,6 +33,7 @@ const ENV: AppEnv = {
   LOG_HASH_KEY: 'test-key',
   WA_PHONE_NUMBER_ID: 'PNID',
   GOOGLE_CLIENT_ID: 'x',
+  PUBLIC_BASE_URL: 'https://assistant.example.test',
 };
 
 describe('the alarm', () => {

@@ -21,6 +21,11 @@ import { ReminderStore } from '../tools/reminder-store.js';
 import type { ClaimedReminder } from '../tools/reminder-store.js';
 import { PendingActions } from '../confirm/pending.js';
 import { UndoActions } from '../confirm/undo.js';
+import { GoogleStore } from '../google/store.js';
+import { CalendarClient } from '../google/calendar.js';
+import { buildAuthUrl, createPkce, exchangeCode, GOOGLE_SCOPES } from '../google/oauth.js';
+import { parseKeyring } from '../security/crypto.js';
+import { eventText } from '../render/events.js';
 import { budgetState, isWindowOpen, RECHECK_BEFORE_MS } from '../policy/window.js';
 import { reminderText } from '../render/reminders.js';
 import { statusText } from '../render/status.js';
@@ -44,7 +49,14 @@ export class AssistantDO implements DurableObject {
   private readonly reminders: ReminderStore;
   private readonly pending: PendingActions;
   private readonly deferred: UndoActions;
+  private readonly google: GoogleStore;
   private readonly log = createLogger({ component: 'assistant_do' });
+
+  /**
+   * Held for the life of the object, so one refreshed access token serves many
+   * requests. It is memory only — nothing about it is written down (§6.6).
+   */
+  private calendar: CalendarClient | null = null;
 
   constructor(
     private readonly ctx: DurableObjectState,
@@ -62,6 +74,9 @@ export class AssistantDO implements DurableObject {
     this.reminders = new ReminderStore(this.sql, now);
     this.pending = new PendingActions(this.sql, now);
     this.deferred = new UndoActions(this.sql, now);
+    this.google = new GoogleStore(this.sql, now, () =>
+      parseKeyring(this.env as unknown as Record<string, string | undefined>),
+    );
 
     // blockConcurrencyWhile keeps requests queued until the schema is ready.
     void this.ctx.blockConcurrencyWhile(async () => {
@@ -77,6 +92,16 @@ export class AssistantDO implements DurableObject {
       const event = (await request.json()) as InboundEvent;
       await this.processEvent(event);
       return new Response(null, { status: 204 });
+    }
+
+    if (url.pathname === '/do/oauth/start' && request.method === 'POST') {
+      const { linkId } = (await request.json()) as { linkId: string };
+      return json(await this.startOAuth(linkId));
+    }
+
+    if (url.pathname === '/do/oauth/callback' && request.method === 'POST') {
+      const { code, state } = (await request.json()) as { code: string; state: string };
+      return json(await this.finishOAuth(code, state));
     }
 
     if (url.pathname === '/do/maintenance' && request.method === 'POST') {
@@ -133,11 +158,88 @@ export class AssistantDO implements DurableObject {
     await this.armAlarm();
   }
 
+  // -- OAuth -----------------------------------------------------------------
+
+  /**
+   * Turn a one-time link into a redirect to Google.
+   *
+   * The link is consumed here, not at the callback: a link that has sent
+   * someone to Google's consent screen has been used, whether or not they
+   * finished. The PKCE verifier is generated now and stored with the `state`,
+   * so the code that comes back can only be exchanged by this attempt.
+   */
+  private async startOAuth(linkId: string): Promise<{ redirectUrl: string } | { error: string }> {
+    const link = this.google.useLink(linkId);
+    if (!link.ok) {
+      this.log.warn('oauth_link_rejected', { reason: link.reason });
+      return { error: link.reason };
+    }
+
+    const pkce = await createPkce();
+    const { state } = this.google.createState(link.value.principal, pkce.verifier);
+
+    return {
+      redirectUrl: buildAuthUrl({
+        clientId: this.env.GOOGLE_CLIENT_ID,
+        redirectUri: this.redirectUri(),
+        state,
+        challenge: pkce.challenge,
+        scopes: GOOGLE_SCOPES,
+      }),
+    };
+  }
+
+  /** Exchange the code and store the grant. The `state` is single use. */
+  private async finishOAuth(code: string, state: string): Promise<{ ok: true } | { error: string }> {
+    const attempt = this.google.useState(state);
+    if (!attempt.ok) {
+      this.log.warn('oauth_state_rejected', { reason: attempt.reason });
+      return { error: attempt.reason };
+    }
+
+    const result = await exchangeCode(
+      {
+        code,
+        codeVerifier: attempt.value.codeVerifier,
+        clientId: this.env.GOOGLE_CLIENT_ID,
+        clientSecret: this.env.GOOGLE_CLIENT_SECRET,
+        redirectUri: this.redirectUri(),
+      },
+      this.fetchImpl,
+    );
+
+    if (!result.ok) {
+      this.log.warn('oauth_exchange_failed', { errorCode: result.error.code });
+      return { error: result.error.code };
+    }
+    if (!result.grant.refreshToken) {
+      // Without one there is no standing access, only an hour of it. Better to
+      // fail the connect than to look connected and stop working silently.
+      this.log.warn('oauth_no_refresh_token', {});
+      return { error: 'no_refresh_token' };
+    }
+
+    await this.google.connect({
+      refreshToken: result.grant.refreshToken,
+      scopes: result.grant.scopes,
+    });
+    this.calendar = null;
+
+    this.log.info('google_connected', { scopes: result.grant.scopes.length });
+    await this.send({ to: this.selfWaId(), text: eventText.connected('he') });
+    return { ok: true };
+  }
+
+  private redirectUri(): string {
+    return `${(this.env.PUBLIC_BASE_URL ?? '').replace(/\/$/, '')}/oauth/google/callback`;
+  }
+
   /** Daily cron entry point (PLAN §6.7). */
   async runMaintenance(): Promise<void> {
     this.repo.purgeInboundBefore(Date.now() - RETENTION_INBOUND_MS);
     this.pending.expireStale();
     this.deferred.expireStale();
+    this.google.purgeExpired();
     await this.armAlarm();
     this.log.info('maintenance_done', {});
   }
@@ -272,7 +374,24 @@ export class AssistantDO implements DurableObject {
       pending: this.pending,
       deferred: this.deferred,
       nlu: buildNluChain({ groqApiKey: this.env.GROQ_API_KEY, fetchImpl: this.fetchImpl }),
+      google: this.google,
+      publicBaseUrl: this.env.PUBLIC_BASE_URL,
+      ...(this.calendarClient() ? { calendar: this.calendarClient()! } : {}),
     };
+  }
+
+  /** Built once a grant exists, and reused so its access token is not re-fetched. */
+  private calendarClient(): CalendarClient | null {
+    if (!this.google.isConnected()) return null;
+    this.calendar ??= new CalendarClient({
+      store: this.google,
+      clientId: this.env.GOOGLE_CLIENT_ID,
+      clientSecret: this.env.GOOGLE_CLIENT_SECRET,
+      log: this.log,
+      now: () => Date.now(),
+      fetchImpl: this.fetchImpl,
+    });
+    return this.calendar;
   }
 
   /**
@@ -321,4 +440,11 @@ export class AssistantDO implements DurableObject {
   private selfWaId(): string {
     return (this.env.ALLOWLIST_WA_IDS ?? '').split(',')[0]?.trim() ?? '';
   }
+}
+
+function json(body: unknown): Response {
+  return new Response(JSON.stringify(body), {
+    status: 200,
+    headers: { 'content-type': 'application/json' },
+  });
 }

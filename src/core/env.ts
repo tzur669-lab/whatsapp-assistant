@@ -18,4 +18,10 @@ export interface AppEnv {
   // Vars
   WA_PHONE_NUMBER_ID: string;
   GOOGLE_CLIENT_ID: string;
+  /**
+   * The Worker's own public origin, e.g. `https://wa-assistant-staging.workers.dev`.
+   * The OAuth redirect URI is derived from it and must match the one registered
+   * with Google exactly (PLAN §6.6).
+   */
+  PUBLIC_BASE_URL: string;
 }

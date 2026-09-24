@@ -24,6 +24,7 @@ import type { PolicyResult } from '../policy/engine.js';
 import { REGISTRY } from '../tools/registry.js';
 import type { ToolName } from '../tools/registry.js';
 import { REMINDER_TOOLS } from '../tools/reminders.js';
+import { calendarListEvents } from '../tools/calendar-read.js';
 import type { ExecuteResult, ToolContext, ToolDefinition } from '../tools/types.js';
 import { ToolInputError } from '../tools/types.js';
 import { buttonId, parseButtonId } from '../confirm/pending.js';
@@ -58,7 +59,10 @@ export type TurnContext = {
 };
 
 /** The tools with an executable body. The rest parse but cannot yet run. */
-const IMPLEMENTED: Partial<Record<ToolName, ToolDefinition>> = { ...REMINDER_TOOLS };
+const IMPLEMENTED: Partial<Record<ToolName, ToolDefinition>> = {
+  ...REMINDER_TOOLS,
+  'calendar.list_events': calendarListEvents,
+};
 
 export async function runIntent(draft: IntentDraft, turn: TurnContext): Promise<Reply> {
   const ctx = turn.tool;

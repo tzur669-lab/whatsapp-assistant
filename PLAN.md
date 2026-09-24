@@ -756,10 +756,14 @@ Each phase ends with its exit criteria met and tests green.
 - [x] 684 tests green, including 19 that drive the real Durable Object through a fake platform.
 - [ ] *Exit:* reminders survive redeploys and never duplicate — proven in tests, still to be confirmed on staging. The Calendar fallback needs Phase 5.
 
-**Phase 5 — Google connect + read**
+**Phase 5 — Google connect + read** — *code complete 2026-09-24*
 
-- [ ] OAuth flow, encrypted token store, `calendar.list_events`, token health check, "Assistant Reminders" calendar.
-- *Exit:* "what's on my calendar tomorrow?" works. Revoking access produces a clean reconnect message.
+- [x] One-time connect link, PKCE authorization, `/oauth/google/start` and `/callback`.
+- [x] Encrypted token store (`integrations`, migration 0004); access tokens in memory only.
+- [x] `calendar.list_events` for a day or a range; "Assistant Reminders" calendar created on first use.
+- [x] Token health: refresh before expiry, one 401 retry, `invalid_grant` -> disconnected + reconnect message.
+- [x] 738 tests green.
+- [ ] *Exit:* needs a real Google project and a staging deploy — the redirect URI has to match a registered one.
 
 **Phase 6 — Calendar writes**
 
@@ -1014,6 +1018,15 @@ Test each of these:
 | 2026-09-24 | The budget warning rides on the message that crosses the threshold instead of arriving as its own. One command still produces one reply (invariant 10), and a warning nobody asked for is not worth a second notification |
 | 2026-09-24 | `AssistantDO` takes an optional third constructor parameter for `fetch`. The platform always constructs it with (state, env); the seam is what lets the alarm, delivery, retries and the give-up path be driven in tests without workerd and without the network |
 | 2026-09-24 | Week ranges are Israeli: Sunday–Saturday, weekend = Friday–Saturday. Boundaries resolve through the zone rather than UTC arithmetic, so the week containing a DST change is still seven calendar days — 169 hours, not 168 |
+| 2026-09-24 | PKCE is used although this is a confidential client with a secret. The authorization code comes back through a browser redirect, on a URL the user can see and a referrer can leak; PKCE is what makes a stolen code useless without the verifier, which never leaves our storage |
+| 2026-09-24 | The connect link is consumed at `/oauth/google/start`, not at the callback. A link that has sent someone to Google's consent screen has been used, whether or not they finished |
+| 2026-09-24 | `prompt=consent` on the authorization URL. Without it a re-authorization returns no refresh token, so reconnecting after a revoke would produce a grant that looks fine and stops working within the hour |
+| 2026-09-24 | Links and states are consumed with `UPDATE … RETURNING`, so the check and the consumption are one statement. A read-then-write would leave a window where a replayed callback passes twice, which is the whole thing a single-use state exists to prevent |
+| 2026-09-24 | `invalid_grant` is the one field read from an OAuth error body. It is the difference between "retry later" and "the user has to reconnect"; the rest of the body can quote the request and is not read |
+| 2026-09-24 | A revoked grant drops the stored ciphertext rather than keeping it. A refresh token that can never be used again is a liability with no upside |
+| 2026-09-24 | The calendar client retries once on a 401. It is not defensive padding: an access token can be revoked between the expiry check and the request, and until the 401 arrives that is indistinguishable from a valid one |
+| 2026-09-24 | The public OAuth pages give one message for spent, expired and never-issued links. A page anyone can load is not an oracle |
+| 2026-09-24 | All-day events carry an `allDay` flag through to the renderer. Their start is midnight UTC as a placeholder, and printing `00:00` would be a number the reader has to decide to ignore |
 
 ---
 

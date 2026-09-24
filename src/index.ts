@@ -103,7 +103,77 @@ app.post('/wa/webhook', async (c) => {
   return c.body(null, 200);
 });
 
+/**
+ * The OAuth redirect pair (PLAN §6.6).
+ *
+ * Both are public — Google's consent flow arrives through a browser, not
+ * through the webhook — so neither trusts anything but the one-time id it was
+ * given. The id and the `state` are the only credentials, both are 256 random
+ * bits, and both are consumed inside the Durable Object where the check and the
+ * consumption are one statement.
+ *
+ * Replies are plain text with no detail: these pages are reachable by anyone
+ * with the URL, and "which of link/state was wrong" is not worth telling them.
+ */
+app.get('/oauth/google/start', async (c) => {
+  const id = c.req.query('id') ?? '';
+  if (!/^[0-9a-f]{64}$/.test(id)) {
+    log.warn('oauth_start_rejected', { errorCode: 'malformed_id' });
+    return c.text('invalid or expired link', 400);
+  }
+
+  const result = await callDo<{ redirectUrl?: string; error?: string }>(c.env, '/do/oauth/start', {
+    linkId: id,
+  });
+
+  if (!result?.redirectUrl) {
+    log.warn('oauth_start_rejected', { errorCode: result?.error ?? 'unknown' });
+    return c.text('invalid or expired link', 400);
+  }
+  return c.redirect(result.redirectUrl, 302);
+});
+
+app.get('/oauth/google/callback', async (c) => {
+  // The user pressed Cancel on the consent screen.
+  if (c.req.query('error')) {
+    log.info('oauth_declined', {});
+    return c.text('Access was not granted. You can close this page.', 200);
+  }
+
+  const code = c.req.query('code') ?? '';
+  const state = c.req.query('state') ?? '';
+  if (!code || !/^[0-9a-f]{64}$/.test(state)) {
+    log.warn('oauth_callback_rejected', { errorCode: 'malformed' });
+    return c.text('invalid request', 400);
+  }
+
+  const result = await callDo<{ ok?: boolean; error?: string }>(c.env, '/do/oauth/callback', {
+    code,
+    state,
+  });
+
+  if (!result?.ok) {
+    log.warn('oauth_callback_rejected', { errorCode: result?.error ?? 'unknown' });
+    return c.text('Could not complete the connection. Please request a new link.', 400);
+  }
+  return c.text('Connected. You can close this page and return to WhatsApp.', 200);
+});
+
 app.notFound((c) => c.text('not found', 404));
+
+async function callDo<T>(env: Bindings, path: string, body: unknown): Promise<T | null> {
+  const stub = env.ASSISTANT.get(env.ASSISTANT.idFromName('singleton'));
+  try {
+    const response = await stub.fetch(`https://do${path}`, {
+      method: 'POST',
+      body: JSON.stringify(body),
+    });
+    return response.ok ? ((await response.json()) as T) : null;
+  } catch (error) {
+    log.error('do_call_failed', { errorCode: error instanceof Error ? error.name : 'E_UNKNOWN' });
+    return null;
+  }
+}
 
 export default {
   fetch: app.fetch,
