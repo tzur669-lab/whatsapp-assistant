@@ -350,6 +350,7 @@ describe('matchReminders', () => {
     tz: 'Asia/Jerusalem',
     status: 'scheduled',
     attempts: 0,
+    backupEventId: null,
   });
 
   const ids = (texts: string[], variants: string[]) =>

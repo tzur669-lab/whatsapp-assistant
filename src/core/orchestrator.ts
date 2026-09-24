@@ -25,6 +25,7 @@ import { REGISTRY } from '../tools/registry.js';
 import type { ToolName } from '../tools/registry.js';
 import { REMINDER_TOOLS } from '../tools/reminders.js';
 import { calendarListEvents } from '../tools/calendar-read.js';
+import { CALENDAR_WRITE_TOOLS } from '../tools/calendar-write.js';
 import type { ExecuteResult, ToolContext, ToolDefinition } from '../tools/types.js';
 import { ToolInputError } from '../tools/types.js';
 import { buttonId, parseButtonId } from '../confirm/pending.js';
@@ -62,6 +63,7 @@ export type TurnContext = {
 const IMPLEMENTED: Partial<Record<ToolName, ToolDefinition>> = {
   ...REMINDER_TOOLS,
   'calendar.list_events': calendarListEvents,
+  ...CALENDAR_WRITE_TOOLS,
 };
 
 export async function runIntent(draft: IntentDraft, turn: TurnContext): Promise<Reply> {
@@ -81,7 +83,11 @@ export async function runIntent(draft: IntentDraft, turn: TurnContext): Promise<
   // 1. Resolve. Everything the model left out is decided here or asked about.
   let resolved;
   try {
-    resolved = tool.resolve(draft.slots, ctx);
+    // A tool whose target lives behind the network resolves asynchronously; the
+    // rest stay synchronous so nothing is fetched before policy has a chance.
+    resolved = tool.resolveAsync
+      ? await tool.resolveAsync(draft.slots, ctx)
+      : tool.resolve(draft.slots, ctx);
   } catch (error) {
     ctx.log.error('resolve_failed', {
       tool: draft.intent,
@@ -107,7 +113,7 @@ export async function runIntent(draft: IntentDraft, turn: TurnContext): Promise<
     horizonExceeded: resolved.needsConfirm === true,
     source: turn.source,
     ...(turn.voiceConfidence ? { voiceConfidence: turn.voiceConfidence } : {}),
-  });
+  }, { hasAttendees: hasAttendees(resolved.input) });
 
   ctx.log.info('policy_decision', {
     tool: draft.intent,
@@ -154,6 +160,18 @@ function askToConfirm(
   });
 
   audit(turn, tool.name, decision, 'CONFIRM', decision.reason, action.id);
+
+  // Tier 3 gets no confirm button at all. Offering one would leave a path that
+  // skips the typed code, which is the only thing separating an invitation
+  // that was meant from one that was a mis-tap.
+  if (decision.requiresTypedCode) {
+    return {
+      text: statusText.confirmTypedPrompt(summary, action.typedCode),
+      buttons: [
+        { id: buttonId('pa', action.id, action.nonce, 'no'), title: buttonLabels.cancel(ctx.lang) },
+      ],
+    };
+  }
 
   return {
     text: statusText.confirmPrompt(summary),
@@ -222,13 +240,25 @@ export async function runButton(raw: string, turn: TurnContext): Promise<Reply> 
   switch (parsed.kind) {
     case 'pa':
       return parsed.verb === 'ok'
-        ? confirmPending(parsed.id, parsed.nonce, turn)
+        ? confirmTapped(parsed.id, parsed.nonce, turn)
         : cancelPending(parsed.id, parsed.nonce, turn);
     case 'undo':
       return runDeferred(parsed.id, parsed.nonce, turn, 0);
     case 'snooze':
       return runDeferred(parsed.id, parsed.nonce, turn, snoozeMinutes(parsed.verb));
   }
+}
+
+/**
+ * A tapped confirm button. Tier 3 is refused here as well as being offered no
+ * button: a forged id must not reach a path the typed code was meant to guard.
+ */
+async function confirmTapped(id: string, nonce: string, turn: TurnContext): Promise<Reply> {
+  if (turn.pending.tierOf(id) >= 3) {
+    turn.tool.log.warn('tier3_button_refused', {});
+    return { text: statusText.confirmTypedRequired };
+  }
+  return confirmPending(id, nonce, turn);
 }
 
 /**
@@ -394,4 +424,15 @@ function audit(
     outcome,
     externalRef: externalRef ?? null,
   });
+}
+
+/**
+ * Attendees turn a Tier 1 event create into a Tier 3 external-facing action.
+ * Read off the resolved input, not the draft: what matters is whether anyone
+ * will actually be invited, which only `resolve` knows.
+ */
+function hasAttendees(input: unknown): boolean {
+  if (typeof input !== 'object' || input === null) return false;
+  const attendees = (input as { attendees?: unknown }).attendees;
+  return Array.isArray(attendees) && attendees.length > 0;
 }

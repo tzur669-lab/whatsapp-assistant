@@ -17,6 +17,7 @@
 import { refreshAccessToken } from './oauth.js';
 import type { GoogleStore } from './store.js';
 import type { Logger } from '../security/redact.js';
+import { ZONE } from '../time/tz.js';
 
 const API_BASE = 'https://www.googleapis.com/calendar/v3';
 const TIMEOUT_MS = 10_000;
@@ -44,9 +45,30 @@ export type CalendarEvent = {
 export type CalendarFailure =
   | { code: 'not_connected' }
   | { code: 'disconnected' }
+  /** The event changed between being previewed and being written (etag mismatch). */
+  | { code: 'changed' }
+  /** Already gone — deleted in the Google UI, or on another device. */
+  | { code: 'not_found' }
   | { code: 'provider_error'; status: number }
   | { code: 'network_error' }
   | { code: 'invalid_response' };
+
+/** What this assistant writes when it creates an event (PLAN §6.6). */
+export type EventDraft = {
+  title: string;
+  startUtc: number;
+  endUtc: number;
+  calendarId?: string;
+  /** Names only. Turning them into addresses is not this layer's business. */
+  attendees?: string[];
+  /** Ties the event back to the request that made it, for the audit log. */
+  intentId?: string;
+  /**
+   * Fire a popup at the start instead of the calendar's default reminder. This
+   * is what makes a backup event actually notify the user (PLAN §6.7).
+   */
+  popupAtStart?: boolean;
+};
 
 export type CalendarResult<T> = { ok: true; value: T } | { ok: false; error: CalendarFailure };
 
@@ -118,6 +140,81 @@ export class CalendarClient {
     return { ok: true, value: id };
   }
 
+  /**
+   * Create an event, tagged as ours.
+   *
+   * `sendUpdates` is `none` unless there are attendees *and* the action was
+   * confirmed at Tier 3. An invitation is an outward-facing act: deleting the
+   * event afterwards does not unsend it, which is why it is the one thing here
+   * that cannot be fixed by an Undo (PLAN §6.4).
+   */
+  async createEvent(
+    draft: EventDraft,
+    notifyAttendees = false,
+  ): Promise<CalendarResult<CalendarEvent>> {
+    const calendarId = draft.calendarId ?? PRIMARY_CALENDAR;
+    const query = new URLSearchParams({ sendUpdates: notifyAttendees ? 'all' : 'none' });
+
+    const result = await this.call(`/calendars/${encodeURIComponent(calendarId)}/events?${query}`, {
+      method: 'POST',
+      body: JSON.stringify(toGoogleEvent(draft)),
+    });
+    if (!result.ok) return result;
+
+    const event = toEvent(result.value);
+    return event ? { ok: true, value: event } : { ok: false, error: { code: 'invalid_response' } };
+  }
+
+  /**
+   * Move an event, refusing if it changed since it was previewed.
+   *
+   * The etag goes out as `If-Match`. Without it, a confirmation tapped five
+   * minutes late would overwrite whatever happened in between — which is the
+   * exact case a confirmation exists to make safe (PLAN §6.5 step 4).
+   */
+  async moveEvent(params: {
+    eventId: string;
+    startUtc: number;
+    endUtc: number;
+    etag: string | null;
+    calendarId?: string;
+  }): Promise<CalendarResult<CalendarEvent>> {
+    const calendarId = params.calendarId ?? PRIMARY_CALENDAR;
+
+    const result = await this.call(
+      `/calendars/${encodeURIComponent(calendarId)}/events/${encodeURIComponent(params.eventId)}?sendUpdates=none`,
+      {
+        method: 'PATCH',
+        body: JSON.stringify({
+          start: { dateTime: new Date(params.startUtc).toISOString(), timeZone: ZONE },
+          end: { dateTime: new Date(params.endUtc).toISOString(), timeZone: ZONE },
+        }),
+        ...(params.etag ? { headers: { 'if-match': params.etag } } : {}),
+      },
+    );
+    if (!result.ok) return result;
+
+    const event = toEvent(result.value);
+    return event ? { ok: true, value: event } : { ok: false, error: { code: 'invalid_response' } };
+  }
+
+  async deleteEvent(params: {
+    eventId: string;
+    etag?: string | null;
+    calendarId?: string;
+  }): Promise<CalendarResult<true>> {
+    const calendarId = params.calendarId ?? PRIMARY_CALENDAR;
+
+    const result = await this.call(
+      `/calendars/${encodeURIComponent(calendarId)}/events/${encodeURIComponent(params.eventId)}?sendUpdates=none`,
+      { method: 'DELETE', ...(params.etag ? { headers: { 'if-match': params.etag } } : {}) },
+    );
+
+    // A delete that finds nothing has reached the state the user asked for.
+    if (!result.ok && result.error.code === 'not_found') return { ok: true, value: true };
+    return result.ok ? { ok: true, value: true } : result;
+  }
+
   // -- transport --------------------------------------------------------------
 
   /**
@@ -155,8 +252,17 @@ export class CalendarClient {
       if (!response.ok) {
         // The body can carry event titles, so it is never read or logged.
         this.config.log.warn('calendar_call_failed', { status: response.status });
+
+        // 412 is the `If-Match` failing: the event changed since it was read.
+        if (response.status === 412) return { ok: false, error: { code: 'changed' } };
+        if (response.status === 404 || response.status === 410) {
+          return { ok: false, error: { code: 'not_found' } };
+        }
         return { ok: false, error: { code: 'provider_error', status: response.status } };
       }
+
+      // A DELETE answers 204 with no body. That is a success, not a parse failure.
+      if (response.status === 204) return { ok: true, value: {} };
 
       try {
         return { ok: true, value: await response.json() };
@@ -253,4 +359,23 @@ function timeOf(value: unknown): { utcMs: number; allDay: boolean } | null {
     return Number.isFinite(parsed) ? { utcMs: parsed, allDay: true } : null;
   }
   return null;
+}
+
+function toGoogleEvent(draft: EventDraft): Record<string, unknown> {
+  return {
+    summary: draft.title,
+    start: { dateTime: new Date(draft.startUtc).toISOString(), timeZone: ZONE },
+    end: { dateTime: new Date(draft.endUtc).toISOString(), timeZone: ZONE },
+    ...(draft.attendees?.length
+      ? { attendees: draft.attendees.map((displayName) => ({ displayName })) }
+      : {}),
+    ...(draft.popupAtStart
+      ? { reminders: { useDefault: false, overrides: [{ method: 'popup', minutes: 0 }] } }
+      : {}),
+    // Everything this assistant creates is tagged, so later it can tell its own
+    // work from the user's (PLAN §6.6, event tagging).
+    extendedProperties: {
+      private: { assistant: '1', ...(draft.intentId ? { intent_id: draft.intentId } : {}) },
+    },
+  };
 }

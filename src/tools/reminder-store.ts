@@ -33,6 +33,8 @@ export type Reminder = {
   tz: string;
   status: ReminderStatus;
   attempts: number;
+  /** The Google Calendar event standing in for a send we cannot make (§6.7). */
+  backupEventId: string | null;
 };
 
 export type ClaimedReminder = Reminder & {
@@ -79,7 +81,13 @@ export class ReminderStore {
       tz: params.tz,
       status: 'scheduled',
       attempts: 0,
+      backupEventId: null,
     };
+  }
+
+  byId(id: string): Reminder | null {
+    const row = this.sql.exec('SELECT * FROM reminders WHERE id = ?', id)[0];
+    return row ? toReminder(row) : null;
   }
 
   listUpcoming(principal: string, limit = 20): Reminder[] {
@@ -140,6 +148,17 @@ export class ReminderStore {
       ...toReminder(row),
       lateByMs: Math.max(0, now - Number(row['due_at_utc'])),
     }));
+  }
+
+  /** Record the calendar event standing in for this reminder (PLAN §6.7). */
+  setBackupEvent(id: string, eventId: string | null): void {
+    this.sql.exec(
+      'UPDATE reminders SET backup_event_id = ?, channel = ?, updated_at = ? WHERE id = ?',
+      eventId,
+      eventId ? 'calendar' : 'whatsapp',
+      this.now(),
+      id,
+    );
   }
 
   markSent(id: string, wamid: string): void {
@@ -211,6 +230,10 @@ function toReminder(row: Record<string, unknown>): Reminder {
     tz: String(row['tz']),
     status: String(row['status']) as ReminderStatus,
     attempts: Number(row['attempts']),
+    backupEventId:
+      typeof row['backup_event_id'] === 'string' && row['backup_event_id'].length > 0
+        ? row['backup_event_id']
+        : null,
   };
 }
 

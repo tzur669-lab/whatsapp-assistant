@@ -218,7 +218,16 @@ async function respondToText(
     return { action: 'reply', text: he.notUnderstood };
   }
 
-  // 2. A plain "כן" answering a pending question. Also never the LLM: a
+  // 2a. A typed Tier 3 code. Checked before the bare "כן" below, which is
+  //     never enough for an action that reaches outside this system.
+  const typed = deps.services.pending.resolveTypedCode(text, principal);
+  if (typed.ok) {
+    const reply = await runPlainConfirmation(typed.id, turnOf(deps, event, now, source, 'he'));
+    repo.markInboundOutcome(event.wamid, { decision: 'CONFIRMED' });
+    return asOutcome(reply);
+  }
+
+  // 2b. A plain "כן" answering a pending question. Also never the LLM: a
   //    confirmation that could be re-parsed is not a confirmation (§6.5).
   const plain = deps.services.pending.resolvePlainText(text, principal);
   if (plain.ok) {
@@ -229,6 +238,10 @@ async function respondToText(
   if (!plain.ok && plain.reason === 'ambiguous') {
     repo.markInboundOutcome(event.wamid, { decision: 'CLARIFY' });
     return { action: 'reply', text: statusText.confirmAmbiguous };
+  }
+  if (!plain.ok && plain.reason === 'typed_code_required') {
+    repo.markInboundOutcome(event.wamid, { decision: 'CLARIFY' });
+    return { action: 'reply', text: statusText.confirmTypedRequired };
   }
 
   // 3. The LLM, at last, and only as a parser.

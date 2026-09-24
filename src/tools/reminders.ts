@@ -16,7 +16,7 @@ import type { DateSpec, TimeSpec } from '../time/resolve.js';
 import { resolveRange } from '../time/range.js';
 import type { RangeName } from '../time/range.js';
 import { localPartsOf, ZONE } from '../time/tz.js';
-import { normalizeHebrew } from '../time/hebrew-lexicon.js';
+import { matchByText } from './match.js';
 import { planDelivery } from '../policy/window.js';
 import { reminderText } from '../render/reminders.js';
 import type { ReminderView } from '../render/reminders.js';
@@ -28,6 +28,7 @@ import type {
   ExecuteResult,
   ResolveOutcome,
   TargetChoice,
+  ToolContext,
   ToolDefinition,
 } from './types.js';
 import { parseInput } from './types.js';
@@ -116,6 +117,14 @@ export const remindersCreate: ToolDefinition = {
     });
 
     const view = viewOf(input);
+
+    // Out of window, a WhatsApp send is not a send that fails — it is one that
+    // must never be attempted. A calendar popup is the delivery instead, and it
+    // is written now rather than discovered missing when the reminder is due.
+    const backupEventId =
+      plan.channel === 'calendar' ? await writeBackupEvent(input, ctx) : null;
+    if (backupEventId) ctx.reminders.setBackupEvent(reminder.id, backupEventId);
+
     return {
       text:
         plan.channel === 'whatsapp'
@@ -133,6 +142,7 @@ export const remindersCreate: ToolDefinition = {
       compensating,
       'reminders.create',
     );
+    await dropBackupEvent(reminderId, ctx);
     ctx.reminders.cancel(reminderId, ctx.principal);
     return { text: reminderText.undoneCreate(ctx.lang), rescheduleAlarm: true };
   },
@@ -211,7 +221,7 @@ export const remindersCancel: ToolDefinition = {
         : clarifyMissing('target');
     }
 
-    const matches = matchReminders(pending, variants);
+    const matches = matchByText(pending, variants, (reminder) => reminder.text);
     if (matches.length === 0) return { kind: 'clarify', clarify: { code: 'not_found' } };
     if (matches.length === 1 && matches[0]) {
       return { kind: 'ready', input: cancelInputOf(matches[0]) };
@@ -237,6 +247,7 @@ export const remindersCancel: ToolDefinition = {
     // Between the preview and the tap the reminder may have fired or been
     // cancelled elsewhere. Say so rather than reporting a cancel that did not
     // happen (PLAN §6.5 step 4).
+    await dropBackupEvent(input.reminderId, ctx);
     const cancelled = ctx.reminders.cancel(input.reminderId, ctx.principal);
     return {
       text: cancelled
@@ -250,53 +261,70 @@ export const remindersCancel: ToolDefinition = {
   },
 };
 
+/** Kept as a named export: the reminder matching has its own tests. */
+export function matchReminders(
+  reminders: readonly Reminder[],
+  variants: readonly string[],
+): Reminder[] {
+  return matchByText(reminders, variants, (reminder) => reminder.text);
+}
+
 export const REMINDER_TOOLS = {
   'reminders.create': remindersCreate,
   'reminders.list': remindersList,
   'reminders.cancel': remindersCancel,
 } as const;
 
-// -- matching -----------------------------------------------------------------
+// -- the calendar fallback ----------------------------------------------------
 
 /**
- * Find the reminders a description refers to.
+ * Put the reminder on the app-created calendar as a popup.
  *
- * Matching is substring-based over normalized text, in both directions: the
- * user says "אבא" for "להתקשר לאבא", and "להתקשר לאבא בערב" for "להתקשר לאבא".
- * Hebrew normalization strips nikud and folds final letters, because
- * "להתקשר לאמא" and "לאמא" differ by a final mem.
+ * Returns null when Google is not connected — the reminder still exists and
+ * will be delivered late once the window reopens. A missing fallback is worse
+ * than a late reminder, but it is not worth failing the whole request for.
  */
-export function matchReminders(
-  reminders: readonly Reminder[],
-  variants: readonly string[],
-): Reminder[] {
-  const needles = variants
-    .map((variant) => foldForMatch(variant))
-    .filter((variant) => variant.length > 0);
-  if (needles.length === 0) return [];
+async function writeBackupEvent(input: CreateInput, ctx: ToolContext): Promise<string | null> {
+  if (!ctx.calendar) return null;
 
-  return reminders.filter((reminder) => {
-    const haystack = foldForMatch(reminder.text);
-    return needles.some((needle) => haystack.includes(needle) || needle.includes(haystack));
+  const calendarId = await ctx.calendar.remindersCalendarId();
+  if (!calendarId.ok) {
+    ctx.log.warn('reminder_backup_calendar_failed', { errorCode: calendarId.error.code });
+    return null;
+  }
+
+  const created = await ctx.calendar.createEvent({
+    title: input.text,
+    startUtc: input.dueAtUtc,
+    endUtc: input.dueAtUtc + BACKUP_EVENT_MINUTES * 60_000,
+    calendarId: calendarId.value,
+    popupAtStart: true,
   });
+
+  if (!created.ok) {
+    ctx.log.warn('reminder_backup_event_failed', { errorCode: created.error.code });
+    return null;
+  }
+  return created.value.id;
 }
 
-/** Final letters fold to their base form, so a suffix cannot break a match. */
-const FINAL_FORMS: Readonly<Record<string, string>> = {
-  'ך': 'כ', // ך -> כ
-  'ם': 'מ', // ם -> מ
-  'ן': 'נ', // ן -> נ
-  'ף': 'פ', // ף -> פ
-  'ץ': 'צ', // ץ -> צ
-};
+/** Remove a backup event when its reminder is cancelled, undone, or delivered. */
+export async function dropBackupEvent(reminderId: string, ctx: ToolContext): Promise<void> {
+  const reminder = ctx.reminders.byId(reminderId);
+  if (!reminder?.backupEventId || !ctx.calendar) return;
 
-function foldForMatch(value: string): string {
-  return normalizeHebrew(value)
-    .toLowerCase()
-    .replace(/[ךםןףץ]/g, (letter) => FINAL_FORMS[letter] ?? letter)
-    .replace(/[^\p{L}\p{N}]+/gu, ' ')
-    .trim();
+  const calendarId = await ctx.calendar.remindersCalendarId();
+  if (!calendarId.ok) return;
+
+  await ctx.calendar.deleteEvent({
+    eventId: reminder.backupEventId,
+    calendarId: calendarId.value,
+  });
+  ctx.reminders.setBackupEvent(reminderId, null);
 }
+
+/** A reminder is a moment, not a span; Google still wants an end. */
+const BACKUP_EVENT_MINUTES = 5;
 
 // -- helpers ------------------------------------------------------------------
 

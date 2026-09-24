@@ -38,7 +38,10 @@ export function renderClarify(clarify: Clarify, lang: Lang): string {
   }
 }
 
-function missingSlot(slot: 'text' | 'time' | 'target' | 'title' | 'date', lang: Lang): string {
+function missingSlot(
+  slot: 'text' | 'time' | 'target' | 'title' | 'date' | 'duration',
+  lang: Lang,
+): string {
   if (lang === 'en') {
     switch (slot) {
       case 'text':
@@ -49,6 +52,8 @@ function missingSlot(slot: 'text' | 'time' | 'target' | 'title' | 'date', lang: 
         return 'What time?';
       case 'date':
         return 'Which day?';
+      case 'duration':
+        return 'How long?';
       case 'target':
         return 'Which one? Describe it, or ask for the list.';
     }
@@ -65,6 +70,10 @@ function missingSlot(slot: 'text' | 'time' | 'target' | 'title' | 'date', lang: 
       return 'באיזו שעה?';
     case 'date':
       return 'באיזה יום?';
+    case 'duration':
+      // R11: no default duration. An hour guessed here writes a wrong end time
+      // into a shared calendar, where someone else will read it as fact.
+      return 'כמה זמן?';
     case 'target':
       return 'על איזו מהן מדובר? אפשר לתאר אותה, או לבקש את הרשימה.';
   }

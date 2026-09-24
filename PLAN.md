@@ -765,10 +765,14 @@ Each phase ends with its exit criteria met and tests green.
 - [x] 738 tests green.
 - [ ] *Exit:* needs a real Google project and a staging deploy — the redirect URI has to match a registered one.
 
-**Phase 6 — Calendar writes**
+**Phase 6 — Calendar writes** — *code complete 2026-09-24*
 
-- [ ] `create_event` (Tier 1 + Undo), `move_event`, `delete_event` (Tier 2), numbered disambiguation, etag checks.
-- *Exit:* all confirmation tests (§11.3) pass; manual test on staging.
+- [x] `create_event` (Tier 1 + Undo), `move_event` and `delete_event` (Tier 2), all matching targets in code.
+- [x] Numbered disambiguation; `If-Match` etag on every write; a 412 writes nothing and says so.
+- [x] Tier 3 for attendees: no confirm button at all, a four-digit code typed back instead.
+- [x] The Phase 4 calendar fallback closed: an out-of-window reminder writes a popup on "Assistant Reminders", removed when it is delivered, cancelled or undone.
+- [x] 779 tests green.
+- [ ] *Exit:* §11.3 passes in tests; the manual staging pass still needs a real Google project.
 
 **Phase 7 — Hardening + ops**
 
@@ -1027,6 +1031,15 @@ Test each of these:
 | 2026-09-24 | The calendar client retries once on a 401. It is not defensive padding: an access token can be revoked between the expiry check and the request, and until the 401 arrives that is indistinguishable from a valid one |
 | 2026-09-24 | The public OAuth pages give one message for spent, expired and never-issued links. A page anyone can load is not an oracle |
 | 2026-09-24 | All-day events carry an `allDay` flag through to the renderer. Their start is midnight UTC as a placeholder, and printing `00:00` would be a number the reader has to decide to ignore |
+| 2026-09-24 | Tier 3 is offered **no confirm button**, only a cancel, and a forged `pa:…:ok` for a Tier 3 row is refused outright. A button would leave a path around the typed code, which is the only thing separating an invitation that was meant from a mis-tap |
+| 2026-09-24 | A bare "כן" cannot confirm Tier 3 either. The plain-text path now selects `tier < 3` and reports `typed_code_required` when that is all that is open — a real hole the Tier 3 test caught before it shipped |
+| 2026-09-24 | The four-digit code is derived from the stored nonce hash rather than kept in its own column: it can be shown at creation and recomputed at verification with nothing extra stored, and the hash is server-side only. Four digits is not an authentication factor — the sender is already allowlisted — it is there to make Tier 3 an act of typing rather than of tapping |
+| 2026-09-24 | `calendar.create_event` never sets `sendUpdates=all`. Inviting someone is the one act here that an Undo cannot reverse, so it stays a separate, explicit decision |
+| 2026-09-24 | Every calendar write carries the etag it was previewed with. A 412 writes nothing and answers "it changed since it was shown", which is exactly the case a confirmation exists to make safe |
+| 2026-09-24 | A delete that 404s is reported as success. The calendar is in the state the user asked for; calling that an error would be pedantry |
+| 2026-09-24 | `ToolDefinition` gained `resolveAsync` for tools whose target lives behind the network. `resolve` stays synchronous so policy can rule on a request before anything is fetched |
+| 2026-09-24 | A move keeps the event's length: the user moved it, they did not resize it |
+| 2026-09-24 | The reminder calendar fallback is written **at creation**, not when the reminder comes due, and removed if the reminder is delivered on WhatsApp after all. A stand-in left behind would remind the user twice, which is worse than not at all. If Google is not connected the reminder is still scheduled — a missing fallback is not worth failing the request for |
 
 ---
 

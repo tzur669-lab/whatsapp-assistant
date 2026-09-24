@@ -305,6 +305,9 @@ export class AssistantDO implements DurableObject {
 
     if (sent) {
       this.reminders.markSent(reminder.id, sent.wamid);
+      // It arrived over WhatsApp after all, so the calendar stand-in would be a
+      // second copy of the same reminder. Remove it (PLAN §6.7).
+      await this.dropBackupEvent(reminder);
       this.repo.audit({
         ts: now,
         principal: reminder.principal,
@@ -318,6 +321,20 @@ export class AssistantDO implements DurableObject {
       // The attempt was already counted by the claim, so this only releases it.
       this.reminders.markFailed(reminder.id);
     }
+  }
+
+  private async dropBackupEvent(reminder: ClaimedReminder): Promise<void> {
+    const calendar = this.calendarClient();
+    if (!reminder.backupEventId || !calendar) return;
+
+    const calendarId = await calendar.remindersCalendarId();
+    if (!calendarId.ok) return;
+
+    await calendar.deleteEvent({
+      eventId: reminder.backupEventId,
+      calendarId: calendarId.value,
+    });
+    this.reminders.setBackupEvent(reminder.id, null);
   }
 
   /**

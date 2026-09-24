@@ -36,7 +36,7 @@ export type TargetChoice = { id: string; label: string };
  */
 export type Clarify =
   /** The user did not say something the tool cannot invent (PLAN §6.3 R11). */
-  | { code: 'missing_slot'; slot: 'text' | 'time' | 'target' | 'title' | 'date' }
+  | { code: 'missing_slot'; slot: 'text' | 'time' | 'target' | 'title' | 'date' | 'duration' }
   /** The time resolver returned a question. Carries its rule and suggestion. */
   | { code: 'time'; detail: ClarifyTime }
   /** Nothing matched the description the user gave. */
@@ -95,7 +95,17 @@ export interface ToolDefinition {
   name: ToolName;
   /** Re-validated before every execute, including after a confirmation. */
   inputSchema: ZodTypeAny;
+  /**
+   * Synchronous, so policy can rule on a request before anything is fetched.
+   * A tool that must look something up returns a placeholder here and does the
+   * work in `resolveAsync`.
+   */
   resolve(slots: unknown, ctx: ToolContext): ResolveOutcome;
+  /**
+   * For tools whose target lives behind the network — a calendar event has to
+   * be found before it can be moved. Preferred over `resolve` when present.
+   */
+  resolveAsync?(slots: unknown, ctx: ToolContext): Promise<ResolveOutcome>;
   preview(input: unknown, lang: Lang): string;
   execute(input: unknown, ctx: ToolContext): Promise<ExecuteResult>;
   /** Present only on Tier 1 tools, which execute first and offer a way back. */

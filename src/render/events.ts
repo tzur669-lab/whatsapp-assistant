@@ -14,6 +14,7 @@ import { isolate, isolateLtr } from './bidi.js';
 import { formatRange, formatWhen } from './format-time.js';
 import type { Lang } from './format-time.js';
 import type { CalendarEvent } from '../google/calendar.js';
+import type { LocalParts } from '../time/tz.js';
 import { localPartsOf, ZONE } from '../time/tz.js';
 
 const HE_WEEKDAYS = ['יום א׳', 'יום ב׳', 'יום ג׳', 'יום ד׳', 'יום ה׳', 'יום ו׳', 'שבת'] as const;
@@ -73,6 +74,76 @@ export const eventText = {
 
   connected(lang: Lang): string {
     return lang === 'he' ? 'יומן Google מחובר. ✅' : 'Google Calendar connected. ✅';
+  },
+
+  // -- writing ---------------------------------------------------------------
+
+  /** Shown before an event is created, when the action needs confirming. */
+  createPreview(
+    title: string,
+    start: LocalParts,
+    end: LocalParts,
+    attendees: readonly string[],
+    lang: Lang,
+  ): string {
+    const when = formatRange(start, end, lang);
+    const lines =
+      lang === 'he'
+        ? [`קביעת ${isolate(title)}`, when]
+        : [`Create ${isolate(title)}`, when];
+
+    if (attendees.length > 0) {
+      // Named explicitly: inviting someone is the part that leaves the system.
+      lines.push(
+        lang === 'he'
+          ? `משתתפים: ${attendees.map(isolate).join(', ')}`
+          : `Attendees: ${attendees.map(isolate).join(', ')}`,
+      );
+    }
+    return lines.join('\n');
+  },
+
+  created(title: string, start: LocalParts, end: LocalParts, lang: Lang): string {
+    return lang === 'he'
+      ? `נקבע ביומן: ${isolate(title)}\n${formatRange(start, end, 'he')}`
+      : `Added to your calendar: ${isolate(title)}\n${formatRange(start, end, 'en')}`;
+  },
+
+  movePreview(title: string, from: LocalParts, to: LocalParts, lang: Lang): string {
+    return lang === 'he'
+      ? `העברת ${isolate(title)}\nמ${formatWhen(from, 'he')}\nל${formatWhen(to, 'he')}`
+      : `Move ${isolate(title)}\nfrom ${formatWhen(from, 'en')}\nto ${formatWhen(to, 'en')}`;
+  },
+
+  moved(title: string, to: LocalParts, lang: Lang): string {
+    return lang === 'he'
+      ? `${isolate(title)} הועבר ל${formatWhen(to, 'he')}.`
+      : `${isolate(title)} moved to ${formatWhen(to, 'en')}.`;
+  },
+
+  deletePreview(title: string, start: LocalParts, lang: Lang): string {
+    return lang === 'he'
+      ? `מחיקת ${isolate(title)}\n${formatWhen(start, 'he')}`
+      : `Delete ${isolate(title)}\n${formatWhen(start, 'en')}`;
+  },
+
+  deleted(lang: Lang): string {
+    return lang === 'he' ? 'האירוע נמחק.' : 'Event deleted.';
+  },
+
+  /**
+   * The etag check failed: the event was edited between the preview and the
+   * tap. Nothing was written — which is the point of sending the etag at all.
+   */
+  changed(lang: Lang): string {
+    return lang === 'he'
+      ? 'האירוע השתנה מאז שהוצג, אז לא שיניתי אותו. כדאי לבקש שוב ולבדוק את הפרטים.'
+      : 'The event changed since it was shown, so nothing was written. Ask again and check the details.';
+  },
+
+  /** It was already deleted elsewhere. Not an error, just not news. */
+  gone(lang: Lang): string {
+    return lang === 'he' ? 'האירוע כבר לא קיים ביומן.' : 'That event is no longer on the calendar.';
   },
 } as const;
 

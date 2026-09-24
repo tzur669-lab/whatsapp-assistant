@@ -35,6 +35,15 @@ export type PendingAction = {
   expiresAt: number;
   /** Returned once, at creation. Only its hash is stored. */
   nonce: string;
+  /**
+   * Tier 3 only: the four digits the user has to type back (PLAN §6.5).
+   *
+   * Derived from the stored nonce hash rather than kept in its own column, so
+   * it can be recomputed at verification without a migration and without ever
+   * being written down twice. The hash is server-side only, so the code cannot
+   * be worked out from anything the user has seen.
+   */
+  typedCode: string;
 };
 
 export type ConfirmFailure =
@@ -46,12 +55,14 @@ export type ConfirmFailure =
   | 'input_changed';
 
 export type ConfirmResult =
-  | { ok: true; action: Omit<PendingAction, 'nonce'> }
+  // Neither secret is handed back: the nonce cannot be recovered from its hash,
+  // and the typed code has already done its job by the time this is returned.
+  | { ok: true; action: Omit<PendingAction, 'nonce' | 'typedCode'> }
   | { ok: false; reason: ConfirmFailure };
 
 export type PlainTextResult =
   | { ok: true; id: string }
-  | { ok: false; reason: 'nothing_pending' | 'ambiguous' | 'not_an_answer' };
+  | { ok: false; reason: 'nothing_pending' | 'ambiguous' | 'not_an_answer' | 'typed_code_required' };
 
 /**
  * The only plain-text replies accepted in place of a button, and only when
@@ -97,6 +108,7 @@ export class PendingActions {
     return {
       id,
       nonce,
+      typedCode: typedCodeFor(digest(nonce)),
       tool: params.tool,
       input: params.input,
       summary: params.summary,
@@ -106,6 +118,37 @@ export class PendingActions {
       createdAt,
       expiresAt: createdAt + EXPIRY_MS,
     };
+  }
+
+  /**
+   * Match a typed Tier 3 code against this sender's open actions.
+   *
+   * Tier 3 is the one tier a button cannot confirm: an invitation or a bulk
+   * change leaves the system, and a mis-tap should not be able to send it. The
+   * code has to be read off the message and typed back, which is a deliberate
+   * second act rather than a reflex (PLAN §6.5).
+   *
+   * Only pending, unexpired actions of this principal are considered, and a
+   * wrong code is simply "no match" — it is never reported as "close".
+   */
+  resolveTypedCode(text: string, principal: string): PlainTextResult {
+    const typed = /^(?:אשר|אישור|confirm)\s+(\d{4})$/iu.exec(text.trim());
+    if (!typed?.[1]) return { ok: false, reason: 'not_an_answer' };
+
+    const rows = this.sql.exec(
+      `SELECT id, nonce_hash FROM pending_actions
+       WHERE principal = ? AND status = 'pending' AND expires_at > ? AND tier >= 3`,
+      principal,
+      this.now(),
+    );
+
+    const matches = rows.filter((row) =>
+      timingSafeEqual(typedCodeFor(String(row['nonce_hash'])), typed[1]!),
+    );
+
+    if (matches.length === 0) return { ok: false, reason: 'nothing_pending' };
+    if (matches.length > 1) return { ok: false, reason: 'ambiguous' };
+    return { ok: true, id: String(matches[0]!['id']) };
   }
 
   /** Validate and mark executed. Returns the stored input to run. */
@@ -176,9 +219,22 @@ export class PendingActions {
     }
 
     const ids = this.pendingIdsFor(principal);
-    if (ids.length === 0) return { ok: false, reason: 'nothing_pending' };
+    if (ids.length === 0) {
+      // A yes is never enough for Tier 3. If that is all that is open, say so
+      // rather than reporting nothing pending — otherwise the message falls
+      // through to the parser and the user is told it was not understood.
+      return this.pendingIdsFor(principal, 3).length > 0
+        ? { ok: false, reason: 'typed_code_required' }
+        : { ok: false, reason: 'nothing_pending' };
+    }
     if (ids.length > 1) return { ok: false, reason: 'ambiguous' };
     return { ok: true, id: ids[0]! };
+  }
+
+  /** The tier of a stored action, or 0 when there is no such row. */
+  tierOf(id: string): number {
+    const row = this.sql.exec('SELECT tier FROM pending_actions WHERE id = ?', id)[0];
+    return row ? Number(row['tier']) : 0;
   }
 
   /** Mark rows past their expiry. Run from the daily cron (PLAN §6.7). */
@@ -189,9 +245,20 @@ export class PendingActions {
     );
   }
 
-  private pendingIdsFor(principal: string): string[] {
+  /**
+   * This principal's open actions.
+   *
+   * `minTier` selects a band: the default excludes Tier 3, because a bare "כן"
+   * must never confirm an action that reaches outside this system. Passing 3
+   * asks the opposite question — is a typed code what is being waited on?
+   */
+  private pendingIdsFor(principal: string, minTier?: number): string[] {
     const rows = this.sql.exec(
-      `SELECT id FROM pending_actions WHERE principal = ? AND status = 'pending' AND expires_at > ?`,
+      minTier === undefined
+        ? `SELECT id FROM pending_actions
+           WHERE principal = ? AND status = 'pending' AND expires_at > ? AND tier < 3`
+        : `SELECT id FROM pending_actions
+           WHERE principal = ? AND status = 'pending' AND expires_at > ? AND tier >= 3`,
       principal,
       this.now(),
     );
@@ -236,6 +303,20 @@ export class PendingActions {
       },
     };
   }
+}
+
+/**
+ * Four digits derived from the stored nonce hash.
+ *
+ * Deterministic on purpose: it can be shown at creation and recomputed at
+ * verification from the row alone, with nothing extra stored. Four digits is
+ * not an authentication factor and is not meant to be one — the sender is
+ * already allowlisted and the action is already theirs. It is there to make
+ * Tier 3 an act of typing rather than of tapping.
+ */
+export function typedCodeFor(nonceHash: string): string {
+  const digest = sha256Hex(new TextEncoder().encode(`typed-code:${nonceHash}`));
+  return String(parseInt(digest.slice(0, 8), 16) % 10_000).padStart(4, '0');
 }
 
 // -- button ids ---------------------------------------------------------------
