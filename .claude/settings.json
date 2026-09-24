@@ -8,14 +8,8 @@
       "Bash(pnpm eval:*)",
       "Bash(pnpm eval)",
       "Bash(git status)",
-      "Bash(git diff:*)"
-    ],
-    "ask": [
-      "Bash(pnpm install:*)",
-      "Bash(pnpm add:*)",
-      "Bash(pnpm deploy:staging)",
-      "Bash(git commit:*)",
-      "Bash(git push:*)"
+      "Bash(git diff:*)",
+      "Bash(git -c core.quotepath=false status --short)"
     ],
     "deny": [
       "Read(./.env)",
@@ -36,6 +30,13 @@
       "Bash(wrangler rollback:*)",
       "Bash(cat .dev.vars:*)",
       "Bash(cat .env:*)"
+    ],
+    "ask": [
+      "Bash(pnpm install:*)",
+      "Bash(pnpm add:*)",
+      "Bash(pnpm deploy:staging)",
+      "Bash(git commit:*)",
+      "Bash(git push:*)"
     ]
   }
 }

@@ -9,13 +9,14 @@
  * a forged button id is refused anyway, and a wrong code executes nothing.
  */
 import { describe, expect, it, beforeEach, afterEach } from 'vitest';
-import { readFileSync } from 'node:fs';
+import { readdirSync, readFileSync } from 'node:fs';
 import { Repository } from '../../../src/core/repo.js';
 import { handleInbound } from '../../../src/core/pipeline.js';
 import type { PipelineDeps, Services } from '../../../src/core/pipeline.js';
 import { ReminderStore } from '../../../src/tools/reminder-store.js';
 import { PendingActions, parseButtonId, buttonId } from '../../../src/confirm/pending.js';
 import { UndoActions } from '../../../src/confirm/undo.js';
+import { OpenQuestions } from '../../../src/confirm/questions.js';
 import { GoogleStore } from '../../../src/google/store.js';
 import { CalendarClient } from '../../../src/google/calendar.js';
 import { parseKeyring } from '../../../src/security/crypto.js';
@@ -26,12 +27,13 @@ import { stripIsolates } from '../../../src/render/bidi.js';
 import { statusText } from '../../../src/render/status.js';
 import type { InboundEvent } from '../../../src/channels/types.js';
 
-const MIGRATIONS = ['0001_init.sql', '0002_confirm.sql', '0003_reminders.sql', '0004_google.sql'].map(
-  (file, i) => ({
+const MIGRATIONS = readdirSync(new URL('../../../migrations/', import.meta.url))
+  .filter((file) => file.endsWith('.sql'))
+  .sort()
+  .map((file, i) => ({
     id: i + 1,
     sql: readFileSync(new URL(`../../../migrations/${file}`, import.meta.url), 'utf8'),
-  }),
-);
+  }));
 
 const KEY = Buffer.alloc(32, 7).toString('base64');
 const NOW = Date.parse('2026-09-24T09:00:00Z');
@@ -50,6 +52,7 @@ describe('an action that leaves the system', () => {
   let driver: TestSqlDriver;
   let repo: Repository;
   let pending: PendingActions;
+  let questions: OpenQuestions;
   let services: Services;
   let writes: { method: string; url: string }[];
 
@@ -85,6 +88,7 @@ describe('an action that leaves the system', () => {
     repo = new Repository(driver);
     repo.migrate(MIGRATIONS);
     pending = new PendingActions(driver, () => NOW);
+    questions = new OpenQuestions(driver, () => NOW);
 
     const fetchImpl = (async (input: string | URL | Request, init?: RequestInit) => {
       const url = typeof input === 'string' ? input : input.toString();
@@ -120,6 +124,7 @@ describe('an action that leaves the system', () => {
     services = {
       reminders: new ReminderStore(driver, () => NOW),
       pending,
+      questions,
       deferred: new UndoActions(driver, () => NOW),
       nlu: [],
       google,

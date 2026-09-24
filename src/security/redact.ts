@@ -21,6 +21,10 @@ export const BANNED_LOG_FIELDS = [
   'query',
   'queryVariants',
   'query_variants',
+  // A stored clarification carries the user's own words (§6.11).
+  'slots',
+  'slotsJson',
+  'slots_json',
   'from',
   'to',
   'phone',

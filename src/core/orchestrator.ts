@@ -26,9 +26,11 @@ import type { ToolName } from '../tools/registry.js';
 import { REMINDER_TOOLS } from '../tools/reminders.js';
 import { calendarListEvents } from '../tools/calendar-read.js';
 import { CALENDAR_WRITE_TOOLS } from '../tools/calendar-write.js';
-import type { ExecuteResult, ToolContext, ToolDefinition } from '../tools/types.js';
+import type { Clarify, ExecuteResult, ToolContext, ToolDefinition } from '../tools/types.js';
 import { ToolInputError } from '../tools/types.js';
 import { buttonId, parseButtonId } from '../confirm/pending.js';
+import type { AskedSlot } from '../confirm/questions.js';
+import { canAnswer } from '../nlu/answer.js';
 import type { PendingActions } from '../confirm/pending.js';
 import { SNOOZE_EXPIRY_MS } from '../confirm/undo.js';
 import type { UndoActions } from '../confirm/undo.js';
@@ -44,6 +46,17 @@ export type Reply = {
   buttons?: OutboundButton[];
   /** Set when state changed in a way that moves the next alarm. */
   rescheduleAlarm?: boolean;
+  /**
+   * Set when this reply is a question the next message can answer (PLAN §6.11).
+   * Returned rather than written here, so the one place that stores a question
+   * is the same place that reads one back.
+   */
+  question?: {
+    tool: string;
+    slots: Record<string, unknown>;
+    asked: AskedSlot;
+    language: Lang;
+  };
 };
 
 export type TurnContext = {
@@ -99,7 +112,24 @@ export async function runIntent(draft: IntentDraft, turn: TurnContext): Promise<
   if (resolved.kind === 'clarify') {
     ctx.log.info('clarify', { tool: draft.intent, reason: resolved.clarify.code });
     audit(turn, draft.intent, null, 'CLARIFY', resolved.clarify.code);
-    return { text: renderClarify(resolved.clarify, ctx.lang) };
+
+    // A question worth asking is a question worth being able to answer. What
+    // the user already said is carried forward so the reply can be just the
+    // missing piece — "8" — rather than the whole request again (§6.11).
+    const asked = askedSlotOf(resolved.clarify);
+    return {
+      text: renderClarify(resolved.clarify, ctx.lang),
+      ...(asked && canAnswer(draft.intent, asked)
+        ? {
+            question: {
+              tool: draft.intent,
+              slots: draft.slots as Record<string, unknown>,
+              asked,
+              language: ctx.lang,
+            },
+          }
+        : {}),
+    };
   }
 
   // 2. Decide, on the resolved input.
@@ -137,6 +167,45 @@ export async function runIntent(draft: IntentDraft, turn: TurnContext): Promise<
 
     case 'ALLOW':
       return execute(tool, resolved.input, decision, turn);
+  }
+}
+
+/**
+ * Which slot a refusal is waiting on, or null when it is not that kind of
+ * question at all.
+ *
+ * Conservative by design. A question is only recorded when a plain reply can
+ * settle it: `ambiguous` offers a numbered list, and reading "2" as an hour
+ * would be exactly the kind of confident misreading this system exists to
+ * avoid, so it records nothing and the user restates instead.
+ */
+function askedSlotOf(clarify: Clarify): AskedSlot | null {
+  switch (clarify.code) {
+    case 'missing_slot':
+      return clarify.slot;
+
+    case 'not_found':
+      // "לא מצאתי משהו שמתאים" — a different description is the answer.
+      return 'target';
+
+    case 'time':
+      switch (clarify.detail.reason) {
+        case 'missing_time':
+          return 'time';
+        case 'already_past':
+        case 'small_hours_relative_date':
+        case 'weekday_is_today':
+        case 'yearless_date_far_away':
+          // All four ask "when, then?" — a day, an hour or both will do.
+          return 'when';
+        default:
+          // unlikely_hour and ambiguous_local_time offer a choice rather than
+          // ask for a value; nonexistent_local_time asks for a rethink.
+          return null;
+      }
+
+    default:
+      return null;
   }
 }
 

@@ -20,6 +20,7 @@ import { buildNluChain } from '../nlu/index.js';
 import { ReminderStore } from '../tools/reminder-store.js';
 import type { ClaimedReminder } from '../tools/reminder-store.js';
 import { PendingActions } from '../confirm/pending.js';
+import { OpenQuestions } from '../confirm/questions.js';
 import { UndoActions } from '../confirm/undo.js';
 import { GoogleStore } from '../google/store.js';
 import { CalendarClient } from '../google/calendar.js';
@@ -48,6 +49,7 @@ export class AssistantDO implements DurableObject {
   private readonly sql: DurableObjectSqlDriver;
   private readonly reminders: ReminderStore;
   private readonly pending: PendingActions;
+  private readonly questions: OpenQuestions;
   private readonly deferred: UndoActions;
   private readonly google: GoogleStore;
   private readonly log = createLogger({ component: 'assistant_do' });
@@ -73,6 +75,7 @@ export class AssistantDO implements DurableObject {
     const now = () => Date.now();
     this.reminders = new ReminderStore(this.sql, now);
     this.pending = new PendingActions(this.sql, now);
+    this.questions = new OpenQuestions(this.sql, now);
     this.deferred = new UndoActions(this.sql, now);
     this.google = new GoogleStore(this.sql, now, () =>
       parseKeyring(this.env as unknown as Record<string, string | undefined>),
@@ -238,6 +241,7 @@ export class AssistantDO implements DurableObject {
   async runMaintenance(): Promise<void> {
     this.repo.purgeInboundBefore(Date.now() - RETENTION_INBOUND_MS);
     this.pending.expireStale();
+    this.questions.purgeExpired();
     this.deferred.expireStale();
     this.google.purgeExpired();
     await this.armAlarm();
@@ -389,6 +393,7 @@ export class AssistantDO implements DurableObject {
     return {
       reminders: this.reminders,
       pending: this.pending,
+      questions: this.questions,
       deferred: this.deferred,
       nlu: buildNluChain({ groqApiKey: this.env.GROQ_API_KEY, fetchImpl: this.fetchImpl }),
       google: this.google,

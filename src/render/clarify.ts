@@ -15,6 +15,7 @@ import { formatWhen } from './format-time.js';
 import type { Lang } from './format-time.js';
 import type { Clarify, TargetChoice } from '../tools/types.js';
 import type { ClarifyTime } from '../time/resolve.js';
+import type { AskedSlot } from '../confirm/questions.js';
 import { localPartsOf, ZONE } from '../time/tz.js';
 
 export function renderClarify(clarify: Clarify, lang: Lang): string {
@@ -35,6 +36,52 @@ export function renderClarify(clarify: Clarify, lang: Lang): string {
       return lang === 'he'
         ? `יומן Google לא מחובר. יש לשלוח ${isolateLtr('/connect google')}.`
         : `Google Calendar is not connected. Send ${isolateLtr('/connect google')}.`;
+  }
+}
+
+/**
+ * Asking again, after a reply that was clearly an attempt at the answer but did
+ * not settle it — "בערב" to "באיזו שעה?" (PLAN §6.11, R11).
+ *
+ * The second asking is more concrete than the first. Repeating "באיזו שעה?"
+ * verbatim reads as though the reply was not received at all, and gives the
+ * user nothing new to work with; an example does.
+ */
+export function reAsk(asked: AskedSlot, lang: Lang): string {
+  if (lang === 'en') {
+    switch (asked) {
+      case 'time':
+        return `What time exactly? For example ${isolateLtr('8')} or ${isolateLtr('20:30')}.`;
+      case 'when':
+        return 'When? A day, a time, or both.';
+      case 'date':
+        return `Which day? For example tomorrow, Sunday, or ${isolateLtr('25/9')}.`;
+      case 'duration':
+        return `How long? Say the unit — ${isolateLtr('45')} minutes, or an hour and a half.`;
+      case 'text':
+        return 'What should the reminder say? A short sentence is enough.';
+      case 'title':
+        return 'What is the meeting? A short name is enough.';
+      case 'target':
+        return 'Which one? Describe it, or ask for the list.';
+    }
+  }
+
+  switch (asked) {
+    case 'time':
+      return `באיזו שעה בדיוק? למשל ${isolateLtr('8')} או ${isolateLtr('20:30')}.`;
+    case 'when':
+      return 'למתי? אפשר לציין יום, שעה, או שניהם.';
+    case 'date':
+      return `באיזה יום? למשל מחר, יום ראשון, או ${isolateLtr('25.9')}.`;
+    case 'duration':
+      return `כמה זמן? צריך לציין יחידה — ${isolateLtr('45')} דקות, או שעה וחצי.`;
+    case 'text':
+      return 'על מה להזכיר? מספיק משפט קצר.';
+    case 'title':
+      return 'מה הפגישה? מספיק שם קצר.';
+    case 'target':
+      return 'על איזו מהן מדובר? אפשר לתאר אותה, או לבקש את הרשימה.';
   }
 }
 

@@ -23,6 +23,7 @@ import type { VoiceTranscriber } from '../voice/transcribe.js';
 import type { NluProvider } from '../nlu/provider.js';
 import type { ReminderStore } from '../tools/reminder-store.js';
 import type { PendingActions } from '../confirm/pending.js';
+import type { OpenQuestion, OpenQuestions } from '../confirm/questions.js';
 import type { UndoActions } from '../confirm/undo.js';
 import type { GoogleStore } from '../google/store.js';
 import type { CalendarClient } from '../google/calendar.js';
@@ -31,6 +32,9 @@ import { matchCommand } from './router.js';
 import { runButton, runIntent, runPlainConfirmation } from './orchestrator.js';
 import type { Reply, TurnContext } from './orchestrator.js';
 import { parseWithFallback } from '../nlu/provider.js';
+import { applyAnswer, parseAnswer } from '../nlu/answer.js';
+import { validateIntentDraft } from '../nlu/intent-schema.js';
+import { reAsk } from '../render/clarify.js';
 import { toolCatalog } from '../tools/registry.js';
 import { budgetState } from '../policy/window.js';
 import { he } from '../render/he.js';
@@ -43,6 +47,8 @@ import { STALE_MESSAGE_MS } from '../channels/whatsapp/limits.js';
 export type Services = {
   reminders: ReminderStore;
   pending: PendingActions;
+  /** The one clarifying question a sender may have open (§6.11). */
+  questions: OpenQuestions;
   deferred: UndoActions;
   /** The fallback chain, in order. Empty means no parsing is available. */
   nlu: NluProvider[];
@@ -244,6 +250,19 @@ async function respondToText(
     return { action: 'reply', text: statusText.confirmTypedRequired };
   }
 
+  // 2c. An answer to the one open question (PLAN §6.11). Before the parser,
+  //     because "8" means nothing to a parser and everything to a question —
+  //     and because answering costs no tokens at all.
+  const open = deps.services.questions.peek(principal);
+  if (open) {
+    const answered = await answerOpenQuestion(open, text, source, event, deps, now);
+    if (answered) return answered;
+    // Not about the question. The user moved on, so the question goes and the
+    // message is read from the top as a request of its own.
+    deps.services.questions.clear(principal);
+    log.info('question_abandoned', { tool: open.tool, asked: open.asked });
+  }
+
   // 3. The LLM, at last, and only as a parser.
   const parsed = await parseWithFallback(deps.services.nlu, promptInputFor(text, now), log);
   if (!parsed.ok) {
@@ -256,7 +275,87 @@ async function respondToText(
   const lang: Lang = parsed.draft.language;
   const reply = await runIntent(parsed.draft, turnOf(deps, event, now, source, lang));
   repo.markInboundOutcome(event.wamid, { intent: parsed.draft.intent, decision: 'ALLOW' });
-  return asOutcome(reply);
+  return replyOutcome(reply, deps);
+}
+
+// -- clarification round-trip -------------------------------------------------
+
+/**
+ * Read this message as the answer to the question still open, or decline to.
+ *
+ * Returns null for "this is not about that question", which is the caller's cue
+ * to forget the question and start over. Everything else is handled here.
+ *
+ * What an answer may do is deliberately narrow: it merges into the slots of the
+ * tool that asked, and the merged draft then goes through the same validation,
+ * the same `resolve` and the same policy decision as a first-time request. An
+ * answer cannot reach a different tool, cannot skip a confirmation, and cannot
+ * turn a refusal into an execution.
+ */
+async function answerOpenQuestion(
+  open: OpenQuestion,
+  text: string,
+  source: TextSource,
+  event: Extract<InboundEvent, { kind: 'text' | 'audio' }>,
+  deps: PipelineDeps,
+  now: number,
+): Promise<PipelineOutcome | null> {
+  const { repo, log, principal } = deps;
+  const services = deps.services;
+  if (!services) return null;
+
+  const outcome = parseAnswer(open.asked, text);
+
+  if (outcome.kind === 'not_an_answer') return null;
+
+  if (outcome.kind === 'cancelled') {
+    services.questions.clear(principal);
+    log.info('question_cancelled', { tool: open.tool, asked: open.asked });
+    repo.markInboundOutcome(event.wamid, { decision: 'CANCELLED' });
+    return { action: 'reply', text: statusText.cancelled };
+  }
+
+  if (outcome.kind === 'incomplete') {
+    // Still an answer, just not one that settles it — "בערב" names no hour
+    // (R11). The question stays open and is asked again, more concretely.
+    log.info('question_incomplete', { tool: open.tool, asked: open.asked });
+    repo.markInboundOutcome(event.wamid, { decision: 'CLARIFY' });
+    return { action: 'reply', text: reAsk(open.asked, open.language) };
+  }
+
+  // Answered. The question is spent either way from here, including when the
+  // merged request turns out to be unusable — leaving it open would re-answer
+  // the same thing on the next message.
+  services.questions.clear(principal);
+
+  const merged = applyAnswer(open.tool, open.slots, outcome.patch);
+  const validated =
+    merged &&
+    validateIntentDraft({
+      intent: open.tool,
+      slots: merged,
+      language: open.language,
+      missing: [],
+      ambiguities: [],
+    });
+
+  if (!validated || !validated.ok) {
+    // The stored slots crossed a JSON boundary, so the reassembled draft is
+    // validated exactly like model output (invariant 3). Failing it is a bug,
+    // not an attack — but it is answered the same way either case.
+    log.warn('question_merge_invalid', {
+      tool: open.tool,
+      asked: open.asked,
+      issues: validated ? validated.issues : ['unmappable_slot'],
+    });
+    repo.markInboundOutcome(event.wamid, { decision: 'CLARIFY', errorCode: 'E_ANSWER_INVALID' });
+    return { action: 'reply', text: he.notUnderstood };
+  }
+
+  log.info('question_answered', { tool: open.tool, asked: open.asked, source: source.kind });
+  const reply = await runIntent(validated.draft, turnOf(deps, event, now, source, open.language));
+  repo.markInboundOutcome(event.wamid, { intent: validated.draft.intent, decision: 'ALLOW' });
+  return replyOutcome(reply, deps);
 }
 
 // -- system commands ----------------------------------------------------------
@@ -362,6 +461,20 @@ function asOutcome(reply: Reply): PipelineOutcome {
     ...(reply.buttons ? { buttons: reply.buttons } : {}),
     ...(reply.rescheduleAlarm ? { rescheduleAlarm: true } : {}),
   };
+}
+
+/**
+ * Send the reply, and remember the question if it asked one.
+ *
+ * Storing it here rather than inside `runIntent` keeps the orchestrator free of
+ * the store, and keeps writing a question and reading one back in the same
+ * file — they are two halves of one rule and drift apart if separated.
+ */
+function replyOutcome(reply: Reply, deps: PipelineDeps): PipelineOutcome {
+  if (reply.question && deps.services) {
+    deps.services.questions.open({ principal: deps.principal, ...reply.question });
+  }
+  return asOutcome(reply);
 }
 
 function promptInputFor(text: string, now: number) {

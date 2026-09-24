@@ -308,3 +308,138 @@ function hourValueOf(token: string): number | null {
   }
   return null;
 }
+
+// -- answers ------------------------------------------------------------------
+//
+// A clarification answer is read under different rules from a request, and the
+// difference is the whole point of asking. In "תזכיר לי מחר להתקשר לאבא" a bare
+// "8" is just a number in a sentence, and reading it as an hour would be a
+// guess. As the answer to "באיזו שעה?" it is the hour and nothing else.
+//
+// So these are deliberately more permissive than `parseHebrewWhen`, and safe to
+// be: they run only when a question is open, only on that question's own slot,
+// and only on a short reply — a long message is a new request, not an answer.
+
+/** Past this, a reply is prose, and a number inside it is not the answer. */
+const MAX_ANSWER_TOKENS = 8;
+
+const EN_PART_OF_DAY: ReadonlyArray<readonly [RegExp, TimeSpec['part_of_day']]> = [
+  [/\bmorning\b/i, 'morning'],
+  [/\bnoon\b|\bmidday\b/i, 'noon'],
+  [/\bafternoon\b/i, 'afternoon'],
+  [/\bevening\b|\btonight\b/i, 'evening'],
+  [/\bnight\b/i, 'night'],
+];
+
+const EN_WEEKDAYS: ReadonlyArray<readonly [RegExp, 0 | 1 | 2 | 3 | 4 | 5 | 6]> = [
+  [/\bsunday\b/i, 0],
+  [/\bmonday\b/i, 1],
+  [/\btuesday\b/i, 2],
+  [/\bwednesday\b/i, 3],
+  [/\bthursday\b/i, 4],
+  [/\bfriday\b/i, 5],
+  [/\bsaturday\b/i, 6],
+];
+
+function tooLongForAnAnswer(text: string): boolean {
+  return text.split(' ').filter((token) => token.length > 0).length > MAX_ANSWER_TOKENS;
+}
+
+/**
+ * The hour in a reply to "באיזו שעה?".
+ *
+ * Returns null when the reply names no clock at all — including when it names
+ * only a part of the day ("בערב"), which R11 holds is not a time. The caller
+ * asks again rather than defaulting it to an hour nobody said.
+ */
+export function parseAnswerTime(raw: string): TimeSpec | null {
+  const text = normalizeHebrew(raw);
+  if (text.length === 0 || tooLongForAnAnswer(text)) return null;
+
+  // Everything a request would accept still counts: "ב-8", "14:30", "רבע ל-9".
+  const full = parseTime(text);
+  if (full) return full;
+
+  // "8", "8 בערב", "8:30 pm", "20:00"
+  const meridiemMatch = /\b(am|pm)\b/i.exec(text);
+  const clock = /(?<!\d)(\d{1,2})(?:[:.](\d{2}))?(?!\d)/.exec(text);
+  if (!clock?.[1]) return null;
+
+  const hour = Number(clock[1]);
+  const minute = clock[2] === undefined ? 0 : Number(clock[2]);
+  if (hour > 23 || minute > 59) return null;
+
+  return {
+    hour,
+    minute,
+    meridiem: meridiemMatch?.[1] ? (meridiemMatch[1].toLowerCase() as 'am' | 'pm') : 'unspecified',
+    part_of_day: answerPartOfDay(text),
+  };
+}
+
+function answerPartOfDay(text: string): TimeSpec['part_of_day'] {
+  const hebrew = extractPartOfDay(text);
+  if (hebrew !== 'unspecified') return hebrew;
+  for (const [pattern, value] of EN_PART_OF_DAY) {
+    if (pattern.test(text)) return value;
+  }
+  return 'unspecified';
+}
+
+/** The day in a reply to "באיזה יום?" — Hebrew as in a request, plus English. */
+export function parseAnswerDate(raw: string): DateSpec | null {
+  const text = normalizeHebrew(raw);
+  if (text.length === 0 || tooLongForAnAnswer(text)) return null;
+
+  const duration = parseDuration(text);
+  if (duration) return duration;
+
+  const hebrew = parseDate(text);
+  if (hebrew) return hebrew;
+
+  if (/\bday after tomorrow\b/i.test(text)) return { kind: 'relative_days', offset: 2 };
+  if (/\btomorrow\b/i.test(text)) return { kind: 'relative_days', offset: 1 };
+  if (/\btoday\b|\btonight\b/i.test(text)) return { kind: 'relative_days', offset: 0 };
+
+  for (const [pattern, weekday] of EN_WEEKDAYS) {
+    if (!pattern.test(text)) continue;
+    return { kind: 'weekday', weekday, qualifier: /\bnext\b/i.test(text) ? 'next' : 'unspecified' };
+  }
+
+  return null;
+}
+
+/**
+ * Minutes in a reply to "כמה זמן?".
+ *
+ * A bare number is read as minutes, but only from 5 up: "2" as an answer is far
+ * more likely to mean two hours than two minutes, and there is no way to tell,
+ * so it is refused and asked again.
+ */
+export function parseAnswerDuration(raw: string): number | null {
+  const text = normalizeHebrew(raw);
+  if (text.length === 0 || tooLongForAnAnswer(text)) return null;
+
+  if (/שעה\s*וחצי|\ban? hour and a half\b|\b1\.5\s*(?:hours?|h)\b/i.test(text)) return 90;
+  if (/חצי\s*שעה|\bhalf an hour\b/i.test(text)) return 30;
+  if (/רבע\s*שעה|\bquarter of an hour\b/i.test(text)) return 15;
+  if (/שעתיים|\btwo hours\b/i.test(text)) return 120;
+
+  const numeric = /(?<!\d)(\d{1,4})(?!\d)/.exec(text);
+  const count = numeric?.[1] === undefined ? extractCount(text) : Number(numeric[1]);
+
+  // שעה / שעות and דקה / דקות: the singular ends in ה and the plural in ות, so
+  // neither is the other with one optional letter.
+  const hours = /שע(?:ה|ות)|\bh\b|\bhours?\b|\bhr\b/i.test(text);
+  const minutes = /דק(?:ה|ות)|\bmin\b|\bmins\b|\bminutes?\b/i.test(text);
+
+  if (count === null) {
+    // "שעה" / "an hour" — a bare unit with no number means one of it.
+    if (hours) return 60;
+    return null;
+  }
+
+  if (hours) return count * 60;
+  if (minutes) return count;
+  return count >= 5 && count <= 24 * 60 ? count : null;
+}

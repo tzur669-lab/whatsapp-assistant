@@ -599,6 +599,81 @@ the database, never in the audit trail. `transcript`, `mediaId` and `mediaUrl`
 are on the logger's ban list, and the canary test pushes a transcript through the
 real logger.
 
+### 6.11 Answering a clarification
+
+This system refuses to invent a missing time more often than it does anything
+else (R11). That refusal is only worth making if the question it produces can be
+answered — and until this section existed, it could not be:
+
+    "תזכיר לי מחר להתקשר לאבא"  ->  "באיזו שעה?"  ->  "8"  ->  "לא הבנתי"
+
+The third message was parsed with no memory of the second, matched no tool, and
+came back as a failure. The exchange the assistant has more often than any other
+was the one exchange it could not complete.
+
+**The shape.** When a tool's `resolve` returns a clarification, the question is
+recorded beside the reply: which tool asked, everything already understood, and
+which slot is being waited on (`open_questions`, migration 0005). The next
+free-text message from that sender is read as the answer, merged into the stored
+slots, and the whole request is **re-run from the top** — validated, resolved,
+and judged by policy exactly as a first-time request would be.
+
+Re-running rather than resuming is the point. An answer cannot reach a tool the
+first message did not, cannot skip a confirmation, and cannot turn a refusal
+into an execution. All it does is supply one more slot.
+
+**Order in the pipeline.** After commands, after a typed Tier 3 code, and after
+a plain "כן" — a confirmation is not a clarification, and "כן" must keep meaning
+what it means. Before the parser, because the parser has nothing useful to say
+about "8".
+
+**Read by code, not by a second model call.** The answer to a question code
+asked is a date, a time, a duration or a phrase, and `src/time/hebrew-lexicon.ts`
+already reads all four. `src/nlu/answer.ts` is therefore deterministic: it costs
+no tokens, works when the provider is down, and keeps the rule that code decides
+what a time means (invariant 4). It is also more permissive than request parsing
+is allowed to be — a bare "8" is an hour here and a number in a sentence there —
+and it can be, because it runs only while a question is open, only against that
+question's own slot, and only on a short reply.
+
+**Four outcomes**, and the two that are not "understood" carry the design:
+
+| Outcome | What it means | What happens |
+|---|---|---|
+| filled | The slot is settled | Merge, re-run the request, reply with the result |
+| incomplete | An answer, but not one that settles it — "בערב" names no hour | Ask again, more concretely. The question stays open |
+| cancelled | "לא", "בטל" | Drop the question, say so |
+| not_an_answer | A request of its own | Drop the question, parse this message from the top |
+
+`incomplete` is R11 surviving contact with the round-trip: having refused to
+default "בערב" to 09:00 the first time, defaulting it the second time would give
+the rule away for the sake of one fewer message.
+
+Distinguishing an answer from a new request differs by slot, on purpose. For a
+time or a date, anything the deterministic parser reads as a request is one. For
+a phrase it cannot be: "פגישה עם יוסי" is exactly what "מה הפגישה?" asks for and
+is also what the rules parser reads as a request to create an event, so a real
+request is recognised there by opening with an instruction to the assistant —
+which a title never does.
+
+**Gates.** One question per sender, enforced by the primary key rather than by
+convention, so a second question replaces the first and no answer can ever match
+two. Ten minutes, matching `STALE_MESSAGE_MS`. Same sender. The stored slots
+cross a JSON boundary, so the reassembled draft is re-validated against
+`intentDraftSchema` exactly like model output (invariant 3), and a row that no
+longer parses reads as "no question open" rather than as a merge into something
+unexpected.
+
+**Privacy.** `slots_json` holds message content — a reminder body, an event
+title. It is storage, never a log field: `slots` is on the logger's ban list,
+every log line here carries the tool and the slot name only, and the row expires
+on its own and is purged by the daily cron.
+
+**Not doing.** A numbered pick from an `ambiguous` list ("1", "2") records no
+question. Reading "2" as an hour would be exactly the confident misreading this
+whole design exists to avoid, so the user restates instead. Nor does anything
+here become conversation memory: one question, one tool, ten minutes.
+
 ---
 
 ## 7. Security
@@ -1053,6 +1128,11 @@ Test each of these:
 | 2026-09-24 | The reminder calendar fallback is written **at creation**, not when the reminder comes due, and removed if the reminder is delivered on WhatsApp after all. A stand-in left behind would remind the user twice, which is worse than not at all. If Google is not connected the reminder is still scheduled — a missing fallback is not worth failing the request for |
 | 2026-09-24 | There is deliberately **no bulk re-encryption tool** for token rotation. There is exactly one token in this system, and a tool that decrypts every secret at once is a worse thing to own than a two-minute manual reconnect |
 | 2026-09-24 | Snooze offers expire after six hours and are one-shot, sender-bound and nonce-checked, like every other deferred action. A reminder that could be revived days later by an old button is not a reminder |
+| 2026-09-25 | A clarification can now be answered (§6.11). The answer is read by **code**, not by a second model call: everything a question can ask for is something `hebrew-lexicon.ts` already parses, so the round-trip costs no tokens and survives the provider being down |
+| 2026-09-25 | An answer **re-runs the whole request** rather than resuming it. Resuming would mean a second path to execution that policy had already ruled on once; re-running means an answer can only ever supply one more slot |
+| 2026-09-25 | One open question per sender, enforced by a primary key on `principal` rather than by convention — so "only one at a time" cannot be violated by a bug, only by a migration |
+| 2026-09-25 | A part of day answering "באיזו שעה?" asks again rather than defaulting to an hour. Having refused to guess the first time, guessing the second time would give R11 away for the sake of one fewer message |
+| 2026-09-25 | Test migration lists are now read from the `migrations/` directory rather than hand-listed. Two test files silently missed migration 0005 and failed on a table that existed |
 
 ---
 
@@ -1133,16 +1213,10 @@ column rather than optimizing blind.
 
 ### P1 — the difference between a demo and something used daily
 
-**B5. A clarification cannot be answered.** `PromptInput.clarifyingSlots` exists,
-is threaded through the prompt, and is never set by anything. So the most common
-exchange in the whole system — "תזכיר לי מחר להתקשר לאבא" → "באיזו שעה?" → "8" —
-fails: the second message is parsed with no memory of the question, matches no
-tool, and answers "לא הבנתי". Every comparable bot keeps at least a few turns of
-context. This is the highest-value fix on the list.
-*Do:* store the open question (tool, slots already resolved, what was asked) for
-a few minutes; on the next free-text message re-parse with `clarifyingSlots` set
-and **merge** rather than replace. Same gates as a confirmation: same sender, not
-expired, one outstanding question at a time.
+**B5. A clarification cannot be answered.** ✅ **Done 2026-09-25** — see §6.11.
+Built deterministically, so it cost no Groq budget and works when the provider
+is down. The round-trip, the four outcomes, the gates and what was deliberately
+left out (a numbered pick from an ambiguous list) are all specified there.
 
 **B6. No recurring reminders.** "כל יום ראשון", "כל בוקר", "בכל 1 לחודש" — the
 most requested feature in every comparable project, and absent here.
