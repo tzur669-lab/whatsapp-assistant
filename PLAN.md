@@ -224,9 +224,17 @@ Only `src/platform/` may import Cloudflare APIs. Everything else is plain TypeSc
 - Size limit: reject bodies over 256 KB [R].
 - Accepted message types in v1:
   - `text`
+  - `audio` — voice notes and attached audio, transcribed (§6.10)
   - `interactive.button_reply`
-  - [O] `audio`, later, via Whisper.
-- Other message types get one fixed reply ("I handle text commands").
+- Other message types get one fixed reply (text or a voice note, nothing else).
+- **Inbound media** carries only a media id. Fetching it is two authenticated
+  requests: `GET /{media-id}` for a short-lived CDN url, then the download. The
+  second request's destination comes from a response body, so it is checked
+  against a host allowlist (`fbcdn.net`, `fbsbx.com`, `facebook.com`,
+  `whatsapp.net`), HTTPS only, no embedded credentials, and **redirects are
+  refused, not followed** — the Meta token travels with that request. Size and
+  type are checked from the metadata first, so an oversized file costs one
+  request rather than a download. Cap: 8 MB [R].
 - Status webhooks (sent/delivered/read/failed) update outbound records. They are also used to detect "outside window" send failures.
 - Senders not on the allowlist are **dropped silently**. No reply, no LLM call, audit entry only.
 
@@ -527,6 +535,70 @@ Policy is code plus static config. **Nothing in chat can change it.**
   - last error code.
 - [O] External uptime check on `/health` (public, returns only `ok`).
 
+### 6.10 Voice notes
+
+Recording is faster than typing on a phone, and it is how this assistant will
+actually be used. The design problem is not transcription — it is that speech
+recognition returns a *guess*, and unlike typed text **the user never sees what
+the system received** before it acts on it.
+
+**Path.** A voice note joins the text path one step earlier and is then treated
+identically. Voice must not grow a second set of rules that can drift from the
+first.
+
+```
+audio message → media download (§6.1) → Whisper → confidence gate → transcript
+              → the same router / NLU / policy / tools path as typed text
+```
+
+**Provider.** Groq `whisper-large-v3` — the same account as the parser, a
+different model, therefore a **separate rate-limit budget**: exhausting the
+parser's daily tokens does not stop voice notes, and vice versa. Not the turbo
+variant: this is unvocalized Hebrew with names and times in it, and accuracy
+decides whether a reminder lands on the right day. Latency is not on a critical
+path, because the webhook was answered before transcription began.
+
+`response_format: verbose_json` is required, not a debugging luxury: it is the
+only format that carries the per-segment confidence the gate runs on.
+The language is **not pinned**, because the assistant takes Hebrew and English
+and forcing one makes the recognizer transliterate the other rather than admit
+it guessed wrong (§13).
+
+**The confidence gate.** Thresholds are Whisper's own decoding defaults, kept
+rather than invented so they can be checked against the reference implementation.
+Segment statistics are weighted by duration — without that, a fifth of a second
+of throat-clearing outweighs eight seconds of clear speech and rejects a good
+message.
+
+| Signal | Threshold | Outcome |
+|---|---|---|
+| empty text, or `no_speech_prob > 0.6` | silence | ask again |
+| `avg_logprob < -1.0` | no confidence | ask again |
+| `compression_ratio > 2.4` | fluent repetition — Whisper's classic invention on noise | ask again |
+| language not he/en | out of scope | say so |
+| `avg_logprob < -0.5` | usable but uncertain | **proceed; any write goes to CONFIRM** |
+| otherwise | clear | proceed normally |
+
+A missing confidence field reads as the pessimistic end of its scale, and a
+transcript with no segments at all is graded *uncertain* — absence of evidence is
+not evidence of a good transcript.
+
+**Tiering.** Voice does not change a tool's tier by itself. Tier 1 is reversible
+and already answers with an Undo; Tier 2 and 3 already confirm. What voice adds
+is the `voice_uncertain` escalation above, which puts a write from a shaky
+transcript behind a confirmation — where the echoed transcript is there to be
+checked.
+
+**Echo.** Every answer to a voice note leads with `שמעתי: <transcript>`, bidi-isolated.
+It is shown even when the recording came through perfectly: it is the only place
+the user can see what was received. It goes only to the person who recorded it.
+
+**Privacy.** The audio is held in memory for one request and never stored. The
+transcript is message content by another route: never logged, never written to
+the database, never in the audit trail. `transcript`, `mediaId` and `mediaUrl`
+are on the logger's ban list, and the canary test pushes a transcript through the
+real logger.
+
 ---
 
 ## 7. Security
@@ -599,9 +671,10 @@ wa-assistant/
 │  │  └─ migrations.ts       # migrations/*.sql inlined as text modules
 │  ├─ channels/
 │  │  ├─ types.ts            # ChannelAdapter, InboundEvent, OutboundMessage
-│  │  └─ whatsapp/           # verify.ts, parse.ts, send.ts, limits.ts, window.ts, budget.ts
+│  │  └─ whatsapp/           # verify.ts, parse.ts, send.ts, limits.ts, media.ts, voice.ts
 │  ├─ core/                  # pipeline.ts, router.ts, repo.ts, sql.ts, env.ts, clarify.ts, errors.ts
 │  ├─ nlu/                   # provider.ts, groq.ts, prompt.ts, intent-schema.ts, rules-fallback.ts
+│  ├─ voice/                 # transcribe.ts (contract + confidence gate), groq-whisper.ts
 │  ├─ time/                  # resolve.ts, tz.ts, hebrew-lexicon.ts
 │  ├─ policy/                # tiers.ts, engine.ts, limits.ts
 │  ├─ tools/                 # registry.ts, reminders.ts, calendar-read.ts, calendar-write.ts
@@ -665,6 +738,14 @@ Each phase ends with its exit criteria met and tests green.
 - [x] Model comparison recorded in §14.
 - [ ] *Exit:* eval thresholds met. Best measured so far is `gpt-oss-120b` at 89.1% intent against a 97% threshold, and neither hard gate is at 100%. Certification is blocked on daily token budget, not on missing work.
 
+**Phase 3b — Voice notes** — *code complete 2026-09-24* (pulled forward from Phase 8 at the user's request)
+
+- [x] Authenticated media download with a host allowlist and no redirect following (§6.1).
+- [x] Groq Whisper provider and the confidence gate (§6.10); `voice_uncertain` in the policy engine.
+- [x] Transcript echo on every reply; transcript and media id on the logger's ban list.
+- [x] 586 tests green, including a voice case in the log canary.
+- [ ] *Exit:* a recorded Hebrew reminder reaches the right slot values. Blocked on Phase 4's tools, and on the same live smoke test as Phase 1.
+
 **Phase 4 — Reminders end to end**
 
 - [ ] `reminders.*` tools, alarm scheduler, window planning, snooze, late delivery, Undo.
@@ -690,7 +771,7 @@ Each phase ends with its exit criteria met and tests green.
 **Phase 8 — Production**
 
 - [ ] Register the real number with its PIN; production secrets; deploy; two weeks of daily use; review the audit log.
-- [ ] Then pick expansions: [O] Hebrew voice notes via Whisper, [O] in-window morning agenda, [O] Telegram adapter, [O] recurring reminders.
+- [ ] Then pick expansions: [O] in-window morning agenda, [O] Telegram adapter, [O] recurring reminders. (Voice notes moved to Phase 3b.)
 
 ---
 
@@ -814,6 +895,27 @@ Test each of these:
 - Real test number + test Google calendar.
 - Script covering the brief's example commands: tomorrow 8:00 reminder, meeting with Yossi at 14:00, "what's on my calendar tomorrow", move 14:00 → 16:00, reminder in two hours.
 - Revoke Google access from account settings → graceful reconnect message.
+- Voice: record the same five commands instead of typing them. Also record one
+  near-silent clip, one in a third language, and one with background noise — the
+  three the gate has to catch.
+
+### 11.8 Voice notes (unit, no network)
+
+- **Media download is the security case:** every rejected host shape
+  (`fbcdn.net.evil.example`, plaintext HTTP, embedded credentials, loopback) is
+  asserted to make **no second request** — the token must not leave.
+  A 3xx is a failure, not a hop.
+- Size is refused from the metadata (one request), from `content-length`, and
+  from a body that lies about both.
+- Gate boundaries are table-driven and pinned at the threshold, not near it:
+  `avg_logprob` exactly at -0.5 is clear, one step below is uncertain.
+- Duration weighting has a test in both directions: a 0.2 s bad segment beside
+  8 s of good speech passes; the reverse fails.
+- Pipeline: a spoken `/ping` writes the same audit row as a typed one, a replayed
+  voice note is not transcribed twice, and each way a recording can be unusable
+  has its own reply.
+- Canary: a transcript pushed through the **real** logger appears in neither the
+  log nor the database.
 
 ---
 
@@ -845,6 +947,9 @@ Test each of these:
 - [ ] When to buy the dedicated number (before or after Phase 4)?
 - [ ] [O] Encrypted export backup: yes/no, and which bucket?
 - [ ] Phase 3 thresholds are not met. Options: keep iterating on the prompt, relax §11.2's 97%/95% targets for a free-tier model, or accept a paid tier. The two hard gates (no invented slots, missing-slot detection) are not negotiable. Structured output has since removed most schema rejections, so re-measure on `gpt-oss-120b` before deciding.
+- [ ] Voice: should the recognizer's language be pinned to `he`? Auto-detect keeps English usable but is weakest on very short clips, which is exactly what a one-line reminder is. Measure before changing.
+- [ ] Voice: Whisper takes a `prompt` to bias spelling — useful for Hebrew names and times. It is static config, not user data, so it does not breach invariant 2, but it is unmeasured. Worth a try against recorded clips.
+- [ ] Voice: the uncertain band (`avg_logprob` between -1.0 and -0.5) currently forces CONFIRM on writes. If that fires on most real recordings it is friction, not safety — revisit after two weeks of daily use.
 - [ ] The 8 s NLU timeout is tight for the free tier: `qwen3.8-27b` exceeds it routinely and `gpt-oss-120b` exceeds it occasionally. Raise it, or treat a timeout as a fallback trigger only?
 
 ---
@@ -885,6 +990,15 @@ Test each of these:
 | 2026-09-24 | `range` no longer offers `today` / `tomorrow`. They duplicated `relative_days` 0 and 1 exactly, so a single day had two valid encodings and models picked either — scored as a failure, though both were right. One meaning, one representation |
 | 2026-09-24 | `unsupported` accepts, and ignores, any known slot. Requiring empty slots turned correct classifications into hard failures: strict output makes the model emit every slot key, and "what's the weather tomorrow" really does contain a date. An unknown slot name is still rejected |
 | 2026-09-24 | `pnpm eval --sample N` takes a stratified slice across categories, round-robin. The corpus is grouped by category, so a head-of-file sample would report only Hebrew reminders and nothing about injection handling. This is what makes prompt iteration fit the daily budget |
+| 2026-09-24 | Voice notes pulled forward from Phase 8. They join the text path one step earlier and are then identical to typed text: same router, same NLU, same policy, same tools. A parallel voice path would be a second place for the rules to drift |
+| 2026-09-24 | ASR = Groq `whisper-large-v3`, not the turbo variant. Same account as the parser, different model, so a **separate rate-limit budget** — the parser's exhausted daily tokens do not stop voice. Accuracy over latency: this is unvocalized Hebrew with names and times in it, and nothing is waiting on the transcription but the reply |
+| 2026-09-24 | Transcription asks for `verbose_json`. It is the only response format carrying per-segment `avg_logprob` / `no_speech_prob` / `compression_ratio`, which is what the confidence gate runs on. Without it the system could not tell a clear recording from a guess |
+| 2026-09-24 | Confidence thresholds are Whisper's own decoding defaults (-1.0, 0.6, 2.4) rather than invented numbers, so they can be checked against the reference implementation. Segment statistics are **duration-weighted**: unweighted, a fifth of a second of throat-clearing outweighed eight good seconds and rejected valid messages |
+| 2026-09-24 | A transcript with no confidence data at all is graded *uncertain*, and a missing confidence field reads as the pessimistic end of its scale. Absence of evidence is not evidence of a good transcript |
+| 2026-09-24 | Voice does **not** raise a tool's tier. Tier 1 is reversible and already answers with an Undo, Tier 2+ already confirms. What voice adds is `voice_uncertain`, which sends a write from a shaky transcript to CONFIRM — where the echoed transcript is there to be checked |
+| 2026-09-24 | Every answer to a voice note leads with `שמעתי: <transcript>`, even when recognition was perfect. Typed text is already on the user's screen; a transcript is not, and acting on words nobody has seen is the failure this feature could introduce |
+| 2026-09-24 | Media download refuses redirects rather than following them. The download url comes from a response body while the request carries the Meta access token, so the destination must stay the one that was validated. Host allowlist matched on whole labels — `fbcdn.net.evil.example` is not `fbcdn.net` |
+| 2026-09-24 | `transcript`, `mediaId` and `mediaUrl` joined the logger's ban list. A transcript is message content by another route, and a media id resolves straight back to the audio |
 
 ---
 

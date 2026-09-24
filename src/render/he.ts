@@ -23,13 +23,37 @@ export const he = {
     '• יומן — מה יש לי ביומן מחר',
     `• פגישה — תקבע פגישה עם יוסי מחר ב${isolateLtr('-14:00')}`,
     '',
+    'אפשר גם להקליט הודעה קולית במקום לכתוב. מה שנשמע יוצג בתשובה.',
+    '',
     `פקודות מערכת: ${SYSTEM_COMMANDS}`,
   ].join('\n'),
 
   pong: 'פונג ✅',
 
-  /** Reply to image, audio, document, location — anything that is not text or a button. */
-  unsupportedType: 'אני מטפל בפקודות טקסט בלבד. יש לשלוח הודעת טקסט או ללחוץ על אחד הכפתורים.',
+  /** Reply to image, document, location — anything that is not text, audio, or a button. */
+  unsupportedType:
+    'אפשר לשלוח הודעת טקסט או הקלטה קולית. סוגי קבצים אחרים לא נתמכים כרגע.',
+
+  /**
+   * What the recognizer heard, echoed above every answer to a voice note. This
+   * is the only way to see what the system actually received, so it is shown
+   * even when the recording came through perfectly (PLAN §6.10).
+   */
+  heard: (transcript: string): string => `שמעתי: ${isolate(transcript)}`,
+
+  /** The recording held no speech — an accidental press, or pure background noise. */
+  voiceSilent: 'לא שמעתי דיבור בהקלטה. כדאי להקליט שוב.',
+
+  /** Speech was there, but the recognizer is not sure enough to act on it. */
+  voiceUnclear:
+    'לא הצלחתי להבין את ההקלטה. כדאי להקליט שוב לאט יותר וקרוב יותר למכשיר, או לכתוב את הבקשה.',
+
+  voiceLanguage: 'ההקלטה אינה בעברית או באנגלית. כדאי להקליט שוב באחת מהשתיים.',
+
+  /** The audio never arrived, or transcription failed. Carries no error detail. */
+  voiceFailed: 'לא הצלחתי לתמלל את ההקלטה. כדאי לנסות שוב בעוד רגע, או לכתוב את הבקשה.',
+
+  voiceTooLong: 'ההקלטה ארוכה מדי לתמלול. כדאי להקליט הודעה קצרה יותר.',
 
   /** NLU could not produce a usable intent. Never guess — ask again. */
   notUnderstood: `לא הבנתי את הבקשה. אפשר לנסח מחדש, או לשלוח ${isolate('/help')} לרשימת הפקודות.`,

@@ -196,3 +196,51 @@ describe('precedence', () => {
     expect(decide('reminders.create', context)).toEqual(decide('reminders.create', context));
   });
 });
+
+describe('voice notes', () => {
+  const voice = (confidence: 'high' | 'uncertain') =>
+    ctx({ source: 'voice', voiceConfidence: confidence });
+
+  it('treats a clear recording exactly like typed text', () => {
+    expect(decide('reminders.create', voice('high'))).toMatchObject({
+      decision: 'ALLOW',
+      undoable: true,
+    });
+    expect(decide('reminders.list', voice('high'))).toMatchObject({ decision: 'ALLOW' });
+  });
+
+  it('puts a write behind a confirmation when the transcript was uncertain', () => {
+    // The user never saw these words before they were acted on, and the
+    // recognizer itself was not sure of them.
+    expect(decide('reminders.create', voice('uncertain'))).toMatchObject({
+      decision: 'CONFIRM',
+      reason: 'voice_uncertain',
+    });
+  });
+
+  it('still answers a read from an uncertain transcript', () => {
+    // Reading nothing back is worse than reading the wrong day back: a read
+    // changes nothing, and its answer shows the mistake.
+    expect(decide('reminders.list', voice('uncertain'))).toMatchObject({ decision: 'ALLOW' });
+  });
+
+  it('does not escalate typed text that carries no confidence at all', () => {
+    expect(decide('reminders.create', ctx({ source: 'text' }))).toMatchObject({ decision: 'ALLOW' });
+    expect(decide('reminders.create', ctx())).toMatchObject({ decision: 'ALLOW' });
+  });
+
+  it('records the voice reason alongside every other rule that fired', () => {
+    const result = decide(
+      'reminders.create',
+      ctx({ source: 'voice', voiceConfidence: 'uncertain', forwarded: true }),
+    );
+    expect(result.allReasons).toContain('voice_uncertain');
+    expect(result.allReasons).toContain('forwarded');
+  });
+
+  it('is still overridden by a denial, which is never softened', () => {
+    expect(
+      decide('reminders.create', ctx({ source: 'voice', voiceConfidence: 'uncertain', paused: true })),
+    ).toMatchObject({ decision: 'DENY', reason: 'paused' });
+  });
+});

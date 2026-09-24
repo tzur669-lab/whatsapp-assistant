@@ -12,6 +12,23 @@ export type InboundText = {
   forwarded: boolean;
 };
 
+/**
+ * A recorded voice note, or an attached audio file. The webhook carries only a
+ * media id — the audio itself is fetched separately, authenticated, and never
+ * stored (PLAN §6.1, §6.10).
+ */
+export type InboundAudio = {
+  kind: 'audio';
+  wamid: string;
+  from: string;
+  sentAtMs: number;
+  mediaId: string;
+  mimeType: string;
+  /** True for a pressed-and-held voice note, false for an attached audio file. */
+  voiceNote: boolean;
+  forwarded: boolean;
+};
+
 export type InboundButton = {
   kind: 'button';
   wamid: string;
@@ -38,7 +55,12 @@ export type InboundStatus = {
   recipient: string;
 };
 
-export type InboundEvent = InboundText | InboundButton | InboundUnsupported | InboundStatus;
+export type InboundEvent =
+  | InboundText
+  | InboundAudio
+  | InboundButton
+  | InboundUnsupported
+  | InboundStatus;
 
 export type OutboundButton = { id: string; title: string };
 

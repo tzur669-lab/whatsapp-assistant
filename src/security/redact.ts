@@ -40,6 +40,14 @@ export const BANNED_LOG_FIELDS = [
   'prompt',
   'draft',
   'slots',
+  // A transcript is the user's spoken words — message content by another route.
+  'transcript',
+  'transcription',
+  // The media id and its signed url both resolve to the audio itself.
+  'mediaId',
+  'media_id',
+  'mediaUrl',
+  'audio',
 ] as const;
 
 const BANNED = new Set<string>(BANNED_LOG_FIELDS);

@@ -7,6 +7,8 @@ import { Repository } from '../core/repo.js';
 import { handleInbound } from '../core/pipeline.js';
 import { createLogger, hashPrincipal } from '../security/redact.js';
 import { WhatsAppSender } from '../channels/whatsapp/send.js';
+import { createVoiceTranscriber } from '../channels/whatsapp/voice.js';
+import { createGroqWhisperProvider, WHISPER_MODEL } from '../voice/groq-whisper.js';
 import type { InboundEvent } from '../channels/types.js';
 import type { AppEnv } from '../core/env.js';
 import { DurableObjectSqlDriver } from './sql-repo.js';
@@ -54,6 +56,21 @@ export class AssistantDO implements DurableObject {
     this.log.info('maintenance_done', {});
   }
 
+  /**
+   * Built per request rather than held on the instance: it closes over secrets,
+   * and a long-lived Durable Object should not keep them alive between calls.
+   */
+  private voiceTranscriber() {
+    return createVoiceTranscriber({
+      accessToken: this.env.WA_ACCESS_TOKEN,
+      provider: createGroqWhisperProvider({
+        apiKey: this.env.GROQ_API_KEY,
+        model: WHISPER_MODEL,
+      }),
+      log: this.log,
+    });
+  }
+
   private async processEvent(event: InboundEvent): Promise<void> {
     const principal =
       event.kind === 'status'
@@ -65,6 +82,7 @@ export class AssistantDO implements DurableObject {
       log: this.log,
       now: () => Date.now(),
       principal,
+      ...(this.env.GROQ_API_KEY ? { transcribe: this.voiceTranscriber() } : {}),
     });
 
     if (outcome.action !== 'reply' || event.kind === 'status') return;

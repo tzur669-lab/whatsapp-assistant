@@ -32,6 +32,7 @@ A single-user WhatsApp assistant for reminders and Google Calendar. It runs on C
 10. **One user command → at most one action and one reply message.** No autonomous loops or chained tool calls.
 11. **Only `src/platform/` may import Cloudflare APIs.** Everything else must run on plain Node for portability.
 12. **Fail safe.** On ambiguity, errors, stale messages (>10 min old), or forwarded messages: CLARIFY or CONFIRM. Never guess and execute.
+13. **A voice note is message text, one step earlier.** Audio is transcribed and graded (`src/voice/`, PLAN §6.10), then follows exactly the same router / NLU / policy / tool path as typed text — never a parallel one. A transcript the recognizer is unsure of never reaches the parser, and every reply to a voice note echoes what was heard, because the user has not seen it. The transcript is message content: never logged, never stored.
 
 ## Secrets and privacy
 
@@ -62,7 +63,7 @@ A single-user WhatsApp assistant for reminders and Google Calendar. It runs on C
 
 ## Testing rules
 
-- **Test first** for anything in `src/time/`, `src/policy/`, `src/confirm/`, `src/security/`, and `src/channels/whatsapp/verify.ts`. Write failing tests, then implement.
+- **Test first** for anything in `src/time/`, `src/policy/`, `src/confirm/`, `src/security/`, `src/channels/whatsapp/verify.ts`, and `src/channels/whatsapp/media.ts`. Write failing tests, then implement.
 - Unit tests make **no network calls.** Use the fakes in `test/integration/` (fake Meta, Google, NLU).
 - Freeze clocks with Vitest fake timers. Never depend on the real current date.
 - Any change to `src/nlu/` (prompt, schema, provider, model) requires `pnpm eval`. Report the metrics against PLAN §11.2 thresholds; "no invented slots" and "missing-slot detection" must stay at 100%.

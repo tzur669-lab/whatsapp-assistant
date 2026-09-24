@@ -127,3 +127,54 @@ describe('parseWebhookPayload', () => {
     if (e.kind === 'text') expect(e.text.length).toBeLessThanOrEqual(4096);
   });
 });
+
+describe('voice notes', () => {
+  const audio = (overrides: Record<string, unknown> = {}) =>
+    parseWebhookPayload(
+      textPayload({
+        type: 'audio',
+        text: undefined,
+        audio: { id: 'MEDIA-1', mime_type: 'audio/ogg; codecs=opus', voice: true, ...overrides },
+      }),
+    );
+
+  it('extracts a recorded voice note', () => {
+    const events = audio();
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({
+      kind: 'audio',
+      wamid: 'wamid.AAA',
+      from: FROM,
+      mediaId: 'MEDIA-1',
+      mimeType: 'audio/ogg; codecs=opus',
+      voiceNote: true,
+    });
+  });
+
+  it('distinguishes an attached audio file from a held-to-record note', () => {
+    expect(audio({ voice: false })[0]).toMatchObject({ voiceNote: false });
+    expect(audio({ voice: undefined })[0]).toMatchObject({ voiceNote: false });
+  });
+
+  it('drops an audio message with no media id, rather than passing on an unusable one', () => {
+    expect(audio({ id: undefined })).toEqual([]);
+  });
+
+  it('drops an audio message with no declared type', () => {
+    expect(audio({ mime_type: undefined })).toEqual([]);
+  });
+
+  it('caps the media id and the type, which are attacker-influenced strings', () => {
+    const events = audio({ id: 'x'.repeat(500), mime_type: 'y'.repeat(500) });
+    const event = events[0] as { mediaId: string; mimeType: string };
+    expect(event.mediaId.length).toBe(128);
+    expect(event.mimeType.length).toBe(128);
+  });
+
+  it('still reports an image as an unsupported type', () => {
+    const events = parseWebhookPayload(
+      textPayload({ type: 'image', text: undefined, image: { id: 'M' } }),
+    );
+    expect(events[0]).toMatchObject({ kind: 'unsupported', messageType: 'image' });
+  });
+});

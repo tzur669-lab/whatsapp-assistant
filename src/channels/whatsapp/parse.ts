@@ -9,6 +9,8 @@ import type { InboundEvent } from '../types.js';
 
 const MAX_TEXT_CHARS = 4096;
 const MAX_BUTTON_ID_CHARS = 256;
+const MAX_MEDIA_ID_CHARS = 128;
+const MAX_MIME_CHARS = 128;
 
 export function parseWebhookPayload(payload: unknown): InboundEvent[] {
   const entries = asArray(prop(payload, 'entry'));
@@ -49,6 +51,21 @@ function parseMessage(raw: unknown): InboundEvent | null {
     const body = asString(prop(prop(raw, 'text'), 'body'));
     if (body === null) return null;
     return { kind: 'text', ...base, text: body.slice(0, MAX_TEXT_CHARS) };
+  }
+
+  if (type === 'audio') {
+    const audio = prop(raw, 'audio');
+    const mediaId = asString(prop(audio, 'id'));
+    const mimeType = asString(prop(audio, 'mime_type'));
+    // A message announcing audio without a media id is unusable, not "audio".
+    if (mediaId === null || mimeType === null) return null;
+    return {
+      kind: 'audio',
+      ...base,
+      mediaId: mediaId.slice(0, MAX_MEDIA_ID_CHARS),
+      mimeType: mimeType.slice(0, MAX_MIME_CHARS),
+      voiceNote: prop(audio, 'voice') === true,
+    };
   }
 
   if (type === 'interactive') {

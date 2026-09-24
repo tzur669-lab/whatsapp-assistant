@@ -21,6 +21,7 @@ export type PolicyReason =
   | 'stale_message'
   | 'forwarded'
   | 'far_future'
+  | 'voice_uncertain'
   | 'tier_requires_confirmation'
   | 'allowed';
 
@@ -36,6 +37,18 @@ export type PolicyContext = {
   limits: Readonly<Record<string, RateLimit>>;
   /** R8: the resolved time is beyond the confirmation horizon. */
   horizonExceeded: boolean;
+  /**
+   * How the request reached us. A voice note is a transcript of what the user
+   * said, not the characters they typed, and they never saw it before it was
+   * acted on (PLAN §6.10).
+   */
+  source?: 'text' | 'voice';
+  /**
+   * Set for voice. A transcript the recognizer was unsure of is still used — the
+   * hopeless ones never get this far — but a write it leads to is put behind a
+   * confirmation, where the echoed transcript is there to be checked.
+   */
+  voiceConfidence?: 'high' | 'uncertain';
 };
 
 export type PolicyExtras = {
@@ -86,6 +99,9 @@ export function decide(tool: ToolName, ctx: PolicyContext, extras: PolicyExtras 
   if (isWrite && isStale(ctx)) reasons.push('stale_message');
   if (isWrite && ctx.forwarded) reasons.push('forwarded');
   if (isWrite && ctx.horizonExceeded) reasons.push('far_future');
+  if (isWrite && ctx.source === 'voice' && ctx.voiceConfidence === 'uncertain') {
+    reasons.push('voice_uncertain');
+  }
   if (tier >= 2) reasons.push('tier_requires_confirmation');
 
   if (reasons.length > 0) {
