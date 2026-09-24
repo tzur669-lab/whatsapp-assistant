@@ -17,7 +17,10 @@ import type { LocalParts, WallTime } from './tz.js';
 export type DateSpec =
   | { kind: 'relative_days'; offset: number } // today = 0, מחר = 1, מחרתיים = 2
   | { kind: 'weekday'; weekday: 0 | 1 | 2 | 3 | 4 | 5 | 6; qualifier: 'this' | 'next' | 'unspecified' }
-  | { kind: 'absolute'; day: number; month: number; year?: number }
+  // `year` is explicitly `| undefined`: under exactOptionalPropertyTypes that is
+  // what a Zod `.optional()` produces, and the drift guard in
+  // `src/nlu/slot-schemas.ts` holds the two shapes together.
+  | { kind: 'absolute'; day: number; month: number; year?: number | undefined }
   | { kind: 'in_duration'; minutes: number }; // "בעוד שעתיים" — carries its own time
 
 export type TimeSpec = {

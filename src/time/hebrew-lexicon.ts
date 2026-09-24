@@ -26,9 +26,14 @@ export type LexiconMatch = {
  * The Hebrew block. JavaScript's word boundary is ASCII-only and never fires
  * between Hebrew letters, so word edges are spelled out as lookarounds instead.
  */
-const HEB = '֐-׿';
-const START = `(?<![${HEB}])`;
-const END = `(?![${HEB}])`;
+export const HEB = '֐-׿';
+/** Left word edge for Hebrew. Use instead of `\b`, which never fires here. */
+export const HEB_START = `(?<![${HEB}])`;
+/** Right word edge for Hebrew. */
+export const HEB_END = `(?![${HEB}])`;
+
+const START = HEB_START;
+const END = HEB_END;
 
 /** Prefix particles that attach to a following word: ו ה ב ל מ ש כ, plus a maqaf. */
 const PREFIX = '(?:[והבלמשכ]{0,3}-?)';

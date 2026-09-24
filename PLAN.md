@@ -69,6 +69,13 @@ Priority order (when goals conflict, the higher one wins):
 **AI inference (Groq)**
 
 - Free plan limits for `openai/gpt-oss-120b`, `openai/gpt-oss-20b`, and `qwen/qwen3.8-27b`: 30 RPM, 1K RPD, 8K TPM, 200K TPD **each**. Limits are per model. Cached tokens don't count toward limits.
+- **[V] Confirmed 2026-09-24 against the live API.** The `x-ratelimit-*` response headers report only `limit-requests: 1000` and `limit-tokens: 8000` (the per-minute bucket) — **the 200K daily token limit is not in the headers at all.** It surfaces only in the body of the 429 that enforces it:
+  `Rate limit reached for model ... on tokens per day (TPD): Limit 200000, Used 199318, Requested 1067`.
+  A monitor built on the headers alone would show a healthy quota while every request is being refused. The only header signal is `retry-after`, which jumps from seconds to minutes once the daily budget is gone.
+- **Consequence: prompt size is a hard throughput ceiling, per minute and per day.**
+  - per minute: `8000 / prompt tokens` — at v2's ~1,700 tokens that was 4/min; v4's ~1,000 tokens gives 7/min.
+  - per day: `200000 / prompt tokens` — ~199 messages at v4, and **one 156-case eval run costs ~157K, over three quarters of the day's budget.**
+  Limits are per model, so comparing two models means two separate budgets. `pnpm eval` measures the prompt, paces itself from it, and stops with a clear message when `retry-after` shows the daily budget is exhausted instead of grinding through retries.
 - No card is needed for the free plan.
 - Groq's contract forbids training on customer inputs and outputs. Inference is not retained by default, except logs kept up to 30 days for troubleshooting or abuse investigation. Zero Data Retention can be enabled in Data Controls.
 - `whisper-large-v3` is free at 2K RPD (for optional voice notes).
