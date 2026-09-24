@@ -1,0 +1,25 @@
+# gitleaks configuration. Runs in CI and in the pre-commit hook.
+[extend]
+useDefault = true
+
+[[rules]]
+id = "wa-access-token"
+description = "Meta Graph API access token"
+regex = '''EAA[A-Za-z0-9]{40,}'''
+
+[[rules]]
+id = "groq-api-key"
+description = "Groq API key"
+regex = '''gsk_[A-Za-z0-9]{40,}'''
+
+[[rules]]
+id = "google-oauth-client-secret"
+description = "Google OAuth client secret"
+regex = '''GOCSPX-[A-Za-z0-9_-]{20,}'''
+
+[allowlist]
+description = "Fixtures deliberately use obviously fake values."
+paths = [
+  '''test/.*''',
+  '''pnpm-lock\.yaml''',
+]

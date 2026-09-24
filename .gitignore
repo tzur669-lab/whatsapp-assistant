@@ -1,0 +1,18 @@
+# secrets — never commit
+.dev.vars
+.dev.vars.*
+.env
+.env.*
+secrets/
+
+# build / tooling
+node_modules/
+dist/
+.wrangler/
+coverage/
+*.tsbuildinfo
+
+# os / editor
+.DS_Store
+Thumbs.db
+.idea/

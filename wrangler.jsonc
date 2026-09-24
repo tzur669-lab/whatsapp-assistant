@@ -1,0 +1,41 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "wa-assistant",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-09-01",
+  "compatibility_flags": ["nodejs_compat"],
+  "observability": { "enabled": true },
+
+  // Migrations are imported as text so they ship inside the bundle.
+  "rules": [{ "type": "Text", "globs": ["**/*.sql"], "fallthrough": false }],
+
+  // No secrets here. Secrets are set with `wrangler secret put` (PLAN §7.2).
+  "env": {
+    "staging": {
+      "name": "wa-assistant-staging",
+      "vars": {
+        "ENVIRONMENT": "staging",
+        "WA_PHONE_NUMBER_ID": "",
+        "GOOGLE_CLIENT_ID": ""
+      },
+      "durable_objects": {
+        "bindings": [{ "name": "ASSISTANT", "class_name": "AssistantDO" }]
+      },
+      "migrations": [{ "tag": "v1", "new_sqlite_classes": ["AssistantDO"] }],
+      "triggers": { "crons": ["30 3 * * *"] }
+    },
+    "production": {
+      "name": "wa-assistant",
+      "vars": {
+        "ENVIRONMENT": "production",
+        "WA_PHONE_NUMBER_ID": "",
+        "GOOGLE_CLIENT_ID": ""
+      },
+      "durable_objects": {
+        "bindings": [{ "name": "ASSISTANT", "class_name": "AssistantDO" }]
+      },
+      "migrations": [{ "tag": "v1", "new_sqlite_classes": ["AssistantDO"] }],
+      "triggers": { "crons": ["30 3 * * *"] }
+    }
+  }
+}

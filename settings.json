@@ -1,0 +1,41 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(pnpm typecheck)",
+      "Bash(pnpm lint)",
+      "Bash(pnpm test:*)",
+      "Bash(pnpm test)",
+      "Bash(pnpm eval:*)",
+      "Bash(pnpm eval)",
+      "Bash(git status)",
+      "Bash(git diff:*)"
+    ],
+    "ask": [
+      "Bash(pnpm install:*)",
+      "Bash(pnpm add:*)",
+      "Bash(pnpm deploy:staging)",
+      "Bash(git commit:*)",
+      "Bash(git push:*)"
+    ],
+    "deny": [
+      "Read(./.env)",
+      "Read(./.env.*)",
+      "Read(./.dev.vars)",
+      "Read(./.dev.vars.*)",
+      "Read(./secrets/**)",
+      "Edit(./.env)",
+      "Edit(./.env.*)",
+      "Edit(./.dev.vars)",
+      "Edit(./.dev.vars.*)",
+      "Bash(wrangler secret:*)",
+      "Bash(npx wrangler secret:*)",
+      "Bash(pnpm wrangler secret:*)",
+      "Bash(wrangler deploy --env production:*)",
+      "Bash(npx wrangler deploy --env production:*)",
+      "Bash(pnpm wrangler deploy --env production:*)",
+      "Bash(wrangler rollback:*)",
+      "Bash(cat .dev.vars:*)",
+      "Bash(cat .env:*)"
+    ]
+  }
+}
