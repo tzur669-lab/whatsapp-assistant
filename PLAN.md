@@ -76,6 +76,7 @@ Priority order (when goals conflict, the higher one wins):
   - per minute: `8000 / prompt tokens` — at v2's ~1,700 tokens that was 4/min; v4's ~1,000 tokens gives 7/min.
   - per day: `200000 / prompt tokens` — ~199 messages at v4, and **one 156-case eval run costs ~157K, over three quarters of the day's budget.**
   Limits are per model, so comparing two models means two separate budgets. `pnpm eval` measures the prompt, paces itself from it, and stops with a clear message when `retry-after` shows the daily budget is exhausted instead of grinding through retries.
+- **[V] Prompt caching is partial, not free.** A 156-case run on `gpt-oss-20b` reported 31,488 of 164,719 prompt tokens cached — **19%**. The identical system prefix is not reliably reused, so prompt size must be budgeted as if nothing were cached.
 - No card is needed for the free plan.
 - Groq's contract forbids training on customer inputs and outputs. Inference is not retained by default, except logs kept up to 30 days for troubleshooting or abuse investigation. Zero Data Retention can be enabled in Data Controls.
 - `whisper-large-v3` is free at 2K RPD (for optional voice notes).
@@ -657,11 +658,12 @@ Each phase ends with its exit criteria met and tests green.
 - [x] Hebrew lexicon (`src/time/hebrew-lexicon.ts`), which doubles as the Phase 3 rules fallback.
 - [x] *Exit:* the §11.1 table passes, including property tests and lexicon cases. 222 tests green.
 
-**Phase 3 — NLU + evals**
+**Phase 3 — NLU + evals** — *code complete 2026-09-24; exit criteria NOT met*
 
-- [ ] Provider interface, Groq provider, prompt v1, Zod schema, rules fallback.
-- [ ] ≥150 eval cases (§11.2). Compare `gpt-oss-120b` vs `qwen3.8-27b` and record the result in §14.
-- *Exit:* eval thresholds met by the chosen model.
+- [x] Provider interface, Groq provider, prompt v4, Zod schema, rules fallback.
+- [x] 156 eval cases (92 he, 64 en) plus a harness with token-aware pacing, budget detection, and record/replay.
+- [x] Model comparison recorded in §14.
+- [ ] *Exit:* eval thresholds met. Best measured so far is `gpt-oss-120b` at 89.1% intent against a 97% threshold, and neither hard gate is at 100%. Certification is blocked on daily token budget, not on missing work.
 
 **Phase 4 — Reminders end to end**
 
@@ -842,6 +844,8 @@ Test each of these:
 - [ ] Tier 3 PIN: enable from day one?
 - [ ] When to buy the dedicated number (before or after Phase 4)?
 - [ ] [O] Encrypted export backup: yes/no, and which bucket?
+- [ ] Phase 3 thresholds are not met. Options: keep iterating on the prompt, relax §11.2's 97%/95% targets for a free-tier model, or accept a paid tier. The two hard gates (no invented slots, missing-slot detection) are not negotiable.
+- [ ] The 8 s NLU timeout is tight for the free tier: `qwen3.8-27b` exceeds it routinely and `gpt-oss-120b` exceeds it occasionally. Raise it, or treat a timeout as a fallback trigger only?
 
 ---
 
@@ -867,6 +871,13 @@ Test each of these:
 | 2026-09-24 | `part_of_day: night` shifts only hours 6–11 into the evening. "2 בלילה" is 02:00; reading it as 14:00 was a real bug caught by the §11.1 table |
 | 2026-09-24 | Phase 2 uses no date library. `Intl.DateTimeFormat` with a cached formatter covers the zone; DST gaps and folds are detected by verifying candidate instants round-trip to the requested wall time |
 | 2026-09-24 | Hebrew lexicon matches word edges with explicit `֐-׿` lookarounds — JavaScript's `` is ASCII-only and never fires between Hebrew letters. U+05BE MAQAF is excluded from nikud stripping |
+| 2026-09-24 | Slot schemas validate **shape**; each tool's `resolve` validates **completeness**. Every slot is optional at the schema layer, because rejecting an incomplete draft would make the prompt's "declare what is missing" rule unfollowable and put §11.2's 100% missing-slot threshold out of reach |
+| 2026-09-24 | The LLM tool catalog carries slot **types**, reflected from the Zod schemas, not just slot names. Without them the model guessed enum values and 11 of 156 cases were rejected by the validator. Deriving them means the prompt and the validator cannot drift |
+| 2026-09-24 | Groq's 200K daily token limit is **absent from the `x-ratelimit-*` headers** and appears only in the 429 body. `retry-after` jumping from seconds to minutes is the only header-visible signal, and is what `pnpm eval` uses to stop cleanly. Error bodies are still never read at runtime |
+| 2026-09-24 | Prompt v4 is ~1,000 tokens, down from v2's ~1,700. A unit test fails the build above 1,200, because prompt size is a throughput ceiling rather than a style question |
+| 2026-09-24 | Evals score date and time slots by the **instant they resolve to**, not by JSON shape — `meridiem: "am"` and `part_of_day: "morning"` encode the same time. A case that pins only a date is compared on the day alone, so the harness never asserts more than the case states |
+| 2026-09-24 | `pnpm eval --record` / `--replay` store and re-score raw drafts. The daily budget allows roughly one full run per model per day, so tuning the scoring must not cost a day's quota |
+| 2026-09-24 | Model comparison, prompt v4, 156 cases: `gpt-oss-120b` leads (89.1% intent on v2, best of the three); `gpt-oss-20b` scores 73.7% intent / 59.6% slots; `qwen3.8-27b` times out against the 8 s budget often enough to be unusable. **Primary = `gpt-oss-120b`, secondary = `gpt-oss-20b`.** Thresholds are not yet met — see §13 |
 
 ---
 

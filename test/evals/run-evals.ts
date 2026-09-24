@@ -14,7 +14,7 @@
  *
  * Needs GROQ_API_KEY in .dev.vars for the real providers.
  */
-import { readFileSync, existsSync } from 'node:fs';
+import { readFileSync, existsSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { parse as parseYaml } from 'yaml';
 import { createGroqProvider } from '../../src/nlu/groq.js';
@@ -62,6 +62,8 @@ type CaseResult = {
   issues?: string[];
   /** The rejected draft, for --verbose. Eval fixtures only, so there is no real data in it. */
   rejected?: unknown;
+  /** The provider's raw output, exactly as returned, for --record. */
+  raw?: unknown;
 };
 
 // -- thresholds (PLAN §11.2) --------------------------------------------------
@@ -77,12 +79,19 @@ const THRESHOLDS = {
 
 // -- entry point --------------------------------------------------------------
 
+type Recording = { provider: string; prompt: string; drafts: { id: string; draft: unknown }[] };
+
 async function main(): Promise<void> {
   const args = parseArgs(process.argv.slice(2));
   const cases = loadCases(args.filter);
 
   if (cases.length === 0) {
     fail('No eval cases matched. Check test/evals/cases.*.yaml.');
+  }
+
+  if (args.replay) {
+    replay(args.replay, cases, args.verbose);
+    return;
   }
 
   const provider = buildProvider(args);
@@ -142,6 +151,20 @@ Stopped after ${results.length} of ${cases.length} cases: the provider's daily
     process.stdout.write('.');
   }
   process.stdout.write('\n\n');
+
+  if (args.record) {
+    const recording: Recording = {
+      provider: provider.name,
+      prompt: PROMPT_VERSION,
+      // The provider's raw output, so a replay validates exactly what the
+      // live run validated.
+      drafts: results.map((r) => ({ id: r.id, draft: r.raw ?? null })),
+    };
+    writeFileSync(args.record, JSON.stringify(recording, null, 2), 'utf8');
+    process.stdout.write(`recorded ${recording.drafts.length} drafts to ${args.record}
+
+`);
+  }
 
   report(results, cases, provider.name, args.verbose);
 }
@@ -247,6 +270,7 @@ async function runCase(provider: NluProvider, testCase: EvalCase): Promise<CaseR
       error: 'schema_invalid',
       issues: validated.issues,
       rejected: response.draft,
+      raw: response.draft,
     };
   }
 
@@ -254,6 +278,7 @@ async function runCase(provider: NluProvider, testCase: EvalCase): Promise<CaseR
     ...score(testCase, validated.draft, latencyMs),
     promptTokens: response.usage.promptTokens,
     cachedTokens: response.usage.cachedTokens,
+    raw: response.draft,
   };
 }
 
@@ -313,6 +338,44 @@ export function score(testCase: EvalCase, draft: IntentDraft, latencyMs = 0): Ca
     cachedTokens: 0,
     actual: { intent: draft.intent, slots: actualSlots, missing: draft.missing },
   };
+}
+
+/** Re-score a recorded run. No network, no budget spent. */
+function replay(path: string, cases: EvalCase[], verbose: boolean): void {
+  const recording = JSON.parse(readFileSync(path, 'utf8')) as Recording;
+  const byId = new Map(recording.drafts.map((d) => [d.id, d.draft]));
+  const results: CaseResult[] = [];
+
+  for (const testCase of cases) {
+    const raw = byId.get(testCase.id);
+    const validated = raw === undefined || raw === null ? null : validateIntentDraft(raw);
+
+    if (!validated || !validated.ok) {
+      results.push({
+        id: testCase.id,
+        intentOk: false,
+        slotsOk: false,
+        missingOk: false,
+        inventedSlots: [],
+        latencyMs: 0,
+        promptTokens: 0,
+        cachedTokens: 0,
+        error: 'schema_invalid',
+        ...(validated && !validated.ok ? { issues: validated.issues, rejected: raw } : {}),
+      });
+      continue;
+    }
+    results.push(score(testCase, validated.draft));
+  }
+
+  process.stdout.write(
+    `replay of ${path} · ${recording.provider} · prompt ${recording.prompt} · ${results.length} cases
+` +
+      `latency is not measured on a replay
+
+`,
+  );
+  report(results, cases, `${recording.provider} (replay)`, verbose);
 }
 
 // -- reporting ----------------------------------------------------------------
@@ -459,6 +522,8 @@ function parseArgs(argv: string[]): {
   filter: string | null;
   rpm: number;
   verbose: boolean;
+  record: string | null;
+  replay: string | null;
 } {
   const get = (flag: string): string | null => {
     const i = argv.indexOf(flag);
@@ -473,10 +538,26 @@ function parseArgs(argv: string[]): {
     // Default 25, comfortably under the free tier's 30 RPM.
     rpm: Number.isFinite(rpm) && rpm >= 0 ? rpm : 25,
     verbose: argv.includes('--verbose'),
+    record: get('--record'),
+    replay: get('--replay'),
   };
 }
 
-/** True when two date/time slot pairs resolve to the same moment, or to the same refusal. */
+/**
+ * Compare a date/time slot pair by what it resolves to, not by its JSON shape.
+ *
+ * Only what the case actually pins is compared. A case that pins `date` alone
+ * is asserting the day, not that the model must find no time — so the day is
+ * compared and the hour is left alone. Asserting more than the case states
+ * would fail correct answers for a reason nobody wrote down.
+ */
+const NEUTRAL_TIME: TimeSpec = {
+  hour: 12,
+  minute: 0,
+  meridiem: 'unspecified',
+  part_of_day: 'unspecified',
+};
+
 function sameInstant(
   nowMs: number,
   expected: Record<string, unknown>,
@@ -484,22 +565,34 @@ function sameInstant(
   dateKey: string,
   timeKey: string,
 ): boolean {
-  const resolve = (slots: Record<string, unknown>) =>
+  const pinsTime = timeKey in expected;
+  const pinsDate = dateKey in expected;
+
+  const resolve = (slots: Record<string, unknown>, useNeutralTime: boolean) =>
     resolveWhen(
       {
         date: slots[dateKey] as DateSpec | undefined,
-        time: slots[timeKey] as TimeSpec | undefined,
+        // A duration already carries its own time; forcing one on it would
+        // change what is being compared.
+        ...(useNeutralTime && (slots[dateKey] as DateSpec | undefined)?.kind !== 'in_duration'
+          ? { time: NEUTRAL_TIME }
+          : { time: slots[timeKey] as TimeSpec | undefined }),
       },
       { nowMs },
     );
 
-  const e = resolve(expected);
-  const a = resolve(actual);
+  // Day only: compare the calendar date, with the same neutral hour on both sides.
+  const useNeutral = pinsDate && !pinsTime;
+  const e = resolve(expected, useNeutral);
+  const a = resolve(actual, useNeutral);
 
-  if (e.kind === 'resolved' && a.kind === 'resolved') return e.utcMs === a.utcMs;
-  // Both refusing for the same reason is agreement too: the case is asserting
-  // that this input is not resolvable, and the model produced something that
-  // also is not.
+  if (e.kind === 'resolved' && a.kind === 'resolved') {
+    return useNeutral
+      ? e.local.year === a.local.year && e.local.month === a.local.month && e.local.day === a.local.day
+      : e.utcMs === a.utcMs;
+  }
+  // Both refusing for the same reason is agreement too: the case asserts this
+  // input is not resolvable, and the model produced something that also is not.
   if (e.kind === 'clarify' && a.kind === 'clarify') return e.rule === a.rule;
   return false;
 }
