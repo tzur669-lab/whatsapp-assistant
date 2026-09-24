@@ -119,6 +119,56 @@ export class Repository {
     return typeof value === 'number' ? value : null;
   }
 
+  // -- counters and settings (PLAN §6.8, §6.9) -------------------------------
+
+  /** Month key for the counters table, in the user's zone rather than UTC. */
+  static monthKey(atMs: number, timeZone = 'Asia/Jerusalem'): string {
+    const parts = new Intl.DateTimeFormat('en-CA', {
+      timeZone,
+      year: 'numeric',
+      month: '2-digit',
+    }).formatToParts(new Date(atMs));
+    const year = parts.find((p) => p.type === 'year')?.value ?? '0000';
+    const month = parts.find((p) => p.type === 'month')?.value ?? '00';
+    return `${year}-${month}`;
+  }
+
+  /** Add to a counter for the given month, creating the row if needed. */
+  bumpCounter(month: string, field: 'wa_sent' | 'llm_calls' | 'llm_tokens' | 'fallbacks', by = 1): number {
+    this.sql.exec(
+      `INSERT INTO counters (month, wa_sent, llm_calls, llm_tokens, fallbacks)
+       VALUES (?, 0, 0, 0, 0)
+       ON CONFLICT(month) DO NOTHING`,
+      month,
+    );
+    const rows = this.sql.exec(
+      `UPDATE counters SET ${field} = ${field} + ? WHERE month = ? RETURNING ${field} AS value`,
+      by,
+      month,
+    );
+    const value = rows[0]?.['value'];
+    return typeof value === 'number' ? value : 0;
+  }
+
+  counters(month: string): { waSent: number; llmCalls: number; llmTokens: number; fallbacks: number } {
+    const row = this.sql.exec('SELECT * FROM counters WHERE month = ?', month)[0];
+    return {
+      waSent: Number(row?.['wa_sent'] ?? 0),
+      llmCalls: Number(row?.['llm_calls'] ?? 0),
+      llmTokens: Number(row?.['llm_tokens'] ?? 0),
+      fallbacks: Number(row?.['fallbacks'] ?? 0),
+    };
+  }
+
+  /** `/pause` and `/resume`. Stored, so it survives a redeploy. */
+  isPaused(): boolean {
+    return this.getSetting('paused') === '1';
+  }
+
+  setPaused(paused: boolean): void {
+    this.setSetting('paused', paused ? '1' : '0');
+  }
+
   audit(entry: {
     ts: number;
     principal?: string | null;
