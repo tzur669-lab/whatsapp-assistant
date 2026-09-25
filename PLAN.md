@@ -1392,6 +1392,68 @@ Test each of these:
 - Canary: a transcript pushed through the **real** logger appears in neither the
   log nor the database.
 
+### 11.9 First full corpus run (2026-09-25, `qwen3.8-27b`, prompt v4)
+
+The first time all 156 cases have been measured in one corpus. It took three
+attempts, `--record` checkpointing and two `--resume` passes, which is what §16
+B10's arithmetic predicted.
+
+| Metric | Result | Threshold |
+|---|---|---|
+| no invented slots | 99.4% | 100% — **hard gate** |
+| missing-slot recall | 89.7% | 100% — **hard gate** |
+| intent accuracy | 90.4% | 97% |
+| exact slot match | 89.7% | 95% |
+| off-topic → unsupported | 97.1% | 95% ✅ |
+| p95 latency | 8,009 ms | 3,000 ms |
+
+**Read the headline numbers with the failure breakdown, not instead of it.** Of
+156 cases, 11 never received an answer at all — timeouts and rate limits — and
+they are scored as failures of everything. Of the 145 that did answer:
+
+- **141 produced a schema-valid draft, and every one of them had the right
+  intent.** Intent accuracy on answered-and-valid cases is 100%.
+- **140 of those 141 matched on slots.** One did not (`en-typo-002`).
+- **One invented a slot**, which is a hard-gate failure and the most important
+  single line in this table.
+
+#### The four schema rejections were one mistake, made four times
+
+`he-cal-030`, `he-inj-010`, `en-cal-030` and `en-inj-010` — the same two cases in
+both languages. All four understood the request completely: intent
+`calendar.delete_event`, the right date, usable `query_variants`. All four were
+thrown away because they also emitted **`attendees`**, which
+`calendarDeleteEventSlots` does not declare and `.strict()` therefore rejects.
+
+That is the schema working as specified. It is also a correct answer being
+discarded over a key the code never reads — and this project has already
+reasoned through this exact trade once, in `intent-schema.ts`, where the
+`unsupported` slots were deliberately widened because "rejecting the draft over
+an ignored field would punish the right answer". Whether the same applies per
+tool is now an open decision in §13 rather than a change made in passing,
+because touching `slot-schemas.ts` changes the catalog and therefore the prompt.
+
+#### The one invented slot
+
+`he-cal-013`, "תקבע פגישה מחר ב-9 לחצי שעה". The model emitted
+`title: "פגישה"` — the generic noun from the request, used as the event's name.
+It is not fabricated information so much as an echo, which is exactly why it is
+worth failing: the rule is absolute because a calendar full of events called
+"פגישה" is the outcome it exists to prevent.
+
+#### Latency is not measured here, it is pinned
+
+p95 came back at 8,009 ms against a request timeout of 8,000 ms, which means the
+timeout is the number being reported and the model's real p95 is unknown and
+higher. That is what settled §13's open question: the eval now uses 30 s and
+production keeps 8 s, so the next run measures accuracy and speed as two
+separate things.
+
+#### What this does not yet decide
+
+§4 chooses between `gpt-oss-120b` and `qwen3.8-27b` by eval, and both have to be
+measured on the same prompt version for that to mean anything. This is one half.
+The other needs a day whose 200K rolling window is untouched.
 ---
 
 ## 12. Risk register
@@ -1417,6 +1479,7 @@ Test each of these:
 - [x] R5 unlikely-hour window: **00:00–05:59** (2026-09-24).
 - [x] R9: "יום X הבא" means the **nearest future X** (2026-09-24).
 - [x] Default event duration: **none — CLARIFY instead** (2026-09-24). Default reminder text when none given is still open.
+- [ ] Should a per-tool slot schema **strip** an unknown key instead of rejecting the draft? The first full corpus run lost four otherwise-perfect answers to one mistake made four times: `attendees` emitted on a `calendar.delete_event` draft, which `.strict()` rejects and which no code would ever have read (§11.9). `intent-schema.ts` already made this trade once for `unsupported`, on the grounds that "rejecting the draft over an ignored field would punish the right answer". The counter-argument is that strict is what makes LLM output safe to act on, and a rule with an exception is a rule people stop trusting. Decide with B6/B8, since all three change the prompt.
 - [ ] Should moving or deleting **assistant-created** events drop to Tier 1 (execute + Undo)?
 - [ ] Tier 3 PIN: enable from day one?
 - [ ] When to buy the dedicated number (before or after Phase 4)?
@@ -1552,6 +1615,9 @@ Test each of these:
 | 2026-09-25 | A 29 February birthday is marked on the 28th in non-leap years. Skipping it three years in four is the feature quietly not working for the person most likely to notice |
 | 2026-09-25 | The command surface has drift guards, because the list lives in four places and grew by four today. The first thing they did was catch `/birthday` missing from `/help` |
 | 2026-09-25 | The eval uses a 30 s request timeout and production keeps 8 s. A run that cuts the model off reports those cases as parse failures, which makes the accuracy number meaningless; how fast the model is has its own threshold measured from the same run |
+| 2026-09-25 | First complete 156-case corpus run in the project's history (§11.9), against `qwen3.8-27b` on prompt v4. Every schema-valid draft had the right intent; the headline 90.4% is what eleven unanswered cases do to a denominator |
+| 2026-09-25 | Four of the run's failures were one mistake made four times — `attendees` on a `calendar.delete_event` draft — which is `.strict()` doing its job and also a correct answer being discarded over a key nothing reads. Logged as a §13 decision rather than changed in passing, because it touches the prompt |
+| 2026-09-25 | The one hard-gate failure, `he-cal-013`, invented `title: "פגישה"` from the request's own noun. Worth failing precisely because it is an echo rather than a fabrication: a calendar full of events called "פגישה" is what the rule exists to prevent |
 
 ---
 
@@ -1679,24 +1745,17 @@ which biases spelling for names and times at no cost (PLAN §13, still unmeasure
 *Do:* try the prompt first, against recorded clips via `--replay`. Reach for a
 second provider only if that is not enough.
 
-**B10. Phase 3 thresholds still unmet, and the corpus costs more than a day's
-budget to run.** 89.1% intent against a 97% target, unchanged since the prompt
-work — and the reason it has never been re-measured is now understood rather
-than guessed at.
+**B10. Phase 3 certification.** ⏳ **Half done, 2026-09-25.** The first complete
+156-case run in the project's history finished against `qwen3.8-27b` — see §11.9
+for the numbers and, more usefully, for what they mean once the eleven cases that
+never got an answer are set aside. Short version: every valid draft had the right
+intent, one hard-gate failure is real (`he-cal-013` invented a title), and four
+schema rejections were one mistake made four times.
 
-The arithmetic: 156 cases × ~993 prompt tokens = **~155K of Groq's 200K per
-day**, and that cap is a *rolling* window rather than a midnight reset, refilling
-at about 139 tokens a minute — one case every seven minutes. So the corpus can
-be run in one twenty-minute burst **only on a day when nothing else has spent
-it**, and three attempts on 2026-09-25 (9, 27 and 0 cases) each started from a
-window the previous attempt had already drained.
-
-*Do:* run it first thing on a day with an untouched window. `--record` now
-checkpoints per case and `--resume` finishes what a stopped run started, and
-after the first daily exhaustion the harness drops to the refill rate instead of
-re-emptying the window the moment it fills. Failing that, the lasting fix is a
-smaller prompt: at ~500 tokens the whole corpus would cost 78K and fit
-comfortably inside a partly-spent day.
+Still outstanding: the same corpus against `gpt-oss-120b`, which §4 needs for the
+model comparison and which requires a day whose 200K rolling window is untouched.
+`--record` and `--resume` now make that a run that can be finished rather than
+restarted.
 
 **B11. Nothing is measured end to end.** ✅ **Done 2026-09-25** — see §6.14. One
 `turn` line per message with a millisecond figure per stage, redaction-safe by
