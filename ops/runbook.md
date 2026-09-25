@@ -29,7 +29,7 @@ SQLite schema, the reminder alarm, and every confirmation gate.
 - The alarm itself fires per reminder, not on a schedule.
 
 **Chat commands** — `/help`, `/status`, `/digest`, `/shabbat`, `/ical`,
-`/pause`, `/resume`, `/budget`, `/connect google`, `/ping`.
+`/birthday`, `/pause`, `/resume`, `/budget`, `/connect google`, `/ping`.
 
 ## Deploying to staging
 

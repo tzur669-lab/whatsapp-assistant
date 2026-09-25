@@ -24,6 +24,7 @@ import type { ClaimedReminder } from '../tools/reminder-store.js';
 import { PendingActions } from '../confirm/pending.js';
 import { OpenQuestions } from '../confirm/questions.js';
 import { IcalStore } from '../ical/store.js';
+import { BirthdayStore } from '../core/birthdays.js';
 import { refreshFeed } from '../ical/refresh.js';
 import { UndoActions } from '../confirm/undo.js';
 import { GoogleStore } from '../google/store.js';
@@ -60,6 +61,7 @@ export class AssistantDO implements DurableObject {
   private readonly pending: PendingActions;
   private readonly questions: OpenQuestions;
   private readonly ical: IcalStore;
+  private readonly birthdays: BirthdayStore;
   private readonly deferred: UndoActions;
   private readonly google: GoogleStore;
   private readonly log = createLogger({ component: 'assistant_do' });
@@ -87,6 +89,7 @@ export class AssistantDO implements DurableObject {
     this.pending = new PendingActions(this.sql, now);
     this.questions = new OpenQuestions(this.sql, now);
     this.ical = new IcalStore(this.sql, now);
+    this.birthdays = new BirthdayStore(this.sql, now);
     this.deferred = new UndoActions(this.sql, now);
     this.google = new GoogleStore(this.sql, now, () =>
       parseKeyring(this.env as unknown as Record<string, string | undefined>),
@@ -357,6 +360,7 @@ export class AssistantDO implements DurableObject {
       lang: 'he',
       reminders: this.reminders,
       ical: this.ical,
+      birthdays: this.birthdays,
       log: this.log,
       ...(this.calendarClient() ? { calendar: this.calendarClient()! } : {}),
     });
@@ -552,6 +556,7 @@ export class AssistantDO implements DurableObject {
       pending: this.pending,
       questions: this.questions,
       ical: this.ical,
+      birthdays: this.birthdays,
       fetchImpl: this.fetchImpl,
       deferred: this.deferred,
       nlu: buildNluChain({ groqApiKey: this.env.GROQ_API_KEY, fetchImpl: this.fetchImpl }),

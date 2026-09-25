@@ -33,6 +33,7 @@ const INVOCATIONS: Record<Command['kind'], string> = {
   digest: '/digest',
   shabbat: '/shabbat',
   ical: '/ical',
+  birthday: '/birthday',
 };
 
 /**

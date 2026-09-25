@@ -29,6 +29,7 @@ import type { OpenQuestion, OpenQuestions } from '../confirm/questions.js';
 import type { UndoActions } from '../confirm/undo.js';
 import type { GoogleStore } from '../google/store.js';
 import type { IcalStore } from '../ical/store.js';
+import type { BirthdayStore } from './birthdays.js';
 import { refreshFeed } from '../ical/refresh.js';
 import { checkFeedUrl } from '../ical/url.js';
 import type { CalendarClient } from '../google/calendar.js';
@@ -67,6 +68,8 @@ export type Services = {
   publicBaseUrl?: string;
   /** Subscribed iCal feeds (§6.15). Absent in tests that predate them. */
   ical?: IcalStore;
+  /** The local birthday list (§6.16). */
+  birthdays?: BirthdayStore;
   /** Supplied by the platform so a feed can be fetched. */
   fetchImpl?: typeof fetch;
 };
@@ -506,6 +509,9 @@ async function renderCommand(command: Command, deps: PipelineDeps, now: number):
     case 'ical':
       return icalSetting(command, deps, now);
 
+    case 'birthday':
+      return birthdaySetting(command, deps);
+
     case 'shabbat':
       if (command.set === null) {
         return repo.restHoldEnabled() ? statusText.restHoldUnchanged : statusText.restHoldOff;
@@ -619,6 +625,37 @@ async function icalSetting(
     return statusText.icalFetchFailed(result.errorCode ?? 'E_ICAL_UNKNOWN');
   }
   return result.events === 0 ? statusText.icalEmpty : statusText.icalSubscribed(result.events);
+}
+
+/** The local birthday list (PLAN §6.16). Deterministic, never the parser. */
+function birthdaySetting(
+  command: Extract<Command, { kind: 'birthday' }>,
+  deps: PipelineDeps,
+): string {
+  const store = deps.services?.birthdays;
+  if (!store) return statusText.notAvailableYet;
+
+  switch (command.action.kind) {
+    case 'malformed':
+      return statusText.birthdayShape;
+
+    case 'list':
+      return statusText.birthdayList(store.list(deps.principal));
+
+    case 'remove':
+      return store.remove(deps.principal, command.action.name)
+        ? statusText.birthdayRemoved(command.action.name)
+        : statusText.birthdayNotFound(command.action.name);
+
+    case 'add': {
+      const { name, day, month } = command.action;
+      const added = store.add({ principal: deps.principal, name, day, month });
+      if (added.ok) return statusText.birthdayAdded(name, day, month);
+      return added.reason === 'invalid_date'
+        ? statusText.birthdayBadDate
+        : statusText.birthdayListFull;
+    }
+  }
 }
 
 /** Matches the TTL in `GoogleStore`. */

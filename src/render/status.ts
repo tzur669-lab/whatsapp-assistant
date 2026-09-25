@@ -176,6 +176,38 @@ export const statusText = {
     }
   },
 
+  // -- birthdays (PLAN §6.16) -------------------------------------------------
+
+  birthdayAdded(name: string, day: number, month: number): string {
+    return `נשמר: יום ההולדת של ${isolate(name)} ב-${isolateLtr(`${day}.${month}`)}. ` +
+      'תופיע תזכורת בתקציר היומי באותו יום.';
+  },
+
+  birthdayRemoved(name: string): string {
+    return `${isolate(name)} הוסר/ה מרשימת ימי ההולדת.`;
+  },
+
+  birthdayNotFound(name: string): string {
+    return `לא נמצא/ה ${isolate(name)} ברשימה.`;
+  },
+
+  birthdayList(entries: ReadonlyArray<{ name: string; day: number; month: number }>): string {
+    if (entries.length === 0) return statusText.birthdayEmpty;
+    const lines = entries.map(
+      (entry) => `• ${isolateLtr(`${entry.day}.${entry.month}`)} — ${isolate(entry.name)}`,
+    );
+    return ['ימי הולדת:', '', ...lines].join('\n');
+  },
+
+  birthdayEmpty: `אין ימי הולדת ברשימה. להוספה: ${isolate('/birthday דנה 14.3')}.`,
+
+  birthdayShape: `הפורמט הוא ${isolate('/birthday דנה 14.3')} — שם ואחריו יום.חודש. ` +
+    `למחיקה: ${isolate('/birthday מחק דנה')}.`,
+
+  birthdayBadDate: 'התאריך הזה לא קיים. צריך יום וחודש תקינים, למשל ⁨14.3⁩.',
+
+  birthdayListFull: 'רשימת ימי ההולדת מלאה.',
+
   icalFetchFailed(errorCode: string): string {
     return `לא הצלחתי להוריד את היומן (${isolate(errorCode)}). כדאי לוודא שהקישור פתוח לכל מי שמחזיק בו.`;
   },

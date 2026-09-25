@@ -18,7 +18,17 @@ export type Command =
   /** `/shabbat`, `/shabbat on`, `/shabbat off` (PLAN §6.13). Off by default. */
   | { kind: 'shabbat'; set: boolean | null }
   /** `/ical <url>`, `/ical off`, `/ical` (PLAN §6.15). */
-  | { kind: 'ical'; set: string | 'off' | null };
+  | { kind: 'ical'; set: string | 'off' | null }
+  /** `/birthday`, `/birthday <name> <d.m>`, `/birthday מחק <name>` (PLAN §6.16). */
+  | {
+      kind: 'birthday';
+      action:
+        | { kind: 'list' }
+        | { kind: 'add'; name: string; day: number; month: number }
+        | { kind: 'remove'; name: string }
+        /** Recognised as `/birthday`, but not in a shape that says what to do. */
+        | { kind: 'malformed' };
+    };
 
 const COMMANDS: ReadonlyArray<readonly [RegExp, Command]> = [
   [/^\/help$|^עזרה$/i, { kind: 'help' }],
@@ -38,12 +48,45 @@ const DIGEST = /^\/digest(?:\s+(off|\d{1,2}))?$/i;
 /** The argument is a URL, so it is captured loosely here and validated in `ical/url.ts`. */
 const ICAL = /^\/ical(?:\s+(\S{1,2100}))?$/i;
 
+const BIRTHDAY = /^\/(?:birthday|יומולדת)(?:\s+(.{1,120}))?$/i;
+/** `מחק`/`הסר`/`remove`/`delete`, then the name. */
+const BIRTHDAY_REMOVE = /^(?:מחק|הסר|remove|delete|off)\s+(.{1,60})$/i;
+/** A trailing `14.3` or `14/3`. The name is whatever comes before it. */
+const BIRTHDAY_DATE = /^(.{1,60}?)\s+(\d{1,2})[./](\d{1,2})$/;
+
+function birthdayCommand(text: string): Command | null {
+  const match = BIRTHDAY.exec(text);
+  if (!match) return null;
+
+  const argument = match[1]?.trim();
+  if (!argument) return { kind: 'birthday', action: { kind: 'list' } };
+
+  const removal = BIRTHDAY_REMOVE.exec(argument);
+  if (removal?.[1]) return { kind: 'birthday', action: { kind: 'remove', name: removal[1].trim() } };
+
+  const dated = BIRTHDAY_DATE.exec(argument);
+  if (dated?.[1] && dated[2] && dated[3]) {
+    return {
+      kind: 'birthday',
+      action: { kind: 'add', name: dated[1].trim(), day: Number(dated[2]), month: Number(dated[3]) },
+    };
+  }
+
+  // `/birthday דנה` with no date is still recognisably this command, so it is
+  // answered with the shape it should have taken. Falling through to the parser
+  // would answer "not understood", which tells the user nothing they can use.
+  return { kind: 'birthday', action: { kind: 'malformed' } };
+}
+
 /** Returns the command for a message, or null if it is free text. */
 export function matchCommand(text: string): Command | null {
   const trimmed = text.trim();
   for (const [pattern, command] of COMMANDS) {
     if (pattern.test(trimmed)) return command;
   }
+
+  const birthday = birthdayCommand(trimmed);
+  if (birthday) return birthday;
 
   const ical = ICAL.exec(trimmed);
   if (ical) {

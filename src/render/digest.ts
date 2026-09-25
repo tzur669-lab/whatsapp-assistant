@@ -22,11 +22,19 @@ export type DigestParts = {
   reminders: readonly ReminderView[];
   /** Due and not delivered — held over a shut window, most likely (§6.7). */
   overdue: readonly ReminderView[];
+  /** Names with a birthday today (§6.16). */
+  birthdays: readonly string[];
 };
 
 export const digestText = {
   compose(parts: DigestParts, lang: Lang): string {
     const sections: string[] = [greeting(parts.hour, lang)];
+
+    if (parts.birthdays.length > 0) {
+      // First. It is the one line that is about a person rather than a task,
+      // and the one the user would be sorry to scroll past.
+      sections.push(birthdayLine(parts.birthdays, lang));
+    }
 
     if (parts.events.length > 0) {
       sections.push(eventText.list(parts.events, lang));
@@ -45,6 +53,12 @@ export const digestText = {
     return sections.join('\n\n');
   },
 };
+
+function birthdayLine(names: readonly string[], lang: Lang): string {
+  const list = names.map(isolate).join(', ');
+  if (lang === 'en') return names.length === 1 ? `Birthday today: ${list}` : `Birthdays today: ${list}`;
+  return names.length === 1 ? `יום הולדת היום: ${list}` : `ימי הולדת היום: ${list}`;
+}
 
 function section(header: string, views: readonly ReminderView[], lang: Lang): string {
   const lines = views.map(

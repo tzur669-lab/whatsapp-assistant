@@ -23,6 +23,7 @@
 import type { CalendarClient, CalendarEvent } from '../google/calendar.js';
 import type { ReminderStore, Reminder } from '../tools/reminder-store.js';
 import type { IcalStore } from '../ical/store.js';
+import type { BirthdayStore } from './birthdays.js';
 import { asCalendarEvents } from '../ical/merge.js';
 import type { Logger } from '../security/redact.js';
 import type { Lang } from '../render/format-time.js';
@@ -42,6 +43,8 @@ export type DigestContext = {
   calendar?: CalendarClient;
   /** A subscribed iCal feed, merged in beside Google's events (§6.15). */
   ical?: IcalStore;
+  /** The local birthday list (§6.16). */
+  birthdays?: BirthdayStore;
   log: Logger;
 };
 
@@ -52,9 +55,15 @@ export async function buildDigest(ctx: DigestContext): Promise<string | null> {
   const upcoming = ctx.reminders.listUpcoming(ctx.principal, MAX_REMINDERS);
   const today = upcoming.filter((reminder) => reminder.dueAtUtc <= endOfDay);
   const overdue = ctx.reminders.listOverdue(ctx.principal, MAX_REMINDERS);
+  const birthdays = ctx.birthdays?.on(ctx.principal, ctx.nowMs) ?? [];
   const events = await todaysEvents(ctx, endOfDay);
 
-  if (events.length === 0 && today.length === 0 && overdue.length === 0) {
+  if (
+    events.length === 0 &&
+    today.length === 0 &&
+    overdue.length === 0 &&
+    birthdays.length === 0
+  ) {
     // Silence is the feature. A digest that says "nothing today" every day is
     // a notification the user learns to dismiss, and then so is the real one.
     ctx.log.info('digest_skipped', { reason: 'nothing_to_say' });
@@ -65,6 +74,7 @@ export async function buildDigest(ctx: DigestContext): Promise<string | null> {
     events: events.length,
     reminders: today.length,
     overdue: overdue.length,
+    birthdays: birthdays.length,
   });
 
   return digestText.compose(
@@ -73,6 +83,7 @@ export async function buildDigest(ctx: DigestContext): Promise<string | null> {
       events,
       reminders: today.map(view),
       overdue: overdue.map(view),
+      birthdays: birthdays.map((entry) => entry.name),
     },
     ctx.lang,
   );

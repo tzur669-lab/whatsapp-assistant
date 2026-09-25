@@ -563,6 +563,7 @@ Policy is code plus static config. **Nothing in chat can change it.**
 | `audit_log` | ts, principal, tool, tier, decision, input_digest, outcome, external_ref | 1 year |
 | `counters` | month, wa_sent, llm_calls, llm_tokens, fallbacks | 1 year |
 | `settings` | default_event_minutes, rule toggles (R5/R6/R9), paused, tier3_pin_hash | permanent |
+| `birthdays` | id PK, principal, name, day, month, year nullable — see §6.16 | until removed |
 | `window_state` | principal, last_inbound_at | permanent |
 
 - **Migrations:** `migrations/NNNN_name.sql`, applied at DO startup inside a transaction. The schema version is stored in `settings`.
@@ -1014,6 +1015,33 @@ look like a feed with nothing in it. `/ical` reports the last error.
 Not many. A second would need a way to name them, to remove one of them, and to
 say which feed a given event came from — none of which is worth building before
 the first one has been used in anger.
+### 6.16 Birthdays
+
+`/birthday דנה 14.3` adds one, `/birthday` lists them, `/birthday מחק דנה`
+removes one. On the day itself the digest leads with it — the one line in a
+morning brief that is about a person rather than a task.
+
+**Local, not from Google Contacts.** Contacts would mean a third OAuth scope, a
+§14 security decision, and would hand this assistant every address the user owns
+in order to answer a question about eight of them. A list the user types is a
+worse feature and a far better trade, and it is written down here rather than
+left as an omission somebody later "fixes".
+
+**The year is optional**, because most people know the date and not the year, and
+a field that has to be filled is a feature that mostly goes unused.
+
+**29 February is marked on the 28th** in years that have no 29th. It is the
+commoner practice and the only reading that happens every year; skipping it three
+years in four would be the feature quietly not working for exactly the person
+most likely to notice.
+
+**A name with no date is answered with the shape it should have had.** It is
+still recognisably this command, and falling through to the parser would answer
+"לא הבנתי" — which tells the user nothing they can use.
+
+Names are message content: stored, never logged.
+
+
 ---
 
 ## 7. Security
@@ -1520,6 +1548,9 @@ Test each of these:
 | 2026-09-25 | A failed feed refresh leaves the cached events alone. Yesterday's timetable is a better answer than an empty calendar, and unreachable must not look like empty |
 | 2026-09-25 | One feed, not many. A second needs naming, removal and provenance, none of which is worth building before the first has been used |
 | 2026-09-25 | The cold-start CPU test is a catastrophe check, not a ratchet. A fixed millisecond bound flaked under parallel test load, and a ratio against SHA-256 did not fix it either — pure CPU and native SQLite I/O do not respond to contention alike. The tight number lives in `pnpm bench` |
+| 2026-09-25 | Birthdays are a local list, not Google Contacts. A third OAuth scope to hand over every address the user owns, in order to answer a question about eight of them, is the wrong trade |
+| 2026-09-25 | A 29 February birthday is marked on the 28th in non-leap years. Skipping it three years in four is the feature quietly not working for the person most likely to notice |
+| 2026-09-25 | The command surface has drift guards, because the list lives in four places and grew by four today. The first thing they did was catch `/birthday` missing from `/help` |
 
 ---
 
@@ -1674,9 +1705,11 @@ to be the security boundary — a URL the *user* types and the Worker then fetch
 is a different danger from one Meta hands us, and redirects are re-validated hop
 by hop for exactly that reason.
 
-**B14. Birthdays and contacts.** Common in comparable bots. Needs a Google
-Contacts scope — a §14 security decision first — or a local list with no new
-scope at all. The local list is the better trade.
+**B14. Birthdays and contacts.** ✅ **Done 2026-09-25** — see §6.16. The local
+list, as the entry judged: no new scope, and Google Contacts stays out. Worth
+recording that this was the weakest item on the list — a list the user types by
+hand has real setup cost and modest payoff, and it is here because it completes
+the backlog rather than because it earns its place.
 
 ### Deliberately not doing
 

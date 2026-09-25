@@ -10,6 +10,7 @@ import google0004 from '../../migrations/0004_google.sql';
 import questions0005 from '../../migrations/0005_questions.sql';
 import outbound0006 from '../../migrations/0006_outbound.sql';
 import ical0007 from '../../migrations/0007_ical.sql';
+import birthdays0008 from '../../migrations/0008_birthdays.sql';
 
 export const MIGRATIONS = [
   { id: 1, sql: init0001 },
@@ -19,4 +20,5 @@ export const MIGRATIONS = [
   { id: 5, sql: questions0005 },
   { id: 6, sql: outbound0006 },
   { id: 7, sql: ical0007 },
+  { id: 8, sql: birthdays0008 },
 ] as const;
