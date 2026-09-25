@@ -1594,6 +1594,20 @@ Assembled from a review of the code as it stands plus a survey of open-source
 personal WhatsApp assistants and WhatsApp Cloud API field reports (§15).
 Ordered by what breaks first, not by what is most interesting to build.
 
+**Status, end of 2026-09-25.** Ten of fourteen are done: B1, B2, B3, B4, B5, B7,
+B11, B12, B13, B14. Of the rest:
+
+- **B6** (recurring reminders) and **B8** (edit after the Undo window) both need a
+  new slot, which changes the tool catalog and therefore the prompt. Doing that
+  today would invalidate the model comparison §4 calls for, since the two
+  candidates have to be measured on the same prompt version. They are the first
+  two things to build once that comparison is settled.
+- **B9** (Hebrew ASR) needs recorded clips to measure against. Changing the
+  Whisper prompt without measuring would be a guess dressed as an improvement.
+- **B10** (Phase 3 certification) is the arithmetic below, now partly answered:
+  the first complete 156-case run in the project's history finished on
+  2026-09-25 against `qwen3.8-27b`.
+
 ### P0 — broken, or will break in production
 
 **B1. Nothing writes `outbound_messages`, and status webhooks are discarded.**
