@@ -1041,6 +1041,130 @@ still recognisably this command, and falling through to the parser would answer
 
 Names are message content: stored, never logged.
 
+### 6.17 Calls, and the device companion [R]
+
+"תתקשר לדוד דני" is the first thing asked of this assistant that the Worker
+**cannot do at all**. It runs in a datacenter. It has no contact list, no SIM and
+no dialer, and no message arriving at it can acquire one. This is not a
+permission that was withheld; the capability needs a second piece of software,
+somewhere else.
+
+**Four approaches, three refused**
+
+| Approach | Why not |
+|---|---|
+| WhatsApp Business Calling API | The **recipient** grants the permission, not the caller: one request a day, two in seven days, 72 hours to use it, and four unanswered calls revoke it automatically. Built for support callbacks. It cannot ring a family member who has never opted in to my WABA, and it needs a payment method |
+| Twilio / Vonage bridge | Works, and costs money forever — an Israeli number plus per-minute. It also dials *from* a number the other side does not recognise, and adds a paid processor that can place calls on my behalf. A large new blast radius for one convenience |
+| A contact card in the reply | Free, one tap, possible today. But the Worker must already know the number, so it reaches only people typed in by hand — §6.16's weakest feature, multiplied by four hundred |
+| Google Contacts (People API) | A third OAuth scope, and it hands over every address I own to answer a question about one. §14 refused this once already, for birthdays |
+
+**The design: the phone resolves the name**
+
+```
+ "תתקשר לדוד דני"
+      │ WhatsApp → Worker → DO
+      ▼
+ NLU → IntentDraft { intent: "calls.place", slots: { query_variants: [...] } }
+      │ policy, rate limit, dispatch row (expires in 2 min)
+      ▼
+ FCM push — an opaque dispatch id, nothing else
+      ▼
+ ┌──── companion app (paired Android device) ────────────────────┐
+ │ GET /device/dispatch/:id   (its own token)  → query_variants  │
+ │ match against the device's own contacts     → 0 | 1 | many    │
+ │ full-screen notification: name + RESOLVED NUMBER              │
+ │ tap → ACTION_CALL on my SIM, my caller id, my minutes         │
+ │ POST /device/report  { matched, outcome }  — no name, no number│
+ └───────────────────────────────────────────────────────────────┘
+      ▼
+ one WhatsApp reply, rendered by code
+```
+
+**Invariant 5 still holds.** "Code finds targets" — the code matching
+`query_variants` against a contact list runs on the phone rather than in the DO,
+but it is still code, and the LLM still supplies words rather than a number. The
+boundary moved. It did not open.
+
+**The device's contact list is the allowlist.** A call is placed only to a
+contact that already exists on the phone. A number written in the message itself
+("תתקשר ל-05…") is **refused**, and that is the most important rule in this
+section: no text — mine, forwarded, injected or misheard — can name a destination
+that was not already mine. It also keeps phone numbers out of the draft, out of
+`slots_json`, and out of every code path that could log one.
+
+**No number ever reaches the Worker.** The device reports a count and an outcome,
+never a match: `{ dispatch_id, matched: 0 | 1 | many, outcome }`. Names and
+numbers stay on the phone — out of the DO, out of the audit log, out of Meta.
+
+**Nor does the name reach Google.** The FCM message carries an opaque dispatch id
+and nothing else; the app then fetches the dispatch over HTTPS with its own
+token. One extra round trip buys keeping "דוד דני" out of a third processor,
+which is §7.1's "send minimal content" applied to a new one.
+
+**The tap on the phone is the Tier 3 factor.** A call is irreversible and
+external-facing, so §6.4 places it at Tier 3 — but the typed code Tier 3 normally
+demands would be slower than dialling by hand, and a safety measure that loses to
+the manual path does not get used. The device's own screen replaces it, and is
+strictly stronger: it is **out of band** from the channel an injection arrives
+on, it happens on hardware an attacker does not hold, and it shows the
+**resolved number**, which is the single fact that decides whether the right
+person is about to ring. As with every Tier 3 action, the Worker offers no
+confirm button at all (§6.5).
+
+**Why a full-screen notification and not a silent dial.** Android has forbidden
+background activity starts since 10, so an app woken by a push cannot simply open
+the dialer. The reliable pattern is a high-priority FCM message and a full-screen
+notification. That platform restriction and the Tier 3 requirement happen to ask
+for the same thing, so the tap is a design, not a workaround.
+
+**Pairing** follows §6.6's one-time-link shape exactly. `/pair` replies with a
+single-use 256-bit code, 10-minute TTL; the app exchanges it at
+`POST /device/pair` for a device token, stored only as a keyed hash and compared
+in constant time. A device token authorizes fetching a dispatch and reporting an
+outcome — **nothing else**. It cannot read reminders, the calendar, or settings.
+`/pair off` revokes it.
+
+**Replies** (code templates; Latin and digits in FSI/PDI isolates as everywhere)
+
+| Outcome | Reply |
+|---|---|
+| one contact matched | `מחכה לאישור בטלפון.` |
+| no contact matched | `אין איש קשר בשם הזה בטלפון.` |
+| several matched | `יש כמה אנשי קשר בשם הזה. הבחירה בטלפון.` |
+| tapped, call placed | `יצאה שיחה.` |
+| cancelled on the phone | `בוטל.` |
+| dispatch expired unseen | `הטלפון לא היה זמין. לא יצאה שיחה.` |
+| no device paired | `אין טלפון מחובר. /pair כדי לחבר.` |
+
+On the phone: title `שיחה לדוד דני`, body the resolved number, actions `חיוג` and
+`ביטול`.
+
+**Shabbat does not hold a call.** §6.13 holds *scheduled* outbound — reminders
+and the digest, where the assistant chose the moment. A call happens because I
+asked for one just now, and holding it would be the assistant deciding what I may
+do on Shabbat rather than when it may interrupt me. Written down because it is
+exactly the kind of thing later "fixed" in the wrong direction.
+
+**A voice note composes with no new code.** §6.10 already routes any write to
+CONFIRM when the recognizer is unsure, and a misheard name is caught a second
+time by the number on the notification.
+
+**Rate limits:** `perHour: 5`, `perDay: 20`. A dispatch **expires after two
+minutes** — a push delivered late to a phone that was off must not ring somebody
+half an hour after I stopped wanting it to. The device re-checks expiry before it
+displays anything.
+
+**Deliberately not built:** the assistant speaking on the call, listening to it,
+recording it, or reading the call log. Speaking to a third party on my behalf is
+data forwarding — Tier 4, no code path (invariant 6). The call log is a second
+sensitive permission for no feature.
+
+**Not in the registry yet.** `calls.place` needs **no new slot** — it reuses
+`query_variants`, so unlike B6 and B8 it leaves the slot schemas alone. It still
+adds a tool to the catalog, and the catalog is in the prompt, so it queues behind
+the model comparison §11.9 is half of. The Worker side lives in `src/device/`;
+the app is its own repo outside this one.
+
 
 ---
 
@@ -1077,6 +1201,11 @@ Names are message content: stored, never logged.
 | Stored clarification slots as a data-at-rest exposure | `slots_json` holds message content — a reminder body, an event title. It is storage and never a log field: `slots` is on the ban list, the rows expire in ten minutes and the daily cron purges them (§6.11) |
 | Scheduled outbound as an amplifier | The digest is one message a day, gated by the same window and budget check a reminder passes, held over Shabbat when that is on, marked done before the send so a retry cannot double it, and silent on a day with nothing to say (§6.12) |
 | Accepted-but-undelivered messages hiding a failure | A 200 from the Cloud API is an acceptance, not a delivery. Every send is recorded and the status webhook advances it; `failed` always wins over a late success, and a reminder that failed is requeued or retired by disposition rather than being left marked `sent` forever (§6.8) |
+| A call to a number that was never mine | The device's contact list **is** the allowlist; a number written in a message is refused outright. No text — mine, forwarded, injected or misheard — can name a destination, and the Worker never holds a number to dial (§6.17) |
+| A stale push ringing somebody later | A call dispatch expires after two minutes and the device re-checks expiry before it displays anything, so a phone that was switched off comes back to a dead dispatch rather than to a call |
+| The device token as a second front door | Stored only as a keyed hash, compared in constant time, issued against a single-use pairing code with a 10-minute TTL (§6.6's shape), revoked by `/pair off`. It authorizes fetching a dispatch and reporting an outcome and nothing else — not reminders, not the calendar, not settings |
+| Contact data leaving the phone | The device reports `matched` and an outcome, never a name or a number. FCM carries an opaque dispatch id, so the contact name does not reach Google either. Nothing about a contact is ever stored in the DO (§6.17) |
+| The companion app as new surface on the phone | Two sensitive permissions (`READ_CONTACTS`, `CALL_PHONE`), sideloaded rather than published, no exported components and no listening socket. It accepts work from one paired Worker over outbound HTTPS and from nowhere else |
 
 ### 7.2 Secrets inventory
 
@@ -1093,6 +1222,9 @@ Names are message content: stored, never logged.
 | `TOKEN_ENC_KEY_V1` | secret | AES-256-GCM key for stored tokens (versioned for rotation) |
 | `LOG_HASH_KEY` | secret | Keyed hash for phone numbers in logs |
 | `TIER3_PIN_HASH` | secret | [O] PIN for Tier 3 |
+| `FCM_PROJECT_ID` | var | Firebase project used to push a call dispatch to the phone (§6.17) |
+| `FCM_SA_KEY` | secret | Service-account private key; RS256-signed JWT exchanged for an FCM access token |
+| `DEVICE_TOKEN_PEPPER` | secret | Keyed hash for stored device tokens. Separate from `LOG_HASH_KEY`: a log key and an auth key rotate on different schedules |
 
 **Rules**
 
@@ -1454,6 +1586,36 @@ separate things.
 §4 chooses between `gpt-oss-120b` and `qwen3.8-27b` by eval, and both have to be
 measured on the same prompt version for that to mean anything. This is one half.
 The other needs a day whose 200K rolling window is untouched.
+### 11.10 Calls and the device companion (planned, §6.17)
+
+Contact matching is **not tested here**, because it does not happen here. It runs
+on the phone, against the phone's own contacts, and belongs to the app's
+instrumented tests. What `pnpm test` owns is the dispatch lifecycle and every gate
+around it.
+
+| Case | Expectation |
+|---|---|
+| a number typed in the message (`תתקשר ל-05…`) | refused before any dispatch. No row written, nothing pushed |
+| dispatch expiry | frozen clock at +2 min: the device's fetch fails and no notification is possible |
+| a report for an expired dispatch | writes nothing, replies that the phone was not reachable in time |
+| a dispatch fetched twice | second fetch refused. One dispatch, one call |
+| a replayed pairing code | refused. Single use, 10-minute TTL, same as §6.6's link |
+| a revoked device token | every device endpoint refuses. `/pair off` is immediate |
+| a wrong device token | constant-time compare, refused, no detail in the reply |
+| a report naming a number or a name | rejected by the endpoint's own Zod schema — the Worker has no field to put it in |
+| forwarded message asking for a call | CONFIRM, per §6.4's existing forwarded rule. No new code, and a test that says so |
+| stale message (>10 min) asking for a call | CONFIRM, same rule |
+| `/pause` on | DENY (pending §13) |
+| Shabbat hold on | the call still goes. A test, because the opposite is the plausible mistake |
+| rate limit | 6th call in an hour refused; 21st in a day refused |
+| log canary | no contact name, no number, no device token in any log field. `contact`, `contactName`, `msisdn`, `deviceToken` and `number` join `BANNED_LOG_FIELDS`; `query_variants` and `phone` are already on it |
+
+**Eval cases.** `calls.place` needs its own corpus block in both languages, and —
+because it is the first capability that reaches the physical world — the
+`he-inj-*` / `en-inj-*` injection families need call-shaped payloads, including a
+forwarded message that names a number and one that names a contact. The two hard
+gates in §11.2 apply unchanged: an invented number is an invented slot.
+
 ---
 
 ## 12. Risk register
@@ -1481,6 +1643,9 @@ The other needs a day whose 200K rolling window is untouched.
 - [x] Default event duration: **none — CLARIFY instead** (2026-09-24). Default reminder text when none given is still open.
 - [ ] Should a per-tool slot schema **strip** an unknown key instead of rejecting the draft? The first full corpus run lost four otherwise-perfect answers to one mistake made four times: `attendees` emitted on a `calendar.delete_event` draft, which `.strict()` rejects and which no code would ever have read (§11.9). `intent-schema.ts` already made this trade once for `unsupported`, on the grounds that "rejecting the draft over an ignored field would punish the right answer". The counter-argument is that strict is what makes LLM output safe to act on, and a rule with an exception is a rule people stop trusting. Decide with B6/B8, since all three change the prompt.
 - [ ] Should moving or deleting **assistant-created** events drop to Tier 1 (execute + Undo)?
+- [ ] **FCM is a new dependency and a new processor** (§6.17). The alternative with no third party is a hibernatable WebSocket from the phone to the DO, which Android will not keep alive through Doze — so the honest choice is FCM, or a call that only works while the phone is awake. Needs approval either way.
+- [ ] Android 14 restricts `USE_FULL_SCREEN_INTENT` to calling and alarm apps. **Verify a companion dialer qualifies before building.** The fallback is a high-priority heads-up notification: one more tap, no less safe.
+- [ ] Should `calls.place` be refused while `/pause` is on? A pause means "stop writing things" and a call writes to no store — but one predictable meaning of pause is worth more than the exception, so probably DENY.
 - [ ] Tier 3 PIN: enable from day one?
 - [ ] When to buy the dedicated number (before or after Phase 4)?
 - [ ] [O] Encrypted export backup: yes/no, and which bucket?
@@ -1488,7 +1653,7 @@ The other needs a day whose 200K rolling window is untouched.
 - [ ] Voice: should the recognizer's language be pinned to `he`? Auto-detect keeps English usable but is weakest on very short clips, which is exactly what a one-line reminder is. Measure before changing.
 - [ ] Voice: Whisper takes a `prompt` to bias spelling — useful for Hebrew names and times. It is static config, not user data, so it does not breach invariant 2, but it is unmeasured. Worth a try against recorded clips.
 - [ ] Voice: the uncertain band (`avg_logprob` between -1.0 and -0.5) currently forces CONFIRM on writes. If that fires on most real recordings it is friction, not safety — revisit after two weeks of daily use.
-- [x] **The 8 s NLU timeout stays in production, and the eval uses 30 s** (2026-09-25). The first full corpus run confirmed the suspicion with a number: `qwen3.8-27b` came back at a p95 of **8,015 ms** against an 8,000 ms timeout, so the timeout was cutting off the model at exactly the point half its answers arrived — and 50 of 156 cases were then reported as parse failures. Production keeps 8 s, because a user waiting longer has already had a bad experience and the fallback chain exists for this; the eval raises it, because a run that cuts the model off is measuring speed, which §11.2 already scores separately. Whether `qwen` is fast *enough* is now a latency question with its own threshold rather than a contaminated accuracy number.
+- [x] **The 8 s NLU timeout stays in production, and the eval uses 30 s** (2026-09-25). The run that settled this reported 50 of 156 cases as parse failures with a p95 of **8,015 ms** against an 8,000 ms timeout — a p95 sitting 15 ms above the cutoff is not a measurement of the model, it is the cutoff being reported back. Production keeps 8 s, because a user waiting longer has already had a bad experience and the fallback chain exists for exactly this; the eval raises it, because a run that cuts the model off is measuring speed, which §11.2 already scores separately. The complete corpus run and its own figures are in §11.9, which is still latency-contaminated for the same reason: it was recorded before the change. Whether `qwen` is fast *enough* becomes a real question only on the next run.
 
 ---
 
@@ -1618,6 +1783,11 @@ The other needs a day whose 200K rolling window is untouched.
 | 2026-09-25 | First complete 156-case corpus run in the project's history (§11.9), against `qwen3.8-27b` on prompt v4. Every schema-valid draft had the right intent; the headline 90.4% is what eleven unanswered cases do to a denominator |
 | 2026-09-25 | Four of the run's failures were one mistake made four times — `attendees` on a `calendar.delete_event` draft — which is `.strict()` doing its job and also a correct answer being discarded over a key nothing reads. Logged as a §13 decision rather than changed in passing, because it touches the prompt |
 | 2026-09-25 | The one hard-gate failure, `he-cal-013`, invented `title: "פגישה"` from the request's own noun. Worth failing precisely because it is an echo rather than a fabrication: a calendar full of events called "פגישה" is what the rule exists to prevent |
+| 2026-09-25 | Calls are placed by a **paired Android app**, not by the Worker and not by a telephony provider (§6.17). The Worker has no contact list, no SIM and no dialer; WhatsApp's Calling API needs the *recipient's* permission, and Twilio adds a paid processor able to call on my behalf |
+| 2026-09-25 | **The device's contact list is the allowlist for dialing.** A number written in a message is refused, so no text — mine, forwarded, injected or misheard — can name a destination that was not already mine. It also keeps phone numbers out of drafts, storage and logs entirely |
+| 2026-09-25 | **The tap on the phone replaces Tier 3's typed code** for `calls.place`. It is out of band from the channel an injection arrives on, it needs hardware an attacker does not hold, and it shows the resolved number — the one fact that decides whether the right person is about to ring |
+| 2026-09-25 | No phone number ever enters the Worker. The device reports `matched: 0 \| 1 \| many` and an outcome; the FCM push carries an opaque dispatch id, so the contact name does not reach Google either |
+| 2026-09-25 | Shabbat hold does not apply to a call. §6.13 holds outbound the assistant *chose the moment for*; a call is asked for in the moment, and holding it would be deciding what I may do rather than when I may be interrupted |
 
 ---
 
@@ -1784,6 +1954,16 @@ list, as the entry judged: no new scope, and Google Contacts stays out. Worth
 recording that this was the weakest item on the list — a list the user types by
 hand has real setup cost and modest payoff, and it is here because it completes
 the backlog rather than because it earns its place.
+
+**B15. Calls, and a device companion.** 📐 **Specified 2026-09-25, not built** —
+see §6.17. `"תתקשר לדוד דני"` resolved and dialled on the phone itself, because the
+Worker has no contact list, no SIM and no dialer and cannot be given one. The
+design's whole value is that **four hundred contacts work from the first minute
+with nothing typed in**, and its whole safety is that the device's contact list is
+the allowlist: a number written in a message is refused, so no phone number ever
+enters a draft, the database, a log, or Meta. Blocked on two things — approval for
+FCM as a new processor, and the same prompt-version gate as B6 and B8, since
+`calls.place` adds a tool to the catalog even though it needs no new slot.
 
 ### Deliberately not doing
 
