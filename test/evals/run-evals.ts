@@ -125,7 +125,7 @@ const HARD_GATES: readonly AccuracyKey[] = ['noInventedSlots', 'missingSlotRecal
 
 // -- entry point --------------------------------------------------------------
 
-type Recording = { provider: string; prompt: string; drafts: { id: string; draft: unknown }[] };
+export type Recording = { provider: string; prompt: string; drafts: { id: string; draft: unknown }[] };
 
 async function main(): Promise<void> {
   const args = parseArgs(process.argv.slice(2));
@@ -576,15 +576,37 @@ function loadRecording(path: string): Recording {
   return JSON.parse(readFileSync(path, 'utf8')) as Recording;
 }
 
-/** Score every case in the corpus against one recording's drafts. */
-function scoreRecording(recording: Recording, cases: EvalCase[]): CaseResult[] {
+/**
+ * Score a recording against the corpus.
+ *
+ * A case the recording has **no entry for** did not exist when the run happened,
+ * and is returned as `predates` rather than scored. A case it has an entry for
+ * with a null draft is one the model was asked and did not answer, and that is a
+ * failure. Conflating the two blames a model for cases written after it ran, and
+ * the corpus grows every time a tool is added — so this distinction decides
+ * whether a comparison across weeks means anything.
+ */
+export function scoreRecording(
+  recording: Recording,
+  cases: EvalCase[],
+): { results: CaseResult[]; predates: string[] } {
   const byId = new Map(recording.drafts.map((d) => [d.id, d.draft]));
-  return cases.map((testCase) => scoreRecorded(testCase, byId.get(testCase.id)));
+  const results: CaseResult[] = [];
+  const predates: string[] = [];
+
+  for (const testCase of cases) {
+    if (!byId.has(testCase.id)) {
+      predates.push(testCase.id);
+      continue;
+    }
+    results.push(scoreRecorded(testCase, byId.get(testCase.id)));
+  }
+  return { results, predates };
 }
 
 function replay(path: string, cases: EvalCase[], verbose: boolean): void {
   const recording = loadRecording(path);
-  const results = scoreRecording(recording, cases);
+  const { results, predates } = scoreRecording(recording, cases);
 
   process.stdout.write(
     `replay of ${path} · ${recording.provider} · prompt ${recording.prompt} · ${results.length} cases
@@ -593,6 +615,14 @@ function replay(path: string, cases: EvalCase[], verbose: boolean): void {
 
 `,
   );
+  if (predates.length > 0) {
+    process.stdout.write(
+      `${predates.length} case(s) were added to the corpus after this recording and are\n` +
+        `excluded rather than counted as failures of it: ${predates.slice(0, 8).join(' ')}` +
+        `${predates.length > 8 ? ' …' : ''}\n\n`,
+    );
+  }
+
   report(results, cases, `${recording.provider} (replay)`, verbose);
 }
 
@@ -624,23 +654,47 @@ function compare(pathA: string, pathB: string, cases: EvalCase[], verbose: boole
     process.exit(2);
   }
 
-  const resultsA = scoreRecording(a, cases);
-  const resultsB = scoreRecording(b, cases);
-  const metricsA = computeMetrics(resultsA, cases);
-  const metricsB = computeMetrics(resultsB, cases);
+  // Only cases both runs were actually asked. Scoring a model on a case written
+  // after it ran is not a measurement of the model, and the corpus grows every
+  // time a tool is added, so the two recordings will not always cover the same
+  // ground.
+  const idsA = new Set(a.drafts.map((d) => d.id));
+  const idsB = new Set(b.drafts.map((d) => d.id));
+  const shared = cases.filter((c) => idsA.has(c.id) && idsB.has(c.id));
+
+  if (shared.length === 0) {
+    process.stdout.write(
+      `Refusing to compare: these two recordings have no case in common.\n`,
+    );
+    process.exit(2);
+  }
+
+  const { results: resultsA } = scoreRecording(a, shared);
+  const { results: resultsB } = scoreRecording(b, shared);
+  const metricsA = computeMetrics(resultsA, shared);
+  const metricsB = computeMetrics(resultsB, shared);
 
   const unanswered = (results: CaseResult[]): number =>
     results.filter((r) => r.error === 'no_response').length;
   const missingA = unanswered(resultsA);
   const missingB = unanswered(resultsB);
   const note = (n: number): string =>
-    n === 0 ? `${cases.length} answered` : `${cases.length - n} answered, ${n} never answered`;
+    n === 0 ? `all ${shared.length} answered` : `${shared.length - n} answered, ${n} never answered`;
 
   process.stdout.write(
-    `prompt ${a.prompt} · ${cases.length} cases · latency is not recorded\n\n` +
+    `prompt ${a.prompt} · ${shared.length} case(s) in common · latency is not recorded\n\n` +
       `  A  ${a.provider}  (${note(missingA)})\n` +
       `  B  ${b.provider}  (${note(missingB)})\n\n`,
   );
+
+  if (shared.length !== cases.length) {
+    const outside = cases.length - shared.length;
+    process.stdout.write(
+      `  ${outside} of the corpus's ${cases.length} cases are missing from at least one\n` +
+        `  recording and are excluded from every number below. A model is not scored\n` +
+        `  on cases written after it ran.\n\n`,
+    );
+  }
 
   if (a.prompt !== PROMPT_VERSION) {
     process.stdout.write(
@@ -716,7 +770,7 @@ function compare(pathA: string, pathB: string, cases: EvalCase[], verbose: boole
       if (wrong.length === 0) continue;
       process.stdout.write(`\n${label} — ${wrong.length} wrong answer(s):\n`);
       for (const r of wrong.slice(0, 40)) {
-        const expected = cases.find((c) => c.id === r.id)?.expect;
+        const expected = shared.find((c) => c.id === r.id)?.expect;
         process.stdout.write(`  ${r.id}  ${r.error ?? ''}\n`);
         process.stdout.write(`      expected ${JSON.stringify(expected)}\n`);
         process.stdout.write(`      actual   ${JSON.stringify(r.actual ?? r.rejected)}\n`);

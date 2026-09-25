@@ -1476,6 +1476,13 @@ the cases where exactly one was right, and the cases where neither was. The last
 of those is what a prompt change has to be aimed at; the aggregate only says who
 won.
 
+It scores **only the cases both recordings were actually asked**. The corpus grows
+every time a tool is added, and a case absent from a recording did not exist when
+that run happened — counting it as a failure measures the calendar rather than the
+model. A case the recording *does* have an entry for, with a null draft, is a
+question that was put and came back empty, and stays a failure. The report says
+how many cases were excluded and why.
+
 It **refuses to compare across prompt versions**, and that refusal is the point.
 §4 chooses between candidate models by eval, the tool catalog is generated into
 the prompt, so a tool added between two runs changes the question rather than the
@@ -1823,6 +1830,7 @@ gates in §11.2 apply unchanged: an invented number is an invented slot.
 | 2026-09-25 | Shabbat hold does not apply to a call. §6.13 holds outbound the assistant *chose the moment for*; a call is asked for in the moment, and holding it would be deciding what I may do rather than when I may be interrupted |
 | 2026-09-25 | The eval checkpoint **merges instead of replacing**. It had been writing only the current process's results, so a resume — which walks the corpus from the start — left the file a truncated prefix of itself, and stopping there destroyed answers already paid for. Found by testing `--compare` against a recording mid-resume: 156 entries had become 108 |
 | 2026-09-25 | `pnpm eval --compare` refuses to score two recordings made on different prompt versions, and so does `--resume`. §4 picks a model by eval and the catalog is generated into the prompt, so a tool added between two runs changes the question. The gate B6, B8 and B15 wait behind is now enforced by the harness rather than remembered |
+| 2026-09-25 | A recording is scored only on the cases it was actually asked. A case with no entry postdates the run and is excluded; a case with a null draft was asked and came back empty and stays a failure. Without the distinction, every corpus addition silently reduces the score of every model measured before it |
 
 ---
 

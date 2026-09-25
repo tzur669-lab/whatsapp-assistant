@@ -17,11 +17,9 @@ import { describe, expect, it, beforeEach, afterEach } from 'vitest';
 import { mkdtempSync, rmSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { answeredDrafts, writeRecording } from '../../evals/run-evals.js';
-import type { CaseResult } from '../../evals/run-evals.js';
+import { answeredDrafts, scoreRecording, writeRecording } from '../../evals/run-evals.js';
+import type { CaseResult, EvalCase, Recording } from '../../evals/run-evals.js';
 import { PROMPT_VERSION } from '../../../src/nlu/prompt.js';
-
-type Recording = { provider: string; prompt: string; drafts: { id: string; draft: unknown }[] };
 
 /** A result carrying an answer, which is all these cases need from one. */
 const answered = (id: string, raw: unknown): CaseResult => ({
@@ -170,5 +168,55 @@ describe('the eval recording', () => {
     writeRecording(path, 'groq:x', results);
 
     expect(read().drafts).toEqual([{ id: 'a', draft: { intent: 'one' } }]);
+  });
+});
+
+describe('scoring a recording against a corpus that has since grown', () => {
+  const corpusCase = (id: string): EvalCase => ({
+    id,
+    now: '2026-09-25T10:00:00+03:00',
+    input: 'whatever',
+    expect: { intent: 'unsupported' },
+  });
+
+  const recording = (drafts: { id: string; draft: unknown }[]): Recording => ({
+    provider: 'groq:x',
+    prompt: PROMPT_VERSION,
+    drafts,
+  });
+
+  it('excludes a case the recording has no entry for, rather than failing it', () => {
+    // The corpus grows every time a tool is added. Counting a case written last
+    // week as a failure of a model that ran the week before measures the calendar,
+    // not the model.
+    const { results, predates } = scoreRecording(
+      recording([{ id: 'old', draft: { intent: 'unsupported', language: 'he', slots: {}, missing: [], ambiguities: [] } }]),
+      [corpusCase('old'), corpusCase('added-later')],
+    );
+
+    expect(predates).toEqual(['added-later']);
+    expect(results.map((r) => r.id)).toEqual(['old']);
+  });
+
+  it('still fails a case the model was asked and did not answer', () => {
+    // An entry with a null draft is a question that was put and came back empty.
+    // That is the model's failure and has to stay one.
+    const { results, predates } = scoreRecording(recording([{ id: 'asked', draft: null }]), [
+      corpusCase('asked'),
+    ]);
+
+    expect(predates).toEqual([]);
+    expect(results[0]?.error).toBe('no_response');
+    expect(results[0]?.intentOk).toBe(false);
+  });
+
+  it('scores an answered case on its merits', () => {
+    const { results } = scoreRecording(
+      recording([{ id: 'ok', draft: { intent: 'unsupported', language: 'he', slots: {}, missing: [], ambiguities: [] } }]),
+      [corpusCase('ok')],
+    );
+
+    expect(results[0]?.intentOk).toBe(true);
+    expect(results[0]?.error).toBeUndefined();
   });
 });
