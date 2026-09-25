@@ -14,7 +14,9 @@ export type Command =
    * `/digest`, `/digest 7`, `/digest off` (PLAN §6.12). The only command that
    * carries a value, so it is matched separately from the fixed table below.
    */
-  | { kind: 'digest'; set: number | 'off' | null };
+  | { kind: 'digest'; set: number | 'off' | null }
+  /** `/shabbat`, `/shabbat on`, `/shabbat off` (PLAN §6.13). Off by default. */
+  | { kind: 'shabbat'; set: boolean | null };
 
 const COMMANDS: ReadonlyArray<readonly [RegExp, Command]> = [
   [/^\/help$|^עזרה$/i, { kind: 'help' }],
@@ -23,6 +25,9 @@ const COMMANDS: ReadonlyArray<readonly [RegExp, Command]> = [
   [/^\/pause$/i, { kind: 'pause' }],
   [/^\/resume$/i, { kind: 'resume' }],
   [/^\/budget$/i, { kind: 'budget' }],
+  [/^\/shabbat$/i, { kind: 'shabbat', set: null }],
+  [/^\/shabbat\s+on$/i, { kind: 'shabbat', set: true }],
+  [/^\/shabbat\s+off$/i, { kind: 'shabbat', set: false }],
   [/^\/connect\s+google$/i, { kind: 'connect_google' }],
 ];
 

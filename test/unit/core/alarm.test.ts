@@ -275,4 +275,82 @@ describe('the alarm', () => {
       expect(repo.lastErrorCode()).toBe('E_WA_SEND_401');
     });
   });
+
+  // -- Shabbat and chagim (PLAN §6.13) ---------------------------------------
+
+  describe('holding over Shabbat', () => {
+    /** Saturday 2026-09-26, 12:00 local (09:00 UTC — Israel is on DST). */
+    const DURING_SHABBAT = Date.parse('2026-09-26T09:00:00Z');
+
+    it('delivers as normal while the setting is off, which it is by default', async () => {
+      vi.setSystemTime(DURING_SHABBAT);
+      openTheWindow(DURING_SHABBAT - 60_000);
+      schedule('להתקשר לאבא', DURING_SHABBAT - 1_000);
+
+      await assistant.alarm();
+      expect(meta.sent).toHaveLength(1);
+    });
+
+    it('holds everything once it is on, and re-arms for after Shabbat', async () => {
+      repo.setRestHold(true);
+      vi.setSystemTime(DURING_SHABBAT);
+      openTheWindow(DURING_SHABBAT - 60_000);
+      schedule('להתקשר לאבא', DURING_SHABBAT - 1_000);
+
+      await assistant.alarm();
+
+      expect(meta.sent).toHaveLength(0);
+      // One decision for the whole period, not one per reminder: the alarm is
+      // moved past the end of Shabbat rather than re-checked every few minutes.
+      const armed = fake.alarmAt();
+      expect(armed).not.toBeNull();
+      expect(armed!).toBeGreaterThan(Date.parse('2026-09-26T16:00:00Z'));
+    });
+
+    it('delivers it once Shabbat is out', async () => {
+      repo.setRestHold(true);
+      vi.setSystemTime(DURING_SHABBAT);
+      openTheWindow(DURING_SHABBAT - 60_000);
+      schedule('להתקשר לאבא', DURING_SHABBAT - 1_000);
+      await assistant.alarm();
+      expect(meta.sent).toHaveLength(0);
+
+      // Saturday 21:00 local, well after nightfall.
+      const motzaeiShabbat = Date.parse('2026-09-26T18:00:00Z');
+      vi.setSystemTime(motzaeiShabbat);
+      openTheWindow(motzaeiShabbat - 60_000);
+
+      await assistant.alarm();
+      expect(meta.sent).toHaveLength(1);
+      expect(plain(meta.sent[0]!.text)).toContain('להתקשר לאבא');
+    });
+
+    it('does not hold a Friday afternoon, when Shabbat has not started', async () => {
+      // Sunset on 2026-09-25 is 18:32, so 15:00 is an ordinary Friday. A fixed
+      // "Friday 18:00" rule would have been wrong here half the year.
+      repo.setRestHold(true);
+      const fridayAfternoon = Date.parse('2026-09-25T12:00:00Z');
+      vi.setSystemTime(fridayAfternoon);
+      openTheWindow(fridayAfternoon - 60_000);
+      schedule('לפני שבת', fridayAfternoon - 1_000);
+
+      await assistant.alarm();
+      expect(meta.sent).toHaveLength(1);
+    });
+
+    it('holds the digest too, since it is a message like any other', async () => {
+      repo.setRestHold(true);
+      repo.setDigestHour(12);
+      vi.setSystemTime(DURING_SHABBAT);
+      openTheWindow(DURING_SHABBAT - 60_000);
+      schedule('להתקשר לאבא', DURING_SHABBAT + 3_600_000);
+
+      await assistant.maybeSendDigest();
+
+      expect(meta.sent).toHaveLength(0);
+      // Not marked done: a digest held on Shabbat is simply not sent, and
+      // tomorrow's is a different day's message.
+      expect(repo.digestDoneOn()).toBeNull();
+    });
+  });
 });

@@ -115,6 +115,20 @@ export const statusText = {
 
   digestTurnedOff: 'התקציר היומי כבוי.',
 
+  /**
+   * `/shabbat` (PLAN §6.13). Says exactly what it does, including that it holds
+   * everything and not only some things — there is no urgency flag to read.
+   */
+  restHoldOn:
+    'תזכורות שזמנן נופל בשבת או בחג יישמרו ויישלחו במוצאי שבת. זה חל על כל התזכורות, ' +
+    'בלי חריגים. הזמנים מחושבים לפי שקיעה בירושלים.',
+
+  restHoldOff: `תזכורות יישלחו גם בשבת ובחג. להשהיה יש לשלוח ${isolate('/shabbat on')}.`,
+
+  restHoldUnchanged: `השהיית שבת פעילה. לכיבוי: ${isolate('/shabbat off')}.`,
+
+  restHoldTurnedOff: 'השהיית שבת כבויה. תזכורות יישלחו גם בשבת ובחג.',
+
   /** The action was undone within the ten minute window. */
   undone: 'הפעולה בוטלה וחזרה למצב הקודם.',
 

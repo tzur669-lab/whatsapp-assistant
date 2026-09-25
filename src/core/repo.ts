@@ -7,6 +7,7 @@ import type { SqlDriver, SqlRow } from './sql.js';
 const SCHEMA_VERSION_KEY = 'schema_version';
 const DIGEST_HOUR_KEY = 'digest_hour';
 const DIGEST_SENT_KEY = 'digest_sent_on';
+const REST_HOLD_KEY = 'rest_hold';
 
 export type InboundRecord = {
   wamid: string;
@@ -169,6 +170,25 @@ export class Repository {
 
   markDigestDone(dayKey: string): void {
     this.setSetting(DIGEST_SENT_KEY, dayKey);
+  }
+
+  /**
+   * Whether to hold reminders over Shabbat and chagim (PLAN §6.13).
+   *
+   * Off unless explicitly stored. Observance is not something to assume, and a
+   * held reminder is one that arrives late — the wrong trade for anyone who did
+   * not ask for it.
+   */
+  restHoldEnabled(): boolean {
+    return this.getSetting(REST_HOLD_KEY) === 'on';
+  }
+
+  setRestHold(enabled: boolean): void {
+    if (!enabled) {
+      this.sql.exec('DELETE FROM settings WHERE key = ?', REST_HOLD_KEY);
+      return;
+    }
+    this.setSetting(REST_HOLD_KEY, 'on');
   }
 
   // -- outbound (PLAN §6.8) ---------------------------------------------------

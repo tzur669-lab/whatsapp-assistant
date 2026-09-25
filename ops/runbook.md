@@ -28,8 +28,8 @@ SQLite schema, the reminder alarm, and every confirmation gate.
   is what decides.
 - The alarm itself fires per reminder, not on a schedule.
 
-**Chat commands** — `/help`, `/status`, `/digest`, `/pause`, `/resume`, `/budget`,
-`/connect google`, `/ping`.
+**Chat commands** — `/help`, `/status`, `/digest`, `/shabbat`, `/pause`,
+`/resume`, `/budget`, `/connect google`, `/ping`.
 
 ## Deploying to staging
 
@@ -81,6 +81,7 @@ messages used this month, NLU fallbacks today, and the last error code.
 | Reminder arrived twice | Should be impossible | Check `reminders.status` and `lease_until`; this is a bug, not an operation |
 | Reminder said sent, never arrived | Meta accepted it and then failed | `/status` undelivered count; `outbound_messages.error_code` for the wamid |
 | No digest | Off, wrong hour, or the window was shut | `/digest` reports the setting; logs for `digest_skipped` |
+| Nothing arrives on Shabbat | Working as asked | `/shabbat` reports it; logs for `delivery_deferred` with `rest_period` |
 
 Every log line carries a stable `errorCode`. None of them carries message
 content, a phone number, a transcript, or a token — if you need to correlate a

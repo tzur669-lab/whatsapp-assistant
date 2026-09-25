@@ -34,6 +34,7 @@ import { reminderText } from '../render/reminders.js';
 import { statusText } from '../render/status.js';
 import { localPartsOf, ZONE } from '../time/tz.js';
 import { buildDigest } from '../core/digest.js';
+import { restPeriodAt } from '../time/shabbat.js';
 import type { InboundEvent, OutboundMessage } from '../channels/types.js';
 import type { AppEnv } from '../core/env.js';
 import { DurableObjectSqlDriver } from './sql-repo.js';
@@ -145,6 +146,18 @@ export class AssistantDO implements DurableObject {
       this.log.info('delivery_deferred', { reason: 'window_or_budget' });
       await this.armAlarm(now + RECHECK_BEFORE_MS);
       return;
+    }
+
+    // Shabbat and chagim, when the user asked for it (PLAN §6.13). Held rather
+    // than dropped, and the alarm is re-armed for the end of the period, so the
+    // whole run is skipped in one decision instead of once per reminder.
+    if (this.repo.restHoldEnabled()) {
+      const rest = restPeriodAt(now);
+      if (rest) {
+        this.log.info('delivery_deferred', { reason: 'rest_period', kind: rest.kind });
+        await this.armAlarm(rest.endUtc + 1_000);
+        return;
+      }
     }
 
     const due = this.reminders.claimDue();
@@ -293,6 +306,15 @@ export class AssistantDO implements DurableObject {
       this.log.info('digest_skipped', { reason: 'window_or_budget' });
       // Deliberately not marked done: if the user writes in during this hour the
       // window opens and the next tick can still send it.
+      return;
+    }
+
+    // Shabbat and chagim hold the digest too (§6.13). A brief that arrives at
+    // seven on Saturday morning is the exact thing that setting is for.
+    if (this.repo.restHoldEnabled() && restPeriodAt(now)) {
+      this.log.info('digest_skipped', { reason: 'rest_period' });
+      // Not marked done: a digest held on Saturday morning is simply not sent,
+      // and tomorrow's is a different day's message.
       return;
     }
 

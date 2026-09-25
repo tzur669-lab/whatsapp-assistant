@@ -822,6 +822,67 @@ calendar did not load" is not a line the user can act on at seven in the morning
 17:00, ערב טוב after. The hour is configurable, and a message that opens with
 "good morning" at two in the afternoon reads as one sent by something that is
 not paying attention.
+### 6.13 Shabbat and chagim
+
+A reminder that buzzes at 19:00 on a Friday in December is the thing that makes
+a tool feel like it was built somewhere else. With `/shabbat on`, reminders whose
+time falls inside Shabbat or yom tov are held and delivered at the end of it.
+
+**Off by default.** Observance is not something software should assume, and a
+held reminder is one that arrives late — the wrong trade for anyone who did not
+ask for it.
+
+**It holds everything, with no exceptions**, and `/shabbat on` says so. The
+backlog entry imagined holding only "non-urgent" reminders, but there is no
+urgency anywhere in the draft schema and inventing one would mean asking the
+model to judge it. Holding everything is what the user opted into; a rule with
+an exception nobody can see is worse than a plain one.
+
+**No dependency and no data file.** The Hebrew date comes from `Intl` with the
+`hebrew` calendar, which every modern runtime ships. Sunset is computed in
+`src/time/sun.ts` with the NOAA solar algorithm — about sixty lines of arithmetic,
+accurate to well under a minute at these latitudes, and worth writing out rather
+than taking on a package that would need keeping current forever for a table the
+platform already has (§4, "avoid heavy dependencies").
+
+**Why sunset is computed rather than approximated.** Sunset in Israel moves by
+more than two and a half hours across the year: 16:39 in December, 19:48 in June.
+A fixed "Friday 18:00" would release reminders during Shabbat all winter and hold
+them for two hours of ordinary Friday afternoon all summer. That is worse than
+not having the feature, and it is the single reason this section involves any
+astronomy at all.
+
+**The offsets**, both widely used and neither a ruling:
+
+| Boundary | Value | Note |
+|---|---|---|
+| Start | sunset − 18 min | Candle-lighting, the common Israeli practice outside Jerusalem, which keeps 40 |
+| End | sun 8.5° below the horizon | Nightfall. An angle, not a fixed offset: the same 8.5° takes ~42 minutes in June and ~40 in December |
+
+**Yom tov, one day, Israel.** Rosh Hashana (both days), Yom Kippur, the first day
+of Sukkot, Shmini Atzeret, the first and seventh days of Pesach, and Shavuot.
+Chol hamoed is deliberately absent — the intermediate days are working days for
+most people, and holding a week of reminders because it is Sukkot would be the
+feature overreaching.
+
+**Consecutive rest days merge into one period.** A chag falling on Friday runs
+straight into Shabbat with no break, and reporting two periods would let a
+message out at the seam — Friday night — which is the exact thing being avoided.
+Rosh Hashana adjoining Shabbat makes a three-day run, and it is handled as one.
+
+**One decision per period, not per reminder.** When the alarm finds itself inside
+a rest period it re-arms for the end of it and returns, so the whole run is
+skipped in a single decision rather than re-checked every few minutes.
+
+**The digest is held too** (§6.12). A morning brief at seven on Saturday is
+exactly what this setting exists to prevent. It is not marked as sent when held:
+a digest is about its own day, and tomorrow's is a different message.
+
+**Not a halachic authority.** The code computes astronomical times and applies
+two common offsets. Anyone whose practice differs should leave the setting off —
+it makes no claim to settle anything, and the times are all Jerusalem's, which is
+the earliest candle-lighting in the country and therefore the safe direction to
+err for a feature that holds messages back.
 ---
 
 ## 7. Security
@@ -1301,6 +1362,12 @@ Test each of these:
 | 2026-09-25 | An hourly cron asks and the Durable Object decides, because the digest hour is a setting and a cron expression must not be changeable from chat (invariant 8) |
 | 2026-09-25 | The digest is marked done before the send and is worth exactly one attempt: it is about today, and a retry an hour later is a different message. A shut window is the one case left unmarked, since writing in reopens it |
 | 2026-09-25 | A failed calendar read leaves the section out rather than cancelling the digest. "Your calendar did not load" is not something the user can act on at seven in the morning |
+| 2026-09-25 | Shabbat times are computed from sunset, not from a fixed hour. Sunset in Israel moves 2h40m across the year, so "Friday 18:00" would release reminders during Shabbat all winter and hold ordinary Friday afternoons all summer |
+| 2026-09-25 | The Hebrew calendar comes from `Intl` and sunset from sixty lines of NOAA arithmetic. Neither is worth a dependency that would have to be kept current forever for a table the platform already ships |
+| 2026-09-25 | Hebrew months are matched by **name**, not number: a leap year inserts Adar I and shifts every following month's number, so a numeric month would be wrong in seven years out of nineteen |
+| 2026-09-25 | The Shabbat hold applies to every reminder, with no urgency exception. There is no urgency in the draft schema, and inventing one would mean asking the model to judge it — a rule with an invisible exception is worse than a plain one |
+| 2026-09-25 | Consecutive rest days merge into one period. A chag running into Shabbat has no break between them, and two periods would let a message out at the seam on Friday night |
+| 2026-09-25 | Nightfall is a solar depression angle (8.5°), not sunset plus N minutes: the same angle takes ~42 minutes in June and ~40 in December |
 
 ---
 
@@ -1428,12 +1495,11 @@ no idea what a turn costs in wall time.
 
 ### P3 — connected to what is actually used
 
-**B12. Shabbat and Israeli holidays.** A reminder that fires at 19:00 on Friday is
-the kind of thing that makes a tool feel foreign. A good deal of Israeli
-scheduling also lives on the Hebrew calendar.
-*Do:* a setting, off by default — hold non-urgent reminders over Shabbat and
-chagim and deliver at motzaei Shabbat. Needs a Hebrew-calendar source; check it
-against the CPU budget before committing to it.
+**B12. Shabbat and Israeli holidays.** ✅ **Done 2026-09-25** — see §6.13. Off by
+default, `/shabbat on` turns it on, and it needed no dependency after all: the
+Hebrew calendar is in `Intl` and sunset is sixty lines of arithmetic. The CPU
+question the entry raised is settled by §4.1 — it is a few microseconds against a
+budget nothing here comes close to.
 
 **B13. iCal feed subscription.** One comparable project's entire value is
 importing any `.ics` — university, work, Canvas, Notion. It reaches far more

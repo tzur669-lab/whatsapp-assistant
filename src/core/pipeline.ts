@@ -460,6 +460,13 @@ function renderCommand(command: Command, deps: PipelineDeps, now: number): strin
     case 'digest':
       return digestSetting(command, deps);
 
+    case 'shabbat':
+      if (command.set === null) {
+        return repo.restHoldEnabled() ? statusText.restHoldUnchanged : statusText.restHoldOff;
+      }
+      repo.setRestHold(command.set);
+      return command.set ? statusText.restHoldOn : statusText.restHoldTurnedOff;
+
     case 'status':
       return statusText.status({
         connected: deps.services?.google?.isConnected() ?? false,

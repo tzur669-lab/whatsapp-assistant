@@ -10,7 +10,7 @@
  */
 import { isolate, isolateLtr } from './bidi.js';
 
-const SYSTEM_COMMANDS = ['/help', '/status', '/digest', '/pause', '/resume', '/connect google', '/budget']
+const SYSTEM_COMMANDS = ['/help', '/status', '/digest', '/shabbat', '/pause', '/resume', '/connect google', '/budget']
   .map(isolate)
   .join(' · ');
 
