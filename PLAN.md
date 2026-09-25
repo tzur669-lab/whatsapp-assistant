@@ -1368,6 +1368,8 @@ Test each of these:
 | 2026-09-25 | The Shabbat hold applies to every reminder, with no urgency exception. There is no urgency in the draft schema, and inventing one would mean asking the model to judge it — a rule with an invisible exception is worse than a plain one |
 | 2026-09-25 | Consecutive rest days merge into one period. A chag running into Shabbat has no break between them, and two periods would let a message out at the seam on Friday night |
 | 2026-09-25 | Nightfall is a solar depression angle (8.5°), not sunset plus N minutes: the same angle takes ~42 minutes in June and ~40 in December |
+| 2026-09-25 | Once the daily cap binds, the eval harness paces at the refill rate (~7 min/case) rather than the per-minute rate (8/min). The fast pace empties the window the instant it refills, buying one case per quarter-hour wait |
+| 2026-09-25 | Phase 3 is not blocked by the model but by arithmetic: 156 cases × 993 tokens is 78% of a day's budget, so certification has to start from an untouched rolling window |
 
 ---
 
@@ -1481,12 +1483,24 @@ which biases spelling for names and times at no cost (PLAN §13, still unmeasure
 *Do:* try the prompt first, against recorded clips via `--replay`. Reach for a
 second provider only if that is not enough.
 
-**B10. Phase 3 thresholds still unmet, still quota-blocked.** 89.1% intent against
-a 97% target. Unchanged since the prompt work; the daily budget has been
-recovering (9 of 12 cases on 2026-09-25) but a full 156-case run costs ~157K of
-the 200K daily.
-*Do:* certify on the first day the budget allows, and settle §13's open question
-with whole numbers rather than partial ones.
+**B10. Phase 3 thresholds still unmet, and the corpus costs more than a day's
+budget to run.** 89.1% intent against a 97% target, unchanged since the prompt
+work — and the reason it has never been re-measured is now understood rather
+than guessed at.
+
+The arithmetic: 156 cases × ~993 prompt tokens = **~155K of Groq's 200K per
+day**, and that cap is a *rolling* window rather than a midnight reset, refilling
+at about 139 tokens a minute — one case every seven minutes. So the corpus can
+be run in one twenty-minute burst **only on a day when nothing else has spent
+it**, and three attempts on 2026-09-25 (9, 27 and 0 cases) each started from a
+window the previous attempt had already drained.
+
+*Do:* run it first thing on a day with an untouched window. `--record` now
+checkpoints per case and `--resume` finishes what a stopped run started, and
+after the first daily exhaustion the harness drops to the refill rate instead of
+re-emptying the window the moment it fills. Failing that, the lasting fix is a
+smaller prompt: at ~500 tokens the whole corpus would cost 78K and fit
+comfortably inside a partly-spent day.
 
 **B11. Nothing is measured end to end.** No latency budget, no cold-start number,
 no idea what a turn costs in wall time.

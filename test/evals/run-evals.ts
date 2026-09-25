@@ -135,6 +135,24 @@ async function main(): Promise<void> {
   }
 
   const minIntervalMs = effectiveRpm > 0 ? Math.ceil(60_000 / effectiveRpm) : 0;
+
+  /**
+   * The pace once the **daily** cap is what is binding, rather than the
+   * per-minute one.
+   *
+   * The two limits want opposite things. Per minute, 8,000 tokens allows eight
+   * cases; per day, 200,000 tokens spread over 24 hours allows one case every
+   * seven minutes. While there is daily headroom the fast pace is right and
+   * finishes the corpus in twenty minutes. Once there is not, the fast pace is
+   * actively harmful: it empties the refill the instant it arrives, gets one
+   * case, and is refused for another quarter of an hour.
+   *
+   * So after the first daily exhaustion the run slows to the refill rate, which
+   * turns "wait fifteen minutes for one case" into steady progress.
+   */
+  const refillIntervalMs =
+    promptTokens > 0 ? Math.ceil((promptTokens / (TOKENS_PER_DAY / 1_440)) * 60_000) : minIntervalMs;
+  let interval = minIntervalMs;
   let nextAllowedAt = 0;
 
   // A resume reads its own file back and skips what already has an answer. The
@@ -161,7 +179,7 @@ async function main(): Promise<void> {
 
     const waitMs = nextAllowedAt - Date.now();
     if (waitMs > 0) await sleep(waitMs);
-    nextAllowedAt = Date.now() + minIntervalMs;
+    nextAllowedAt = Date.now() + interval;
 
     let result: CaseResult | null = null;
     while (result === null) {
@@ -178,8 +196,19 @@ async function main(): Promise<void> {
           stopExhausted(error, results.length, cases.length, recordPath, args);
         }
         patienceMs -= pauseMs;
+
+        if (interval !== refillIntervalMs) {
+          // From here the daily cap is what binds, not the per-minute one, and
+          // the fast pace makes things worse rather than better.
+          interval = refillIntervalMs;
+          process.stdout.write(
+            `\n  daily cap reached; slowing to one case every ` +
+              `${Math.round(refillIntervalMs / 60_000)} min, the rate it refills at\n`,
+          );
+        }
+
         process.stdout.write(
-          `\n  token budget spent; waiting ${Math.ceil(pauseMs / 1_000)}s ` +
+          `  token budget spent; waiting ${Math.ceil(pauseMs / 1_000)}s ` +
             `(${Math.round(patienceMs / 60_000)} min of patience left)\n  `,
         );
         await sleep(pauseMs);
