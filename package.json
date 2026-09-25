@@ -14,6 +14,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "eval": "tsx test/evals/run-evals.ts",
+    "bench": "tsx scripts/bench-turn.ts",
     "dev": "wrangler dev --env staging",
     "deploy:staging": "wrangler deploy --env staging"
   },

@@ -157,7 +157,7 @@ Only `src/platform/` may import Cloudflare APIs. Everything else is plain TypeSc
 | Layer | Decision | Status |
 |---|---|---|
 | Runtime | Cloudflare Workers (Free) + 1 SQLite-backed Durable Object | [R] |
-| Language / libs | TypeScript (strict), Hono, Zod, small tz-aware date lib (measure CPU) | [R] |
+| Language / libs | TypeScript (strict), Hono, Zod, small tz-aware date lib — CPU measured, see §4.1 | [R] |
 | Channel | WhatsApp Cloud API directly (no BSP) behind `ChannelAdapter` | [R] |
 | LLM | Groq free: `gpt-oss-120b` vs `qwen3.8-27b` chosen by eval; loser = fallback | [R] |
 | LLM fallback 2 | Deterministic rules parser for common patterns | [R] |
@@ -176,6 +176,51 @@ Only `src/platform/` may import Cloudflare APIs. Everything else is plain TypeSc
 - **Make/n8n as the core.** Secrets and validation would live outside my code.
 - **Google Tasks for timed reminders.** The API has no time field.
 
+### 4.1 The CPU budget, measured
+
+Workers Free allows **10 ms of CPU per request**, and exceeding it does not cost
+money — it fails the request. This table said "measure CPU" from the first draft
+and it had not been measured once, which meant every claim about the synchronous
+SHA-256, the Zod validation and the bidi rendering being affordable was a guess.
+
+`pnpm bench` (`scripts/bench-turn.ts`) now measures it. Median of 500 runs after
+a warm-up, on a developer machine under Node:
+
+| Stage | ms | % of 10 ms |
+|---|---|---|
+| parse webhook | 0.003 | 0.0% |
+| Zod validate `IntentDraft` | 0.003 | 0.0% |
+| sha256, button id (~13 B) | 0.003 | 0.0% |
+| render a reply (bidi + `Intl`) | 0.005 | 0.0% |
+| sha256, stored input (~250 B) | 0.006 | 0.1% |
+| `resolveWhen` | 0.020 | 0.2% |
+| HMAC verify (webhook ingress) | 0.043 | 0.4% |
+| sha256, 8 KB | 0.098 | 1.0% |
+| **full turn — a tapped button, every gate** | **0.13** | **1.3%** |
+| **full turn — create a reminder** | **0.32** | **3.2%** |
+| **full turn — `/status`** | **0.33** | **3.3%** |
+| migrate, cold start, once per Durable Object | 0.99 | 9.9% |
+
+**The conclusion: this was never the constraint.** A whole turn costs about a
+thirtieth of the allowance. The hand-written synchronous SHA-256 that §6.5
+defends at length costs six microseconds on the inputs it actually sees — the
+argument for keeping it synchronous stands on atomicity alone and needs no
+performance justification, and never did.
+
+**What the numbers do change** is where to look. The single largest cost in the
+system is applying the migrations at cold start, at 10% of one request's budget,
+and it grows with every migration file added. It is paid once per Durable Object
+and lands on that object's first request, so a cold start costs about 1.3 ms all
+in — still an eighth of the budget, but it is the one line here that trends the
+wrong way. `test/unit/core/cpu-budget.test.ts` ratchets it, along with a turn and
+the two SHA-256 sizes.
+
+**What this measurement is not.** It is Node on a laptop, not workerd: a
+different isolate, a different machine, and Cloudflare counts CPU rather than
+wall time. Awaiting Groq or Google does not consume CPU, so network latency —
+which dominates a real turn's wall clock — does not enter this budget at all.
+The authoritative figure is `cpuMs` from `wrangler tail` against staging, which
+is still outstanding and needs a deploy.
 ---
 
 ## 5. Cost model
@@ -1193,6 +1238,9 @@ Test each of these:
 | 2026-09-25 | The built-in scan reads its custom rules out of `.gitleaks.toml` rather than keeping a second copy, so adding a rule stays a one-place change |
 | 2026-09-25 | The scan reports rule, file and line and never the matched text. A scanner that echoes a credential into a terminal and a CI log has moved the problem, not solved it |
 | 2026-09-25 | Real phone numbers and email addresses are a scan rule here, which no off-the-shelf scanner treats as a finding. They are the leak this project is most likely to produce |
+| 2026-09-25 | The 10 ms CPU budget is measured (§4.1) and was never the constraint: a whole turn is ~0.33 ms. The synchronous SHA-256 is justified by atomicity alone and needed no performance argument |
+| 2026-09-25 | The largest CPU cost in the system is applying migrations at cold start (~1 ms, 10% of one request), and it grows per migration file. That is now the number to watch, not the crypto |
+| 2026-09-25 | The CPU test is a ratchet, not a measurement: every ceiling is at least 15x the measured cost, so a tenfold regression fails and a loaded CI machine does not |
 
 ---
 
@@ -1259,12 +1307,15 @@ this is a floor, not a replacement. `test/security/secret-scan.test.ts` fires it
 eleven ways, with every fixture credential assembled at runtime so none of them
 exists as a literal in the repository.
 
-**B4. The 10 ms CPU budget has never been measured.** PLAN §4 says to measure it
-and it has not been measured once. The synchronous SHA-256, the Zod validation
-and the bidi rendering all draw on it. Exceeding it does not bill — it fails the
-request.
-*Do:* measure a full turn on staging. If it is close, precompute the hash into a
-column rather than optimizing blind.
+**B4. The 10 ms CPU budget has never been measured.** ✅ **Done 2026-09-25** —
+see §4.1. It was never the constraint: a whole turn costs about 0.33 ms, a
+thirtieth of the allowance, and the synchronous SHA-256 the plan worried about
+costs six microseconds on the inputs it sees. The largest cost in the system
+turned out to be applying the migrations at cold start (0.99 ms, 10% of one
+request), which is the one figure that grows with every migration added.
+`pnpm bench` measures it and `test/unit/core/cpu-budget.test.ts` ratchets it.
+Still outstanding: the authoritative `cpuMs` from `wrangler tail` on staging,
+which needs a deploy.
 
 ### P1 — the difference between a demo and something used daily
 
