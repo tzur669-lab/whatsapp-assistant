@@ -1450,6 +1450,39 @@ Case format (`test/evals/cases.he.yaml`):
 | Off-topic → `unsupported` | ≥95% |
 | p95 latency | < 3 s |
 
+**Running one, when the corpus costs more than a day**
+
+A 156-case run costs ~155K tokens of a 200K **rolling** daily budget, so it
+normally stops partway. `--record <file>` checkpoints every answer as it
+arrives, `--resume <file>` finishes the corpus instead of re-buying the half
+already paid for, `--wait <minutes>` sits out the refill, and `--replay <file>`
+re-scores a recording with no network and no budget at all.
+
+The recording is therefore a ledger of tokens already spent, and **it must never
+get smaller**. It did once: the checkpoint wrote only the results accumulated in
+the running process, and a resume walks the corpus from the start, so for most of
+a resume the file on disk was a truncated prefix of itself. A run stopping there
+destroyed every answer below the point it had reached. The checkpoint now merges —
+the file is the floor, this run's answers go on top, and a case that went
+unanswered this time keeps whatever an earlier run bought for it.
+`test/unit/evals/recording.test.ts` exists because this happened mid-run with 39
+paid answers on the line.
+
+**Comparing two models**
+
+`pnpm eval --compare <a.json> <b.json>` scores two recordings side by side: the
+five accuracy metrics with the hard gates marked, which candidate leads each one,
+the cases where exactly one was right, and the cases where neither was. The last
+of those is what a prompt change has to be aimed at; the aggregate only says who
+won.
+
+It **refuses to compare across prompt versions**, and that refusal is the point.
+§4 chooses between candidate models by eval, the tool catalog is generated into
+the prompt, so a tool added between two runs changes the question rather than the
+answer. The same rule guards resuming: a recording made on another prompt version
+is neither resumed nor merged into. This is the gate B6, B8 and B15 wait behind,
+expressed where it cannot be forgotten rather than remembered by whoever runs it.
+
 ### 11.3 Policy and confirmations
 
 - Unknown or Tier-4 tool → DENY.
@@ -1788,6 +1821,8 @@ gates in §11.2 apply unchanged: an invented number is an invented slot.
 | 2026-09-25 | **The tap on the phone replaces Tier 3's typed code** for `calls.place`. It is out of band from the channel an injection arrives on, it needs hardware an attacker does not hold, and it shows the resolved number — the one fact that decides whether the right person is about to ring |
 | 2026-09-25 | No phone number ever enters the Worker. The device reports `matched: 0 \| 1 \| many` and an outcome; the FCM push carries an opaque dispatch id, so the contact name does not reach Google either |
 | 2026-09-25 | Shabbat hold does not apply to a call. §6.13 holds outbound the assistant *chose the moment for*; a call is asked for in the moment, and holding it would be deciding what I may do rather than when I may be interrupted |
+| 2026-09-25 | The eval checkpoint **merges instead of replacing**. It had been writing only the current process's results, so a resume — which walks the corpus from the start — left the file a truncated prefix of itself, and stopping there destroyed answers already paid for. Found by testing `--compare` against a recording mid-resume: 156 entries had become 108 |
+| 2026-09-25 | `pnpm eval --compare` refuses to score two recordings made on different prompt versions, and so does `--resume`. §4 picks a model by eval and the catalog is generated into the prompt, so a tool added between two runs changes the question. The gate B6, B8 and B15 wait behind is now enforced by the harness rather than remembered |
 
 ---
 

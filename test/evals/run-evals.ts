@@ -15,6 +15,7 @@
  *   pnpm eval --resume <file>       # finish a run the token budget cut short
  *   pnpm eval --wait 90             # sit out daily-budget waits, up to 90 min
  *   pnpm eval --replay <file>       # re-score a recording, no network, no budget
+ *   pnpm eval --compare <a> <b>    # score two recordings side by side (§4)
  *
  * Needs GROQ_API_KEY in .dev.vars for the real providers.
  *
@@ -62,7 +63,7 @@ export type EvalCase = {
   };
 };
 
-type CaseResult = {
+export type CaseResult = {
   id: string;
   intentOk: boolean;
   slotsOk: boolean;
@@ -95,6 +96,33 @@ const THRESHOLDS = {
   p95LatencyMs: 3000,
 } as const;
 
+type AccuracyKey =
+  | 'noInventedSlots'
+  | 'missingSlotRecall'
+  | 'intentAccuracy'
+  | 'exactSlotMatch'
+  | 'offTopicAccuracy';
+
+type Metrics = Record<AccuracyKey, number> & { p95LatencyMs: number };
+
+/**
+ * The five accuracy metrics, in reporting order.
+ *
+ * One list, read by both `report` and `--compare`, so a metric added to the plan
+ * cannot appear in a single run and go missing from the comparison that decides
+ * which model ships.
+ */
+const ACCURACY_METRICS: readonly (readonly [label: string, key: AccuracyKey])[] = [
+  ['no invented slots', 'noInventedSlots'],
+  ['missing-slot recall', 'missingSlotRecall'],
+  ['intent accuracy', 'intentAccuracy'],
+  ['exact slot match', 'exactSlotMatch'],
+  ['off-topic -> unsupported', 'offTopicAccuracy'],
+];
+
+/** The two gates §11.2 calls non-negotiable. */
+const HARD_GATES: readonly AccuracyKey[] = ['noInventedSlots', 'missingSlotRecall'];
+
 // -- entry point --------------------------------------------------------------
 
 type Recording = { provider: string; prompt: string; drafts: { id: string; draft: unknown }[] };
@@ -109,6 +137,11 @@ async function main(): Promise<void> {
 
   if (args.replay) {
     replay(args.replay, cases, args.verbose);
+    return;
+  }
+
+  if (args.compare) {
+    compare(args.compare[0], args.compare[1], cases, args.verbose);
     return;
   }
 
@@ -269,29 +302,71 @@ function stopExhausted(
 }
 
 /** Cases in a recording that actually got an answer. A null draft did not. */
-function answeredDrafts(path: string): Map<string, unknown> {
+export function answeredDrafts(path: string): Map<string, unknown> {
   const answered = new Map<string, unknown>();
   if (!existsSync(path)) return answered;
 
   const recording = JSON.parse(readFileSync(path, 'utf8')) as Recording;
+  if (recording.prompt !== PROMPT_VERSION) {
+    fail(
+      `${path} was recorded on prompt ${recording.prompt} and the prompt is now ` +
+        `${PROMPT_VERSION}.\nResuming would mix two prompt versions into one ` +
+        `recording, which makes its numbers mean nothing.\nStart a fresh ` +
+        `--record instead.`,
+    );
+  }
   for (const { id, draft } of recording.drafts) {
     if (draft !== null && draft !== undefined) answered.set(id, draft);
   }
   return answered;
 }
 
-/** Write the checkpoint. Returns how many drafts it holds. */
-function writeRecording(path: string, providerName: string, results: CaseResult[]): number {
+/**
+ * Write the checkpoint. Returns how many answers it holds.
+ *
+ * **It merges; it does not replace.** A resume walks the corpus from the start,
+ * so `results` is only a prefix of it until the run ends — and writing that
+ * prefix alone narrows the file as the run proceeds. Answers already paid for,
+ * sitting further down the corpus, would disappear from disk the moment an early
+ * case was reached, and a run stopping there would have destroyed the very thing
+ * `--resume` exists to protect. So the file is the floor: every draft in it
+ * survives, and this run's answers go on top.
+ *
+ * A recording from a different prompt version is not merged into. Resuming one
+ * already fails, so this is the same rule enforced where a stray `--record` at
+ * the same path could otherwise blend two corpora.
+ */
+export function writeRecording(path: string, providerName: string, results: CaseResult[]): number {
+  const previous =
+    existsSync(path) ? (JSON.parse(readFileSync(path, 'utf8')) as Recording) : null;
+  const carried = previous?.prompt === PROMPT_VERSION ? previous.drafts : [];
+
+  const order: string[] = [];
+  const drafts = new Map<string, unknown>();
+  for (const { id, draft } of carried) {
+    order.push(id);
+    drafts.set(id, draft);
+  }
+  for (const r of results) {
+    // The provider's raw output, so a replay validates exactly what the live
+    // run validated.
+    const answer = r.raw ?? null;
+    // A case that went unanswered this time keeps whatever an earlier run
+    // bought for it. Only a real answer overwrites.
+    const kept = drafts.get(r.id);
+    if (answer === null && kept !== null && kept !== undefined) continue;
+    if (!drafts.has(r.id)) order.push(r.id);
+    drafts.set(r.id, answer);
+  }
+
   const recording: Recording = {
     provider: providerName,
     prompt: PROMPT_VERSION,
-    // The provider's raw output, so a replay validates exactly what the live
-    // run validated.
-    drafts: results.map((r) => ({ id: r.id, draft: r.raw ?? null })),
+    drafts: order.map((id) => ({ id, draft: drafts.get(id) ?? null })),
   };
   mkdirSync(dirname(resolve(path)), { recursive: true });
   writeFileSync(path, JSON.stringify(recording, null, 2), 'utf8');
-  return recording.drafts.length;
+  return recording.drafts.filter((d) => d.draft !== null).length;
 }
 
 /**
@@ -496,14 +571,20 @@ export function score(testCase: EvalCase, draft: IntentDraft, latencyMs = 0): Ca
 }
 
 /** Re-score a recorded run. No network, no budget spent. */
-function replay(path: string, cases: EvalCase[], verbose: boolean): void {
-  const recording = JSON.parse(readFileSync(path, 'utf8')) as Recording;
-  const byId = new Map(recording.drafts.map((d) => [d.id, d.draft]));
-  const results: CaseResult[] = [];
+function loadRecording(path: string): Recording {
+  if (!existsSync(path)) fail(`No recording at ${path}.`);
+  return JSON.parse(readFileSync(path, 'utf8')) as Recording;
+}
 
-  for (const testCase of cases) {
-    results.push(scoreRecorded(testCase, byId.get(testCase.id)));
-  }
+/** Score every case in the corpus against one recording's drafts. */
+function scoreRecording(recording: Recording, cases: EvalCase[]): CaseResult[] {
+  const byId = new Map(recording.drafts.map((d) => [d.id, d.draft]));
+  return cases.map((testCase) => scoreRecorded(testCase, byId.get(testCase.id)));
+}
+
+function replay(path: string, cases: EvalCase[], verbose: boolean): void {
+  const recording = loadRecording(path);
+  const results = scoreRecording(recording, cases);
 
   process.stdout.write(
     `replay of ${path} · ${recording.provider} · prompt ${recording.prompt} · ${results.length} cases
@@ -515,19 +596,167 @@ function replay(path: string, cases: EvalCase[], verbose: boolean): void {
   report(results, cases, `${recording.provider} (replay)`, verbose);
 }
 
+/**
+ * Score two recordings side by side (PLAN §4's model choice, §11.9).
+ *
+ * §4 decides between candidate models by eval, and that decision only means
+ * something if both ran on the same prompt: the tool catalog is generated into
+ * the prompt, so a tool added between two runs changes the question rather than
+ * the answer. This refuses to compare across prompt versions instead of trusting
+ * whoever runs it to remember — the same care the gate on B6, B8 and B15 exists
+ * to enforce, put where it cannot be forgotten.
+ *
+ * Latency is absent by construction: a recording stores drafts, not timings.
+ */
+function compare(pathA: string, pathB: string, cases: EvalCase[], verbose: boolean): void {
+  const a = loadRecording(pathA);
+  const b = loadRecording(pathB);
+
+  if (a.prompt !== b.prompt) {
+    process.stdout.write(
+      `Refusing to compare.\n\n` +
+        `  ${pathA}\n      prompt ${a.prompt}\n` +
+        `  ${pathB}\n      prompt ${b.prompt}\n\n` +
+        `The tool catalog is generated into the prompt, so these two runs were not\n` +
+        `asked the same question, and the difference between them is not the model.\n` +
+        `Re-record one on the other's prompt version.\n`,
+    );
+    process.exit(2);
+  }
+
+  const resultsA = scoreRecording(a, cases);
+  const resultsB = scoreRecording(b, cases);
+  const metricsA = computeMetrics(resultsA, cases);
+  const metricsB = computeMetrics(resultsB, cases);
+
+  const unanswered = (results: CaseResult[]): number =>
+    results.filter((r) => r.error === 'no_response').length;
+  const missingA = unanswered(resultsA);
+  const missingB = unanswered(resultsB);
+  const note = (n: number): string =>
+    n === 0 ? `${cases.length} answered` : `${cases.length - n} answered, ${n} never answered`;
+
+  process.stdout.write(
+    `prompt ${a.prompt} · ${cases.length} cases · latency is not recorded\n\n` +
+      `  A  ${a.provider}  (${note(missingA)})\n` +
+      `  B  ${b.provider}  (${note(missingB)})\n\n`,
+  );
+
+  if (a.prompt !== PROMPT_VERSION) {
+    process.stdout.write(
+      `  Both recordings predate the current prompt (${PROMPT_VERSION}). They are\n` +
+        `  comparable to each other, but neither certifies what ships today.\n\n`,
+    );
+  }
+
+  process.stdout.write(`${''.padEnd(26)}      A        B   threshold\n`);
+  for (const [label, key] of ACCURACY_METRICS) {
+    const va = metricsA[key];
+    const vb = metricsB[key];
+    const gate = HARD_GATES.includes(key) ? '*' : ' ';
+    // Parenthesised when the leader is still under the threshold: ahead of the
+    // other candidate and not yet good enough is not a win.
+    const lead =
+      va === vb
+        ? '  ='
+        : va > vb
+          ? va >= THRESHOLDS[key]
+            ? '  A'
+            : ' (A)'
+          : vb >= THRESHOLDS[key]
+            ? '  B'
+            : ' (B)';
+    process.stdout.write(
+      `${gate}${label.padEnd(25)} ${pct(va).padStart(6)}  ${pct(vb).padStart(7)}   ` +
+        `${pct(THRESHOLDS[key]).padStart(6)} ${lead}\n`,
+    );
+  }
+  process.stdout.write(
+    `\n  * hard gate, not negotiable (§11.2). Parentheses: ahead, still failing.\n`,
+  );
+
+  // The aggregate says which model is better. This says where they actually
+  // differ, which is what a prompt change has to be aimed at.
+  const byIdB = new Map(resultsB.map((r) => [r.id, r]));
+  const onlyA: string[] = [];
+  const onlyB: string[] = [];
+  const neither: string[] = [];
+  for (const ra of resultsA) {
+    const rb = byIdB.get(ra.id);
+    if (rb === undefined) continue;
+    const okA = passedAll(ra);
+    const okB = passedAll(rb);
+    if (okA && !okB) onlyA.push(ra.id);
+    else if (!okA && okB) onlyB.push(ra.id);
+    else if (!okA && !okB) neither.push(ra.id);
+  }
+
+  process.stdout.write(
+    `\n${onlyA.length + onlyB.length} case(s) where exactly one was right, ` +
+      `${neither.length} where neither was:\n`,
+  );
+  const list = (label: string, ids: string[]): void => {
+    if (ids.length === 0) return;
+    process.stdout.write(`  ${label} (${ids.length})\n`);
+    for (let i = 0; i < ids.length; i += 6) {
+      process.stdout.write(`      ${ids.slice(i, i + 6).join('  ')}\n`);
+    }
+  };
+  list('A only', onlyA);
+  list('B only', onlyB);
+  list('neither', neither);
+
+  if (verbose) {
+    const pairs: readonly (readonly [string, CaseResult[]])[] = [
+      ['A', resultsA],
+      ['B', resultsB],
+    ];
+    for (const [label, results] of pairs) {
+      const wrong = results.filter((r) => !passedAll(r) && r.error !== 'no_response');
+      if (wrong.length === 0) continue;
+      process.stdout.write(`\n${label} — ${wrong.length} wrong answer(s):\n`);
+      for (const r of wrong.slice(0, 40)) {
+        const expected = cases.find((c) => c.id === r.id)?.expect;
+        process.stdout.write(`  ${r.id}  ${r.error ?? ''}\n`);
+        process.stdout.write(`      expected ${JSON.stringify(expected)}\n`);
+        process.stdout.write(`      actual   ${JSON.stringify(r.actual ?? r.rejected)}\n`);
+      }
+    }
+  }
+
+  const meetsAll = (m: Metrics): boolean =>
+    ACCURACY_METRICS.every(([, key]) => m[key] >= THRESHOLDS[key]);
+  const okA = meetsAll(metricsA);
+  const okB = meetsAll(metricsB);
+
+  const verdict = okA && okB
+    ? 'Both meet every accuracy threshold. Decide on latency and cost.'
+    : okA
+      ? `Only A meets every accuracy threshold: ${a.provider}.`
+      : okB
+        ? `Only B meets every accuracy threshold: ${b.provider}.`
+        : 'Neither meets every accuracy threshold. §13 already lists the options.';
+
+  process.stdout.write(`\n${verdict}\n`);
+  if (missingA > 0 || missingB > 0) {
+    process.stdout.write(
+      `Provisional: an unanswered case is scored as a failure of everything, so a\n` +
+        `run with gaps understates its model. Finish both corpora before deciding.\n`,
+    );
+  }
+  process.exit(okA || okB ? 0 : 1);
+}
+
 // -- reporting ----------------------------------------------------------------
 
-function report(
-  results: CaseResult[],
-  cases: EvalCase[],
-  providerName: string,
-  verbose: boolean,
-): void {
+function computeMetrics(results: CaseResult[], cases: EvalCase[]): Metrics {
   const total = results.length;
-  const offTopic = cases.filter((c) => c.expect.intent === 'unsupported').map((c) => c.id);
-  const offTopicResults = results.filter((r) => offTopic.includes(r.id));
+  const offTopic = new Set(
+    cases.filter((c) => c.expect.intent === 'unsupported').map((c) => c.id),
+  );
+  const offTopicResults = results.filter((r) => offTopic.has(r.id));
 
-  const metrics = {
+  return {
     noInventedSlots: ratio(results.filter((r) => r.inventedSlots.length === 0).length, total),
     missingSlotRecall: ratio(results.filter((r) => r.missingOk).length, total),
     intentAccuracy: ratio(results.filter((r) => r.intentOk).length, total),
@@ -537,14 +766,29 @@ function report(
       : 1,
     p95LatencyMs: percentile(results.map((r) => r.latencyMs), 0.95),
   };
+}
 
-  const rows: [string, number, number, boolean][] = [
-    ['no invented slots', metrics.noInventedSlots, THRESHOLDS.noInventedSlots, metrics.noInventedSlots >= THRESHOLDS.noInventedSlots],
-    ['missing-slot recall', metrics.missingSlotRecall, THRESHOLDS.missingSlotRecall, metrics.missingSlotRecall >= THRESHOLDS.missingSlotRecall],
-    ['intent accuracy', metrics.intentAccuracy, THRESHOLDS.intentAccuracy, metrics.intentAccuracy >= THRESHOLDS.intentAccuracy],
-    ['exact slot match', metrics.exactSlotMatch, THRESHOLDS.exactSlotMatch, metrics.exactSlotMatch >= THRESHOLDS.exactSlotMatch],
-    ['off-topic -> unsupported', metrics.offTopicAccuracy, THRESHOLDS.offTopicAccuracy, metrics.offTopicAccuracy >= THRESHOLDS.offTopicAccuracy],
-  ];
+/** Everything a case is scored on, so "one got it right and the other did not" is one predicate. */
+function passedAll(r: CaseResult): boolean {
+  return r.intentOk && r.slotsOk && r.missingOk && r.inventedSlots.length === 0;
+}
+
+function report(
+  results: CaseResult[],
+  cases: EvalCase[],
+  providerName: string,
+  verbose: boolean,
+): void {
+  const metrics = computeMetrics(results, cases);
+
+  const rows: [string, number, number, boolean][] = ACCURACY_METRICS.map(
+    ([label, key]): [string, number, number, boolean] => [
+      label,
+      metrics[key],
+      THRESHOLDS[key],
+      metrics[key] >= THRESHOLDS[key],
+    ],
+  );
 
   for (const [label, value, threshold, pass] of rows) {
     process.stdout.write(
@@ -708,12 +952,24 @@ function parseArgs(argv: string[]): {
   record: string | null;
   replay: string | null;
   resume: string | null;
+  compare: [string, string] | null;
   waitMinutes: number;
   sample: number | null;
 } {
   const get = (flag: string): string | null => {
     const i = argv.indexOf(flag);
     return i >= 0 ? (argv[i + 1] ?? null) : null;
+  };
+  /** Two paths after one flag, which is the only shape a comparison has. */
+  const pair = (flag: string): [string, string] | null => {
+    const i = argv.indexOf(flag);
+    if (i < 0) return null;
+    const first = argv[i + 1];
+    const second = argv[i + 2];
+    if (first === undefined || second === undefined) {
+      fail(`${flag} needs two recordings: ${flag} <a.json> <b.json>`);
+    }
+    return [first, second];
   };
   const provider = get('--provider') ?? 'groq';
   const rpm = Number(get('--rpm') ?? (provider === 'rules' ? 0 : 25));
@@ -727,6 +983,7 @@ function parseArgs(argv: string[]): {
     record: get('--record'),
     replay: get('--replay'),
     resume: get('--resume'),
+    compare: pair('--compare'),
     // Total patience for daily-budget waits, across the whole run. Zero keeps
     // the old behaviour: stop and print how to resume.
     waitMinutes: Number(get('--wait') ?? 0) || 0,
