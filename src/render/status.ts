@@ -97,6 +97,24 @@ export const statusText = {
 
   cancelled: 'בוטל.',
 
+  /**
+   * `/digest` (PLAN §6.12). Says the hour and says what it will not do, because
+   * "on" is ambiguous about whether a quiet day still gets a message.
+   */
+  digestOn(hour: number): string {
+    const clock = isolateLtr(`${String(hour).padStart(2, '0')}:00`);
+    return `תקציר יומי יישלח כל יום ב-${clock}. ביום שאין בו כלום לא תישלח הודעה.`;
+  },
+
+  digestOff: `התקציר היומי כבוי. להפעלה יש לשלוח ${isolate('/digest 7')} — המספר הוא השעה.`,
+
+  digestUnchanged(hour: number): string {
+    const clock = isolateLtr(`${String(hour).padStart(2, '0')}:00`);
+    return `התקציר היומי פעיל ונשלח ב-${clock}. לכיבוי: ${isolate('/digest off')}.`;
+  },
+
+  digestTurnedOff: 'התקציר היומי כבוי.',
+
   /** The action was undone within the ten minute window. */
   undone: 'הפעולה בוטלה וחזרה למצב הקודם.',
 

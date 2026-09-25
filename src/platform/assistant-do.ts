@@ -32,7 +32,8 @@ import { eventText } from '../render/events.js';
 import { budgetState, isWindowOpen, RECHECK_BEFORE_MS } from '../policy/window.js';
 import { reminderText } from '../render/reminders.js';
 import { statusText } from '../render/status.js';
-import { localPartsOf } from '../time/tz.js';
+import { localPartsOf, ZONE } from '../time/tz.js';
+import { buildDigest } from '../core/digest.js';
 import type { InboundEvent, OutboundMessage } from '../channels/types.js';
 import type { AppEnv } from '../core/env.js';
 import { DurableObjectSqlDriver } from './sql-repo.js';
@@ -114,6 +115,11 @@ export class AssistantDO implements DurableObject {
 
     if (url.pathname === '/do/maintenance' && request.method === 'POST') {
       await this.runMaintenance();
+      return new Response(null, { status: 204 });
+    }
+
+    if (url.pathname === '/do/tick' && request.method === 'POST') {
+      await this.maybeSendDigest();
       return new Response(null, { status: 204 });
     }
 
@@ -252,6 +258,59 @@ export class AssistantDO implements DurableObject {
     this.google.purgeExpired();
     await this.armAlarm();
     this.log.info('maintenance_done', {});
+  }
+
+  // -- the daily digest ------------------------------------------------------
+
+  /**
+   * Hourly cron entry point (PLAN §6.12).
+   *
+   * Hourly rather than at a fixed time because the digest hour is a setting, and
+   * a cron expression cannot be changed by a chat message — nor should it be
+   * (invariant 8). So the schedule is dumb and the decision is here: is it that
+   * hour locally, and has today's digest been dealt with?
+   *
+   * "Dealt with" rather than "sent": a day with nothing to say is marked done
+   * without a message. Otherwise every quiet day would retry for an hour and
+   * then give up, having decided nothing.
+   */
+  async maybeSendDigest(): Promise<void> {
+    const now = Date.now();
+    const hour = this.repo.digestHour();
+    if (hour === null) return;
+
+    const local = localPartsOf(now, ZONE);
+    if (local.hour !== hour) return;
+
+    const dayKey = Repository.dayKey(now);
+    if (this.repo.digestDoneOn() === dayKey) return;
+
+    const principal = await this.selfPrincipal();
+
+    // The same gate a reminder passes. A digest outside the 24-hour window is
+    // not a message that fails — it is one that must not be attempted (§5).
+    if (!this.canDeliver(principal, now)) {
+      this.log.info('digest_skipped', { reason: 'window_or_budget' });
+      // Deliberately not marked done: if the user writes in during this hour the
+      // window opens and the next tick can still send it.
+      return;
+    }
+
+    // Marked before the send, not after. A digest is worth exactly one attempt:
+    // it is about today, and a retry an hour later is a different message.
+    this.repo.markDigestDone(dayKey);
+
+    const text = await buildDigest({
+      nowMs: now,
+      principal,
+      lang: 'he',
+      reminders: this.reminders,
+      log: this.log,
+      ...(this.calendarClient() ? { calendar: this.calendarClient()! } : {}),
+    });
+    if (text === null) return;
+
+    await this.send({ to: this.selfWaId(), text }, { kind: 'digest', principal });
   }
 
   // -- inbound ---------------------------------------------------------------

@@ -20,12 +20,15 @@ SQLite schema, the reminder alarm, and every confirmation gate.
 
 **Scheduled work**
 
-- Daily cron at 03:30 UTC: purges inbound records over 30 days old, expires
-  unanswered confirmations, undos and snooze offers, clears spent OAuth rows,
-  and re-arms the alarm.
+- Daily cron at 03:30 UTC: purges inbound and outbound records over 30 days old,
+  expires unanswered confirmations, undos, snooze offers and open questions,
+  clears spent OAuth rows, and re-arms the alarm.
+- Hourly cron: asks whether this is the digest hour locally (PLAN §6.12). The
+  schedule is deliberately dumb — the hour is a setting, and the Durable Object
+  is what decides.
 - The alarm itself fires per reminder, not on a schedule.
 
-**Chat commands** — `/help`, `/status`, `/pause`, `/resume`, `/budget`,
+**Chat commands** — `/help`, `/status`, `/digest`, `/pause`, `/resume`, `/budget`,
 `/connect google`, `/ping`.
 
 ## Deploying to staging
@@ -76,6 +79,8 @@ messages used this month, NLU fallbacks today, and the last error code.
 | "לא הבנתי" on everything | NLU quota exhausted | `/status` fallback count; logs for `nlu_exhausted` |
 | Calendar says not connected | Grant revoked or lapsed | Logs for `google_disconnected`; re-run `/connect google` |
 | Reminder arrived twice | Should be impossible | Check `reminders.status` and `lease_until`; this is a bug, not an operation |
+| Reminder said sent, never arrived | Meta accepted it and then failed | `/status` undelivered count; `outbound_messages.error_code` for the wamid |
+| No digest | Off, wrong hour, or the window was shut | `/digest` reports the setting; logs for `digest_skipped` |
 
 Every log line carries a stable `errorCode`. None of them carries message
 content, a phone number, a transcript, or a token — if you need to correlate a

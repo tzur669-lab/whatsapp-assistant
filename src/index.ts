@@ -175,11 +175,23 @@ async function callDo<T>(env: Bindings, path: string, body: unknown): Promise<T 
   }
 }
 
+/** Must match `triggers.crons` in `wrangler.jsonc`, exactly. */
+const HOURLY_CRON = '0 * * * *';
+
 export default {
   fetch: app.fetch,
 
-  async scheduled(_event: ScheduledController, env: Bindings, ctx: ExecutionContext): Promise<void> {
+  /**
+   * Two schedules, told apart by the expression that fired (PLAN §6.7, §6.12).
+   *
+   * The hourly one exists because the digest hour is a setting and a cron
+   * expression is not: the schedule is dumb and the Durable Object decides
+   * whether this is the hour. Anything unrecognised runs maintenance, so a cron
+   * added to the config and forgotten here still does something sane.
+   */
+  async scheduled(event: ScheduledController, env: Bindings, ctx: ExecutionContext): Promise<void> {
     const stub = env.ASSISTANT.get(env.ASSISTANT.idFromName('singleton'));
-    ctx.waitUntil(stub.fetch('https://do/do/maintenance', { method: 'POST' }));
+    const path = event.cron === HOURLY_CRON ? '/do/tick' : '/do/maintenance';
+    ctx.waitUntil(stub.fetch(`https://do${path}`, { method: 'POST' }));
   },
 };

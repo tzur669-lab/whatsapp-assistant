@@ -5,6 +5,8 @@
 import type { SqlDriver, SqlRow } from './sql.js';
 
 const SCHEMA_VERSION_KEY = 'schema_version';
+const DIGEST_HOUR_KEY = 'digest_hour';
+const DIGEST_SENT_KEY = 'digest_sent_on';
 
 export type InboundRecord = {
   wamid: string;
@@ -133,6 +135,40 @@ export class Repository {
   /** Purge inbound records past their retention window (PLAN §6.8: 30 days). */
   purgeInboundBefore(cutoffMs: number): void {
     this.sql.exec('DELETE FROM inbound_messages WHERE received_at < ?', cutoffMs);
+  }
+
+  // -- the daily digest (PLAN §6.12) -----------------------------------------
+
+  /** The local hour the digest is sent at, or null when it is off. */
+  digestHour(): number | null {
+    const raw = this.getSetting(DIGEST_HOUR_KEY);
+    if (raw === null) return null;
+    const hour = Number(raw);
+    return Number.isInteger(hour) && hour >= 0 && hour <= 23 ? hour : null;
+  }
+
+  setDigestHour(hour: number | null): void {
+    if (hour === null) {
+      this.sql.exec('DELETE FROM settings WHERE key = ?', DIGEST_HOUR_KEY);
+      return;
+    }
+    this.setSetting(DIGEST_HOUR_KEY, String(hour));
+  }
+
+  /**
+   * Whether today's digest has already been dealt with.
+   *
+   * The cron runs hourly and only one of those hours is the digest hour, so this
+   * is belt and braces — but a cron that fires twice in the same hour is a
+   * documented possibility, and a duplicate digest costs a message and looks
+   * broken.
+   */
+  digestDoneOn(): string | null {
+    return this.getSetting(DIGEST_SENT_KEY);
+  }
+
+  markDigestDone(dayKey: string): void {
+    this.setSetting(DIGEST_SENT_KEY, dayKey);
   }
 
   // -- outbound (PLAN §6.8) ---------------------------------------------------

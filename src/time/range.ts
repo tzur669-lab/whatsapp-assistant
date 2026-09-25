@@ -88,3 +88,23 @@ export function daysBetween(fromUtc: number, toUtc: number, zone: string = ZONE)
   const toMidnight = midnightUtc({ ...to, hour: 0, minute: 0 }, zone);
   return Math.round((toMidnight - fromMidnight) / DAY_MS);
 }
+
+/**
+ * The last instant of the local day containing `atMs` (PLAN §6.12).
+ *
+ * Resolved through the zone rather than by adding 24 hours, for the same reason
+ * every boundary here is: on a DST day the local day is 23 or 25 hours long, and
+ * a digest that stops an hour early on the last Sunday in October is a digest
+ * that quietly drops an evening's events.
+ */
+export function endOfLocalDay(atMs: number, zone: string = ZONE): number {
+  const local = localPartsOf(atMs, zone);
+  const tomorrow = addDays({ ...local, hour: 0, minute: 0 }, 1);
+  const midnight = wallTimeToUtc({ ...tomorrow, hour: 0, minute: 0 }, zone);
+
+  if (midnight.kind === 'ok') return midnight.utcMs - 1;
+  // A midnight that is ambiguous or missing is not something Israel's rules
+  // produce, but the earliest candidate is the safe reading either way.
+  if (midnight.kind === 'fold') return Math.min(...midnight.utcMsCandidates) - 1;
+  return Date.UTC(tomorrow.year, tomorrow.month - 1, tomorrow.day) - 1;
+}

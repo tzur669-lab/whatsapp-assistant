@@ -770,6 +770,58 @@ question. Reading "2" as an hour would be exactly the confident misreading this
 whole design exists to avoid, so the user restates instead. Nor does anything
 here become conversation memory: one question, one tool, ten minutes.
 
+### 6.12 The daily digest
+
+One message, once a day, at an hour the user sets: what is on the calendar for
+the rest of today, which reminders are still coming, and anything that was due
+and did not get through. Field reports on comparable assistants rate a daily
+brief as the single most valued feature, and almost all of it already existed
+here — the calendar read, the reminder list, both renderers.
+
+**Off by default**, and turned on by `/digest 7`, where the number is the local
+hour. `/digest` reports the current setting, `/digest off` stops it. An hour
+outside 0–23 is not treated as a command at all and falls through to the parser,
+because clamping `25` to something the user did not ask for is worse than not
+understanding it.
+
+**Two rules keep it from becoming noise**, which is the only way a scheduled
+message fails:
+
+1. **Nothing to say means nothing sent.** There is no "you have no events
+   today". A digest that arrives every morning regardless trains the user to
+   dismiss it, and then it trains them to dismiss the real one.
+2. **From now, not from midnight.** The calendar is read from the moment the
+   digest is composed to the end of the local day, so a digest at 14:00 is not a
+   list of the meetings that already happened.
+
+**The schedule is dumb and the decision is not.** The digest hour is a setting,
+and a cron expression cannot be changed by a chat message — nor should it be
+(invariant 8). So an hourly cron asks the Durable Object every hour, and the
+object checks three things: is this that hour locally, has today's digest been
+dealt with, and can a message be sent at all.
+
+"Dealt with" rather than "sent": a day with nothing to say is marked done without
+a message, or every quiet day would retry through the hour and then give up
+having decided nothing. The day key is local, so the marker is correct across a
+DST change and for a digest hour of 0–2.
+
+**It passes the same gate a reminder does.** A digest is a service message and
+costs one of the thousand in the monthly budget (§5); outside the 24-hour window
+it is not a message that fails but one that must not be attempted. In that case
+it is deliberately *not* marked done — if the user writes in during that hour the
+window opens and the next tick can still send it.
+
+**Marked done before the send, not after.** A digest is worth exactly one
+attempt: it is about today, and a retry an hour later is a different message.
+
+**A calendar failure does not cancel it.** The reminders are ours and are still
+worth sending; the failure is logged and the section is simply absent. "Your
+calendar did not load" is not a line the user can act on at seven in the morning.
+
+**Greeting matched to the hour** — בוקר טוב before noon, צהריים טובים until
+17:00, ערב טוב after. The hour is configurable, and a message that opens with
+"good morning" at two in the afternoon reads as one sent by something that is
+not paying attention.
 ---
 
 ## 7. Security
@@ -1244,6 +1296,11 @@ Test each of these:
 | 2026-09-25 | The eval harness checkpoints its recording after every case and gained `--resume`. Groq's 200K/day cap is a rolling window and a full 156-case run costs ~155K of it, so a run that stops partway must keep what it paid for rather than re-buying it |
 | 2026-09-25 | `--wait <minutes>` sits out a rolling-window exhaustion within a caller-set budget. Unbounded waiting was not an option: an eval that can hang for an hour is one nobody runs |
 | 2026-09-25 | `--replay` and `--resume` score a recorded draft through the same function, so a resumed run judges its earlier half by exactly the rules it judges the later half by |
+| 2026-09-25 | The digest sends nothing on a day with nothing on it. A brief that arrives regardless trains the user to dismiss it, and then to dismiss the real notification too |
+| 2026-09-25 | The digest reads the calendar from now to the end of the local day, not from midnight. The hour is configurable, and at 14:00 a list of this morning's meetings is not a brief |
+| 2026-09-25 | An hourly cron asks and the Durable Object decides, because the digest hour is a setting and a cron expression must not be changeable from chat (invariant 8) |
+| 2026-09-25 | The digest is marked done before the send and is worth exactly one attempt: it is about today, and a retry an hour later is a different message. A shut window is the one case left unmarked, since writing in reopens it |
+| 2026-09-25 | A failed calendar read leaves the section out rather than cancelling the digest. "Your calendar did not load" is not something the user can act on at seven in the morning |
 
 ---
 
@@ -1335,12 +1392,10 @@ budget, and a pure rule with no materialized row cannot be claimed under a lease
 Note the DST trap: "every day at 08:00" means the wall clock, so the next
 occurrence has to be recomputed through the zone each time, never by adding 24 h.
 
-**B7. No morning digest.** The field reports rate a daily brief as the single
-most valued feature: today's calendar, what is due, what is overdue. It is also
-nearly free here — every piece exists — and it lands inside the 24-hour window
-because the user replies to it.
-*Do:* one cron at a configurable local hour, one message, and skip it entirely
-when there is nothing to say, so it does not decay into noise.
+**B7. No morning digest.** ✅ **Done 2026-09-25** — see §6.12. Off by default,
+`/digest 7` turns it on, and a day with nothing on it sends nothing at all —
+which is the only thing that keeps a scheduled message from decaying into the
+one the user has learned to dismiss.
 
 **B8. No way to see or edit a reminder after the Undo window.** Ten minutes after
 setting one, the only options are cancel and re-create. `/status` reports a count

@@ -24,7 +24,9 @@
         "bindings": [{ "name": "ASSISTANT", "class_name": "AssistantDO" }]
       },
       "migrations": [{ "tag": "v1", "new_sqlite_classes": ["AssistantDO"] }],
-      "triggers": { "crons": ["30 3 * * *"] }
+      // 03:30 UTC: retention, expiries, re-arm. Hourly: the digest decides
+      // for itself whether this is its hour (PLAN §6.12).
+      "triggers": { "crons": ["30 3 * * *", "0 * * * *"] }
     },
     "production": {
       "name": "wa-assistant",
@@ -39,7 +41,9 @@
         "bindings": [{ "name": "ASSISTANT", "class_name": "AssistantDO" }]
       },
       "migrations": [{ "tag": "v1", "new_sqlite_classes": ["AssistantDO"] }],
-      "triggers": { "crons": ["30 3 * * *"] }
+      // 03:30 UTC: retention, expiries, re-arm. Hourly: the digest decides
+      // for itself whether this is its hour (PLAN §6.12).
+      "triggers": { "crons": ["30 3 * * *", "0 * * * *"] }
     }
   }
 }

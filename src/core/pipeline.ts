@@ -29,6 +29,7 @@ import type { GoogleStore } from '../google/store.js';
 import type { CalendarClient } from '../google/calendar.js';
 import type { Lang } from '../render/format-time.js';
 import { matchCommand } from './router.js';
+import type { Command } from './router.js';
 import { runButton, runIntent, runPlainConfirmation } from './orchestrator.js';
 import type { Reply, TurnContext } from './orchestrator.js';
 import { parseWithFallback } from '../nlu/provider.js';
@@ -286,7 +287,7 @@ async function respondToText(
     log.info('command', { wamid: event.wamid, intent: command.kind, stale, source: source.kind });
     repo.markInboundOutcome(event.wamid, { intent: command.kind, decision: 'ALLOW' });
     repo.audit({ ts: now, principal, tool: command.kind, tier: 0, decision: 'ALLOW', outcome: 'ok' });
-    return { action: 'reply', text: renderCommand(command.kind, deps, now) };
+    return { action: 'reply', text: renderCommand(command, deps, now) };
   }
 
   if (!deps.services) {
@@ -431,10 +432,10 @@ async function answerOpenQuestion(
 
 // -- system commands ----------------------------------------------------------
 
-function renderCommand(kind: string, deps: PipelineDeps, now: number): string {
+function renderCommand(command: Command, deps: PipelineDeps, now: number): string {
   const { repo } = deps;
 
-  switch (kind) {
+  switch (command.kind) {
     case 'help':
       return he.help;
     case 'ping':
@@ -455,6 +456,9 @@ function renderCommand(kind: string, deps: PipelineDeps, now: number): string {
 
     case 'connect_google':
       return connectLinkFor(deps);
+
+    case 'digest':
+      return digestSetting(command, deps);
 
     case 'status':
       return statusText.status({
@@ -487,6 +491,31 @@ function connectLinkFor(deps: PipelineDeps): string {
   const link = google.createLink(deps.principal);
   const url = `${base.replace(/\/$/, '')}/oauth/google/start?id=${link.id}`;
   return eventText.connectLink(url, CONNECT_LINK_MINUTES, 'he');
+}
+
+/**
+ * Read or change the digest hour (PLAN §6.12).
+ *
+ * `/digest` alone reports; `/digest 7` sets; `/digest off` stops. Deterministic
+ * and nowhere near the parser, like every other setting: nothing received over
+ * chat may change policy, and an hour is close enough to one that it is worth
+ * keeping on the same side of that line (invariant 8).
+ */
+function digestSetting(command: Extract<Command, { kind: 'digest' }>, deps: PipelineDeps): string {
+  const { repo } = deps;
+
+  if (command.set === null) {
+    const hour = repo.digestHour();
+    return hour === null ? statusText.digestOff : statusText.digestUnchanged(hour);
+  }
+
+  if (command.set === 'off') {
+    repo.setDigestHour(null);
+    return statusText.digestTurnedOff;
+  }
+
+  repo.setDigestHour(command.set);
+  return statusText.digestOn(command.set);
 }
 
 /** Matches the TTL in `GoogleStore`. */

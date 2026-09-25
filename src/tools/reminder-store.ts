@@ -104,6 +104,27 @@ export class ReminderStore {
   }
 
   /**
+   * Reminders that are due and still waiting (PLAN §6.12).
+   *
+   * A `scheduled` row past its time is normally transient — the next alarm
+   * claims it — but one held over a shut 24-hour window can sit here for hours.
+   * That is exactly what a digest should lead with: not "you have a reminder",
+   * but "this one did not reach you".
+   */
+  listOverdue(principal: string, limit = 20): Reminder[] {
+    const rows = this.sql.exec(
+      `SELECT * FROM reminders
+       WHERE principal = ? AND status = 'scheduled' AND due_at_utc < ?
+       ORDER BY due_at_utc ASC
+       LIMIT ?`,
+      principal,
+      this.now(),
+      limit,
+    );
+    return rows.map(toReminder);
+  }
+
+  /**
    * Take ownership of every reminder that is due, under a lease.
    *
    * A row is eligible when it is `scheduled`, or when it is `sending` with an

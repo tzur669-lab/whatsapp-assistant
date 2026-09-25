@@ -9,7 +9,12 @@ export type Command =
   | { kind: 'pause' }
   | { kind: 'resume' }
   | { kind: 'budget' }
-  | { kind: 'connect_google' };
+  | { kind: 'connect_google' }
+  /**
+   * `/digest`, `/digest 7`, `/digest off` (PLAN §6.12). The only command that
+   * carries a value, so it is matched separately from the fixed table below.
+   */
+  | { kind: 'digest'; set: number | 'off' | null };
 
 const COMMANDS: ReadonlyArray<readonly [RegExp, Command]> = [
   [/^\/help$|^עזרה$/i, { kind: 'help' }],
@@ -21,11 +26,24 @@ const COMMANDS: ReadonlyArray<readonly [RegExp, Command]> = [
   [/^\/connect\s+google$/i, { kind: 'connect_google' }],
 ];
 
+const DIGEST = /^\/digest(?:\s+(off|\d{1,2}))?$/i;
+
 /** Returns the command for a message, or null if it is free text. */
 export function matchCommand(text: string): Command | null {
   const trimmed = text.trim();
   for (const [pattern, command] of COMMANDS) {
     if (pattern.test(trimmed)) return command;
   }
-  return null;
+
+  const digest = DIGEST.exec(trimmed);
+  if (!digest) return null;
+
+  const argument = digest[1];
+  if (argument === undefined) return { kind: 'digest', set: null };
+  if (/^off$/i.test(argument)) return { kind: 'digest', set: 'off' };
+
+  const hour = Number(argument);
+  // An hour outside the clock is not a command. Falling through to the parser
+  // is better than clamping it to something the user did not ask for.
+  return hour >= 0 && hour <= 23 ? { kind: 'digest', set: hour } : null;
 }
