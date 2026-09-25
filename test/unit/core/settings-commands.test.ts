@@ -194,6 +194,34 @@ describe('the settings commands', () => {
     });
   });
 
+  describe('/status', () => {
+    it('stays quiet about features that are not in use', async () => {
+      // A status report that lists every feature whether or not it is on stops
+      // being read, and then so does the line that matters.
+      const text = await reply('/status');
+      expect(text).not.toContain('תקציר יומי');
+      expect(text).not.toContain('יומן חיצוני');
+      expect(text).not.toContain('שבת');
+    });
+
+    it('reports each one once it is', async () => {
+      await reply('/digest 7');
+      await reply('/shabbat on');
+      await reply('/ical https://calendar.example.test/f.ics');
+
+      const text = await reply('/status');
+      expect(text).toContain('07:00');
+      expect(text).toContain('שבת');
+      expect(text).toContain('יומן חיצוני');
+    });
+
+    it('surfaces a feed whose refresh is failing', async () => {
+      served = new Response('down', { status: 503 });
+      await reply('/ical https://calendar.example.test/f.ics');
+      expect(await reply('/status')).toContain('E_ICAL_HTTP_503');
+    });
+  });
+
   describe('/birthday', () => {
     it('adds, lists and removes', async () => {
       expect(await reply('/birthday')).toContain('אין ימי הולדת');

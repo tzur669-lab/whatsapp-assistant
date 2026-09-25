@@ -70,7 +70,10 @@ of the two it was, on purpose.
 ## Diagnosing
 
 **`/status` first.** It reports the integration state, pending reminders,
-messages used this month, NLU fallbacks today, and the last error code.
+messages used this month, NLU fallbacks today, the last error code, and — only
+when they are in use — the digest hour, the Shabbat hold, a subscribed feed and
+any undelivered messages. Features that are off stay off the report, so the
+lines that are there are the ones worth reading.
 
 | Symptom | Likely cause | Check |
 |---|---|---|

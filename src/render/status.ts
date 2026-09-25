@@ -20,6 +20,12 @@ export type StatusReport = {
   llmFallbacksToday: number;
   /** Messages Meta accepted and then reported as undelivered (§6.8). */
   undeliveredToday: number;
+  /** The digest hour, or null when it is off (§6.12). */
+  digestHour: number | null;
+  /** Whether reminders are held over Shabbat and chagim (§6.13). */
+  restHold: boolean;
+  /** A subscribed feed's event count and last error, or null when none (§6.15). */
+  ical: { events: number; lastError: string | null } | null;
   lastErrorCode: string | null;
   paused: boolean;
 };
@@ -35,6 +41,24 @@ export const statusText = {
       `• הודעות החודש: ${isolateLtr(`${report.budget.sent}/${report.budget.remaining + report.budget.sent}`)}`,
       `• נפילות לפרסר גיבוי היום: ${isolateLtr(String(report.llmFallbacksToday))}`,
     ];
+
+    // Each of these appears only when it has something to say. A status report
+    // that lists every feature whether or not it is in use stops being read.
+    if (report.digestHour !== null) {
+      const clock = isolateLtr(`${String(report.digestHour).padStart(2, '0')}:00`);
+      lines.push(`• תקציר יומי: ${clock}`);
+    }
+    if (report.restHold) {
+      lines.push('• תזכורות מושהות בשבת ובחג');
+    }
+    if (report.ical) {
+      const count = isolateLtr(String(report.ical.events));
+      lines.push(
+        report.ical.lastError === null
+          ? `• יומן חיצוני: ${count} אירועים`
+          : `• יומן חיצוני: ${count} אירועים, העדכון האחרון נכשל (${isolate(report.ical.lastError)})`,
+      );
+    }
 
     if (report.undeliveredToday > 0) {
       // Worth its own line only when it is not zero: a healthy system should

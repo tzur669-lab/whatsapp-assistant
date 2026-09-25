@@ -526,6 +526,9 @@ async function renderCommand(command: Command, deps: PipelineDeps, now: number):
         budget: budgetState(monthlySentOf(repo, now)),
         llmFallbacksToday: repo.counters(Repository.dayKey(now)).fallbacks,
         undeliveredToday: repo.undeliveredSince(now - DAY_MS),
+        digestHour: repo.digestHour(),
+        restHold: repo.restHoldEnabled(),
+        ical: icalStatus(deps),
         lastErrorCode: repo.lastErrorCode(),
         paused: repo.isPaused(),
       });
@@ -625,6 +628,12 @@ async function icalSetting(
     return statusText.icalFetchFailed(result.errorCode ?? 'E_ICAL_UNKNOWN');
   }
   return result.events === 0 ? statusText.icalEmpty : statusText.icalSubscribed(result.events);
+}
+
+/** The subscribed feed's state for `/status`, or null when there is none. */
+function icalStatus(deps: PipelineDeps): { events: number; lastError: string | null } | null {
+  const feed = deps.services?.ical?.feedFor(deps.principal);
+  return feed ? { events: feed.eventCount, lastError: feed.lastError } : null;
 }
 
 /** The local birthday list (PLAN §6.16). Deterministic, never the parser. */
