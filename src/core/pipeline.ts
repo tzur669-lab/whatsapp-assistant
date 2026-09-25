@@ -18,6 +18,8 @@
  */
 import type { InboundEvent, OutboundButton } from '../channels/types.js';
 import { Repository } from './repo.js';
+import { Stopwatch } from './timing.js';
+import type { Stage } from './timing.js';
 import type { Logger } from '../security/redact.js';
 import type { VoiceTranscriber } from '../voice/transcribe.js';
 import type { NluProvider } from '../nlu/provider.js';
@@ -72,6 +74,8 @@ export type PipelineDeps = {
   transcribe?: VoiceTranscriber;
   /** Absent only in the Phase 1 tests, which predate the tool layer. */
   services?: Services;
+  /** Set by `handleInbound` for the turn it is handling (§6.14). */
+  watch?: Stopwatch;
 };
 
 export type PipelineOutcome =
@@ -96,6 +100,25 @@ export async function handleInbound(
   event: InboundEvent,
   deps: PipelineDeps,
 ): Promise<PipelineOutcome> {
+  // One stopwatch per turn, threaded through rather than global, so a test can
+  // drive two turns at once and so nothing here is ambient state (§6.14).
+  const watch = new Stopwatch();
+  const outcome = await route(event, { ...deps, watch });
+
+  // Numbers only, and the field names are a closed set — there is nowhere here
+  // a message body could reach (§6.9).
+  deps.log.info('turn', {
+    wamid: event.wamid,
+    kind: event.kind,
+    action: outcome.action,
+    ...(outcome.action === 'none' ? { reason: outcome.reason } : {}),
+    ...watch.fields(),
+  });
+
+  return outcome;
+}
+
+async function route(event: InboundEvent, deps: PipelineDeps): Promise<PipelineOutcome> {
   const { repo, log, principal } = deps;
   const now = deps.now();
 
@@ -240,7 +263,10 @@ async function handleAudio(
     return { action: 'reply', text: he.unsupportedType };
   }
 
-  const outcome = await deps.transcribe({ mediaId: event.mediaId, mimeType: event.mimeType });
+  const transcribe = deps.transcribe;
+  const outcome = await timed(deps, 'voice', () =>
+    transcribe({ mediaId: event.mediaId, mimeType: event.mimeType }),
+  );
 
   if (outcome.status !== 'ok') {
     // Nothing usable came back. Say which of the fixable things went wrong, and
@@ -336,7 +362,10 @@ async function respondToText(
   }
 
   // 3. The LLM, at last, and only as a parser.
-  const parsed = await parseWithFallback(deps.services.nlu, promptInputFor(text, now), log);
+  const nlu = deps.services.nlu;
+  const parsed = await timed(deps, 'nlu', () =>
+    parseWithFallback(nlu, promptInputFor(text, now), log),
+  );
   if (!parsed.ok) {
     repo.bumpCounter(Repository.dayKey(now), 'fallbacks');
     repo.markInboundOutcome(event.wamid, { decision: 'CLARIFY', errorCode: parsed.errorCode });
@@ -345,9 +374,16 @@ async function respondToText(
   }
 
   const lang: Lang = parsed.draft.language;
-  const reply = await runIntent(parsed.draft, turnOf(deps, event, now, source, lang));
+  const reply = await timed(deps, 'act', () =>
+    runIntent(parsed.draft, turnOf(deps, event, now, source, lang)),
+  );
   repo.markInboundOutcome(event.wamid, { intent: parsed.draft.intent, decision: 'ALLOW' });
   return replyOutcome(reply, deps);
+}
+
+/** Time a stage when a stopwatch is running, and simply run it when not. */
+function timed<T>(deps: PipelineDeps, stage: Stage, body: () => Promise<T>): Promise<T> {
+  return deps.watch ? deps.watch.time(stage, body) : body();
 }
 
 // -- clarification round-trip -------------------------------------------------

@@ -462,6 +462,10 @@ export class AssistantDO implements DurableObject {
       fetchImpl: this.fetchImpl,
     });
 
+    // Timed here rather than in the pipeline: the send happens after the turn
+    // has returned its reply, so the pipeline does not know about it (§6.14).
+    const startedAt = Date.now();
+
     try {
       const result = await sender.send(this.withBudgetWarning(message));
       const now = Date.now();
@@ -477,7 +481,11 @@ export class AssistantDO implements DurableObject {
         ...(track.reminderId ? { reminderId: track.reminderId } : {}),
       });
 
-      this.log.info('message_sent', { wamid: result.wamid, buttons: message.buttons?.length ?? 0 });
+      this.log.info('message_sent', {
+        wamid: result.wamid,
+        buttons: message.buttons?.length ?? 0,
+        sendMs: now - startedAt,
+      });
       return { ok: true, wamid: result.wamid };
     } catch (error) {
       const failure =
@@ -488,6 +496,7 @@ export class AssistantDO implements DurableObject {
       this.log.error('send_failed', {
         errorCode: failure.errorCode,
         disposition: failure.disposition,
+        sendMs: Date.now() - startedAt,
       });
       this.repo.setLastErrorCode(failure.errorCode);
       return { ok: false, failure };

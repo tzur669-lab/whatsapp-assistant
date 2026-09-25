@@ -631,6 +631,37 @@ conversation with itself.
   - last error code.
 - [O] External uptime check on `/health` (public, returns only `ok`).
 
+#### Turn timing
+
+Nothing in this system was measured end to end: no latency budget, no idea what
+a turn costs in wall time, and therefore no way to tell a slow provider from a
+slow tool from a slow calendar. `src/core/timing.ts` adds one `turn` log line
+per message, with a millisecond figure per stage.
+
+**Redaction-safe by construction.** `Stopwatch` holds a closed set of stage names
+and a number each. There is no field a message body could ever reach, which is a
+stronger guarantee than remembering not to put one there — and a test asserts
+that no stage name collides with the logger's ban list.
+
+**What it can and cannot see on Workers.** Cloudflare freezes the clock between
+I/O operations, so `Date.now()` advances across a fetch and not across a loop.
+These numbers therefore measure **waiting**, not CPU — which is the right half,
+because waiting is what dominates a turn and CPU is settled separately by
+`pnpm bench` and the budget test (§4.1). A stage reading 0 did no I/O; it is not
+a stage that was free.
+
+**Stages:** `voice` (transcription), `nlu` (the parser, including its retries),
+`act` (resolve, policy and execute, including any Google call). What is left over
+is reported as `other` rather than left to be worked out, since it is the part —
+storage, rendering, policy — with no owner. A stage that did not run is left out
+rather than reported as zero: a turn with no voice note did not spend zero
+milliseconds transcribing, it did not transcribe.
+
+**The send is not a stage.** It happens after the turn has returned its reply, in
+the platform layer, so timing it from inside would mean the pipeline knowing
+about a step it does not take. It is logged there as `sendMs` and correlates by
+`wamid`.
+
 ### 6.10 Voice notes
 
 Recording is faster than typing on a phone, and it is how this assistant will
@@ -1370,6 +1401,9 @@ Test each of these:
 | 2026-09-25 | Nightfall is a solar depression angle (8.5°), not sunset plus N minutes: the same angle takes ~42 minutes in June and ~40 in December |
 | 2026-09-25 | Once the daily cap binds, the eval harness paces at the refill rate (~7 min/case) rather than the per-minute rate (8/min). The fast pace empties the window the instant it refills, buying one case per quarter-hour wait |
 | 2026-09-25 | Phase 3 is not blocked by the model but by arithmetic: 156 cases × 993 tokens is 78% of a day's budget, so certification has to start from an untouched rolling window |
+| 2026-09-25 | Turn timing is redaction-safe by construction: a closed set of stage names and a number each, with a test that no stage name is on the logger's ban list. Safer than a rule about what not to log |
+| 2026-09-25 | Turn timings measure I/O waiting, not CPU. Workers freezes the clock between I/O, so that is the half it can see — and it is the half that dominates. CPU is §4.1's question |
+| 2026-09-25 | A stage that did not run is omitted, not reported as zero. A turn with no voice note did not spend zero milliseconds transcribing |
 
 ---
 
@@ -1502,10 +1536,11 @@ re-emptying the window the moment it fills. Failing that, the lasting fix is a
 smaller prompt: at ~500 tokens the whole corpus would cost 78K and fit
 comfortably inside a partly-spent day.
 
-**B11. Nothing is measured end to end.** No latency budget, no cold-start number,
-no idea what a turn costs in wall time.
-*Do:* log a turn-level breakdown that is redaction-safe by construction
-(receive → parse → resolve → execute → send).
+**B11. Nothing is measured end to end.** ✅ **Done 2026-09-25** — see §6.14. One
+`turn` line per message with a millisecond figure per stage, redaction-safe by
+construction rather than by care. What it measures is waiting rather than CPU,
+because that is what Workers' frozen clock can see — and CPU is already settled
+by §4.1.
 
 ### P3 — connected to what is actually used
 
