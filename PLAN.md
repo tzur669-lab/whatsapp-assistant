@@ -631,37 +631,6 @@ conversation with itself.
   - last error code.
 - [O] External uptime check on `/health` (public, returns only `ok`).
 
-#### Turn timing
-
-Nothing in this system was measured end to end: no latency budget, no idea what
-a turn costs in wall time, and therefore no way to tell a slow provider from a
-slow tool from a slow calendar. `src/core/timing.ts` adds one `turn` log line
-per message, with a millisecond figure per stage.
-
-**Redaction-safe by construction.** `Stopwatch` holds a closed set of stage names
-and a number each. There is no field a message body could ever reach, which is a
-stronger guarantee than remembering not to put one there — and a test asserts
-that no stage name collides with the logger's ban list.
-
-**What it can and cannot see on Workers.** Cloudflare freezes the clock between
-I/O operations, so `Date.now()` advances across a fetch and not across a loop.
-These numbers therefore measure **waiting**, not CPU — which is the right half,
-because waiting is what dominates a turn and CPU is settled separately by
-`pnpm bench` and the budget test (§4.1). A stage reading 0 did no I/O; it is not
-a stage that was free.
-
-**Stages:** `voice` (transcription), `nlu` (the parser, including its retries),
-`act` (resolve, policy and execute, including any Google call). What is left over
-is reported as `other` rather than left to be worked out, since it is the part —
-storage, rendering, policy — with no owner. A stage that did not run is left out
-rather than reported as zero: a turn with no voice note did not spend zero
-milliseconds transcribing, it did not transcribe.
-
-**The send is not a stage.** It happens after the turn has returned its reply, in
-the platform layer, so timing it from inside would mean the pipeline knowing
-about a step it does not take. It is logged there as `sendMs` and correlates by
-`wamid`.
-
 ### 6.10 Voice notes
 
 Recording is faster than typing on a phone, and it is how this assistant will
@@ -914,6 +883,37 @@ two common offsets. Anyone whose practice differs should leave the setting off �
 it makes no claim to settle anything, and the times are all Jerusalem's, which is
 the earliest candle-lighting in the country and therefore the safe direction to
 err for a feature that holds messages back.
+### 6.14 Turn timing
+
+Nothing in this system was measured end to end: no latency budget, no idea what
+a turn costs in wall time, and therefore no way to tell a slow provider from a
+slow tool from a slow calendar. `src/core/timing.ts` adds one `turn` log line
+per message, with a millisecond figure per stage.
+
+**Redaction-safe by construction.** `Stopwatch` holds a closed set of stage names
+and a number each. There is no field a message body could ever reach, which is a
+stronger guarantee than remembering not to put one there — and a test asserts
+that no stage name collides with the logger's ban list.
+
+**What it can and cannot see on Workers.** Cloudflare freezes the clock between
+I/O operations, so `Date.now()` advances across a fetch and not across a loop.
+These numbers therefore measure **waiting**, not CPU — which is the right half,
+because waiting is what dominates a turn and CPU is settled separately by
+`pnpm bench` and the budget test (§4.1). A stage reading 0 did no I/O; it is not
+a stage that was free.
+
+**Stages:** `voice` (transcription), `nlu` (the parser, including its retries),
+`act` (resolve, policy and execute, including any Google call). What is left over
+is reported as `other` rather than left to be worked out, since it is the part —
+storage, rendering, policy — with no owner. A stage that did not run is left out
+rather than reported as zero: a turn with no voice note did not spend zero
+milliseconds transcribing, it did not transcribe.
+
+**The send is not a stage.** It happens after the turn has returned its reply, in
+the platform layer, so timing it from inside would mean the pipeline knowing
+about a step it does not take. It is logged there as `sendMs` and correlates by
+`wamid`.
+
 ---
 
 ## 7. Security
