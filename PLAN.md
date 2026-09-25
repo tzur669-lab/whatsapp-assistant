@@ -1189,6 +1189,10 @@ Test each of these:
 | 2026-09-25 | Meta error codes are mapped to four dispositions (retry / back_off / window_closed / give_up) rather than all being retried alike. Retrying 131026 five times spends five of a thousand free messages to learn what the first attempt said |
 | 2026-09-25 | An unknown Meta code is treated as retryable. Optimism is safe only because attempts are capped at five — without that cap the default would have to be the opposite |
 | 2026-09-25 | Only the numeric code is read from a Meta error object. `error.message` and `error_data.details` echo the message that failed, so they are never parsed, stored or logged |
+| 2026-09-25 | The pre-commit secret scan no longer skips itself when gitleaks is absent. A guardrail that announces its own absence is not one, and every commit in this repo had been made that way |
+| 2026-09-25 | The built-in scan reads its custom rules out of `.gitleaks.toml` rather than keeping a second copy, so adding a rule stays a one-place change |
+| 2026-09-25 | The scan reports rule, file and line and never the matched text. A scanner that echoes a credential into a terminal and a CI log has moved the problem, not solved it |
+| 2026-09-25 | Real phone numbers and email addresses are a scan rule here, which no off-the-shelf scanner treats as a finding. They are the leak this project is most likely to produce |
 
 ---
 
@@ -1242,10 +1246,18 @@ requeued or retired by disposition; `/status` reports what never arrived.
 §6.8. Four dispositions, mapped in `src/channels/whatsapp/errors.ts`, and only
 what is retryable is retried.
 
-**B3. The pre-commit secret scan has never run.** Every commit in this repo has
-printed `gitleaks not installed — skipping secret scan`. The guardrail described
-in PLAN §8 and §11.6 is not in force locally.
-*Do:* install gitleaks, or make the hook fail rather than skip.
+**B3. The pre-commit secret scan has never run.** ✅ **Done 2026-09-25.** Every
+commit in this repository was made with the hook printing `gitleaks not
+installed — skipping`, which is indistinguishable from no hook. The scan now
+always runs: `scripts/scan-secrets.mjs` needs nothing but node and git, reads the
+project's own rules out of `.gitleaks.toml` so a rule is added in one place, and
+adds what an off-the-shelf scanner would not flag — a real Israeli phone number
+or email address in code, a fixture or a doc (CLAUDE.md). It refuses `.dev.vars`,
+`.env` and `secrets/**` by path whatever is inside them, and it never prints the
+match it found. gitleaks still runs when it is installed, and is still better:
+this is a floor, not a replacement. `test/security/secret-scan.test.ts` fires it
+eleven ways, with every fixture credential assembled at runtime so none of them
+exists as a literal in the repository.
 
 **B4. The 10 ms CPU budget has never been measured.** PLAN §4 says to measure it
 and it has not been measured once. The synchronous SHA-256, the Zod validation

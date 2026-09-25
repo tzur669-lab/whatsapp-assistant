@@ -1,11 +1,25 @@
 #!/bin/sh
 # Block commits that contain secrets. Install with:
 #   git config core.hooksPath .githooks
+#
+# The scan always runs. It used to print "gitleaks not installed -- skipping",
+# which is how every commit in this repository was made: a guardrail that
+# announces its own absence is not one (PLAN §11.6, backlog B3).
+#
+# scan-secrets.mjs needs nothing but node and git and covers what would actually
+# leak from this project. gitleaks is still better and still runs when present.
 set -e
+
+if [ -n "$SKIP_SECRET_SCAN" ]; then
+  echo "pre-commit: secret scan skipped by request (SKIP_SECRET_SCAN)." >&2
+  exit 0
+fi
+
+node scripts/scan-secrets.mjs --staged
 
 if command -v gitleaks >/dev/null 2>&1; then
   gitleaks protect --staged --redact --config .gitleaks.toml
 else
-  echo "pre-commit: gitleaks not installed — skipping secret scan." >&2
-  echo "            install it from https://github.com/gitleaks/gitleaks" >&2
+  echo "pre-commit: gitleaks not installed; ran the built-in scan only." >&2
+  echo "            for the full rule set: https://github.com/gitleaks/gitleaks" >&2
 fi

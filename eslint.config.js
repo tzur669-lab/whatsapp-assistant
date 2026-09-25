@@ -8,6 +8,24 @@ export default tseslint.config(
   js.configs.recommended,
   ...tseslint.configs.recommended,
   {
+    // Build and hook scripts. Node CLIs, not Worker code: they run on a
+    // developer's machine, they have Node's globals, and stdout is the whole
+    // point of them — so the `no-console` ban that governs `src/` is not the
+    // right rule here. The globals are listed rather than pulled from the
+    // `globals` package, which would be a dependency for four names.
+    files: ['scripts/**/*.mjs'],
+    languageOptions: {
+      ecmaVersion: 2022,
+      sourceType: 'module',
+      globals: {
+        console: 'readonly',
+        process: 'readonly',
+        URL: 'readonly',
+        TextEncoder: 'readonly',
+      },
+    },
+  },
+  {
     files: ['**/*.ts'],
     languageOptions: {
       parserOptions: { ecmaVersion: 2022, sourceType: 'module' },
