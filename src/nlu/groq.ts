@@ -38,6 +38,20 @@ export type GroqConfig = {
   model: string;
   /** Injected so tests never reach the network. */
   fetchImpl?: typeof fetch;
+  /**
+   * Override the request timeout.
+   *
+   * Production keeps the 8 seconds below, and should: a user waiting longer
+   * than that for a reply has already had a bad experience, and the fallback
+   * chain exists precisely so a slow model is not waited on.
+   *
+   * The **eval** raises it, because there the timeout answers the wrong
+   * question. A run that cuts a model off is measuring how fast it is, which
+   * §11.2 already has a separate threshold for — and reporting the cut-off
+   * cases as parse failures makes the accuracy number meaningless. Measure
+   * accuracy and latency separately, then decide (PLAN §13).
+   */
+  timeoutMs?: number;
 };
 
 export function createGroqProvider(config: GroqConfig): NluProvider {
@@ -94,7 +108,7 @@ async function callOnce(
         'content-type': 'application/json',
       },
       body: JSON.stringify(body),
-      signal: AbortSignal.timeout(TIMEOUT_MS),
+      signal: AbortSignal.timeout(config.timeoutMs ?? TIMEOUT_MS),
     });
   } catch (error) {
     // A failure to connect is a network fault, not a slow model. Counting the

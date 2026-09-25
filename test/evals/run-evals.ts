@@ -42,6 +42,12 @@ import type { DateSpec, TimeSpec } from '../../src/time/resolve.js';
 const DEFAULT_MODEL = 'openai/gpt-oss-120b';
 
 /** Groq free-tier limits per model (PLAN §2, verified 2026-09-24). */
+/**
+ * The eval's own request timeout. Production's is 8 s and stays there; see
+ * `buildProvider` for why measurement wants a different number.
+ */
+const EVAL_TIMEOUT_MS = 30_000;
+
 const TOKENS_PER_MINUTE = 8_000;
 const TOKENS_PER_DAY = 200_000;
 
@@ -601,7 +607,11 @@ function buildProvider(args: { provider: string; model: string }): NluProvider {
         'Put it in .dev.vars (git-ignored), or run with --provider rules.',
     );
   }
-  return createGroqProvider({ apiKey, model: args.model });
+  // Deliberately longer than production's 8 s (PLAN §13). A run that cuts the
+  // model off reports those cases as parse failures, which makes the accuracy
+  // number meaningless — and how fast the model is has its own threshold in
+  // §11.2, measured from the same run.
+  return createGroqProvider({ apiKey, model: args.model, timeoutMs: EVAL_TIMEOUT_MS });
 }
 
 /**

@@ -1425,7 +1425,7 @@ Test each of these:
 - [ ] Voice: should the recognizer's language be pinned to `he`? Auto-detect keeps English usable but is weakest on very short clips, which is exactly what a one-line reminder is. Measure before changing.
 - [ ] Voice: Whisper takes a `prompt` to bias spelling — useful for Hebrew names and times. It is static config, not user data, so it does not breach invariant 2, but it is unmeasured. Worth a try against recorded clips.
 - [ ] Voice: the uncertain band (`avg_logprob` between -1.0 and -0.5) currently forces CONFIRM on writes. If that fires on most real recordings it is friction, not safety — revisit after two weeks of daily use.
-- [ ] The 8 s NLU timeout is tight for the free tier: `qwen3.8-27b` exceeds it routinely and `gpt-oss-120b` exceeds it occasionally. Raise it, or treat a timeout as a fallback trigger only?
+- [x] **The 8 s NLU timeout stays in production, and the eval uses 30 s** (2026-09-25). The first full corpus run confirmed the suspicion with a number: `qwen3.8-27b` came back at a p95 of **8,015 ms** against an 8,000 ms timeout, so the timeout was cutting off the model at exactly the point half its answers arrived — and 50 of 156 cases were then reported as parse failures. Production keeps 8 s, because a user waiting longer has already had a bad experience and the fallback chain exists for this; the eval raises it, because a run that cuts the model off is measuring speed, which §11.2 already scores separately. Whether `qwen` is fast *enough* is now a latency question with its own threshold rather than a contaminated accuracy number.
 
 ---
 
@@ -1551,6 +1551,7 @@ Test each of these:
 | 2026-09-25 | Birthdays are a local list, not Google Contacts. A third OAuth scope to hand over every address the user owns, in order to answer a question about eight of them, is the wrong trade |
 | 2026-09-25 | A 29 February birthday is marked on the 28th in non-leap years. Skipping it three years in four is the feature quietly not working for the person most likely to notice |
 | 2026-09-25 | The command surface has drift guards, because the list lives in four places and grew by four today. The first thing they did was catch `/birthday` missing from `/help` |
+| 2026-09-25 | The eval uses a 30 s request timeout and production keeps 8 s. A run that cuts the model off reports those cases as parse failures, which makes the accuracy number meaningless; how fast the model is has its own threshold measured from the same run |
 
 ---
 
