@@ -11,12 +11,23 @@
  *   pnpm eval --model <id>          # compare candidates
  *   pnpm eval --provider rules      # score the deterministic fallback
  *   pnpm eval --filter he-rem       # a subset, while iterating
+ *   pnpm eval --record <file>       # keep the raw drafts, checkpointed per case
+ *   pnpm eval --resume <file>       # finish a run the token budget cut short
+ *   pnpm eval --wait 90             # sit out daily-budget waits, up to 90 min
+ *   pnpm eval --replay <file>       # re-score a recording, no network, no budget
  *
  * Needs GROQ_API_KEY in .dev.vars for the real providers.
+ *
+ * Groq's 200K tokens/day cap is a **rolling** window, not a midnight reset: an
+ * exhausted run reports `retry-after` in single-digit minutes. A full 156-case
+ * run costs ~155K of it, so it will normally hit the cap partway through. That
+ * is what `--record` and `--resume` are for: every answer is written down as it
+ * arrives, and a second invocation finishes the corpus instead of re-buying the
+ * part already paid for.
  */
-import { readFileSync, existsSync, writeFileSync } from 'node:fs';
+import { readFileSync, existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { resolve } from 'node:path';
+import { dirname, resolve } from 'node:path';
 import { parse as parseYaml } from 'yaml';
 import { createGroqProvider } from '../../src/nlu/groq.js';
 import { createRulesProvider } from '../../src/nlu/rules-fallback.js';
@@ -126,48 +137,156 @@ async function main(): Promise<void> {
   const minIntervalMs = effectiveRpm > 0 ? Math.ceil(60_000 / effectiveRpm) : 0;
   let nextAllowedAt = 0;
 
+  // A resume reads its own file back and skips what already has an answer. The
+  // recording is the checkpoint, so there is nothing else to keep in step.
+  const recordPath = args.resume ?? args.record;
+  const alreadyAnswered = args.resume ? answeredDrafts(args.resume) : new Map<string, unknown>();
+  if (alreadyAnswered.size > 0) {
+    process.stdout.write(
+      `resuming: ${alreadyAnswered.size} cases already answered, ${cases.length - alreadyAnswered.size} to go\n\n`,
+    );
+  }
+
+  let patienceMs = args.waitMinutes * 60_000;
+
   for (const testCase of cases) {
+    const recorded = alreadyAnswered.get(testCase.id);
+    if (recorded !== undefined) {
+      // Scored from the recording, exactly as --replay would. Marked `=` so the
+      // progress line shows what was bought now and what was bought earlier.
+      results.push(scoreRecorded(testCase, recorded));
+      process.stdout.write('=');
+      continue;
+    }
+
     const waitMs = nextAllowedAt - Date.now();
     if (waitMs > 0) await sleep(waitMs);
     nextAllowedAt = Date.now() + minIntervalMs;
 
-    try {
-      results.push(await runCaseWithRetry(provider, testCase));
-    } catch (error) {
-      if (error instanceof DailyBudgetExhausted) {
-        process.stdout.write(
-          `
+    let result: CaseResult | null = null;
+    while (result === null) {
+      try {
+        result = await runCaseWithRetry(provider, testCase);
+      } catch (error) {
+        if (!(error instanceof DailyBudgetExhausted)) throw error;
 
-Stopped after ${results.length} of ${cases.length} cases: the provider's daily
-` +
-            `token budget is exhausted (retry-after ${Math.round(error.retryAfterSeconds / 60)} min).
-` +
-            `Limits are per model, so try --model with a different one, or wait for the reset.
-`,
+        // The daily cap is a rolling window, so a wait of a few minutes buys
+        // more of it. Sitting it out is only worth doing within a budget the
+        // caller set: an eval that can hang for an hour is one nobody runs.
+        const pauseMs = error.retryAfterSeconds * 1_000 + 5_000;
+        if (pauseMs > patienceMs) {
+          stopExhausted(error, results.length, cases.length, recordPath, args);
+        }
+        patienceMs -= pauseMs;
+        process.stdout.write(
+          `\n  token budget spent; waiting ${Math.ceil(pauseMs / 1_000)}s ` +
+            `(${Math.round(patienceMs / 60_000)} min of patience left)\n  `,
         );
-        process.exit(2);
+        await sleep(pauseMs);
       }
-      throw error;
     }
+
+    results.push(result);
+    // Checkpoint every case. A run that stops at 27 of 156 should keep the 27 it
+    // paid for, which is the whole difference between --resume working and not.
+    if (recordPath) writeRecording(recordPath, provider.name, results);
     process.stdout.write('.');
   }
   process.stdout.write('\n\n');
 
-  if (args.record) {
-    const recording: Recording = {
-      provider: provider.name,
-      prompt: PROMPT_VERSION,
-      // The provider's raw output, so a replay validates exactly what the
-      // live run validated.
-      drafts: results.map((r) => ({ id: r.id, draft: r.raw ?? null })),
-    };
-    writeFileSync(args.record, JSON.stringify(recording, null, 2), 'utf8');
-    process.stdout.write(`recorded ${recording.drafts.length} drafts to ${args.record}
-
-`);
+  if (recordPath) {
+    const written = writeRecording(recordPath, provider.name, results);
+    process.stdout.write(`recorded ${written} drafts to ${recordPath}\n\n`);
   }
 
   report(results, cases, provider.name, args.verbose);
+}
+
+/**
+ * Stop, having said how to finish without re-buying what is already paid for.
+ * Exits; the return type is for the caller's benefit.
+ */
+function stopExhausted(
+  error: DailyBudgetExhausted,
+  done: number,
+  total: number,
+  recordPath: string | null,
+  args: { model: string },
+): never {
+  const minutes = Math.max(1, Math.round(error.retryAfterSeconds / 60));
+  process.stdout.write(
+    `\n\nStopped after ${done} of ${total} cases: the provider's token budget is\n` +
+      `exhausted (retry-after ${minutes} min). The cap is a rolling window, not a\n` +
+      `midnight reset, so waiting that long buys more of it.\n\n`,
+  );
+  if (recordPath) {
+    process.stdout.write(
+      `The ${done} answers so far are saved. Finish the rest with:\n` +
+        `  pnpm eval --resume ${recordPath} --wait 90\n\n`,
+    );
+  } else {
+    process.stdout.write(
+      `Nothing was saved. Use --record <file> so a stopped run can be resumed.\n\n`,
+    );
+  }
+  process.stdout.write(`Limits are per model; --model ${args.model} has its own.\n`);
+  process.exit(2);
+}
+
+/** Cases in a recording that actually got an answer. A null draft did not. */
+function answeredDrafts(path: string): Map<string, unknown> {
+  const answered = new Map<string, unknown>();
+  if (!existsSync(path)) return answered;
+
+  const recording = JSON.parse(readFileSync(path, 'utf8')) as Recording;
+  for (const { id, draft } of recording.drafts) {
+    if (draft !== null && draft !== undefined) answered.set(id, draft);
+  }
+  return answered;
+}
+
+/** Write the checkpoint. Returns how many drafts it holds. */
+function writeRecording(path: string, providerName: string, results: CaseResult[]): number {
+  const recording: Recording = {
+    provider: providerName,
+    prompt: PROMPT_VERSION,
+    // The provider's raw output, so a replay validates exactly what the live
+    // run validated.
+    drafts: results.map((r) => ({ id: r.id, draft: r.raw ?? null })),
+  };
+  mkdirSync(dirname(resolve(path)), { recursive: true });
+  writeFileSync(path, JSON.stringify(recording, null, 2), 'utf8');
+  return recording.drafts.length;
+}
+
+/**
+ * Score one case from a recorded draft.
+ *
+ * Shared by `--replay` and `--resume`, so a resumed run scores its earlier half
+ * by exactly the same rules as its later one. `raw` is carried through, or the
+ * next checkpoint would overwrite an answer with a null.
+ */
+function scoreRecorded(testCase: EvalCase, raw: unknown): CaseResult {
+  const validated = raw === undefined || raw === null ? null : validateIntentDraft(raw);
+
+  if (!validated || !validated.ok) {
+    return {
+      id: testCase.id,
+      intentOk: false,
+      slotsOk: false,
+      missingOk: false,
+      inventedSlots: [],
+      latencyMs: 0,
+      promptTokens: 0,
+      cachedTokens: 0,
+      // A case with no recorded draft never got an answer at all. Reporting
+      // that as a schema rejection would blame the model for a dropped call.
+      error: validated ? 'schema_invalid' : 'no_response',
+      ...(validated && !validated.ok ? { issues: validated.issues, rejected: raw } : {}),
+      ...(raw === undefined ? {} : { raw }),
+    };
+  }
+  return { ...score(testCase, validated.draft), raw };
 }
 
 /**
@@ -348,27 +467,7 @@ function replay(path: string, cases: EvalCase[], verbose: boolean): void {
   const results: CaseResult[] = [];
 
   for (const testCase of cases) {
-    const raw = byId.get(testCase.id);
-    const validated = raw === undefined || raw === null ? null : validateIntentDraft(raw);
-
-    if (!validated || !validated.ok) {
-      results.push({
-        id: testCase.id,
-        intentOk: false,
-        slotsOk: false,
-        missingOk: false,
-        inventedSlots: [],
-        latencyMs: 0,
-        promptTokens: 0,
-        cachedTokens: 0,
-        // A case with no recorded draft never got an answer at all. Reporting
-        // that as a schema rejection would blame the model for a dropped call.
-        error: validated ? 'schema_invalid' : 'no_response',
-        ...(validated && !validated.ok ? { issues: validated.issues, rejected: raw } : {}),
-      });
-      continue;
-    }
-    results.push(score(testCase, validated.draft));
+    results.push(scoreRecorded(testCase, byId.get(testCase.id)));
   }
 
   process.stdout.write(
@@ -569,6 +668,8 @@ function parseArgs(argv: string[]): {
   verbose: boolean;
   record: string | null;
   replay: string | null;
+  resume: string | null;
+  waitMinutes: number;
   sample: number | null;
 } {
   const get = (flag: string): string | null => {
@@ -586,6 +687,10 @@ function parseArgs(argv: string[]): {
     verbose: argv.includes('--verbose'),
     record: get('--record'),
     replay: get('--replay'),
+    resume: get('--resume'),
+    // Total patience for daily-budget waits, across the whole run. Zero keeps
+    // the old behaviour: stop and print how to resume.
+    waitMinutes: Number(get('--wait') ?? 0) || 0,
     sample: get('--sample') ? Number(get('--sample')) : null,
   };
 }

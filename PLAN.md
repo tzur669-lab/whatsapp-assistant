@@ -1241,6 +1241,9 @@ Test each of these:
 | 2026-09-25 | The 10 ms CPU budget is measured (§4.1) and was never the constraint: a whole turn is ~0.33 ms. The synchronous SHA-256 is justified by atomicity alone and needed no performance argument |
 | 2026-09-25 | The largest CPU cost in the system is applying migrations at cold start (~1 ms, 10% of one request), and it grows per migration file. That is now the number to watch, not the crypto |
 | 2026-09-25 | The CPU test is a ratchet, not a measurement: every ceiling is at least 15x the measured cost, so a tenfold regression fails and a loaded CI machine does not |
+| 2026-09-25 | The eval harness checkpoints its recording after every case and gained `--resume`. Groq's 200K/day cap is a rolling window and a full 156-case run costs ~155K of it, so a run that stops partway must keep what it paid for rather than re-buying it |
+| 2026-09-25 | `--wait <minutes>` sits out a rolling-window exhaustion within a caller-set budget. Unbounded waiting was not an option: an eval that can hang for an hour is one nobody runs |
+| 2026-09-25 | `--replay` and `--resume` score a recorded draft through the same function, so a resumed run judges its earlier half by exactly the rules it judges the later half by |
 
 ---
 
