@@ -129,6 +129,57 @@ export const statusText = {
 
   restHoldTurnedOff: 'השהיית שבת כבויה. תזכורות יישלחו גם בשבת ובחג.',
 
+  // -- iCal feeds (PLAN §6.15) ------------------------------------------------
+
+  icalSubscribed(events: number): string {
+    return `היומן החיצוני מחובר. נקלטו ${isolateLtr(String(events))} אירועים לחודשיים הקרובים. ` +
+      'הוא מתעדכן פעם ביום ומופיע ביומן ובתקציר היומי.';
+  },
+
+  /** The feed was accepted but came back empty — usually the wrong link. */
+  icalEmpty:
+    'היומן החיצוני מחובר, אבל לא נמצאו בו אירועים לחודשיים הקרובים. כדאי לוודא שזה קישור ' +
+    'ההרשמה ליומן ולא הקישור לצפייה בדפדפן.',
+
+  icalNone: `אין יומן חיצוני מחובר. לחיבור יש לשלוח ${isolate('/ical')} ואחריו קישור ה-ics.`,
+
+  icalRemoved: 'היומן החיצוני נותק. האירועים שלו הוסרו.',
+
+  icalStatus(events: number, errorCode: string | null): string {
+    const head = `יומן חיצוני מחובר, ${isolateLtr(String(events))} אירועים שמורים.`;
+    return errorCode === null
+      ? head
+      : `${head}
+העדכון האחרון נכשל: ${isolate(errorCode)}. האירועים שנשמרו עדיין מוצגים.`;
+  },
+
+  /**
+   * A rejected URL says which rule it broke. This is a link the user typed and
+   * probably mistyped — unlike a webhook signature, there is nobody to keep in
+   * the dark, and "לא תקין" is not something anyone can act on.
+   */
+  icalRejected(reason: string): string {
+    switch (reason) {
+      case 'not_https':
+        return `הקישור חייב להתחיל ב-${isolate('https://')} (או ${isolate('webcal://')}).`;
+      case 'has_credentials':
+        return 'הקישור מכיל שם משתמש וסיסמה. צריך קישור הרשמה ציבורי, בלי פרטי התחברות.';
+      case 'ip_literal':
+      case 'private_host':
+        return 'הקישור מצביע על כתובת פנימית ולא על יומן באינטרנט.';
+      case 'bad_port':
+        return 'הקישור מצביע על פורט לא סטנדרטי. צריך קישור רגיל, בלי מספר פורט.';
+      case 'too_long':
+        return 'הקישור ארוך מדי.';
+      default:
+        return 'זה לא נראה כמו קישור תקין. צריך את קישור ההרשמה ליומן, שמסתיים בדרך כלל ב-ics.';
+    }
+  },
+
+  icalFetchFailed(errorCode: string): string {
+    return `לא הצלחתי להוריד את היומן (${isolate(errorCode)}). כדאי לוודא שהקישור פתוח לכל מי שמחזיק בו.`;
+  },
+
   /** The action was undone within the ten minute window. */
   undone: 'הפעולה בוטלה וחזרה למצב הקודם.',
 

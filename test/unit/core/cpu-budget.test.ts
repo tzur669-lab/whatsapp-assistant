@@ -120,15 +120,31 @@ describe('a whole turn', () => {
 
 describe('cold start', () => {
   it('applies every migration in well under one request', async () => {
-    // The dominant cost in the whole system: measured at 0.99 ms, which is 10%
-    // of a single request's budget, paid once per Durable Object and added to
-    // its first request. It grows with every migration file, which is the one
-    // thing here worth watching — hence the ceiling.
-    const median = await medianMs(10, () => {
+    // The dominant cost in the whole system: ~1 ms, a tenth of a single
+    // request's budget, paid once per Durable Object and added to its first
+    // request. It grows with every migration file, which is the one thing here
+    // worth watching.
+    //
+    // This bound is deliberately loose, and the reason is worth stating.
+    //
+    // A tighter one was tried twice and both were wrong. A fixed few
+    // milliseconds fails whenever vitest's parallel files and a background job
+    // load the machine; a ratio against SHA-256 in the same run does not fix it
+    // either, because SHA-256 is pure CPU and this is SQLite doing native I/O,
+    // and the two do not respond to contention the same way. A guard that fails
+    // on a busy machine is one somebody deletes, which is worse than a loose one.
+    //
+    // So this catches a catastrophe — a missing index, an accidental O(n²), a
+    // migration that rebuilds a table — and nothing subtler. The number worth
+    // watching (~1 ms, 10% of a request) comes from `pnpm bench`, which is run
+    // deliberately and on a quiet machine. §4.1 records it.
+    const migrate = await medianMs(10, () => {
       const fresh = new TestSqlDriver();
       new Repository(fresh).migrate(MIGRATIONS);
       fresh.close();
     });
-    expect(median).toBeLessThan(6);
+
+    expect(migrate, `${migrate.toFixed(3)} ms to apply ${MIGRATIONS.length} migrations`)
+      .toBeLessThan(50);
   });
 });

@@ -10,7 +10,7 @@
  */
 import { isolate, isolateLtr } from './bidi.js';
 
-const SYSTEM_COMMANDS = ['/help', '/status', '/digest', '/shabbat', '/pause', '/resume', '/connect google', '/budget']
+const SYSTEM_COMMANDS = ['/help', '/status', '/digest', '/shabbat', '/ical', '/pause', '/resume', '/connect google', '/budget']
   .map(isolate)
   .join(' · ');
 
@@ -26,6 +26,7 @@ export const he = {
     'אפשר גם להקליט הודעה קולית במקום לכתוב. מה שנשמע יוצג בתשובה.',
     '',
     `לתקציר יומי: ${isolate('/digest 7')} — המספר הוא השעה. ביום ריק לא נשלחת הודעה.`,
+    `לחיבור יומן חיצוני: ${isolate('/ical')} ואחריו קישור ה-ics.`,
     '',
     `פקודות מערכת: ${SYSTEM_COMMANDS}`,
   ].join('\n'),

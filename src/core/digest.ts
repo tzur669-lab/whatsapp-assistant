@@ -22,6 +22,8 @@
  */
 import type { CalendarClient, CalendarEvent } from '../google/calendar.js';
 import type { ReminderStore, Reminder } from '../tools/reminder-store.js';
+import type { IcalStore } from '../ical/store.js';
+import { asCalendarEvents } from '../ical/merge.js';
 import type { Logger } from '../security/redact.js';
 import type { Lang } from '../render/format-time.js';
 import { digestText } from '../render/digest.js';
@@ -38,6 +40,8 @@ export type DigestContext = {
   reminders: ReminderStore;
   /** Absent when Google is not connected. The digest is then reminders only. */
   calendar?: CalendarClient;
+  /** A subscribed iCal feed, merged in beside Google's events (§6.15). */
+  ical?: IcalStore;
   log: Logger;
 };
 
@@ -83,7 +87,13 @@ export async function buildDigest(ctx: DigestContext): Promise<string | null> {
  * the user can do nothing about at that hour.
  */
 async function todaysEvents(ctx: DigestContext, endOfDay: number): Promise<CalendarEvent[]> {
-  if (!ctx.calendar) return [];
+  // A subscribed feed is a calendar like any other, and is read from the cache
+  // rather than over the network — a digest must not wait on someone's server.
+  const subscribed = ctx.ical
+    ? asCalendarEvents(ctx.ical.eventsBetween(ctx.principal, ctx.nowMs, endOfDay, MAX_EVENTS))
+    : [];
+
+  if (!ctx.calendar) return subscribed;
 
   const result = await ctx.calendar.listEvents({
     startUtc: ctx.nowMs,
@@ -93,9 +103,9 @@ async function todaysEvents(ctx: DigestContext, endOfDay: number): Promise<Calen
 
   if (!result.ok) {
     ctx.log.warn('digest_calendar_failed', { errorCode: result.error.code });
-    return [];
+    return subscribed;
   }
-  return result.value;
+  return [...result.value, ...subscribed].sort((a, b) => a.startUtc - b.startUtc);
 }
 
 function view(reminder: Reminder): { id: string; text: string; local: ReturnType<typeof localPartsOf> } {

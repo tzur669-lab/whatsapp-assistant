@@ -28,6 +28,9 @@ import type { PendingActions } from '../confirm/pending.js';
 import type { OpenQuestion, OpenQuestions } from '../confirm/questions.js';
 import type { UndoActions } from '../confirm/undo.js';
 import type { GoogleStore } from '../google/store.js';
+import type { IcalStore } from '../ical/store.js';
+import { refreshFeed } from '../ical/refresh.js';
+import { checkFeedUrl } from '../ical/url.js';
 import type { CalendarClient } from '../google/calendar.js';
 import type { Lang } from '../render/format-time.js';
 import { matchCommand } from './router.js';
@@ -62,6 +65,10 @@ export type Services = {
   calendar?: CalendarClient;
   /** Where the one-time connect link points. */
   publicBaseUrl?: string;
+  /** Subscribed iCal feeds (§6.15). Absent in tests that predate them. */
+  ical?: IcalStore;
+  /** Supplied by the platform so a feed can be fetched. */
+  fetchImpl?: typeof fetch;
 };
 
 export type PipelineDeps = {
@@ -313,7 +320,7 @@ async function respondToText(
     log.info('command', { wamid: event.wamid, intent: command.kind, stale, source: source.kind });
     repo.markInboundOutcome(event.wamid, { intent: command.kind, decision: 'ALLOW' });
     repo.audit({ ts: now, principal, tool: command.kind, tier: 0, decision: 'ALLOW', outcome: 'ok' });
-    return { action: 'reply', text: renderCommand(command, deps, now) };
+    return { action: 'reply', text: await renderCommand(command, deps, now) };
   }
 
   if (!deps.services) {
@@ -468,7 +475,7 @@ async function answerOpenQuestion(
 
 // -- system commands ----------------------------------------------------------
 
-function renderCommand(command: Command, deps: PipelineDeps, now: number): string {
+async function renderCommand(command: Command, deps: PipelineDeps, now: number): Promise<string> {
   const { repo } = deps;
 
   switch (command.kind) {
@@ -495,6 +502,9 @@ function renderCommand(command: Command, deps: PipelineDeps, now: number): strin
 
     case 'digest':
       return digestSetting(command, deps);
+
+    case 'ical':
+      return icalSetting(command, deps, now);
 
     case 'shabbat':
       if (command.set === null) {
@@ -561,6 +571,56 @@ function digestSetting(command: Extract<Command, { kind: 'digest' }>, deps: Pipe
   return statusText.digestOn(command.set);
 }
 
+/**
+ * Subscribe to, report on, or drop an iCal feed (PLAN §6.15).
+ *
+ * Subscribing fetches straight away rather than waiting for the nightly
+ * refresh. The user has just pasted a link and wants to know whether it worked;
+ * "I will tell you tomorrow" is not an answer, and a link that is wrong is
+ * wrong now.
+ */
+async function icalSetting(
+  command: Extract<Command, { kind: 'ical' }>,
+  deps: PipelineDeps,
+  now: number,
+): Promise<string> {
+  const store = deps.services?.ical;
+  if (!store) return statusText.notAvailableYet;
+
+  if (command.set === null) {
+    const feed = store.feedFor(deps.principal);
+    return feed === null
+      ? statusText.icalNone
+      : statusText.icalStatus(feed.eventCount, feed.lastError);
+  }
+
+  if (command.set === 'off') {
+    return store.unsubscribe(deps.principal) ? statusText.icalRemoved : statusText.icalNone;
+  }
+
+  const checked = checkFeedUrl(command.set);
+  if (!checked.ok) {
+    deps.log.info('ical_url_rejected', { reason: checked.reason });
+    return statusText.icalRejected(checked.reason);
+  }
+
+  const feed = store.subscribe(deps.principal, checked.url);
+  const result = await refreshFeed({
+    store,
+    feed,
+    nowMs: now,
+    log: deps.log,
+    ...(deps.services?.fetchImpl ? { fetchImpl: deps.services.fetchImpl } : {}),
+  });
+
+  if (result.status === 'failed') {
+    // The subscription is kept: the link may be right and the server briefly
+    // down, and the daily refresh will try again. `/ical` reports the error.
+    return statusText.icalFetchFailed(result.errorCode ?? 'E_ICAL_UNKNOWN');
+  }
+  return result.events === 0 ? statusText.icalEmpty : statusText.icalSubscribed(result.events);
+}
+
 /** Matches the TTL in `GoogleStore`. */
 const CONNECT_LINK_MINUTES = 10;
 
@@ -589,6 +649,7 @@ function turnOf(
       lastInboundAt: deps.repo.lastInboundAt(deps.principal),
       monthlySent: monthlySentOf(deps.repo, now),
       ...(services.calendar ? { calendar: services.calendar } : {}),
+      ...(services.ical ? { ical: services.ical } : {}),
     },
     pending: services.pending,
     deferred: services.deferred,

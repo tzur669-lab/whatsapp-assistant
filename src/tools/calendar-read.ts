@@ -16,6 +16,7 @@ import type { DateSpec } from '../time/resolve.js';
 import { resolveRange } from '../time/range.js';
 import { localPartsOf, wallTimeToUtc, addDays, ZONE } from '../time/tz.js';
 import { eventText } from '../render/events.js';
+import { asCalendarEvents } from '../ical/merge.js';
 import type { ExecuteResult, ResolveOutcome, ToolDefinition } from './types.js';
 import { parseInput } from './types.js';
 
@@ -74,7 +75,20 @@ export const calendarListEvents: ToolDefinition = {
     const input = parseInput<ListInput>(inputSchema, rawInput, 'calendar.list_events');
     const calendar = ctx.calendar;
 
-    if (!calendar) return { text: eventText.notConnected(ctx.lang) };
+    // A subscribed feed is read from the cache and merged in. It is the whole
+    // answer when Google is not connected — which is the point of the feature:
+    // it reaches calendars an OAuth grant never will (§6.15).
+    const subscribed = ctx.ical
+      ? asCalendarEvents(
+          ctx.ical.eventsBetween(ctx.principal, input.startUtc, input.endUtc, MAX_EVENTS),
+        )
+      : [];
+
+    if (!calendar) {
+      return subscribed.length > 0
+        ? { text: eventText.list(subscribed, ctx.lang) }
+        : { text: eventText.notConnected(ctx.lang) };
+    }
 
     const result = await calendar.listEvents({
       startUtc: input.startUtc,

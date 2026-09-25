@@ -556,6 +556,8 @@ Policy is code plus static config. **Nothing in chat can change it.**
 | `undo_actions` | id, compensating_json, nonce_hash, expires_at | 1 day |
 | `reminders` | id, text, due_at_utc, local_wall_time, tz, status, channel, attempts, lease_until, backup_event_id, wamid | 90 days after final state |
 | `outbound_messages` | wamid PK, kind, sent_at, delivery_status, pricing_category, principal, reminder_id, status_at, error_code | 30 days |
+| `ical_feeds` | id PK, principal, url, etag, last_fetched_at, last_error, event_count — see §6.15 | until unsubscribed |
+| `ical_events` | (feed_id, uid, start_utc) PK, title, end_utc, all_day — replaced wholesale on refresh | 60-day horizon |
 | `integrations` | provider, account, scopes, token_ciphertext, key_version, status, updated_at | until revoked |
 | `oauth_states` | id, state, pkce_verifier, expires_at | 10 min |
 | `audit_log` | ts, principal, tool, tier, decision, input_digest, outcome, external_ref | 1 year |
@@ -914,6 +916,104 @@ the platform layer, so timing it from inside would mean the pipeline knowing
 about a step it does not take. It is logged there as `sendMs` and correlates by
 `wamid`.
 
+### 6.15 Subscribed calendars (iCal)
+
+`/ical <link>` subscribes to any `.ics` feed. Its events then appear in the
+calendar reads and in the daily digest, beside Google's.
+
+**Why, when Google is already connected.** An OAuth grant reaches the calendars
+the user owns. An `.ics` link reaches the ones they merely follow — a university
+timetable, a team calendar, a shared roster, a Notion or Canvas export. Most of
+those will never offer OAuth, and all of them publish a link. It needs no
+consent screen, no scope decision and no token, which makes it both the cheapest
+integration here and the one with the widest reach.
+
+**Read-only, and it says so.** Nothing writes to a feed and nothing can. Feed
+events carry an `ical:` id prefix precisely so one can never be handed to a move
+or a delete, where it would fail confusingly rather than immediately.
+
+#### The security boundary
+
+This is the second place in the system where an external URL is fetched, and it
+is a different danger from the first. In `channels/whatsapp/media.ts` the URL came
+from Meta's own response and the risk was a redirect carrying our token; here the
+URL is **typed by the user** and the risk is where it points.
+
+Cloudflare exposes no cloud metadata endpoint the way EC2 does, and a Worker
+cannot reach a private network unless one is bound — so the practical SSRF risk
+is smaller than the usual story. It is still refused explicitly, because "it
+happens not to be reachable today" is a property of the platform and not of this
+code.
+
+| Rule | Refused |
+|---|---|
+| Scheme | anything but `https` (`webcal://` is rewritten, since that is what calendar apps hand out) |
+| Credentials | any `user:pass@`, which would reach a log the moment anything printed the feed |
+| Host | IP literals in every spelling — dotted, integer, hex, octal, IPv6 — and `localhost`, `.local`, `.internal`, `.home`, and any name with no dot |
+| Port | anything but 443; a feed on `:8080` is a development server |
+| Length | over 2,048 characters |
+
+**Redirects are followed by hand**, at most three, and every hop is re-validated
+from scratch. A feed allowed to redirect freely could point anywhere after the
+user approved it, which would make the first check a formality. A relative
+`Location` is resolved and then re-checked like any other.
+
+**The body is read through the stream with a byte counter**, capped at 1 MB.
+`content-length` is checked when offered and never relied on: it is a claim, and
+a server that omits it and keeps sending would exhaust the isolate before any
+size check ran.
+
+**Nothing about the URL is ever logged.** A private feed carries its token in the
+query string, and a thrown fetch error commonly contains the URL it was given —
+so failures are recorded as `E_ICAL_*` codes and the error's own text is
+discarded unread.
+
+#### Reading the file
+
+A deliberate subset of RFC 5545. Full iCalendar is a large specification, most of
+which no personal assistant reads. What a timetable actually contains is VEVENTs
+with a start, an end, a title and sometimes a recurrence rule.
+
+- `DTSTART` / `DTEND` / `DURATION`, as UTC, as a wall time with a `TZID`, or as a
+  date. A **floating** time — no `Z`, no `TZID` — is resolved in the assistant's
+  own zone, the only sensible reading for a feed shown to one person.
+- Line folding is undone first, since a fold can split a property anywhere.
+- `STATUS:CANCELLED` is dropped. It is still in the file, and showing it would be
+  worse than not reading the feed.
+- A timed event with no end gets an hour, which is what every calendar client
+  shows; an all-day one gets the day.
+- **Recurrences are expanded into a window, not in general.** A general RRULE
+  expander is where this kind of parser goes wrong — it grows BYSETPOS and WKST
+  and becomes the largest thing in the codebase. Expanding only into the sixty
+  days the assistant will ask about makes it a bounded loop with a hard cap, and
+  the cases it gets wrong are ones nobody would see. `FREQ` daily/weekly/monthly/
+  yearly, with `INTERVAL`, `COUNT`, `UNTIL`, `BYDAY` and `EXDATE`.
+- **Stepped through the wall clock**, in the start's own zone. "Every Tuesday at
+  09:00" means nine in the morning on both sides of a DST change, and a UTC
+  `DTSTART` stepped through Israel's zone would shift every instance after the
+  first by the offset. That was a real bug, caught by the tests.
+- Everything is capped and a malformed VEVENT is dropped rather than failing the
+  feed: one bad event in a semester's timetable should cost that one event.
+
+#### Caching
+
+Events are expanded sixty days ahead and stored, refreshed on the daily cron and
+on demand once six hours stale. Fetching a semester's timetable on every question
+would be slow, wasteful and rate-limited by the other end.
+
+**Replaced wholesale, never merged**: an event deleted from the feed has to
+disappear here too, and a merge would keep a cancelled meeting on the calendar
+forever.
+
+**A failed refresh leaves the cache alone.** Yesterday's timetable is a better
+answer than an empty calendar, and a feed that is briefly unreachable must not
+look like a feed with nothing in it. `/ical` reports the last error.
+
+#### One feed
+
+Not many. A second would need a way to name them, to remove one of them, and to
+say which feed a given event came from — none of which is worth building before
+the first one has been used in anger.
 ---
 
 ## 7. Security
@@ -1404,6 +1504,14 @@ Test each of these:
 | 2026-09-25 | Turn timing is redaction-safe by construction: a closed set of stage names and a number each, with a test that no stage name is on the logger's ban list. Safer than a rule about what not to log |
 | 2026-09-25 | Turn timings measure I/O waiting, not CPU. Workers freezes the clock between I/O, so that is the half it can see — and it is the half that dominates. CPU is §4.1's question |
 | 2026-09-25 | A stage that did not run is omitted, not reported as zero. A turn with no voice note did not spend zero milliseconds transcribing |
+| 2026-09-25 | iCal redirects are followed by hand, at most three, with every hop re-validated. A feed allowed to redirect freely could point anywhere after approval, which would make the URL check a formality |
+| 2026-09-25 | IP literals are refused in every spelling rather than private ranges being enumerated. A public feed is never published as an address, so refusing the whole form removes the question |
+| 2026-09-25 | The feed body is read through the stream with a byte counter. `content-length` is a claim, and a server that omits it and keeps sending would exhaust the isolate before a size check ran |
+| 2026-09-25 | Recurrences are expanded into the 60-day horizon rather than in general. A full RRULE expander grows BYSETPOS and WKST and becomes the largest thing in the codebase for cases nobody sees |
+| 2026-09-25 | A recurrence is stepped through the **start's own zone**. A UTC `DTSTART` stepped through Israel's zone shifted every instance after the first by the offset — a real bug the tests caught |
+| 2026-09-25 | A failed feed refresh leaves the cached events alone. Yesterday's timetable is a better answer than an empty calendar, and unreachable must not look like empty |
+| 2026-09-25 | One feed, not many. A second needs naming, removal and provenance, none of which is worth building before the first has been used |
+| 2026-09-25 | The cold-start CPU test is a catastrophe check, not a ratchet. A fixed millisecond bound flaked under parallel test load, and a ratio against SHA-256 did not fix it either — pure CPU and native SQLite I/O do not respond to contention alike. The tight number lives in `pnpm bench` |
 
 ---
 
@@ -1550,11 +1658,13 @@ Hebrew calendar is in `Intl` and sunset is sixty lines of arithmetic. The CPU
 question the entry raised is settled by §4.1 — it is a few microseconds against a
 budget nothing here comes close to.
 
-**B13. iCal feed subscription.** One comparable project's entire value is
-importing any `.ics` — university, work, Canvas, Notion. It reaches far more
-calendars than a Google grant does, needs no OAuth, and is one fetch and a parse.
-*Do:* pull on the daily cron, into the same event shape `calendar.list_events`
-already renders.
+**B13. iCal feed subscription.** ✅ **Done 2026-09-25** — see §6.15. `/ical <link>`
+subscribes to any `.ics`; its events appear in calendar reads and in the digest.
+It reaches the calendars an OAuth grant never will, needs no consent screen and
+no scope decision, and is read-only by construction. Most of the work turned out
+to be the security boundary — a URL the *user* types and the Worker then fetches
+is a different danger from one Meta hands us, and redirects are re-validated hop
+by hop for exactly that reason.
 
 **B14. Birthdays and contacts.** Common in comparable bots. Needs a Google
 Contacts scope — a §14 security decision first — or a local list with no new

@@ -26,6 +26,7 @@ import type { ReminderStore } from './reminder-store.js';
 import type { Repository } from '../core/repo.js';
 import type { Logger } from '../security/redact.js';
 import type { CalendarClient } from '../google/calendar.js';
+import type { IcalStore } from '../ical/store.js';
 
 /** One candidate when a description matched more than one thing. */
 export type TargetChoice = { id: string; label: string };
@@ -74,6 +75,8 @@ export type ToolContext = {
    * answers "not connected" rather than failing (PLAN §6.6).
    */
   calendar?: CalendarClient;
+  /** A subscribed iCal feed, read-only and merged into calendar reads (§6.15). */
+  ical?: IcalStore;
 };
 
 export type ExecuteResult = {

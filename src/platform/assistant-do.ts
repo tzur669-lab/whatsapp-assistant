@@ -23,6 +23,8 @@ import { ReminderStore } from '../tools/reminder-store.js';
 import type { ClaimedReminder } from '../tools/reminder-store.js';
 import { PendingActions } from '../confirm/pending.js';
 import { OpenQuestions } from '../confirm/questions.js';
+import { IcalStore } from '../ical/store.js';
+import { refreshFeed } from '../ical/refresh.js';
 import { UndoActions } from '../confirm/undo.js';
 import { GoogleStore } from '../google/store.js';
 import { CalendarClient } from '../google/calendar.js';
@@ -57,6 +59,7 @@ export class AssistantDO implements DurableObject {
   private readonly reminders: ReminderStore;
   private readonly pending: PendingActions;
   private readonly questions: OpenQuestions;
+  private readonly ical: IcalStore;
   private readonly deferred: UndoActions;
   private readonly google: GoogleStore;
   private readonly log = createLogger({ component: 'assistant_do' });
@@ -83,6 +86,7 @@ export class AssistantDO implements DurableObject {
     this.reminders = new ReminderStore(this.sql, now);
     this.pending = new PendingActions(this.sql, now);
     this.questions = new OpenQuestions(this.sql, now);
+    this.ical = new IcalStore(this.sql, now);
     this.deferred = new UndoActions(this.sql, now);
     this.google = new GoogleStore(this.sql, now, () =>
       parseKeyring(this.env as unknown as Record<string, string | undefined>),
@@ -269,8 +273,33 @@ export class AssistantDO implements DurableObject {
     this.questions.purgeExpired();
     this.deferred.expireStale();
     this.google.purgeExpired();
+    await this.refreshFeeds();
     await this.armAlarm();
     this.log.info('maintenance_done', {});
+  }
+
+  /**
+   * Refresh every subscribed feed, once a day (PLAN §6.15).
+   *
+   * One at a time and never fatal: a feed that is down is a feed whose cached
+   * events stay exactly where they are, and it must not stop the rest of
+   * maintenance from running.
+   */
+  private async refreshFeeds(): Promise<void> {
+    const now = Date.now();
+    for (const feed of this.ical.all()) {
+      try {
+        await refreshFeed({
+          store: this.ical,
+          feed,
+          nowMs: now,
+          log: this.log,
+          fetchImpl: this.fetchImpl,
+        });
+      } catch {
+        this.ical.markFailed(feed.id, 'E_ICAL_UNKNOWN');
+      }
+    }
   }
 
   // -- the daily digest ------------------------------------------------------
@@ -327,6 +356,7 @@ export class AssistantDO implements DurableObject {
       principal,
       lang: 'he',
       reminders: this.reminders,
+      ical: this.ical,
       log: this.log,
       ...(this.calendarClient() ? { calendar: this.calendarClient()! } : {}),
     });
@@ -521,6 +551,8 @@ export class AssistantDO implements DurableObject {
       reminders: this.reminders,
       pending: this.pending,
       questions: this.questions,
+      ical: this.ical,
+      fetchImpl: this.fetchImpl,
       deferred: this.deferred,
       nlu: buildNluChain({ groqApiKey: this.env.GROQ_API_KEY, fetchImpl: this.fetchImpl }),
       google: this.google,

@@ -16,7 +16,9 @@ export type Command =
    */
   | { kind: 'digest'; set: number | 'off' | null }
   /** `/shabbat`, `/shabbat on`, `/shabbat off` (PLAN §6.13). Off by default. */
-  | { kind: 'shabbat'; set: boolean | null };
+  | { kind: 'shabbat'; set: boolean | null }
+  /** `/ical <url>`, `/ical off`, `/ical` (PLAN §6.15). */
+  | { kind: 'ical'; set: string | 'off' | null };
 
 const COMMANDS: ReadonlyArray<readonly [RegExp, Command]> = [
   [/^\/help$|^עזרה$/i, { kind: 'help' }],
@@ -33,11 +35,21 @@ const COMMANDS: ReadonlyArray<readonly [RegExp, Command]> = [
 
 const DIGEST = /^\/digest(?:\s+(off|\d{1,2}))?$/i;
 
+/** The argument is a URL, so it is captured loosely here and validated in `ical/url.ts`. */
+const ICAL = /^\/ical(?:\s+(\S{1,2100}))?$/i;
+
 /** Returns the command for a message, or null if it is free text. */
 export function matchCommand(text: string): Command | null {
   const trimmed = text.trim();
   for (const [pattern, command] of COMMANDS) {
     if (pattern.test(trimmed)) return command;
+  }
+
+  const ical = ICAL.exec(trimmed);
+  if (ical) {
+    const argument = ical[1];
+    if (argument === undefined) return { kind: 'ical', set: null };
+    return { kind: 'ical', set: /^off$/i.test(argument) ? 'off' : argument };
   }
 
   const digest = DIGEST.exec(trimmed);
