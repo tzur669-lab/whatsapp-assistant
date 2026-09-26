@@ -287,12 +287,15 @@
 - id: en-cal-012
   now: "2026-09-24T21:00:00+03:00"
   input: "schedule a 30 minute call on Monday at 10am"
+  # A bare "call" names the kind of event, not the event — the English twin of
+  # he-cal-013. Listed as missing since prompt v5 (2026-09-26), which made the
+  # rule explicit; before that this case silently accepted "call" as a title.
   expect:
     intent: calendar.create_event
     slots:
       duration_minutes: 30
       date: { kind: weekday, weekday: 1, qualifier: unspecified }
-    missing: []
+    missing: [title]
 
 - id: en-cal-013
   now: "2026-09-24T21:00:00+03:00"

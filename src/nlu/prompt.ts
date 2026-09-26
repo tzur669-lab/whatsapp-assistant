@@ -27,7 +27,7 @@
 import type { ToolCatalogEntry } from '../tools/registry.js';
 
 /** Bump on any wording change. Recorded with eval results in PLAN §14. */
-export const PROMPT_VERSION = 'v4';
+export const PROMPT_VERSION = 'v5';
 
 /**
  * The complete set of facts the model may receive. Adding a field here is a
@@ -74,7 +74,8 @@ COMPLETENESS
 - A period with no DateSpec shape ("soon", "sometime", "when I get home") -> "date" in "missing". Exception: a tool with a "range" slot takes "this week" / "next week" as range.
 - "qualifier" is "unspecified" unless the user said this or next ("הבא").
 - A day that identifies an existing item ("the Monday standup") is both a query_variant and the date.
-- A named action with no details ("schedule a meeting", "תקבע פגישה") is still that intent, with every absent slot in "missing". Not "unsupported".`;
+- A named action with no details ("schedule a meeting", "תקבע פגישה") is still that intent, with every absent slot in "missing". Not "unsupported".
+- A title says who or what: "meeting with Sarah", "פגישת צוות". The bare kind of event - "a meeting", "a call", "פגישה", "שיחה" - is not a title: put "title" in "missing".`;
 
 /**
  * Assemble the prompt. Returns system and user parts separately so a provider
