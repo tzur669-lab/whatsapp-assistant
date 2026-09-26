@@ -123,6 +123,12 @@ export async function parseWithFallback(
       latencyMs: Date.now() - started,
       promptTokens: response.usage.promptTokens,
       completionTokens: response.usage.completionTokens,
+      // Slot *names* from a closed vocabulary, never values. A model that
+      // starts filling other tools' slots often is drifting, and this is
+      // where that shows first.
+      ...(validated.strippedSlots.length === 0
+        ? {}
+        : { strippedSlotKeys: validated.strippedSlots.join(',') }),
     });
 
     return { ok: true, draft: validated.draft, provider: provider.name, attempts };

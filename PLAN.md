@@ -1705,11 +1705,52 @@ higher. That is what settled §13's open question: the eval now uses 30 s and
 production keeps 8 s, so the next run measures accuracy and speed as two
 separate things.
 
+#### Completed, 2026-09-26: all 156 answered
+
+It took the rest of a day to fill the last eleven — a TLS-intercepting filter on
+the machine, then a harness that had stopped retrying (§11.2) — but every case
+now has an answer, and the numbers are the model's rather than the network's.
+
+| Metric | Threshold | As first scored | Other tools' slots removed (§13) |
+|---|---|---|---|
+| no invented slots | 100% — **hard gate** | 99.4% | 99.4% |
+| missing-slot recall | 100% — **hard gate** | 96.8% | **99.4%** |
+| intent accuracy | 97% | 97.4% ✅ | **100%** ✅ |
+| exact slot match | 95% | 96.8% ✅ | **99.4%** ✅ |
+| off-topic → unsupported | 95% | 100% ✅ | 100% ✅ |
+
+The right-hand column is the same recording scored under the §13 decision, which
+changes validation only — the prompt and the wire schema are byte-identical — so
+it is a measurement, not a projection.
+
+**Both hard gates now come down to one case**, `he-cal-013`: "תקבע פגישה מחר ב-9
+לחצי שעה" answered with `title: "פגישה"` where the title should have been listed
+as missing. It fails *both* gates at once — an invented slot, and a missing one
+not reported — so fixing it clears both. The only other failure is `en-typo-002`,
+a slot mismatch that no hard gate covers.
+
+Latency is still not settled. The resumes that filled the corpus answered a few
+cases each, which is no sample; the one run with a real sample read p95 at
+**4,674 ms**, above the 3,000 ms threshold. That is its own question, for its own
+run.
+
 #### What this does not yet decide
 
-§4 chooses between `gpt-oss-120b` and `qwen3.8-27b` by eval, and both have to be
-measured on the same prompt version for that to mean anything. This is one half.
-The other needs a day whose 200K rolling window is untouched.
+§4 chooses between `gpt-oss-120b` and `qwen3.8-27b` by eval, on one prompt
+version. `gpt-oss-120b` has not been measured, and on 2026-09-26 it could not be:
+
+- Its first ten cases on a clean connection all came back without a draft. The
+  one inspected by hand was a **400 `json_validate_failed`** — Groq's own
+  strict-schema check refusing a generation that omitted keys strict mode
+  requires as `null`. Ten is no sample, but it is ten of ten.
+- A gpt-oss case costs about **2,500 tokens** against qwen's ~1,500, because it
+  is a reasoning model and output counts. A full corpus is therefore ~390K
+  tokens — about two days of a 200K rolling budget — and that day's budget had
+  already gone on the harness faults listed in §11.2.
+
+So the comparison needs about two days of a run that is left alone. What can be
+said now is narrower: qwen is one targeted fix from passing every accuracy
+threshold, and gpt-oss has so far failed the output format itself.
 ### 11.10 Calls and the device companion (planned, §6.17)
 
 Contact matching is **not tested here**, because it does not happen here. It runs
@@ -1765,7 +1806,7 @@ gates in §11.2 apply unchanged: an invented number is an invented slot.
 - [x] R5 unlikely-hour window: **00:00–05:59** (2026-09-24).
 - [x] R9: "יום X הבא" means the **nearest future X** (2026-09-24).
 - [x] Default event duration: **none — CLARIFY instead** (2026-09-24). Default reminder text when none given is still open.
-- [ ] Should a per-tool slot schema **strip** an unknown key instead of rejecting the draft? The first full corpus run lost four otherwise-perfect answers to one mistake made four times: `attendees` emitted on a `calendar.delete_event` draft, which `.strict()` rejects and which no code would ever have read (§11.9). `intent-schema.ts` already made this trade once for `unsupported`, on the grounds that "rejecting the draft over an ignored field would punish the right answer". The counter-argument is that strict is what makes LLM output safe to act on, and a rule with an exception is a rule people stop trusting. Decide with B6/B8, since all three change the prompt.
+- [x] **A slot that belongs to another tool is removed, not a reason to reject the draft** (2026-09-26, decided on measurement). Strict structured output cannot express per-intent slot sets, so the wire schema offers one flat union and a model sometimes fills another tool's slot. The complete `qwen3.8-27b` corpus lost four otherwise-perfect answers to exactly this, all `attendees` on a delete; removed, all four scored correct and intent accuracy went from 97.4% to 100% (§11.9). The rule is drawn tightly because strict is still what makes the output safe to act on: only a name another tool declares is removed, only at the top of `slots`; a name no tool declares, any nested extra key, and any declared slot with a bad value all still reject. The removed names are counted in `nlu_parsed` and in the eval report, so a model that starts leaning on the tolerance is visible. The wire schema and the prompt are byte-identical before and after — this is validation only, and prompt v4 is still v4.
 - [ ] Should moving or deleting **assistant-created** events drop to Tier 1 (execute + Undo)?
 - [ ] **FCM is a new dependency and a new processor** (§6.17). The alternative with no third party is a hibernatable WebSocket from the phone to the DO, which Android will not keep alive through Doze — so the honest choice is FCM, or a call that only works while the phone is awake. Needs approval either way.
 - [ ] Android 14 restricts `USE_FULL_SCREEN_INTENT` to calling and alarm apps. **Verify a companion dialer qualifies before building.** The fallback is a high-priority heads-up notification: one more tap, no less safe.
@@ -1923,6 +1964,9 @@ gates in §11.2 apply unchanged: an invented number is an invented slot.
 | 2026-09-26 | A failure's code and its detail are separate fields. Composing them (`rate_limited:http 429`) broke the exact-match retry check, and a run silently stopped retrying anything |
 | 2026-09-26 | `gpt-oss-120b` often fails Groq's server-side strict-schema validation on prompt v4 (400 `json_validate_failed`: required-as-null keys omitted). This is a measurement about the model and feeds §4's choice directly; the harness scores it once instead of retrying it |
 | 2026-09-26 | The eval paces from each answer's measured billed cost — prompt minus cached, plus output including reasoning — for the per-minute and the daily limit alike. The prompt estimate was a third of a reasoning model's real cost |
+| 2026-09-26 | **A slot belonging to another tool is removed rather than rejecting the draft** (§13, decided). Measured: four `attendees`-on-delete answers were otherwise perfect, and removing the slot took qwen's intent accuracy from 97.4% to 100% with the prompt and wire schema byte-identical. Only another tool's slot names, only at the top of `slots`, counted in logs and in the eval |
+| 2026-09-26 | The complete qwen corpus: both hard gates now fail on exactly one case, `he-cal-013`, which invents a title and so fails both at once. gpt-oss-120b failed its first ten cases on Groq's strict-schema check and needs ~2 days of rolling budget for a full corpus (§11.9) |
+| 2026-09-26 | An eval recording keeps each gap's failure code, detail and status. A stopped run had left ten nulls and no way to tell the model failing the schema from the network failing the request |
 
 ---
 
@@ -2050,17 +2094,14 @@ which biases spelling for names and times at no cost (PLAN §13, still unmeasure
 *Do:* try the prompt first, against recorded clips via `--replay`. Reach for a
 second provider only if that is not enough.
 
-**B10. Phase 3 certification.** ⏳ **Half done, 2026-09-25.** The first complete
-156-case run in the project's history finished against `qwen3.8-27b` — see §11.9
-for the numbers and, more usefully, for what they mean once the eleven cases that
-never got an answer are set aside. Short version: every valid draft had the right
-intent, one hard-gate failure is real (`he-cal-013` invented a title), and four
-schema rejections were one mistake made four times.
-
-Still outstanding: the same corpus against `gpt-oss-120b`, which §4 needs for the
-model comparison and which requires a day whose 200K rolling window is untouched.
-`--record` and `--resume` now make that a run that can be finished rather than
-restarted.
+**B10. Phase 3 certification.** ⏳ **qwen done, gpt-oss not measurable yet —
+2026-09-26.** The complete 156-case `qwen3.8-27b` corpus is in §11.9: with the §13
+decision it passes intent (100%), exact slot match (99.4%) and off-topic (100%),
+and both hard gates fail on a single case, `he-cal-013`. `gpt-oss-120b` failed its
+first ten cases on the strict schema and needs about two days of rolling budget
+for a full corpus. The harness is now fit to run that unattended: it keeps every
+answer and the reason for every gap, holds one writer per file, paces from the
+measured cost of a case, and stops retrying requests the provider refused.
 
 **B11. Nothing is measured end to end.** ✅ **Done 2026-09-25** — see §6.14. One
 `turn` line per message with a millisecond figure per stage, redaction-safe by

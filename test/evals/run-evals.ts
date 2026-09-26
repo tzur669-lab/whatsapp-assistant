@@ -93,6 +93,8 @@ export type CaseResult = {
   detail?: string;
   /** The provider's HTTP status, when it sent one. Read by `isTransient`. */
   status?: number;
+  /** Other tools' slot names removed from an otherwise valid draft (§13). */
+  stripped?: readonly string[];
   /**
    * Set when this process asked the provider, rather than reading an answer back
    * from a recording. Only these can say anything about latency.
@@ -150,7 +152,20 @@ const HARD_GATES: readonly AccuracyKey[] = ['noInventedSlots', 'missingSlotRecal
 
 // -- entry point --------------------------------------------------------------
 
-export type Recording = { provider: string; prompt: string; drafts: { id: string; draft: unknown }[] };
+/**
+ * One case in a recording. A missing answer carries its failure code and detail,
+ * so a run stopped partway still says *why* — the difference between "the model
+ * failed the schema" and "the network was down" is the whole diagnosis, and it
+ * used to be printed once at the end of a run that often never reached the end.
+ */
+export type RecordedCase = {
+  id: string;
+  draft: unknown;
+  error?: string;
+  detail?: string;
+  status?: number;
+};
+export type Recording = { provider: string; prompt: string; drafts: RecordedCase[] };
 
 async function main(): Promise<void> {
   const args = parseArgs(process.argv.slice(2));
@@ -449,10 +464,10 @@ export function writeRecording(path: string, providerName: string, results: Case
   const carried = previous?.prompt === PROMPT_VERSION ? previous.drafts : [];
 
   const order: string[] = [];
-  const drafts = new Map<string, unknown>();
-  for (const { id, draft } of carried) {
-    order.push(id);
-    drafts.set(id, draft);
+  const entries = new Map<string, RecordedCase>();
+  for (const entry of carried) {
+    order.push(entry.id);
+    entries.set(entry.id, entry);
   }
   for (const r of results) {
     // The provider's raw output, so a replay validates exactly what the live
@@ -460,16 +475,29 @@ export function writeRecording(path: string, providerName: string, results: Case
     const answer = r.raw ?? null;
     // A case that went unanswered this time keeps whatever an earlier run
     // bought for it. Only a real answer overwrites.
-    const kept = drafts.get(r.id);
-    if (answer === null && kept !== null && kept !== undefined) continue;
-    if (!drafts.has(r.id)) order.push(r.id);
-    drafts.set(r.id, answer);
+    const kept = entries.get(r.id);
+    if (answer === null && kept !== undefined && kept.draft !== null && kept.draft !== undefined) {
+      continue;
+    }
+    if (!entries.has(r.id)) order.push(r.id);
+    entries.set(
+      r.id,
+      answer === null
+        ? {
+            id: r.id,
+            draft: null,
+            ...(r.error === undefined ? {} : { error: r.error }),
+            ...(r.detail === undefined ? {} : { detail: r.detail }),
+            ...(r.status === undefined ? {} : { status: r.status }),
+          }
+        : { id: r.id, draft: answer },
+    );
   }
 
   const recording: Recording = {
     provider: providerName,
     prompt: PROMPT_VERSION,
-    drafts: order.map((id) => ({ id, draft: drafts.get(id) ?? null })),
+    drafts: order.map((id) => entries.get(id) ?? { id, draft: null }),
   };
   mkdirSync(dirname(resolve(path)), { recursive: true });
   writeFileSync(path, JSON.stringify(recording, null, 2), 'utf8');
@@ -483,7 +511,11 @@ export function writeRecording(path: string, providerName: string, results: Case
  * by exactly the same rules as its later one. `raw` is carried through, or the
  * next checkpoint would overwrite an answer with a null.
  */
-function scoreRecorded(testCase: EvalCase, raw: unknown): CaseResult {
+function scoreRecorded(
+  testCase: EvalCase,
+  raw: unknown,
+  reason?: Pick<RecordedCase, 'error' | 'detail' | 'status'>,
+): CaseResult {
   const validated = raw === undefined || raw === null ? null : validateIntentDraft(raw);
 
   if (!validated || !validated.ok) {
@@ -497,13 +529,20 @@ function scoreRecorded(testCase: EvalCase, raw: unknown): CaseResult {
       promptTokens: 0,
       cachedTokens: 0,
       // A case with no recorded draft never got an answer at all. Reporting
-      // that as a schema rejection would blame the model for a dropped call.
-      error: validated ? 'schema_invalid' : 'no_response',
+      // that as a schema rejection would blame the model for a dropped call —
+      // unless the recording says why, and then it says exactly that.
+      error: validated ? 'schema_invalid' : (reason?.error ?? 'no_response'),
+      ...(validated || reason?.detail === undefined ? {} : { detail: reason.detail }),
+      ...(validated || reason?.status === undefined ? {} : { status: reason.status }),
       ...(validated && !validated.ok ? { issues: validated.issues, rejected: raw } : {}),
       ...(raw === undefined ? {} : { raw }),
     };
   }
-  return { ...score(testCase, validated.draft), raw };
+  return {
+    ...score(testCase, validated.draft),
+    raw,
+    ...(validated.strippedSlots.length === 0 ? {} : { stripped: validated.strippedSlots }),
+  };
 }
 
 /**
@@ -679,6 +718,7 @@ async function runCase(provider: NluProvider, testCase: EvalCase): Promise<CaseR
 
   return {
     ...score(testCase, validated.draft, latencyMs),
+    ...(validated.strippedSlots.length === 0 ? {} : { stripped: validated.strippedSlots }),
     promptTokens: response.usage.promptTokens,
     completionTokens: response.usage.completionTokens,
     cachedTokens: response.usage.cachedTokens,
@@ -764,16 +804,17 @@ export function scoreRecording(
   recording: Recording,
   cases: EvalCase[],
 ): { results: CaseResult[]; predates: string[] } {
-  const byId = new Map(recording.drafts.map((d) => [d.id, d.draft]));
+  const byId = new Map(recording.drafts.map((d) => [d.id, d]));
   const results: CaseResult[] = [];
   const predates: string[] = [];
 
   for (const testCase of cases) {
-    if (!byId.has(testCase.id)) {
+    const entry = byId.get(testCase.id);
+    if (entry === undefined) {
       predates.push(testCase.id);
       continue;
     }
-    results.push(scoreRecorded(testCase, byId.get(testCase.id)));
+    results.push(scoreRecorded(testCase, entry.draft, entry));
   }
   return { results, predates };
 }
@@ -848,8 +889,11 @@ function compare(pathA: string, pathB: string, cases: EvalCase[], verbose: boole
   const metricsA = computeMetrics(resultsA, shared);
   const metricsB = computeMetrics(resultsB, shared);
 
+  // Never answered: no draft, for a reason that was not the model's — a dropped
+  // call, a timeout, a rate limit. A schema refusal (a 4xx) is the model's own
+  // failure and is scored as one, not excused as a gap.
   const unanswered = (results: CaseResult[]): number =>
-    results.filter((r) => r.error === 'no_response').length;
+    results.filter((r) => r.error === 'no_response' || ((r.raw === null || r.raw === undefined) && isTransient(r))).length;
   const missingA = unanswered(resultsA);
   const missingB = unanswered(resultsB);
   const note = (n: number): string =>
@@ -1021,6 +1065,21 @@ function report(
   for (const [label, value, threshold, pass] of rows) {
     process.stdout.write(
       `${pass ? 'PASS' : 'FAIL'}  ${label.padEnd(26)} ${pct(value)}  (threshold ${pct(threshold)})\n`,
+    );
+  }
+
+  // Stripping is a tolerance, and a tolerance nobody counts becomes a habit
+  // nobody sees. A model that fills other tools' slots more often is drifting.
+  const strippedCounts = new Map<string, number>();
+  for (const r of results) {
+    for (const key of r.stripped ?? []) strippedCounts.set(key, (strippedCounts.get(key) ?? 0) + 1);
+  }
+  if (strippedCounts.size > 0) {
+    const casesWith = results.filter((r) => (r.stripped?.length ?? 0) > 0).length;
+    const detail = [...strippedCounts].map(([k, n]) => `${k}×${n}`).join(', ');
+    process.stdout.write(
+      `      ${"other tools' slots".padEnd(26)} stripped in ${casesWith} answer(s): ${detail}
+`,
     );
   }
 

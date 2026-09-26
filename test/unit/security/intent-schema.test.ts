@@ -98,10 +98,6 @@ describe('rejects anything outside the contract', () => {
     reject({ ...ok, slots: { ...ok.slots, event_id: 'abc123' } });
   });
 
-  it('rejects a slot belonging to another tool', () => {
-    reject({ ...ok, slots: { ...ok.slots, query_variants: ['x'] } });
-  });
-
   it('rejects an over-long title', () => {
     reject({ ...ok, slots: { ...ok.slots, text: 'א'.repeat(MAX_TITLE_CHARS + 1) } });
   });
@@ -173,5 +169,118 @@ describe('error reporting', () => {
       expect(JSON.stringify(res.issues)).not.toContain('CANARY');
       expect(res.issues.join(' ')).toContain('language');
     }
+  });
+});
+
+describe("a slot that belongs to another tool (§13, decided 2026-09-26)", () => {
+  // The wire schema has to offer the model one flat union of every tool's
+  // slots, so a model sometimes fills one that is not its tool's. The first
+  // complete corpus lost four otherwise-perfect answers to `attendees` on a
+  // delete. Such a slot is now removed, and nothing else about the door moves.
+  const deleteDraft = {
+    intent: 'calendar.delete_event',
+    language: 'he',
+    slots: { query_variants: ['פגישה עם יוסי'], date: { kind: 'relative_days', offset: 1 } },
+    missing: [],
+    ambiguities: [],
+  };
+
+  it('removes it, keeps the answer, and says which name went', () => {
+    const res = validateIntentDraft({
+      ...deleteDraft,
+      slots: { ...deleteDraft.slots, attendees: ['יוסי'] },
+    });
+    expect(res.ok).toBe(true);
+    if (res.ok) {
+      expect(res.strippedSlots).toEqual(['attendees']);
+      expect(res.draft.slots).not.toHaveProperty('attendees');
+      expect(res.draft.slots).toEqual(deleteDraft.slots);
+    }
+  });
+
+  it('reports nothing stripped for a clean draft', () => {
+    const res = validateIntentDraft(deleteDraft);
+    expect(res.ok && res.strippedSlots).toEqual([]);
+  });
+
+  it('still rejects a name no tool declares, which strict generation cannot produce', () => {
+    // An id smuggled in is the case that matters: the LLM never supplies IDs.
+    const res = validateIntentDraft({
+      ...deleteDraft,
+      slots: { ...deleteDraft.slots, event_id: 'abc123' },
+    });
+    expect(res.ok).toBe(false);
+  });
+
+  it('still rejects a declared slot with a bad value', () => {
+    const res = validateIntentDraft({
+      ...deleteDraft,
+      slots: { ...deleteDraft.slots, date: { kind: 'relative_days', offset: -1 } },
+      // …even alongside a strippable one, which must not launder the draft.
+    });
+    expect(res.ok).toBe(false);
+    const res2 = validateIntentDraft({
+      ...deleteDraft,
+      slots: { ...deleteDraft.slots, attendees: ['יוסי'], date: { kind: 'bogus' } },
+    });
+    expect(res2.ok).toBe(false);
+  });
+
+  it('keeps nested shapes strict — only the top of `slots` is projected', () => {
+    const res = validateIntentDraft({
+      ...deleteDraft,
+      slots: { ...deleteDraft.slots, date: { kind: 'relative_days', offset: 1, attendees: ['x'] } },
+    });
+    expect(res.ok).toBe(false);
+  });
+
+  it("never strips a slot that belongs to the draft's own tool", () => {
+    // A create_event draft may carry attendees — that is its own slot, and it
+    // is what raises the tool to Tier 3. Removing it would lower a tier.
+    const res = validateIntentDraft({
+      intent: 'calendar.create_event',
+      language: 'he',
+      slots: {
+        title: 'ישיבה',
+        date: { kind: 'relative_days', offset: 1 },
+        attendees: ['יוסי'],
+      },
+      missing: [],
+      ambiguities: [],
+    });
+    expect(res.ok).toBe(true);
+    if (res.ok) {
+      expect(res.strippedSlots).toEqual([]);
+      expect(res.draft.slots).toHaveProperty('attendees');
+    }
+  });
+
+  it('cannot change the intent, which is what decides the tool and its tier', () => {
+    const res = validateIntentDraft({
+      ...deleteDraft,
+      slots: { ...deleteDraft.slots, title: 'x', attendees: ['y'] },
+    });
+    expect(res.ok && res.draft.intent).toBe('calendar.delete_event');
+  });
+
+  it('leaves unsupported alone — it already tolerates every slot', () => {
+    const res = validateIntentDraft({
+      intent: 'unsupported',
+      language: 'en',
+      slots: { attendees: ['x'], date: { kind: 'relative_days', offset: 1 } },
+      missing: [],
+      ambiguities: [],
+    });
+    expect(res.ok && res.strippedSlots).toEqual([]);
+  });
+
+  it('does not mutate what it was given', () => {
+    const input = {
+      ...deleteDraft,
+      slots: { ...deleteDraft.slots, attendees: ['יוסי'] },
+    };
+    const before = JSON.stringify(input);
+    validateIntentDraft(input);
+    expect(JSON.stringify(input)).toBe(before);
   });
 });

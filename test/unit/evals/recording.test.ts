@@ -126,7 +126,8 @@ describe('the eval recording', () => {
     expect(recording.provider).toBe('groq:x');
     expect(recording.drafts).toEqual([
       { id: 'a', draft: { intent: 'one' } },
-      { id: 'b', draft: null },
+      // An empty answer carries its reason, so a stopped run says why.
+      { id: 'b', draft: null, error: 'no_response' },
     ]);
   });
 
@@ -368,5 +369,70 @@ describe('pacing from what a case actually costs', () => {
 
   it('imposes nothing before any cost is known', () => {
     expect(spacingMs(0, 8_000, 60_000)).toBe(0);
+  });
+});
+
+describe('a stopped run still says why each case failed', () => {
+  // A gpt-oss run stopped at 10 cases with 10 nulls, and nothing on disk said
+  // whether that was the model failing the strict schema or the network
+  // failing the request. The reason was printed only at the end of a run that
+  // never reached the end.
+  let dir: string;
+  let path: string;
+  const read = (): Recording => JSON.parse(readFileSync(path, 'utf8')) as Recording;
+
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), 'eval-why-'));
+    path = join(dir, 'run.json');
+  });
+  afterEach(() => rmSync(dir, { recursive: true, force: true }));
+
+  const refused = (id: string): CaseResult => ({
+    ...unanswered(id),
+    error: 'provider_error',
+    detail: 'http 400',
+    status: 400,
+    live: true,
+  });
+
+  it('writes the failure code, detail and status next to the empty answer', () => {
+    writeRecording(path, 'groq:x', [refused('a')]);
+    expect(read().drafts).toEqual([
+      { id: 'a', draft: null, error: 'provider_error', detail: 'http 400', status: 400 },
+    ]);
+  });
+
+  it('replaces a recorded failure with a later answer, reason and all', () => {
+    writeRecording(path, 'groq:x', [refused('a')]);
+    writeRecording(path, 'groq:x', [answered('a', { intent: 'one' })]);
+    expect(read().drafts).toEqual([{ id: 'a', draft: { intent: 'one' } }]);
+  });
+
+  it('reads the reason back when scoring, instead of guessing "no response"', () => {
+    const corpus: EvalCase[] = [
+      { id: 'a', now: '2026-09-25T10:00:00+03:00', input: 'x', expect: { intent: 'unsupported' } },
+    ];
+    const { results } = scoreRecording(
+      {
+        provider: 'groq:x',
+        prompt: PROMPT_VERSION,
+        drafts: [{ id: 'a', draft: null, error: 'provider_error', detail: 'http 400', status: 400 }],
+      },
+      corpus,
+    );
+    expect(results[0]).toMatchObject({ error: 'provider_error', detail: 'http 400', status: 400 });
+    // A refusal is the model's failure, not a gap to excuse.
+    expect(isTransient(results[0]!)).toBe(false);
+  });
+
+  it('still says "no response" for an old recording that carries no reason', () => {
+    const corpus: EvalCase[] = [
+      { id: 'a', now: '2026-09-25T10:00:00+03:00', input: 'x', expect: { intent: 'unsupported' } },
+    ];
+    const { results } = scoreRecording(
+      { provider: 'groq:x', prompt: PROMPT_VERSION, drafts: [{ id: 'a', draft: null }] },
+      corpus,
+    );
+    expect(results[0]?.error).toBe('no_response');
   });
 });
