@@ -84,6 +84,11 @@ export type CaseResult = {
   error?: string;
   /** `http 429`, `SELF_SIGNED_CERT_IN_CHAIN` — for the report, never for logic. */
   detail?: string;
+  /**
+   * Set when this process asked the provider, rather than reading an answer back
+   * from a recording. Only these can say anything about latency.
+   */
+  live?: true;
   /** Provider `retry-after`, in seconds. A long one means the daily budget is gone. */
   retryAfterSeconds?: number;
   /** Populated for failures under --verbose, so a mismatch can be read at a glance. */
@@ -520,7 +525,7 @@ async function runCaseWithRetry(provider: NluProvider, testCase: EvalCase): Prom
     last = result;
 
     if (!isTransient(result)) {
-      return { ...result, latencyMs: worstLatency };
+      return { ...result, latencyMs: worstLatency, live: true };
     }
     if ((result.retryAfterSeconds ?? 0) > DAILY_BUDGET_RETRY_AFTER_S) {
       throw new DailyBudgetExhausted(result.retryAfterSeconds!);
@@ -528,7 +533,7 @@ async function runCaseWithRetry(provider: NluProvider, testCase: EvalCase): Prom
     await sleep(1_500 * 2 ** attempt);
   }
 
-  return { ...last!, latencyMs: worstLatency };
+  return { ...last!, latencyMs: worstLatency, live: true };
 }
 
 function estimateSize(sample: EvalCase | undefined): number {
@@ -966,10 +971,27 @@ function report(
     );
   }
 
-  const latencyPass = metrics.p95LatencyMs < THRESHOLDS.p95LatencyMs;
-  process.stdout.write(
-    `${latencyPass ? 'PASS' : 'FAIL'}  ${'p95 latency'.padEnd(26)} ${metrics.p95LatencyMs} ms  (threshold ${THRESHOLDS.p95LatencyMs} ms)\n`,
-  );
+  // Latency means the model's time to answer, so it is read only from cases this
+  // process put to the model and got a reply to. A recorded answer carries no
+  // timing, and a connection that failed in 150 ms says nothing about the model.
+  // Without this, a replay — or a resume whose every live case hit a dead
+  // network — reported `PASS 0 ms`: a pass for a measurement nobody made.
+  const timed = results
+    .filter((r) => r.live === true && (r.error === undefined || r.error === 'schema_invalid'))
+    .map((r) => r.latencyMs);
+  let latencyPass: boolean | null = null;
+  if (timed.length === 0) {
+    process.stdout.write(
+      `SKIP  ${'p95 latency'.padEnd(26)} not measured — no case was answered live in this run\n`,
+    );
+  } else {
+    const p95 = percentile(timed, 0.95);
+    latencyPass = p95 < THRESHOLDS.p95LatencyMs;
+    const sample = timed.length === results.length ? '' : `, over ${timed.length} live answers`;
+    process.stdout.write(
+      `${latencyPass ? 'PASS' : 'FAIL'}  ${'p95 latency'.padEnd(26)} ${p95} ms  (threshold ${THRESHOLDS.p95LatencyMs} ms${sample})\n`,
+    );
+  }
 
   const failures = results.filter((r) => !r.intentOk || !r.slotsOk || !r.missingOk || r.inventedSlots.length > 0);
   if (failures.length > 0) {
@@ -992,10 +1014,14 @@ function report(
     }
   }
 
-  const allPass = rows.every(([, , , pass]) => pass) && latencyPass;
-  process.stdout.write(
-    `\n${allPass ? 'All thresholds met' : 'Thresholds NOT met'} — provider ${providerName}, prompt ${PROMPT_VERSION}\n`,
-  );
+  const accuracyPass = rows.every(([, , , pass]) => pass);
+  const allPass = accuracyPass && latencyPass !== false;
+  const verdict = !allPass
+    ? 'Thresholds NOT met'
+    : latencyPass === null
+      ? 'Accuracy thresholds met; latency was not measured in this run'
+      : 'All thresholds met';
+  process.stdout.write(`\n${verdict} — provider ${providerName}, prompt ${PROMPT_VERSION}\n`);
   process.exit(allPass ? 0 : 1);
 }
 
