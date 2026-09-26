@@ -20,14 +20,16 @@ import { join } from 'node:path';
 import {
   acquireRecordingLock,
   answeredDrafts,
+  isRefusal,
   isTransient,
+  settledCases,
   caseCost,
   deadConnection,
   spacingMs,
   scoreRecording,
   writeRecording,
 } from '../../evals/run-evals.js';
-import type { CaseResult, EvalCase, Recording } from '../../evals/run-evals.js';
+import type { CaseResult, EvalCase, Recording, RecordedCase } from '../../evals/run-evals.js';
 import { PROMPT_VERSION } from '../../../src/nlu/prompt.js';
 
 /** A result carrying an answer, which is all these cases need from one. */
@@ -469,5 +471,54 @@ describe('a run stops when the connection, not the case, is failing', () => {
   it('ignores answers read back from a recording, which were never live', () => {
     const recordedGap: CaseResult = { ...unanswered('r'), error: 'network_error' };
     expect(deadConnection([recordedGap, recordedGap, recordedGap])).toBeNull();
+  });
+});
+
+describe('a resume asks gaps again, and leaves refusals alone', () => {
+  // gpt-oss answers some cases with Groq's 400 strict-schema refusal. That is
+  // its answer. Re-asking it on every resume would regenerate the same failure
+  // for ~2,500 tokens a time, indefinitely.
+  let dir: string;
+  let path: string;
+  const seed = (drafts: RecordedCase[]): void =>
+    writeFileSync(path, JSON.stringify({ provider: 'groq:x', prompt: PROMPT_VERSION, drafts }), 'utf8');
+
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), 'eval-settled-'));
+    path = join(dir, 'run.json');
+  });
+  afterEach(() => rmSync(dir, { recursive: true, force: true }));
+
+  it('treats a schema refusal and an unparseable reply as final', () => {
+    expect(isRefusal({ error: 'provider_error', status: 400 })).toBe(true);
+    expect(isRefusal({ error: 'invalid_json' })).toBe(true);
+  });
+
+  it('treats a dropped call, a rate limit, a server fault and an unknown gap as gaps', () => {
+    expect(isRefusal({ error: 'network_error' })).toBe(false);
+    expect(isRefusal({ error: 'rate_limited', status: 429 })).toBe(false);
+    expect(isRefusal({ error: 'provider_error', status: 503 })).toBe(false);
+    expect(isRefusal({ error: 'no_response' })).toBe(false);
+    expect(isRefusal({})).toBe(false);
+  });
+
+  it('settles answers and refusals, and leaves the gaps to be asked again', () => {
+    seed([
+      { id: 'answered', draft: { intent: 'x' } },
+      { id: 'refused', draft: null, error: 'provider_error', detail: 'http 400', status: 400 },
+      { id: 'dropped', draft: null, error: 'network_error', detail: 'SELF_SIGNED_CERT_IN_CHAIN' },
+      { id: 'limited', draft: null, error: 'rate_limited', status: 429 },
+      { id: 'old-gap', draft: null },
+    ]);
+    expect([...settledCases(path).keys()]).toEqual(['answered', 'refused']);
+  });
+
+  it('does not let a later gap erase a recorded refusal', () => {
+    seed([{ id: 'a', draft: null, error: 'provider_error', detail: 'http 400', status: 400 }]);
+    writeRecording(path, 'groq:x', [
+      { ...unanswered('a'), error: 'network_error', detail: 'ECONNRESET', live: true },
+    ]);
+    const entry = (JSON.parse(readFileSync(path, 'utf8')) as Recording).drafts[0];
+    expect(entry).toMatchObject({ error: 'provider_error', status: 400 });
   });
 });

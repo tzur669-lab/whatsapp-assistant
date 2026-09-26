@@ -253,21 +253,24 @@ async function main(): Promise<void> {
     }
     process.on('exit', lock.release);
   }
-  const alreadyAnswered = args.resume ? answeredDrafts(args.resume) : new Map<string, unknown>();
-  if (alreadyAnswered.size > 0) {
+  const alreadySettled = args.resume ? settledCases(args.resume) : new Map<string, RecordedCase>();
+  if (alreadySettled.size > 0) {
+    const refused = [...alreadySettled.values()].filter((e) => e.draft === null).length;
+    const inCorpus = cases.filter((c) => alreadySettled.has(c.id)).length;
     process.stdout.write(
-      `resuming: ${alreadyAnswered.size} cases already answered, ${cases.length - alreadyAnswered.size} to go\n\n`,
+      `resuming: ${alreadySettled.size - refused} answered and ${refused} refused already, ` +
+        `${cases.length - inCorpus} to go\n\n`,
     );
   }
 
   let patienceMs = args.waitMinutes * 60_000;
 
   for (const testCase of cases) {
-    const recorded = alreadyAnswered.get(testCase.id);
+    const recorded = alreadySettled.get(testCase.id);
     if (recorded !== undefined) {
       // Scored from the recording, exactly as --replay would. Marked `=` so the
       // progress line shows what was bought now and what was bought earlier.
-      results.push(scoreRecorded(testCase, recorded));
+      results.push(scoreRecorded(testCase, recorded.draft, recorded));
       process.stdout.write('=');
       continue;
     }
@@ -473,6 +476,40 @@ function isAlive(pid: number): boolean {
   }
 }
 
+/**
+ * Whether a recorded gap is the model's final answer rather than a gap.
+ *
+ * A provider that refused the request as written — Groq's 400 when a
+ * generation fails the strict schema, or a reply that is still not JSON after
+ * the repair retry — gave its answer, and the answer was "I cannot". Asking again
+ * regenerates the same failure against the budget: on gpt-oss about 2,500 tokens
+ * a time, on every resume, for good. A dropped connection, a timeout or a rate
+ * limit is the opposite — the question never reached a verdict — and is asked
+ * again. `no_response` and an absent reason are gaps too.
+ */
+export function isRefusal(entry: Pick<RecordedCase, 'error' | 'status'>): boolean {
+  if (entry.error === 'invalid_json') return true;
+  return entry.error === 'provider_error' && !isTransient(entry);
+}
+
+/**
+ * The cases a resume does not ask again: every answer, and every refusal.
+ * Same prompt-version rule as `answeredDrafts`.
+ */
+export function settledCases(path: string): Map<string, RecordedCase> {
+  const settled = new Map<string, RecordedCase>();
+  if (!existsSync(path)) return settled;
+
+  // Reuses the version check, which fails the run on a mismatch.
+  answeredDrafts(path);
+  const recording = JSON.parse(readFileSync(path, 'utf8')) as Recording;
+  for (const entry of recording.drafts) {
+    const answered = entry.draft !== null && entry.draft !== undefined;
+    if (answered || isRefusal(entry)) settled.set(entry.id, entry);
+  }
+  return settled;
+}
+
 export function answeredDrafts(path: string): Map<string, unknown> {
   const answered = new Map<string, unknown>();
   if (!existsSync(path)) return answered;
@@ -525,9 +562,9 @@ export function writeRecording(path: string, providerName: string, results: Case
     // A case that went unanswered this time keeps whatever an earlier run
     // bought for it. Only a real answer overwrites.
     const kept = entries.get(r.id);
-    if (answer === null && kept !== undefined && kept.draft !== null && kept.draft !== undefined) {
-      continue;
-    }
+    const keptIsFinal =
+      kept !== undefined && ((kept.draft !== null && kept.draft !== undefined) || isRefusal(kept));
+    if (answer === null && keptIsFinal) continue;
     if (!entries.has(r.id)) order.push(r.id);
     entries.set(
       r.id,
