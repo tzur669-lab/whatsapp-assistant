@@ -1967,6 +1967,7 @@ gates in §11.2 apply unchanged: an invented number is an invented slot.
 | 2026-09-26 | **A slot belonging to another tool is removed rather than rejecting the draft** (§13, decided). Measured: four `attendees`-on-delete answers were otherwise perfect, and removing the slot took qwen's intent accuracy from 97.4% to 100% with the prompt and wire schema byte-identical. Only another tool's slot names, only at the top of `slots`, counted in logs and in the eval |
 | 2026-09-26 | The complete qwen corpus: both hard gates now fail on exactly one case, `he-cal-013`, which invents a title and so fails both at once. gpt-oss-120b failed its first ten cases on Groq's strict-schema check and needs ~2 days of rolling budget for a full corpus (§11.9) |
 | 2026-09-26 | An eval recording keeps each gap's failure code, detail and status. A stopped run had left ten nulls and no way to tell the model failing the schema from the network failing the request |
+| 2026-09-26 | An eval stops after three consecutive live connection failures and names the cause, pointing at Netspark when it is a certificate error. Twice a run had walked the rest of the corpus on a connection the filter had started intercepting — nothing paid for, nothing measured, and a run that looked finished. Rate limits and schema refusals are the provider answering and do not count |
 
 ---
 

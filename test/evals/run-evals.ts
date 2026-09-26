@@ -323,6 +323,9 @@ async function main(): Promise<void> {
     // paid for, which is the whole difference between --resume working and not.
     if (recordPath) writeRecording(recordPath, provider.name, results);
     process.stdout.write('.');
+
+    const dead = deadConnection(results);
+    if (dead !== null) stopDeadConnection(dead, results.length, cases.length, recordPath);
   }
   process.stdout.write('\n\n');
 
@@ -338,6 +341,52 @@ async function main(): Promise<void> {
  * Stop, having said how to finish without re-buying what is already paid for.
  * Exits; the return type is for the caller's benefit.
  */
+/** How many connection failures in a row mean the connection, not the case. */
+export const DEAD_CONNECTION_AFTER = 3;
+
+/**
+ * The cause, when the last few live cases all failed to connect — `null` if not.
+ *
+ * Twice in one day a run walked the rest of the corpus on a connection that had
+ * stopped working: a content filter on the machine began intercepting TLS
+ * mid-run, and every remaining case became a null in seconds. Nothing was paid
+ * for, but nothing was measured either, and a run that "finished" is one nobody
+ * looks at twice. A connection fault three cases running is not about the cases.
+ * Rate limits and schema refusals are the provider answering, and do not count.
+ */
+export function deadConnection(results: readonly CaseResult[]): string | null {
+  const live = results.filter((r) => r.live === true);
+  if (live.length < DEAD_CONNECTION_AFTER) return null;
+  const tail = live.slice(-DEAD_CONNECTION_AFTER);
+  if (!tail.every((r) => r.error === 'network_error')) return null;
+  return tail[tail.length - 1]?.detail ?? 'network_error';
+}
+
+function stopDeadConnection(
+  cause: string,
+  done: number,
+  total: number,
+  recordPath: string | null,
+): never {
+  const intercepted = cause.includes('CERT');
+  process.stdout.write(
+    `\n\nStopped after ${done} of ${total} cases: the last ${DEAD_CONNECTION_AFTER} could not ` +
+      `connect (${cause}).\n` +
+      (intercepted
+        ? `A certificate error on api.groq.com means something on this network or machine\n` +
+          `is intercepting TLS — here that has been Netspark (PLAN §11.2). Switch to a\n` +
+          `network it does not filter, then resume.\n\n`
+        : `Check the connection, then resume.\n\n`),
+  );
+  if (recordPath) {
+    process.stdout.write(
+      `Every answer so far is saved, and the failed cases are recorded with their\n` +
+        `reason and will be asked again:\n  pnpm eval --resume ${recordPath}\n`,
+    );
+  }
+  process.exit(4);
+}
+
 function stopExhausted(
   error: DailyBudgetExhausted,
   done: number,

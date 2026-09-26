@@ -22,6 +22,7 @@ import {
   answeredDrafts,
   isTransient,
   caseCost,
+  deadConnection,
   spacingMs,
   scoreRecording,
   writeRecording,
@@ -434,5 +435,39 @@ describe('a stopped run still says why each case failed', () => {
       corpus,
     );
     expect(results[0]?.error).toBe('no_response');
+  });
+});
+
+describe('a run stops when the connection, not the case, is failing', () => {
+  // Twice in one day a run walked the rest of the corpus on a connection a
+  // content filter had started intercepting: every case a null, in seconds.
+  const netFail = (id: string, cause = 'SELF_SIGNED_CERT_IN_CHAIN'): CaseResult => ({
+    ...unanswered(id),
+    error: 'network_error',
+    detail: cause,
+    live: true,
+  });
+  const ok = (id: string): CaseResult => ({ ...answered(id, {}), live: true });
+
+  it('stops after three connection failures in a row, and names the cause', () => {
+    expect(deadConnection([ok('a'), netFail('b'), netFail('c'), netFail('d')])).toBe(
+      'SELF_SIGNED_CERT_IN_CHAIN',
+    );
+  });
+
+  it('keeps going through fewer, or a streak an answer interrupts', () => {
+    expect(deadConnection([netFail('a'), netFail('b')])).toBeNull();
+    expect(deadConnection([netFail('a'), netFail('b'), ok('c'), netFail('d')])).toBeNull();
+  });
+
+  it('does not count the provider answering — a rate limit or a schema refusal', () => {
+    const limited: CaseResult = { ...unanswered('x'), error: 'rate_limited', live: true };
+    const refused: CaseResult = { ...unanswered('y'), error: 'provider_error', status: 400, live: true };
+    expect(deadConnection([limited, refused, limited])).toBeNull();
+  });
+
+  it('ignores answers read back from a recording, which were never live', () => {
+    const recordedGap: CaseResult = { ...unanswered('r'), error: 'network_error' };
+    expect(deadConnection([recordedGap, recordedGap, recordedGap])).toBeNull();
   });
 });
