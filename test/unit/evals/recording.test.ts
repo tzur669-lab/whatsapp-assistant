@@ -21,6 +21,8 @@ import {
   acquireRecordingLock,
   answeredDrafts,
   isTransient,
+  caseCost,
+  spacingMs,
   scoreRecording,
   writeRecording,
 } from '../../evals/run-evals.js';
@@ -251,6 +253,19 @@ describe('which failures are retried', () => {
     expect(isTransient({})).toBe(false);
   });
 
+  it('does not retry a request the provider refused as written', () => {
+    // Groq answers a generation that failed the strict schema with a 400.
+    // Retrying regenerates the same failure and spends the minute's tokens on it.
+    expect(isTransient({ error: 'provider_error', status: 400 })).toBe(false);
+    expect(isTransient({ error: 'provider_error', status: 422 })).toBe(false);
+  });
+
+  it('still retries a server fault, a request timeout and a rate limit', () => {
+    expect(isTransient({ error: 'provider_error', status: 503 })).toBe(true);
+    expect(isTransient({ error: 'provider_error', status: 408 })).toBe(true);
+    expect(isTransient({ error: 'rate_limited', status: 429 })).toBe(true);
+  });
+
   it('refuses a composed label outright, so the old bug cannot pass quietly', () => {
     expect(isTransient({ error: 'rate_limited:http 429' })).toBe(false);
   });
@@ -309,5 +324,49 @@ describe('one writer per recording', () => {
 
     if (lock.ok) lock.release();
     expect(readFileSync(`${path}.lock`, 'utf8')).toBe(String(process.ppid));
+  });
+});
+
+describe('pacing from what a case actually costs', () => {
+  // gpt-oss-120b is a reasoning model. Paced from its ~1K-token prompt alone,
+  // the run sent six requests a minute that each cost two to three times that,
+  // and the per-minute limit answered 429.
+  const live = (prompt: number, completion: number, cached = 0): CaseResult => ({
+    ...answered('x', {}),
+    promptTokens: prompt,
+    completionTokens: completion,
+    cachedTokens: cached,
+    live: true,
+  });
+
+  it('counts the prompt and every output token, reasoning included', () => {
+    expect(caseCost(live(1_000, 1_500))).toBe(2_500);
+  });
+
+  it('does not count cached prompt tokens, which Groq does not bill', () => {
+    expect(caseCost(live(1_000, 1_500, 1_000))).toBe(1_500);
+  });
+
+  it('learns nothing from an answer read back out of a recording', () => {
+    expect(caseCost({ ...answered('x', {}), promptTokens: 0 })).toBe(0);
+  });
+
+  it('learns nothing from a request the provider refused', () => {
+    expect(caseCost({ ...unanswered('x'), live: true })).toBe(0);
+  });
+
+  it('spaces cases to fit 80% of the per-minute limit', () => {
+    // 2,000 tokens a case; 80% of 8,000 a minute is 6,400.
+    expect(spacingMs(2_000, 8_000, 60_000)).toBe(18_750);
+  });
+
+  it('spaces cases to fit the rolling daily limit once that is what binds', () => {
+    // 2,500 tokens a case against 80% of 200,000 a day: one case every
+    // 2,500/160,000 of a day, which is 22.5 minutes.
+    expect(spacingMs(2_500, 200_000, 86_400_000)).toBe(1_350_000);
+  });
+
+  it('imposes nothing before any cost is known', () => {
+    expect(spacingMs(0, 8_000, 60_000)).toBe(0);
   });
 });

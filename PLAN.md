@@ -1532,6 +1532,26 @@ daily-budget detection both stopped, and a run burned 128 cases in two minutes
 for seven answers. The code and the detail are separate fields now, and
 `isTransient` is tested against the composed form so it cannot come back.
 
+**Pacing from what a case costs, and what not to retry**
+
+The run used to pace itself from the prompt estimate (~1K tokens). On
+`gpt-oss-120b` that was a third of the real cost: it is a reasoning model, the
+per-minute limit counts output including reasoning, and one request left 5,461
+of 8,000 tokens for the minute. The harness now measures each answer's billed
+cost — prompt minus cached, plus all output — and paces both the per-minute
+limit and, once it has been hit, the rolling daily one from the costliest case
+seen, at 80% of each. It only ever slows down.
+
+And a 4xx other than 408/429 is no longer retried. `gpt-oss-120b` often fails
+Groq's **server-side strict-schema check** on prompt v4: the reply is a 400
+`json_validate_failed` because the model omits keys that strict mode requires
+to be present as `null` (`range`, `query_variants`, `title`, …). Retrying
+regenerates the same failure against the minute's budget; four attempts a case
+at six cases a minute was the whole of the 429 cascade. It is scored once, as
+the failure it is — **and it is a real result about the model**, not about the
+network: a model that cannot fill the strict schema is a model the production
+fallback chain will fall through on.
+
 **Comparing two models**
 
 `pnpm eval --compare <a.json> <b.json>` scores two recordings side by side: the
@@ -1901,6 +1921,8 @@ gates in §11.2 apply unchanged: an invented number is an invented slot.
 | 2026-09-26 | The timing tests run **on their own**, after the rest of the suite (`pnpm test:timing`, chained from `pnpm test`). Even as catastrophe checks they failed inside a parallel run — cold start at 76 ms against 50 — because they were measuring the other 63 files. Looser ceilings only moved the flake; isolation removes its cause |
 | 2026-09-26 | An eval recording has one writer, enforced by a pid lock. Stopping a shell on Windows leaves the eval running underneath it, and two runs on one file had spent a model's per-minute budget against each other. The resulting 429s were self-inflicted |
 | 2026-09-26 | A failure's code and its detail are separate fields. Composing them (`rate_limited:http 429`) broke the exact-match retry check, and a run silently stopped retrying anything |
+| 2026-09-26 | `gpt-oss-120b` often fails Groq's server-side strict-schema validation on prompt v4 (400 `json_validate_failed`: required-as-null keys omitted). This is a measurement about the model and feeds §4's choice directly; the harness scores it once instead of retrying it |
+| 2026-09-26 | The eval paces from each answer's measured billed cost — prompt minus cached, plus output including reasoning — for the per-minute and the daily limit alike. The prompt estimate was a third of a reasoning model's real cost |
 
 ---
 

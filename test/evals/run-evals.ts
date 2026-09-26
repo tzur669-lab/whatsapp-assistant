@@ -71,6 +71,13 @@ export type CaseResult = {
   inventedSlots: string[];
   latencyMs: number;
   promptTokens: number;
+  /**
+   * Output tokens, reasoning included. A reasoning model spends more here than on
+   * the prompt, and the per-minute limit counts both — so pacing by the prompt
+   * alone underestimates the cost of a case, and did, by enough to 429 every
+   * other request.
+   */
+  completionTokens?: number;
   cachedTokens: number;
   /**
    * The bare failure code, and only the code.
@@ -84,6 +91,8 @@ export type CaseResult = {
   error?: string;
   /** `http 429`, `SELF_SIGNED_CERT_IN_CHAIN` — for the report, never for logic. */
   detail?: string;
+  /** The provider's HTTP status, when it sent one. Read by `isTransient`. */
+  status?: number;
   /**
    * Set when this process asked the provider, rather than reading an answer back
    * from a recording. Only these can say anything about latency.
@@ -208,6 +217,10 @@ async function main(): Promise<void> {
   const refillIntervalMs =
     promptTokens > 0 ? Math.ceil((promptTokens / (TOKENS_PER_DAY / 1_440)) * 60_000) : minIntervalMs;
   let interval = minIntervalMs;
+  // The costliest case seen so far, in billed tokens. Both limits are paced from
+  // it once a real answer has arrived; see caseCost.
+  let maxCaseCost = 0;
+  let dailyCapHit = false;
   let nextAllowedAt = 0;
 
   // A resume reads its own file back and skips what already has an answer. The
@@ -246,7 +259,13 @@ async function main(): Promise<void> {
 
     const waitMs = nextAllowedAt - Date.now();
     if (waitMs > 0) await sleep(waitMs);
-    nextAllowedAt = Date.now() + interval;
+    nextAllowedAt =
+      Date.now() +
+      Math.max(
+        interval,
+        spacingMs(maxCaseCost, TOKENS_PER_MINUTE, 60_000),
+        dailyCapHit ? spacingMs(maxCaseCost, TOKENS_PER_DAY, 86_400_000) : 0,
+      );
 
     let result: CaseResult | null = null;
     while (result === null) {
@@ -268,6 +287,7 @@ async function main(): Promise<void> {
           // From here the daily cap is what binds, not the per-minute one, and
           // the fast pace makes things worse rather than better.
           interval = refillIntervalMs;
+          dailyCapHit = true;
           process.stdout.write(
             `\n  daily cap reached; slowing to one case every ` +
               `${Math.round(refillIntervalMs / 60_000)} min, the rate it refills at\n`,
@@ -283,6 +303,7 @@ async function main(): Promise<void> {
     }
 
     results.push(result);
+    maxCaseCost = Math.max(maxCaseCost, caseCost(result));
     // Checkpoint every case. A run that stops at 27 of 156 should keep the 27 it
     // paid for, which is the whole difference between --resume working and not.
     if (recordPath) writeRecording(recordPath, provider.name, results);
@@ -486,6 +507,34 @@ function scoreRecorded(testCase: EvalCase, raw: unknown): CaseResult {
 }
 
 /**
+ * What one case cost, in the tokens Groq's limits count: the prompt minus its
+ * cached part (§2), plus every output token, reasoning included.
+ *
+ * The run starts paced from the prompt estimate because that is all it knows.
+ * A reasoning model spends more on output than on the prompt, so that estimate
+ * was a third of the real cost — six requests a minute against a limit that
+ * allowed two or three. Zero for anything not answered live in this process: a
+ * recorded answer and a refused request say nothing about what a case costs.
+ */
+export function caseCost(result: CaseResult): number {
+  if (result.live !== true || result.promptTokens === 0) return 0;
+  return result.promptTokens - result.cachedTokens + (result.completionTokens ?? 0);
+}
+
+/**
+ * The spacing that keeps cases of this cost inside a limit, at 80% of it so a
+ * slightly larger answer does not tip the next request over. Used for both the
+ * per-minute limit and, once it has been hit, the rolling daily one.
+ *
+ * Callers pass the costliest case seen, so the pace only ever slows: a run that
+ * speeds up after one cheap case hits the limit on the next expensive one.
+ */
+export function spacingMs(costTokens: number, limitTokens: number, windowMs: number): number {
+  if (costTokens <= 0) return 0;
+  return Math.ceil((costTokens / (limitTokens * 0.8)) * windowMs);
+}
+
+/**
  * A `retry-after` longer than this means the wait is a daily budget, not the
  * per-minute bucket. Retrying through it just burns time (PLAN §2).
  */
@@ -511,8 +560,19 @@ const TRANSIENT = new Set(['rate_limited', 'timeout', 'provider_error', 'network
  * Whether a failed case is worth asking again. Reads the bare code only — a
  * detail attached for the report must never change the answer (see `error`).
  */
-export function isTransient(result: Pick<CaseResult, 'error'>): boolean {
-  return result.error !== undefined && TRANSIENT.has(result.error);
+export function isTransient(result: Pick<CaseResult, 'error' | 'status'>): boolean {
+  if (result.error === undefined || !TRANSIENT.has(result.error)) return false;
+  // A 4xx other than 408 or 429 is the request refused as written — on Groq,
+  // typically a generation that failed the strict response schema
+  // (`json_validate_failed`). The same request fails the same way, and each
+  // retry regenerates a full answer against the per-minute budget: four
+  // attempts a case at six cases a minute is how one model's schema failures
+  // became a run of 429s. It is scored as the failure it is, once.
+  const status = result.status;
+  if (status !== undefined && status >= 400 && status < 500 && status !== 408 && status !== 429) {
+    return false;
+  }
+  return true;
 }
 
 async function runCaseWithRetry(provider: NluProvider, testCase: EvalCase): Promise<CaseResult> {
@@ -591,6 +651,7 @@ async function runCase(provider: NluProvider, testCase: EvalCase): Promise<CaseR
       // says *why* without needing a separate probe against the provider.
       error: response.error.code,
       ...(detailOf(response.error) === null ? {} : { detail: detailOf(response.error) as string }),
+      ...(response.error.status === undefined ? {} : { status: response.error.status }),
       ...(response.error.retryAfterSeconds !== undefined
         ? { retryAfterSeconds: response.error.retryAfterSeconds }
         : {}),
@@ -607,6 +668,7 @@ async function runCase(provider: NluProvider, testCase: EvalCase): Promise<CaseR
       inventedSlots: [],
       latencyMs,
       promptTokens: response.usage.promptTokens,
+      completionTokens: response.usage.completionTokens,
       cachedTokens: response.usage.cachedTokens,
       error: 'schema_invalid',
       issues: validated.issues,
@@ -618,6 +680,7 @@ async function runCase(provider: NluProvider, testCase: EvalCase): Promise<CaseR
   return {
     ...score(testCase, validated.draft, latencyMs),
     promptTokens: response.usage.promptTokens,
+    completionTokens: response.usage.completionTokens,
     cachedTokens: response.usage.cachedTokens,
     raw: response.draft,
   };
@@ -962,6 +1025,15 @@ function report(
   }
 
   const billedPrompt = results.reduce((sum, r) => sum + r.promptTokens, 0);
+  const completion = results.reduce((sum, r) => sum + (r.completionTokens ?? 0), 0);
+  if (completion > 0) {
+    const answeredLive = results.filter((r) => (r.completionTokens ?? 0) > 0).length;
+    process.stdout.write(
+      `      ${'completion tokens'.padEnd(26)} ${completion} total, ` +
+        `~${Math.round(completion / answeredLive)} per answer (reasoning included)
+`,
+    );
+  }
   const cached = results.reduce((sum, r) => sum + r.cachedTokens, 0);
   if (billedPrompt > 0) {
     const share = ((cached / billedPrompt) * 100).toFixed(0);
