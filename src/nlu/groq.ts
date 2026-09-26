@@ -115,11 +115,18 @@ async function callOnce(
     // two together made the provider look slower than it is.
     const name = error instanceof Error ? error.name : '';
     const cause = (error as { cause?: { code?: string } } | undefined)?.cause?.code ?? '';
-    if (cause === 'UND_ERR_CONNECT_TIMEOUT' || cause === 'ENOTFOUND' || cause === 'ECONNREFUSED') {
-      return { ok: false, error: { code: 'network_error' } };
-    }
-    const timedOut = name === 'TimeoutError' || name === 'AbortError';
-    return { ok: false, error: { code: timedOut ? 'timeout' : 'network_error' } };
+    // A timeout is the model being slow; everything else here is the connection
+    // never working, and which fault it was is the whole diagnosis. The code
+    // travels, the message does not.
+    const timedOut =
+      cause === '' && (name === 'TimeoutError' || name === 'AbortError');
+    return {
+      ok: false,
+      error: {
+        code: timedOut ? 'timeout' : 'network_error',
+        ...(cause === '' ? {} : { cause }),
+      },
+    };
   }
 
   if (response.status === 429) {

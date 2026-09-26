@@ -39,6 +39,16 @@ export type NluError = {
    * rate-limit headers and reading the error body is not allowed (PLAN §2).
    */
   retryAfterSeconds?: number;
+  /**
+   * The connection fault behind a `network_error`, as the runtime's own short
+   * code (`ECONNREFUSED`, `SELF_SIGNED_CERT_IN_CHAIN`, …) and nothing else.
+   *
+   * It is a code, never the error's text: a thrown fetch commonly carries the
+   * URL, and §7.1 keeps URLs out of log fields. Without it every connection
+   * fault looks identical, which is how an intercepted TLS handshake spent an
+   * afternoon looking like a slow model.
+   */
+  cause?: string;
 };
 
 export type NluResponse =

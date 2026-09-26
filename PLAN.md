@@ -212,8 +212,23 @@ system is applying the migrations at cold start, at 10% of one request's budget,
 and it grows with every migration file added. It is paid once per Durable Object
 and lands on that object's first request, so a cold start costs about 1.3 ms all
 in — still an eighth of the budget, but it is the one line here that trends the
-wrong way. `test/unit/core/cpu-budget.test.ts` ratchets it, along with a turn and
+wrong way. `test/unit/core/cpu-budget.test.ts` guards it, along with a turn and
 the two SHA-256 sizes.
+
+**These absolute numbers move, and by more than a regression would.** The same
+bench on the same machine a day later, with nothing changed in the code, read a
+full turn at **0.876 ms**, `/status` at **0.911 ms** and cold-start migration at
+**3.277 ms** — roughly 3x every figure above. Inside a full `pnpm test`, where 64
+files run in parallel, that same turn measured **11.4 ms**.
+
+So what this table supports is a **ranking and an order of magnitude**, which is
+what `pnpm bench` prints at the top of its own output, and not a threshold. The
+tests were briefly written as though it were one: a 5 ms ceiling looked like 15x
+of headroom against 0.32 ms and turned out to sit inside the range the same code
+occupies on a loaded machine. They are catastrophe checks now, and the reasoning
+is written out in the test file. The number that decides whether the budget is
+actually safe is `cpuMs` from `wrangler tail` on staging — nothing measured under
+Node on a developer laptop can settle it.
 
 **What this measurement is not.** It is Node on a laptop, not workerd: a
 different isolate, a different machine, and Cloudflare counts CPU rather than
@@ -1468,6 +1483,36 @@ unanswered this time keeps whatever an earlier run bought for it.
 `test/unit/evals/recording.test.ts` exists because this happened mid-run with 39
 paid answers on the line.
 
+**When the network will not let a run happen at all**
+
+On 2026-09-26 a run that had been working stopped mid-corpus, and every remaining
+case came back `network_error`. The cause was not Groq and not the model:
+`api.groq.com` was being intercepted by **Netspark**, the Israeli content filter,
+presenting a certificate issued by its own CA. `registry.npmjs.org` and
+`api.github.com` were untouched, so this was one host being singled out rather
+than blanket HTTPS inspection — and browsers were unaffected because the filter's
+root is in the Windows certificate store, which **Node does not use**; Node ships
+its own CA bundle.
+
+Two ways out, and they are not equivalent:
+
+- **Allow `api.groq.com` in the filter.** Nothing is intercepted, the key stays
+  encrypted end to end, and nothing about this repo changes. This is the right
+  fix.
+- **`NODE_OPTIONS=--use-system-ca`** (Node ≥ 22.15). Verification stays on and
+  Node trusts the CA the machine already trusts, so runs work immediately — but
+  the filter is then decrypting the connection, which means `GROQ_API_KEY` passes
+  through it in the clear. Eval prompts carry only fixtures, so the traffic is
+  not sensitive; the key is. That is a disclosure decision, not a config tweak.
+
+Production is unaffected either way: the Worker runs on Cloudflare, not behind a
+home filter. This is only about running `pnpm eval` from that machine.
+
+A connection fault now carries its cause code (`network_error:SELF_SIGNED_CERT_IN_CHAIN`)
+rather than a bare `network_error`, because diagnosing this one needed a
+hand-written probe against the provider — and a code is all it carries, never the
+error's text, which commonly holds the URL (§7.1).
+
 **Comparing two models**
 
 `pnpm eval --compare <a.json> <b.json>` scores two recordings side by side: the
@@ -1831,6 +1876,9 @@ gates in §11.2 apply unchanged: an invented number is an invented slot.
 | 2026-09-25 | The eval checkpoint **merges instead of replacing**. It had been writing only the current process's results, so a resume — which walks the corpus from the start — left the file a truncated prefix of itself, and stopping there destroyed answers already paid for. Found by testing `--compare` against a recording mid-resume: 156 entries had become 108 |
 | 2026-09-25 | `pnpm eval --compare` refuses to score two recordings made on different prompt versions, and so does `--resume`. §4 picks a model by eval and the catalog is generated into the prompt, so a tool added between two runs changes the question. The gate B6, B8 and B15 wait behind is now enforced by the harness rather than remembered |
 | 2026-09-25 | A recording is scored only on the cases it was actually asked. A case with no entry postdates the run and is excluded; a case with a null draft was asked and came back empty and stays a failure. Without the distinction, every corpus addition silently reduces the score of every model measured before it |
+| 2026-09-26 | `pnpm eval` cannot reach Groq from this machine: **Netspark** intercepts `api.groq.com` with its own CA, and Node uses its own CA bundle rather than the Windows store the filter installed into. Allowing the host in the filter is the clean fix; `--use-system-ca` works but hands `GROQ_API_KEY` to the filter, so it is the user's call, not a config tweak (§11.2) |
+| 2026-09-26 | A connection fault carries its cause code, not just `network_error`. Every connection failure had looked identical, which is how an intercepted TLS handshake spent an afternoon looking like a slow model. The code travels; the message does not, because a thrown fetch commonly carries the URL |
+| 2026-09-26 | The CPU budget tests are catastrophe checks, not thresholds. The same bench on the same machine read 3x slower a day later with no code change, and the same turn cost 11.4 ms inside a parallel `pnpm test` against a 5 ms ceiling. A wall-clock bound cannot both survive the suite and guard 10 ms; `cpuMs` from `wrangler tail` is the only figure that can (§4.1) |
 
 ---
 

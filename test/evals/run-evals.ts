@@ -479,7 +479,11 @@ async function runCase(provider: NluProvider, testCase: EvalCase): Promise<CaseR
       latencyMs,
       promptTokens: 0,
       cachedTokens: 0,
-      error: response.error.code,
+      // The cause rides along with the code, so a run full of `network_error`
+      // says *why* without needing a separate probe against the provider.
+      error: response.error.cause
+        ? `${response.error.code}:${response.error.cause}`
+        : response.error.code,
       ...(response.error.retryAfterSeconds !== undefined
         ? { retryAfterSeconds: response.error.retryAfterSeconds }
         : {}),

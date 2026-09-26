@@ -104,17 +104,37 @@ describe('a whole turn', () => {
   });
   afterEach(() => driver.close());
 
-  it('fits inside the budget many times over', async () => {
-    // Measured at 0.32 ms of the 10 ms allowance. The ceiling is 15x that and
-    // still half the budget, so a real regression fails and a slow CI does not.
+  /**
+   * These two are catastrophe checks, for the same reason the cold-start case
+   * below is one — and they were tightened once too far before anyone wrote the
+   * reason down twice.
+   *
+   * A 5 ms ceiling against a 0.32 ms measurement looked like 15x of headroom. It
+   * was not. The same turn measured 0.88 ms on a quiet machine a day later and
+   * **11.4 ms** inside a full `pnpm test`, where 64 files run in parallel: the
+   * assertion was reading contention, and the failure said nothing about the
+   * code. A wall-clock bound cannot both survive this suite and guard a 10 ms
+   * budget; those are two different measurements and only one of them belongs in
+   * a unit test.
+   *
+   * So the ceiling here is set where only a real catastrophe reaches it — an
+   * accidental O(n²), a missing index, a network call sneaking into a path that
+   * is supposed to be pure. The number that actually guards the budget comes
+   * from `pnpm bench` on a quiet machine, and ultimately from `cpuMs` in
+   * `wrangler tail` on staging, which is the only place workerd's own cost is
+   * visible. §4.1 records both.
+   */
+  const CATASTROPHE_MS = 50;
+
+  it('does not blow the budget outright on a whole turn', async () => {
     const median = await medianMs(200, () => handleInbound(textEvent('תזכיר לי מחר ב-8'), deps));
-    expect(median).toBeLessThan(5);
+    expect(median, `${median.toFixed(3)} ms per turn`).toBeLessThan(CATASTROPHE_MS);
   });
 
-  it('costs no more to answer a system command', async () => {
+  it('does not blow it on a system command either', async () => {
     // `/status` reads five counters and now a sixth for undelivered messages.
     const median = await medianMs(200, () => handleInbound(textEvent('/status'), deps));
-    expect(median).toBeLessThan(5);
+    expect(median, `${median.toFixed(3)} ms per /status`).toBeLessThan(CATASTROPHE_MS);
   });
 });
 

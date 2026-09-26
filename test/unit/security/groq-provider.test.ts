@@ -94,10 +94,16 @@ describe('createGroqProvider', () => {
     expect(res).toEqual({ ok: false, error: { code: 'network_error' } });
   });
 
-  it('reports a connect timeout as a network fault, not a model timeout', async () => {
+  it('reports a connect timeout as a network fault, and says which fault', async () => {
+    // The code alone made every connection failure look identical. The cause
+    // rides with it — the runtime's short code, never the error's text, which
+    // commonly carries the URL.
     const fake = createFakeGroq([{ kind: 'connect_timeout' }]);
     const res = await provider(fake).parse(INPUT);
-    expect(res).toEqual({ ok: false, error: { code: 'network_error' } });
+    expect(res).toEqual({
+      ok: false,
+      error: { code: 'network_error', cause: 'UND_ERR_CONNECT_TIMEOUT' },
+    });
   });
 
   it('constrains generation with the response schema', async () => {
