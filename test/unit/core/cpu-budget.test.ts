@@ -1,19 +1,22 @@
 /**
- * The 10 ms CPU budget, as a test (PLAN §4, backlog B4).
+ * The 10 ms CPU budget, as a test (PLAN §4.1, backlog B4).
  *
- * `pnpm bench` measured it: a full turn costs about 0.33 ms on this machine,
- * roughly 3% of the Workers Free budget, and the hand-written synchronous
- * SHA-256 — the thing PLAN worried about most — is 0.005 ms on a realistic
- * input. There is around thirty times more headroom than there needs to be.
- *
- * These cases are not that measurement. They are a **ratchet**: generous enough
- * that a GC pause or a loaded machine cannot fail them, tight enough that a
- * tenfold regression cannot pass. Timing assertions are flaky when they are
- * ambitious, so these are not: every ceiling is at least fifteen times the
- * measured cost, and each is a median so one slow run is not the verdict.
- *
+ * `pnpm bench` measures the cost; these cases only guard against a catastrophe.
  * Exceeding the real budget on Workers does not cost money — it fails the
- * request. That is why this is worth a test at all.
+ * request — which is why it is worth a test at all.
+ *
+ * **This file runs on its own, after the rest of the suite** (`pnpm test:timing`,
+ * chained from `pnpm test`). Everything in it measures wall-clock time, and inside
+ * a parallel run it was measuring the other 63 files: a whole turn read 11.4 ms,
+ * SHA-256 over 8 KB 2.75 ms, cold-start migration 76 ms — against 0.9, 0.28 and
+ * 3.3 on a quiet machine, with nothing in the code changed. The ceilings here had
+ * been described as generous enough that a loaded machine could not fail them;
+ * it did, repeatedly, and looser ceilings only moved the flake. Isolation removes
+ * its cause.
+ *
+ * What still cannot be removed is the machine itself: the same bench read 3x
+ * slower one day than the day before. So nothing here is a threshold on the
+ * budget. The figure that settles it is `cpuMs` from `wrangler tail` on staging.
  */
 import { describe, expect, it, beforeEach, afterEach } from 'vitest';
 import { readdirSync, readFileSync } from 'node:fs';

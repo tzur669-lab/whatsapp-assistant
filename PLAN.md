@@ -1513,6 +1513,25 @@ rather than a bare `network_error`, because diagnosing this one needed a
 hand-written probe against the provider — and a code is all it carries, never the
 error's text, which commonly holds the URL (§7.1).
 
+**One writer per recording, and a stopped run may not be stopped**
+
+Stopping a background shell on Windows ends the shell and leaves the
+`pnpm → tsx → node` tree beneath it running. That happened twice in one
+afternoon: a run stopped over the TLS failure kept going in a 150-minute wait,
+a second run was started on the same file, and the two spent the same model's
+per-minute budget against each other — the 429s that followed were
+self-inflicted. The merge-on-write checkpoint is only safe with one writer, so
+a recording now carries a `<file>.lock` holding the writer's pid: a live
+holder refuses the second run and names it, a dead one is stale and taken over.
+To stop a run properly: `taskkill /PID <pid> /T /F`.
+
+The same afternoon found a bug of the harness's own making. A failure code had
+been composed with its detail (`rate_limited:http 429`), and the retry check
+matches codes exactly — so every 429 became permanent, retries and the
+daily-budget detection both stopped, and a run burned 128 cases in two minutes
+for seven answers. The code and the detail are separate fields now, and
+`isTransient` is tested against the composed form so it cannot come back.
+
 **Comparing two models**
 
 `pnpm eval --compare <a.json> <b.json>` scores two recordings side by side: the
@@ -1879,6 +1898,9 @@ gates in §11.2 apply unchanged: an invented number is an invented slot.
 | 2026-09-26 | `pnpm eval` cannot reach Groq from this machine: **Netspark** intercepts `api.groq.com` with its own CA, and Node uses its own CA bundle rather than the Windows store the filter installed into. Allowing the host in the filter is the clean fix; `--use-system-ca` works but hands `GROQ_API_KEY` to the filter, so it is the user's call, not a config tweak (§11.2) |
 | 2026-09-26 | A connection fault carries its cause code, not just `network_error`. Every connection failure had looked identical, which is how an intercepted TLS handshake spent an afternoon looking like a slow model. The code travels; the message does not, because a thrown fetch commonly carries the URL |
 | 2026-09-26 | The CPU budget tests are catastrophe checks, not thresholds. The same bench on the same machine read 3x slower a day later with no code change, and the same turn cost 11.4 ms inside a parallel `pnpm test` against a 5 ms ceiling. A wall-clock bound cannot both survive the suite and guard 10 ms; `cpuMs` from `wrangler tail` is the only figure that can (§4.1) |
+| 2026-09-26 | The timing tests run **on their own**, after the rest of the suite (`pnpm test:timing`, chained from `pnpm test`). Even as catastrophe checks they failed inside a parallel run — cold start at 76 ms against 50 — because they were measuring the other 63 files. Looser ceilings only moved the flake; isolation removes its cause |
+| 2026-09-26 | An eval recording has one writer, enforced by a pid lock. Stopping a shell on Windows leaves the eval running underneath it, and two runs on one file had spent a model's per-minute budget against each other. The resulting 429s were self-inflicted |
+| 2026-09-26 | A failure's code and its detail are separate fields. Composing them (`rate_limited:http 429`) broke the exact-match retry check, and a run silently stopped retrying anything |
 
 ---
 

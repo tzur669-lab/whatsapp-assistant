@@ -14,10 +14,16 @@
  * because that happened, mid-run, with 39 paid answers on the line.
  */
 import { describe, expect, it, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, rmSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, rmSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { answeredDrafts, scoreRecording, writeRecording } from '../../evals/run-evals.js';
+import {
+  acquireRecordingLock,
+  answeredDrafts,
+  isTransient,
+  scoreRecording,
+  writeRecording,
+} from '../../evals/run-evals.js';
 import type { CaseResult, EvalCase, Recording } from '../../evals/run-evals.js';
 import { PROMPT_VERSION } from '../../../src/nlu/prompt.js';
 
@@ -218,5 +224,90 @@ describe('scoring a recording against a corpus that has since grown', () => {
 
     expect(results[0]?.intentOk).toBe(true);
     expect(results[0]?.error).toBeUndefined();
+  });
+});
+
+describe('which failures are retried', () => {
+  // The harness once composed the HTTP status onto the failure code
+  // (`rate_limited:http 429`). The retry check matches the code exactly, so
+  // every 429 became a permanent failure and a 156-case run burned through
+  // 128 cases in two minutes with seven answers. The detail lives beside the
+  // code now, and these pin that it cannot leak back in.
+  it('retries a rate limit that carries an HTTP status', () => {
+    const r: Pick<CaseResult, 'error' | 'detail'> = { error: 'rate_limited', detail: 'http 429' };
+    expect(isTransient(r)).toBe(true);
+  });
+
+  it('retries a connection fault that carries a cause', () => {
+    expect(isTransient({ error: 'network_error' })).toBe(true);
+    expect(isTransient({ error: 'timeout' })).toBe(true);
+  });
+
+  it('does not retry a schema rejection, which the same prompt will reproduce', () => {
+    expect(isTransient({ error: 'schema_invalid' })).toBe(false);
+  });
+
+  it('does not retry a case that succeeded', () => {
+    expect(isTransient({})).toBe(false);
+  });
+
+  it('refuses a composed label outright, so the old bug cannot pass quietly', () => {
+    expect(isTransient({ error: 'rate_limited:http 429' })).toBe(false);
+  });
+});
+
+describe('one writer per recording', () => {
+  // Two runs on one file once spent tokens on the same cases and raced each
+  // other's checkpoint, because stopping a shell on Windows left the eval
+  // running underneath it.
+  let dir: string;
+  let path: string;
+
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), 'eval-lock-'));
+    path = join(dir, 'run.json');
+  });
+  afterEach(() => rmSync(dir, { recursive: true, force: true }));
+
+  it('takes the lock, and gives it back', () => {
+    const lock = acquireRecordingLock(path);
+    expect(lock.ok).toBe(true);
+    expect(readFileSync(`${path}.lock`, 'utf8')).toBe(String(process.pid));
+
+    if (lock.ok) lock.release();
+    expect(existsSync(`${path}.lock`)).toBe(false);
+  });
+
+  it('refuses a second writer while the first is alive, and names it', () => {
+    // The parent of this test runner is alive for as long as the test is.
+    writeFileSync(`${path}.lock`, String(process.ppid), 'utf8');
+
+    const lock = acquireRecordingLock(path);
+    expect(lock).toEqual({ ok: false, holder: process.ppid });
+  });
+
+  it('takes over a lock whose writer is gone', () => {
+    // A run killed hard never releases. A pid this large is not running.
+    writeFileSync(`${path}.lock`, '999999999', 'utf8');
+
+    const lock = acquireRecordingLock(path);
+    expect(lock.ok).toBe(true);
+    expect(readFileSync(`${path}.lock`, 'utf8')).toBe(String(process.pid));
+    if (lock.ok) lock.release();
+  });
+
+  it('takes over a lock file with nothing readable in it', () => {
+    writeFileSync(`${path}.lock`, 'not a pid', 'utf8');
+    const lock = acquireRecordingLock(path);
+    expect(lock.ok).toBe(true);
+    if (lock.ok) lock.release();
+  });
+
+  it('does not release a lock someone else now holds', () => {
+    const lock = acquireRecordingLock(path);
+    writeFileSync(`${path}.lock`, String(process.ppid), 'utf8');
+
+    if (lock.ok) lock.release();
+    expect(readFileSync(`${path}.lock`, 'utf8')).toBe(String(process.ppid));
   });
 });

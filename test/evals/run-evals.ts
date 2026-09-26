@@ -26,7 +26,7 @@
  * arrives, and a second invocation finishes the corpus instead of re-buying the
  * part already paid for.
  */
-import { readFileSync, existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { readFileSync, existsSync, mkdirSync, writeFileSync, unlinkSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
 import { parse as parseYaml } from 'yaml';
@@ -72,7 +72,18 @@ export type CaseResult = {
   latencyMs: number;
   promptTokens: number;
   cachedTokens: number;
+  /**
+   * The bare failure code, and only the code.
+   *
+   * `TRANSIENT` matches this by exact value to decide whether to retry, and
+   * `stopExhausted` reads the daily budget off the same path. Composing anything
+   * onto it — an HTTP status, a TLS cause — turns every retryable failure into a
+   * permanent one silently, which is a run that looks finished and measured
+   * nothing. Diagnostics go in `detail`.
+   */
   error?: string;
+  /** `http 429`, `SELF_SIGNED_CERT_IN_CHAIN` — for the report, never for logic. */
+  detail?: string;
   /** Provider `retry-after`, in seconds. A long one means the daily budget is gone. */
   retryAfterSeconds?: number;
   /** Populated for failures under --verbose, so a mismatch can be read at a glance. */
@@ -197,6 +208,18 @@ async function main(): Promise<void> {
   // A resume reads its own file back and skips what already has an answer. The
   // recording is the checkpoint, so there is nothing else to keep in step.
   const recordPath = args.resume ?? args.record;
+  if (recordPath) {
+    const lock = acquireRecordingLock(recordPath);
+    if (!lock.ok) {
+      fail(
+        `${recordPath} is already being written by process ${lock.holder}.\n` +
+          `Two runs on one recording spend tokens on the same cases and race on the ` +
+          `file. Stop that one first — on Windows, the whole tree:\n` +
+          `  taskkill /PID ${lock.holder} /T /F`,
+      );
+    }
+    process.on('exit', lock.release);
+  }
   const alreadyAnswered = args.resume ? answeredDrafts(args.resume) : new Map<string, unknown>();
   if (alreadyAnswered.size > 0) {
     process.stdout.write(
@@ -302,6 +325,64 @@ function stopExhausted(
 }
 
 /** Cases in a recording that actually got an answer. A null draft did not. */
+/**
+ * One writer per recording.
+ *
+ * The checkpoint merges on every write, which is only safe with a single
+ * writer: two runs on one file each hold their own results, each re-buy the
+ * other's cases, and race each other's read-modify-write. It happened —
+ * a run stopped from the outside kept running underneath, because stopping a
+ * shell on Windows does not stop the pnpm → tsx → node tree below it, and a
+ * second run was then started on the same file.
+ *
+ * The lock is a `<recording>.lock` holding the writer's pid. A lock whose pid
+ * is gone is stale — a run killed hard never releases — and is taken over; one
+ * whose pid is alive refuses the second run, naming it.
+ */
+export function acquireRecordingLock(
+  path: string,
+): { ok: true; release: () => void } | { ok: false; holder: number } {
+  const lockPath = `${path}.lock`;
+
+  if (existsSync(lockPath)) {
+    const holder = Number.parseInt(readFileSync(lockPath, 'utf8'), 10);
+    if (Number.isInteger(holder) && holder !== process.pid && isAlive(holder)) {
+      return { ok: false, holder };
+    }
+    unlinkSync(lockPath);
+  }
+
+  mkdirSync(dirname(resolve(lockPath)), { recursive: true });
+  // `wx`: create or fail. Two runs starting in the same instant cannot both win.
+  try {
+    writeFileSync(lockPath, String(process.pid), { encoding: 'utf8', flag: 'wx' });
+  } catch {
+    const holder = Number.parseInt(readFileSync(lockPath, 'utf8'), 10);
+    return { ok: false, holder: Number.isInteger(holder) ? holder : -1 };
+  }
+
+  return {
+    ok: true,
+    release: () => {
+      try {
+        if (readFileSync(lockPath, 'utf8') === String(process.pid)) unlinkSync(lockPath);
+      } catch {
+        // Already gone. Nothing to release.
+      }
+    },
+  };
+}
+
+/** Signal 0 checks existence without touching the process. EPERM means it exists. */
+function isAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return (error as { code?: string }).code === 'EPERM';
+  }
+}
+
 export function answeredDrafts(path: string): Map<string, unknown> {
   const answered = new Map<string, unknown>();
   if (!existsSync(path)) return answered;
@@ -421,6 +502,14 @@ class DailyBudgetExhausted extends Error {
  */
 const TRANSIENT = new Set(['rate_limited', 'timeout', 'provider_error', 'network_error']);
 
+/**
+ * Whether a failed case is worth asking again. Reads the bare code only — a
+ * detail attached for the report must never change the answer (see `error`).
+ */
+export function isTransient(result: Pick<CaseResult, 'error'>): boolean {
+  return result.error !== undefined && TRANSIENT.has(result.error);
+}
+
 async function runCaseWithRetry(provider: NluProvider, testCase: EvalCase): Promise<CaseResult> {
   let worstLatency = 0;
   let last: CaseResult | null = null;
@@ -430,7 +519,7 @@ async function runCaseWithRetry(provider: NluProvider, testCase: EvalCase): Prom
     worstLatency = Math.max(worstLatency, result.latencyMs);
     last = result;
 
-    if (!result.error || !TRANSIENT.has(result.error)) {
+    if (!isTransient(result)) {
       return { ...result, latencyMs: worstLatency };
     }
     if ((result.retryAfterSeconds ?? 0) > DAILY_BUDGET_RETRY_AFTER_S) {
@@ -454,6 +543,20 @@ function estimateSize(sample: EvalCase | undefined): number {
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * What is worth printing about a failure beyond its code.
+ *
+ * The HTTP status and the connection's cause code, never the error's text: a
+ * thrown fetch commonly carries the URL and §7.1 keeps URLs out of log fields.
+ */
+function detailOf(error: { status?: number; cause?: string }): string | null {
+  const parts = [
+    error.status === undefined ? null : `http ${error.status}`,
+    error.cause ?? null,
+  ].filter((part): part is string => part !== null);
+  return parts.length === 0 ? null : parts.join(' ');
 }
 
 async function runCase(provider: NluProvider, testCase: EvalCase): Promise<CaseResult> {
@@ -481,9 +584,8 @@ async function runCase(provider: NluProvider, testCase: EvalCase): Promise<CaseR
       cachedTokens: 0,
       // The cause rides along with the code, so a run full of `network_error`
       // says *why* without needing a separate probe against the provider.
-      error: response.error.cause
-        ? `${response.error.code}:${response.error.cause}`
-        : response.error.code,
+      error: response.error.code,
+      ...(detailOf(response.error) === null ? {} : { detail: detailOf(response.error) as string }),
       ...(response.error.retryAfterSeconds !== undefined
         ? { retryAfterSeconds: response.error.retryAfterSeconds }
         : {}),
@@ -879,6 +981,7 @@ function report(
         !f.missingOk && 'missing',
         f.inventedSlots.length > 0 && `invented:${f.inventedSlots.join('/')}`,
         f.error,
+        f.detail === undefined ? null : `(${f.detail})`,
       ].filter(Boolean);
       process.stdout.write(`  ${f.id}  ${reasons.join(' ')}\n`);
       if (verbose && f.actual) {
