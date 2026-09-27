@@ -1751,6 +1751,40 @@ version. `gpt-oss-120b` has not been measured, and on 2026-09-26 it could not be
 So the comparison needs about two days of a run that is left alone. What can be
 said now is narrower: qwen is one targeted fix from passing every accuracy
 threshold, and gpt-oss has so far failed the output format itself.
+
+#### qwen on prompt v5, 2026-09-27: every accuracy threshold met
+
+All 156 cases, scored with the §13 strip and with Groq's 400 given the repair
+retry (§6.2):
+
+| Metric | Threshold | v4 (with strip) | **v5** |
+|---|---|---|---|
+| no invented slots | 100% — **hard gate** | 99.4% | **100%** ✅ |
+| missing-slot recall | 100% — **hard gate** | 99.4% | **100%** ✅ |
+| intent accuracy | 97% | 100% | **100%** ✅ |
+| exact slot match | 95% | 99.4% | **98.1%** ✅ |
+| off-topic → unsupported | 95% | 100% | **100%** ✅ |
+
+`he-cal-013` is fixed. What v5 first reported was worse than this — 95.5% on
+both recall and intent — and all of the difference was seven cases (six Hebrew)
+that came back as Groq's **400**, which the provider had treated as final. Sent
+again they answered; it is sampling, and it now gets the one repair retry the
+spec already gives a schema failure. Other tools' slots were removed in five
+answers, all `attendees`.
+
+Three slot mismatches remain, none under a hard gate:
+
+- **`he-cal-012`** — "ביום שני" read as `weekday: 2`. יום שני is Monday, `1`;
+  the model counted "second day" against a Sunday-is-0 scale. This one matters:
+  it names the wrong day, and only the confirmation's weekday-and-date echo
+  (§6.4) stands between it and a Tuesday meeting.
+- **`en-typo-002`** — "2morrow" as two days ahead. The same case failed on v4.
+- **`en-cal-031`** — "delete the Monday standup" put Monday in `query_variants`
+  instead of `date`. The lookup still has something to match; it is the least
+  harmful of the three.
+
+Latency is still not measured: these were resumes of a few cases each on a
+phone hotspot, and the samples range from 1 s to over 10 s at p95.
 ### 11.10 Calls and the device companion (planned, §6.17)
 
 Contact matching is **not tested here**, because it does not happen here. It runs
@@ -1970,6 +2004,7 @@ gates in §11.2 apply unchanged: an invented number is an invented slot.
 | 2026-09-26 | An eval stops after three consecutive live connection failures and names the cause, pointing at Netspark when it is a certificate error. Twice a run had walked the rest of the corpus on a connection the filter had started intercepting — nothing paid for, nothing measured, and a run that looked finished. Rate limits and schema refusals are the provider answering and do not count |
 | 2026-09-26 | **Prompt v5**: "A title says who or what; the bare kind of event — a meeting, a call, פגישה, שיחה — is not a title: put title in missing." Aimed at `he-cal-013`, the one case failing both hard gates on v4. On the 31 calendar cases under v5, qwen answered 23 and all 23 passed — `he-cal-013` now lists title as missing, while "פגישה עם יוסי" and "meeting with Sarah" keep their titles. The other 8 were rate limits and a dropped connection, not answers. `en-cal-012` ("a 30 minute call") now expects title missing too: it had silently accepted "call" as a title, contradicting the cases around it. Both models are re-measured on v5 (§11.9) |
 | 2026-09-27 | **A Groq 400 gets the one repair retry.** Under strict json_schema Groq validates the generation itself and answers 400 when it fails; the provider had treated that as final. On the complete qwen v5 corpus seven cases (six Hebrew) came back 400, and those sent again answered — sampling, not a request that always fails. The retry is the one §6.2 already allows for a schema failure; a server error and a rate limit are still not retried. The v5 recordings' 400s were asked again under it |
+| 2026-09-27 | **qwen on prompt v5 meets every accuracy threshold**: both hard gates 100%, intent 100%, exact slots 98.1%, off-topic 100% (§11.9). Three slot mismatches remain; `he-cal-012` reads יום שני as Tuesday |
 
 ---
 
@@ -2097,14 +2132,11 @@ which biases spelling for names and times at no cost (PLAN §13, still unmeasure
 *Do:* try the prompt first, against recorded clips via `--replay`. Reach for a
 second provider only if that is not enough.
 
-**B10. Phase 3 certification.** ⏳ **qwen done, gpt-oss not measurable yet —
-2026-09-26.** The complete 156-case `qwen3.8-27b` corpus is in §11.9: with the §13
-decision it passes intent (100%), exact slot match (99.4%) and off-topic (100%),
-and both hard gates fail on a single case, `he-cal-013`. `gpt-oss-120b` failed its
-first ten cases on the strict schema and needs about two days of rolling budget
-for a full corpus. The harness is now fit to run that unattended: it keeps every
-answer and the reason for every gap, holds one writer per file, paces from the
-measured cost of a case, and stops retrying requests the provider refused.
+**B10. Phase 3 certification.** ⏳ **qwen passes, gpt-oss running —
+2026-09-27.** On prompt v5 the complete 156-case `qwen3.8-27b` corpus meets every
+accuracy threshold, both hard gates at 100% (§11.9). `gpt-oss-120b` is being run
+on v5 under the same rules and needs about two more days of rolling budget; the
+§4 choice waits for it, and latency is still unmeasured for both.
 
 **B11. Nothing is measured end to end.** ✅ **Done 2026-09-25** — see §6.14. One
 `turn` line per message with a millisecond figure per stage, redaction-safe by
