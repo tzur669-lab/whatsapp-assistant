@@ -2,8 +2,9 @@
  * Groq NLU provider (PLAN §4, §6.2).
  *
  * Settings are fixed by the plan: temperature 0, JSON-object response format,
- * low reasoning effort, an 8 second timeout, and exactly one repair retry when
- * the body is not parseable JSON. Failures are returned, never thrown.
+ * low reasoning effort, an 8 second timeout, and exactly one repair retry on a
+ * schema failure — a body that is not parseable JSON, or Groq's own 400 when the
+ * generation fails the strict schema. Failures are returned, never thrown.
  */
 import type { NluProvider, NluResponse } from './provider.js';
 import { buildPrompt } from './prompt.js';
@@ -65,16 +66,29 @@ export function createGroqProvider(config: GroqConfig): NluProvider {
 
       const { system, user } = buildPrompt(input);
 
-      // One repair retry: an otherwise-good model occasionally wraps the object
-      // in prose. A second failure means fall through to the next provider.
-      for (let attempt = 0; attempt < 2; attempt++) {
-        const result = await callOnce(doFetch, config, system, user, attempt > 0);
-        if (result.ok || result.error.code !== 'invalid_json') return result;
+      // One repair retry on a schema failure: an otherwise-good model
+      // occasionally wraps the object in prose, and under strict json_schema
+      // Groq validates the generation itself and answers 400 when it fails.
+      // Both are sampling, not a request that will always fail — on qwen v5 the
+      // 400s sent again answered. A second failure means fall through to the
+      // next provider.
+      let result = await callOnce(doFetch, config, system, user, false);
+      if (!result.ok && isSchemaFailure(result.error)) {
+        result = await callOnce(doFetch, config, system, user, true);
       }
-
-      return { ok: false, error: { code: 'invalid_json' } };
+      return result;
     },
   };
+}
+
+/**
+ * The body of a 400 would name the reason (`json_validate_failed`), but it
+ * quotes the failed generation, so it is not read (§7.1); the status stands in
+ * for it. A 400 for a malformed request would fail both times and cost one
+ * extra call, which the tests would catch long before production.
+ */
+function isSchemaFailure(error: { code: string; status?: number }): boolean {
+  return error.code === 'invalid_json' || (error.code === 'provider_error' && error.status === 400);
 }
 
 async function callOnce(

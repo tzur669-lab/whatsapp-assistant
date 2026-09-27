@@ -479,13 +479,14 @@ function isAlive(pid: number): boolean {
 /**
  * Whether a recorded gap is the model's final answer rather than a gap.
  *
- * A provider that refused the request as written — Groq's 400 when a
- * generation fails the strict schema, or a reply that is still not JSON after
- * the repair retry — gave its answer, and the answer was "I cannot". Asking again
- * regenerates the same failure against the budget: on gpt-oss about 2,500 tokens
- * a time, on every resume, for good. A dropped connection, a timeout or a rate
- * limit is the opposite — the question never reached a verdict — and is asked
- * again. `no_response` and an absent reason are gaps too.
+ * A schema failure that survived the provider's own repair retry — Groq's 400
+ * when a generation fails the strict schema, or a reply that is still not JSON —
+ * is what production would have got, so it is scored, not asked again. A schema
+ * failure is sampling (the qwen v5 400s answered when sent again), but the
+ * retry the product makes is already inside the provider, and asking a third
+ * time would measure a product that does not exist. A dropped connection, a
+ * timeout or a rate limit is the opposite — the question never reached a
+ * verdict — and is asked again. `no_response` and an absent reason are gaps too.
  */
 export function isRefusal(entry: Pick<RecordedCase, 'error' | 'status'>): boolean {
   if (entry.error === 'invalid_json') return true;

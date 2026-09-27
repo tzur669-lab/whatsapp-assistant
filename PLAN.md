@@ -331,7 +331,7 @@ interface NluProvider {
 - structured output with a strict JSON schema where the provider supports it
 - low reasoning effort for gpt-oss
 - 8 s timeout
-- one repair retry on schema failure
+- one repair retry on schema failure — a reply that is not JSON, or Groq's 400 when the generation fails the strict schema (the status stands in for the body, which quotes the generation and is not read)
 
 **Fallback chain:** primary model → secondary model → rules parser → reply "didn't understand, please rephrase". Never execute on a partial parse.
 
@@ -1969,6 +1969,7 @@ gates in §11.2 apply unchanged: an invented number is an invented slot.
 | 2026-09-26 | An eval recording keeps each gap's failure code, detail and status. A stopped run had left ten nulls and no way to tell the model failing the schema from the network failing the request |
 | 2026-09-26 | An eval stops after three consecutive live connection failures and names the cause, pointing at Netspark when it is a certificate error. Twice a run had walked the rest of the corpus on a connection the filter had started intercepting — nothing paid for, nothing measured, and a run that looked finished. Rate limits and schema refusals are the provider answering and do not count |
 | 2026-09-26 | **Prompt v5**: "A title says who or what; the bare kind of event — a meeting, a call, פגישה, שיחה — is not a title: put title in missing." Aimed at `he-cal-013`, the one case failing both hard gates on v4. On the 31 calendar cases under v5, qwen answered 23 and all 23 passed — `he-cal-013` now lists title as missing, while "פגישה עם יוסי" and "meeting with Sarah" keep their titles. The other 8 were rate limits and a dropped connection, not answers. `en-cal-012` ("a 30 minute call") now expects title missing too: it had silently accepted "call" as a title, contradicting the cases around it. Both models are re-measured on v5 (§11.9) |
+| 2026-09-27 | **A Groq 400 gets the one repair retry.** Under strict json_schema Groq validates the generation itself and answers 400 when it fails; the provider had treated that as final. On the complete qwen v5 corpus seven cases (six Hebrew) came back 400, and those sent again answered — sampling, not a request that always fails. The retry is the one §6.2 already allows for a schema failure; a server error and a rate limit are still not retried. The v5 recordings' 400s were asked again under it |
 
 ---
 

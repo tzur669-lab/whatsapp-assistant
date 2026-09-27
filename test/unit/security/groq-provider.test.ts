@@ -69,6 +69,35 @@ describe('createGroqProvider', () => {
     expect(fake.requests).toHaveLength(2);
   });
 
+  it('gives a 400 the one repair retry, since that is how a schema failure arrives', async () => {
+    // Under strict json_schema Groq validates the generation itself and answers
+    // 400 when it fails. Measured on qwen v5: seven such cases, and the two sent
+    // again both answered — sampling, not a request Groq will always refuse.
+    const fake = createFakeGroq([
+      { kind: 'status', status: 400 },
+      { kind: 'content', content: DRAFT_JSON },
+    ]);
+    const res = await provider(fake).parse(INPUT);
+    expect(res.ok).toBe(true);
+    expect(fake.requests).toHaveLength(2);
+  });
+
+  it('reports a second 400 as the provider error it is, not as invalid json', async () => {
+    const fake = createFakeGroq([
+      { kind: 'status', status: 400 },
+      { kind: 'status', status: 400 },
+    ]);
+    const res = await provider(fake).parse(INPUT);
+    expect(res).toEqual({ ok: false, error: { code: 'provider_error', status: 400 } });
+    expect(fake.requests).toHaveLength(2);
+  });
+
+  it('does not retry a server error', async () => {
+    const fake = createFakeGroq([{ kind: 'status', status: 503 }]);
+    await provider(fake).parse(INPUT);
+    expect(fake.requests).toHaveLength(1);
+  });
+
   it('reports a rate limit without retrying', async () => {
     const fake = createFakeGroq([{ kind: 'status', status: 429 }]);
     const res = await provider(fake).parse(INPUT);
