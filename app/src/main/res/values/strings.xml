@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">חיוג מהעוזר</string>
+
+    <!-- Pairing screen -->
+    <string name="status_paired">מחובר. בקשות חיוג מהעוזר יגיעו לכאן.</string>
+    <string name="status_unpaired">לא מחובר.</string>
+    <string name="pair_instructions">יש לשלוח ⁨/pair⁩ בצ׳אט עם העוזר, להעתיק את הקוד שחוזר ולהדביק כאן.</string>
+    <string name="pair_hint">קוד חיבור</string>
+    <string name="button_pair">חיבור</string>
+    <string name="button_unpair">ניתוק הטלפון הזה</string>
+    <string name="pairing">מתחבר…</string>
+    <string name="pair_failed">החיבור נכשל: הקוד פג או שכבר נוצל. יש לבקש קוד חדש.</string>
+    <string name="pair_network">אין חיבור לשרת. יש לנסות שוב.</string>
+    <string name="pair_no_push">אין חיבור לשירותי ההתראות של Google. יש לנסות שוב.</string>
+    <string name="unpaired_note">הטלפון נותק כאן. כדי לנתק גם בשרת, יש לשלוח ⁨/pair off⁩ לעוזר.</string>
+
+    <string name="perm_title">הרשאות</string>
+    <string name="perm_contacts">אנשי קשר — כדי למצוא את מי לחייג</string>
+    <string name="perm_phone">שיחות — כדי לחייג אחרי האישור</string>
+    <string name="perm_notifications">התראות — כדי להציג את בקשת החיוג</string>
+    <string name="perm_fullscreen">מסך מלא — כדי שהבקשה תופיע מיד, גם במסך נעול</string>
+    <string name="perm_grant">מתן הרשאה</string>
+    <string name="perm_ok">✓ ניתנה</string>
+    <string name="privacy_note">השמות והמספרים נשארים בטלפון. לשרת נשלח רק אם השיחה יצאה, בוטלה או שלא נמצא איש קשר.</string>
+
+    <!-- A call request -->
+    <string name="channel_name">בקשות חיוג</string>
+    <string name="call_title">שיחה ל%1$s</string>
+    <string name="call_many_title">למי להתקשר?</string>
+    <string name="call_many_text">יש כמה אנשי קשר בשם הזה. הבחירה כאן.</string>
+    <string name="call_public_title">בקשת חיוג מהעוזר</string>
+    <string name="action_dial">חיוג</string>
+    <string name="action_cancel">ביטול</string>
+    <string name="no_match_title">אין איש קשר בשם הזה</string>
+    <string name="no_match_text">לא נמצא בטלפון איש קשר בשם %1$s.</string>
+    <string name="expired">הבקשה פגה. לא יצאה שיחה.</string>
+    <string name="no_call_permission">אין הרשאה לחייג. יש לפתוח את האפליקציה ולאשר.</string>
+    <string name="no_contacts_permission_title">אין גישה לאנשי קשר</string>
+    <string name="no_contacts_permission_text">יש לפתוח את האפליקציה ולאשר גישה לאנשי קשר.</string>
+</resources>
