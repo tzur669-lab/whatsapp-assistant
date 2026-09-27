@@ -22,9 +22,10 @@ or dialling anything.
 
 ## Setup
 
-1. **Firebase project** (console.firebase.google.com): add an Android app with
-   package `com.tzur.callcompanion`, download `google-services.json` into
-   `app/`. It is gitignored.
+1. **Firebase project**: `tzur-call-companion`, with the Android app
+   `com.tzur.callcompanion` registered (created 2026-09-27). Its config goes in
+   `app/google-services.json`, which is gitignored:
+   `firebase apps:sdkconfig ANDROID <app id> --project tzur-call-companion -o app/google-services.json`
 2. **Service account for the server**: Project settings → Service accounts →
    Generate new private key. Give the file to `bot/scripts/set-staging-secrets.ps1`
    (it becomes `FCM_SA_KEY`), then delete it.
