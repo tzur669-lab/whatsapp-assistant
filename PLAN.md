@@ -2182,8 +2182,9 @@ enters a draft, the database, a log, or Meta.
 `src/tools/calls.ts`; the Android app in its own repo, `apps/call-companion`
 (Kotlin, one dependency — Firebase Messaging; contact matching unit-tested on
 the JVM; the device token sealed with an Android Keystore key and excluded from
-backup). Live needs the Firebase project, the staging secrets, and a pass of
-prompt v6's eval, which is running. What building it decided, beyond §6.17:
+backup). The Firebase project is `tzur-call-companion`, with the Android app
+registered (2026-09-27). Live needs its service-account key and the other
+staging secrets, and a pass of prompt v6's eval, which is running. What building it decided, beyond §6.17:
 
 - **One reply, at the end.** §6.17's table lists "מחכה לאישור בטלפון" and "יש כמה
   אנשי קשר" as replies, but sending them *and* the outcome would be two messages
