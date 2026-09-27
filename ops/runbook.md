@@ -44,6 +44,16 @@ Production deploys are manual and human-only (PLAN §9).
 
 Secrets: see PLAN §7.2, set with `wrangler secret put <NAME> --env <env>`.
 
+For **staging**, `scripts/set-staging-secrets.ps1` does it in one pass: it
+generates the internal keys (`TOKEN_ENC_KEY_V1`, `LOG_HASH_KEY`,
+`DEVICE_TOKEN_PEPPER`, `WA_VERIFY_TOKEN`) from a CSPRNG — first run only — and
+asks for the external ones with hidden input. It is fixed to staging and writes
+nothing to disk. Run it yourself; Claude Code never sets secrets.
+
+    powershell -ExecutionPolicy Bypass -File scripts\set-staging-secrets.ps1
+
+Staging lives at `https://wa-assistant-staging.moneytime-pro-api.workers.dev`.
+
 Vars in `wrangler.jsonc` per environment:
 
 | Var | Value |

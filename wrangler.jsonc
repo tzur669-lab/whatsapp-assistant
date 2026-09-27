@@ -18,7 +18,7 @@
         "WA_PHONE_NUMBER_ID": "",
         "GOOGLE_CLIENT_ID": "",
         // Must match the redirect URI registered with Google, exactly.
-        "PUBLIC_BASE_URL": ""
+        "PUBLIC_BASE_URL": "https://wa-assistant-staging.moneytime-pro-api.workers.dev"
       },
       "durable_objects": {
         "bindings": [{ "name": "ASSISTANT", "class_name": "AssistantDO" }]
