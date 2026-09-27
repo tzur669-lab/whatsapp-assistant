@@ -77,9 +77,22 @@ Put-Secret 'ALLOWLIST_WA_IDS' (Read-Host 'ALLOWLIST_WA_IDS (your number, digits 
 
 # Calls (PLAN 6.17): the Firebase service account's key, read from the file
 # Firebase downloads, compacted to one line, and sent straight to Cloudflare.
-$saPath = Read-Host 'Path to the Firebase service-account JSON file (Enter to skip)'
+# The file's PATH, never its contents: pasting a private key into a terminal
+# puts it in the shell's history. Dragging the file into this window types its
+# path, which is the safe way to answer.
+while ($true) {
+  $saPath = Read-Host 'Drag the Firebase key file into this window, then Enter (Enter alone skips)'
+  if ([string]::IsNullOrWhiteSpace($saPath)) { break }
+  $saPath = $saPath.Trim().Trim('"').Trim("'")
+  if ($saPath.StartsWith('{') -or $saPath.Contains('PRIVATE KEY')) {
+    Write-Host '  That is the file''s CONTENT, not its path. Nothing was sent.'
+    Write-Host '  A key pasted into a terminal is exposed: delete it in Google Cloud and make a new one.'
+    exit 1
+  }
+  if (Test-Path -LiteralPath $saPath -PathType Leaf) { break }
+  Write-Host "  No file at that path. Drag the .json file itself into this window."
+}
 if (-not [string]::IsNullOrWhiteSpace($saPath)) {
-  $saPath = $saPath.Trim('"')
   $account = Get-Content -Raw -LiteralPath $saPath | ConvertFrom-Json
   if ($account.type -ne 'service_account' -or -not $account.private_key) {
     throw 'That file is not a service-account key.'
