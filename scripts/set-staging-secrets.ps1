@@ -19,9 +19,14 @@ Set-Location (Split-Path -Parent $PSScriptRoot)
 
 function Put-Secret([string]$Name, [string]$Value) {
   if ([string]::IsNullOrWhiteSpace($Value)) { Write-Host "  skipped $Name"; return }
-  $Value | npx wrangler secret put $Name --env $Env | Out-Null
-  if ($LASTEXITCODE -ne 0) { throw "wrangler failed to set $Name" }
-  Write-Host "  set $Name"
+  # A dropped connection makes wrangler exit non-zero; try again before giving up.
+  for ($attempt = 1; $attempt -le 3; $attempt++) {
+    $Value | npx wrangler secret put $Name --env $Env 2>$null | Out-Null
+    if ($LASTEXITCODE -eq 0) { Write-Host "  set $Name"; return }
+    Write-Host "  $Name failed (attempt $attempt of 3), retrying..."
+    Start-Sleep -Seconds 5
+  }
+  throw "wrangler could not set $Name. Check the connection (the hotspot, not the home Wi-Fi) and run again."
 }
 
 function Random-Base64([int]$Bytes) {
