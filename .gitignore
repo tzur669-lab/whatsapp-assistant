@@ -16,3 +16,7 @@ app/google-services.json
 *.jks
 *.keystore
 keystore.properties
+
+# Built installers
+*.apk
+*.aab
