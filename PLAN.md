@@ -335,6 +335,8 @@ interface NluProvider {
 
 **Fallback chain:** primary model → secondary model → rules parser → reply "didn't understand, please rephrase". Never execute on a partial parse.
 
+**Named weekdays are held against the draft** (`src/nlu/weekday-check.ts`, 2026-09-27). A weekday is one thing code can read out of the words itself (`weekdaysNamed` in the lexicon: a day after יום/ימי, a day carrying ב/ל/מ, the letter names יום ב', שבת, ערב שבת as Friday too, and the English names). Where the message names a day and a draft's `date`, `from_date` or `to_date` names a different weekday, that slot is removed and the reply asks "באיזה יום?" before anything is resolved — even for a tool where the date was only a filter, because dropping it would search every day instead of the one named. Code never substitutes the day it read. A message that names no day is not checked. The log line `weekday_mismatch` carries the intent and slot names only. On the recorded corpora (qwen v4 and v5, 312 answers) it fires on exactly one, `he-cal-012`: יום שני read as Tuesday.
+
 **Prompt contract** (stored in `src/nlu/prompt.ts`, versioned; every change re-runs evals)
 
 - Output JSON only, matching the schema.
@@ -1775,9 +1777,10 @@ answers, all `attendees`.
 Three slot mismatches remain, none under a hard gate:
 
 - **`he-cal-012`** — "ביום שני" read as `weekday: 2`. יום שני is Monday, `1`;
-  the model counted "second day" against a Sunday-is-0 scale. This one matters:
-  it names the wrong day, and only the confirmation's weekday-and-date echo
-  (§6.4) stands between it and a Tuesday meeting.
+  the model counted "second day" against a Sunday-is-0 scale. It named the wrong
+  day, so code now holds the draft to the day the words name and asks instead
+  (§6.2, the named-weekday check); in production this case is a question, not a
+  Tuesday meeting.
 - **`en-typo-002`** — "2morrow" as two days ahead. The same case failed on v4.
 - **`en-cal-031`** — "delete the Monday standup" put Monday in `query_variants`
   instead of `date`. The lookup still has something to match; it is the least
@@ -2005,6 +2008,7 @@ gates in §11.2 apply unchanged: an invented number is an invented slot.
 | 2026-09-26 | **Prompt v5**: "A title says who or what; the bare kind of event — a meeting, a call, פגישה, שיחה — is not a title: put title in missing." Aimed at `he-cal-013`, the one case failing both hard gates on v4. On the 31 calendar cases under v5, qwen answered 23 and all 23 passed — `he-cal-013` now lists title as missing, while "פגישה עם יוסי" and "meeting with Sarah" keep their titles. The other 8 were rate limits and a dropped connection, not answers. `en-cal-012` ("a 30 minute call") now expects title missing too: it had silently accepted "call" as a title, contradicting the cases around it. Both models are re-measured on v5 (§11.9) |
 | 2026-09-27 | **A Groq 400 gets the one repair retry.** Under strict json_schema Groq validates the generation itself and answers 400 when it fails; the provider had treated that as final. On the complete qwen v5 corpus seven cases (six Hebrew) came back 400, and those sent again answered — sampling, not a request that always fails. The retry is the one §6.2 already allows for a schema failure; a server error and a rate limit are still not retried. The v5 recordings' 400s were asked again under it |
 | 2026-09-27 | **qwen on prompt v5 meets every accuracy threshold**: both hard gates 100%, intent 100%, exact slots 98.1%, off-topic 100% (§11.9). Three slot mismatches remain; `he-cal-012` reads יום שני as Tuesday |
+| 2026-09-27 | **A weekday the message names is held against the draft** (§6.2): a draft naming another weekday has that date removed and the user is asked which day, before anything resolves. Approved by the user after `he-cal-012` (יום שני read as Tuesday). Fires on that case alone across 312 recorded answers |
 
 ---
 

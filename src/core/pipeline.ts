@@ -41,6 +41,7 @@ import type { Reply, TurnContext } from './orchestrator.js';
 import { parseWithFallback } from '../nlu/provider.js';
 import { applyAnswer, parseAnswer } from '../nlu/answer.js';
 import { validateIntentDraft } from '../nlu/intent-schema.js';
+import { checkNamedWeekdays } from '../nlu/weekday-check.js';
 import { reAsk } from '../render/clarify.js';
 import { toolCatalog } from '../tools/registry.js';
 import { budgetState } from '../policy/window.js';
@@ -383,11 +384,22 @@ async function respondToText(
     return { action: 'reply', text: he.notUnderstood };
   }
 
-  const lang: Lang = parsed.draft.language;
+  // 3a. Code reads the day the words name, and holds the model to it (§6.2).
+  const checked = checkNamedWeekdays(parsed.draft, text);
+  if (checked.mismatched.length > 0) {
+    log.info('weekday_mismatch', {
+      intent: checked.draft.intent,
+      slotKeys: checked.mismatched.join(','),
+    });
+  }
+
+  const lang: Lang = checked.draft.language;
   const reply = await timed(deps, 'act', () =>
-    runIntent(parsed.draft, turnOf(deps, event, now, source, lang)),
+    runIntent(checked.draft, turnOf(deps, event, now, source, lang), {
+      dayInDoubt: checked.mismatched,
+    }),
   );
-  repo.markInboundOutcome(event.wamid, { intent: parsed.draft.intent, decision: 'ALLOW' });
+  repo.markInboundOutcome(event.wamid, { intent: checked.draft.intent, decision: 'ALLOW' });
   return replyOutcome(reply, deps);
 }
 

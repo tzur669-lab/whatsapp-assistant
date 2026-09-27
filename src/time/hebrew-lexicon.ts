@@ -386,6 +386,65 @@ function answerPartOfDay(text: string): TimeSpec['part_of_day'] {
   return 'unspecified';
 }
 
+// -- weekdays a message names -------------------------------------------------
+//
+// Not a parser: a check on one. `parseDate` stops at the first day it finds and
+// reads a bare "שני" as Monday because it only ever runs where a day is
+// expected. This answers a different question — which days does the message
+// name at all — so the model's weekday can be held against it (PLAN §6.2).
+//
+// The two ways to get it wrong are not equally bad, and the patterns lean
+// accordingly. Missing a day the user named only switches the check off, which
+// is where things stood without it. Reading a day into a word that was not one
+// ("שני דברים", "the second") can only let a draft through. Neither can turn a
+// draft into an action; only a disagreement does anything, and what it does is ask.
+
+type Weekday = 0 | 1 | 2 | 3 | 4 | 5 | 6;
+
+/** "יום ב'" — the letter names, geresh already normalized to an apostrophe. */
+const WEEKDAY_LETTERS: ReadonlyArray<readonly [string, Weekday]> = [
+  ['א', 0],
+  ['ב', 1],
+  ['ג', 2],
+  ['ד', 3],
+  ['ה', 4],
+  ['ו', 5],
+];
+
+/** A weekday word directly after יום or ימי: "ביום שני", "ימי שלישי". */
+function afterDayWord(name: string): RegExp {
+  return new RegExp(`${START}${PREFIX}(?:יום|ימי)\\s+${name}${END}`);
+}
+
+/** A weekday word carrying ב, ל or מ: "בשלישי", "לרביעי". A bare "שני" is a number. */
+function withPreposition(name: string): RegExp {
+  return new RegExp(`${START}ו?[בלמ]-?${name}${END}`);
+}
+
+export function weekdaysNamed(raw: string): ReadonlySet<Weekday> {
+  const text = normalizeHebrew(raw);
+  const named = new Set<Weekday>();
+
+  for (const [name, weekday] of WEEKDAYS) {
+    if (weekday === 6) continue;
+    if (afterDayWord(name).test(text) || withPreposition(name).test(text)) named.add(weekday);
+  }
+  for (const [letter, weekday] of WEEKDAY_LETTERS) {
+    if (new RegExp(`${START}${PREFIX}(?:יום|ימי)\\s+${letter}'`).test(text)) named.add(weekday);
+  }
+
+  // שבת is never anything else, and ערב שבת is Friday evening — a model that
+  // answers Friday for it is right.
+  if (word('שבת').test(text)) named.add(6);
+  if (new RegExp(`${START}${PREFIX}ערב\\s+שבת${END}`).test(text)) named.add(5);
+
+  for (const [pattern, weekday] of EN_WEEKDAYS) {
+    if (pattern.test(text)) named.add(weekday);
+  }
+
+  return named;
+}
+
 /** The day in a reply to "באיזה יום?" — Hebrew as in a request, plus English. */
 export function parseAnswerDate(raw: string): DateSpec | null {
   const text = normalizeHebrew(raw);

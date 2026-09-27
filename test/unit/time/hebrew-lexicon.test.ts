@@ -4,7 +4,7 @@
  * guards against.
  */
 import { describe, expect, it } from 'vitest';
-import { normalizeHebrew, parseHebrewWhen } from '../../../src/time/hebrew-lexicon.js';
+import { normalizeHebrew, parseHebrewWhen, weekdaysNamed } from '../../../src/time/hebrew-lexicon.js';
 
 describe('normalizeHebrew', () => {
   it('strips nikud', () => {
@@ -216,5 +216,60 @@ describe('end-to-end phrasing from the brief', () => {
       date: { kind: 'relative_days', offset: 1 },
       time: { hour: 14, minute: 0 },
     });
+  });
+});
+
+// A check on the model, not a parser: the set of days a message names, so a
+// draft that names a different one can be asked about instead of acted on.
+// Missing a day only switches the check off; naming one that was not meant only
+// makes it more permissive. Neither direction can make it act.
+describe('weekdaysNamed', () => {
+  const named = (text: string) => [...weekdaysNamed(text)].sort();
+
+  it('reads יום שני as Monday, which the model once counted as the second day', () => {
+    expect(named('תקבע פגישת צוות ביום שני ב-10:00 לשעתיים')).toEqual([1]);
+  });
+
+  it('reads every day after יום, with or without a prefix on יום', () => {
+    expect(named('יום ראשון')).toEqual([0]);
+    expect(named('ליום שלישי')).toEqual([2]);
+    expect(named('מיום רביעי')).toEqual([3]);
+    expect(named('ביום חמישי')).toEqual([4]);
+    expect(named('ביום שישי')).toEqual([5]);
+    expect(named('ביום ששי')).toEqual([5]);
+  });
+
+  it("reads the letter names: יום ב', ביום ג׳", () => {
+    expect(named("יום ב'")).toEqual([1]);
+    expect(named('ביום ג׳')).toEqual([2]);
+  });
+
+  it('reads a day attached to ב, ל or מ', () => {
+    expect(named('נדבר בשלישי')).toEqual([2]);
+    expect(named('תזיז לרביעי')).toEqual([3]);
+  });
+
+  it('reads שבת in any form, and ערב שבת as Friday too', () => {
+    expect(named('בשבת בבוקר')).toEqual([6]);
+    expect(named('בערב שבת')).toEqual([5, 6]);
+  });
+
+  it('reads the English names', () => {
+    expect(named('remind me on Monday at 8')).toEqual([1]);
+    expect(named('move it from tuesday to Friday')).toEqual([2, 5]);
+  });
+
+  it('does not read a bare ordinal as a day', () => {
+    expect(named('תזכיר לי שני דברים מחר')).toEqual([]);
+    expect(named('הפגישה השלישית')).toEqual([]);
+  });
+
+  it('names nothing when no day is named', () => {
+    expect(named('תזכיר לי מחר ב-8 להתקשר לאבא')).toEqual([]);
+  });
+
+  it('survives nikud and maqaf', () => {
+    expect(named('בְּיוֹם שֵׁנִי')).toEqual([1]);
+    expect(named('ב־שלישי')).toEqual([2]);
   });
 });

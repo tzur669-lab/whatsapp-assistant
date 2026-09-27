@@ -459,6 +459,88 @@ describe('a turn, end to end', () => {
   // answer to its own question was parsed with no memory of having asked, so
   // "8" matched no tool and came back "לא הבנתי".
 
+  // qwen v5 read "ביום שני" as weekday 2 — Tuesday — counting "second day" on a
+  // Sunday-is-0 scale (PLAN §11.9). The words name the day; a draft that names
+  // another is asked about, never acted on (invariant 12).
+  describe('a day the message names and the draft does not', () => {
+    const EIGHT = { hour: 8, minute: 0, meridiem: 'unspecified', part_of_day: 'unspecified' };
+    const onWeekday = (weekday: number) => [
+      draft('reminders.create', {
+        text: 'להתקשר לאבא',
+        date: { kind: 'weekday', weekday, qualifier: 'unspecified' },
+        time: EIGHT,
+      }),
+    ];
+    const SAID = 'תזכיר לי ביום שני ב-8 להתקשר לאבא';
+
+    it('asks which day instead of scheduling Tuesday for "יום שני"', async () => {
+      const out = await handleInbound(text(SAID), deps(onWeekday(2)));
+      if (out.action !== 'reply') throw new Error('expected reply');
+
+      expect(plain(out.text)).toContain('באיזה יום?');
+      expect(reminders.listUpcoming(PRINCIPAL)).toHaveLength(0);
+      expect(questions.peek(PRINCIPAL)?.asked).toBe('date');
+    });
+
+    it('schedules Monday once the day is given, keeping the rest of what was said', async () => {
+      await handleInbound(text(SAID), deps(onWeekday(2)));
+      const out = await handleInbound(text('יום שני'), deps(onWeekday(2)));
+      if (out.action !== 'reply') throw new Error('expected reply');
+
+      expect(plain(out.text)).toContain('יום ב׳ 28.9 · 08:00');
+      expect(reminders.listUpcoming(PRINCIPAL)[0]?.text).toBe('להתקשר לאבא');
+    });
+
+    it('lets a draft that agrees with the message through', async () => {
+      const out = await handleInbound(text(SAID), deps(onWeekday(1)));
+      if (out.action !== 'reply') throw new Error('expected reply');
+
+      expect(plain(out.text)).toContain('יום ב׳ 28.9 · 08:00');
+      expect(reminders.listUpcoming(PRINCIPAL)).toHaveLength(1);
+    });
+
+    it('does not check a message that names no day', async () => {
+      const out = await handleInbound(text('תזכיר לי ב-8 להתקשר לאבא'), deps(onWeekday(2)));
+      if (out.action !== 'reply') throw new Error('expected reply');
+
+      expect(reminders.listUpcoming(PRINCIPAL)).toHaveLength(1);
+    });
+
+    it('asks rather than widen a search, where the day was only a filter', async () => {
+      // Dropping an optional date would look in every day instead of the one
+      // named. Asking is the only safe reading of a day that disagrees.
+      reminders.schedule({
+        principal: PRINCIPAL,
+        text: 'להתקשר לאבא',
+        dueAtUtc: Date.parse('2026-09-25T05:00:00Z'),
+        localWallTime: '2026-09-25T08:00',
+        tz: 'Asia/Jerusalem',
+      });
+      const out = await handleInbound(
+        text('תבטל את התזכורת לאבא של יום שישי'),
+        deps([
+          draft('reminders.cancel', {
+            query_variants: ['אבא'],
+            date: { kind: 'weekday', weekday: 4, qualifier: 'unspecified' },
+          }),
+        ]),
+      );
+      if (out.action !== 'reply') throw new Error('expected reply');
+
+      expect(plain(out.text)).toContain('באיזה יום?');
+      expect(out.buttons ?? []).toHaveLength(0);
+      expect(reminders.listUpcoming(PRINCIPAL)).toHaveLength(1);
+    });
+
+    it('logs which slot disagreed, and none of the words', async () => {
+      await handleInbound(text(SAID), deps(onWeekday(2)));
+
+      const entry = log.captured.find((c) => c.event === 'weekday_mismatch');
+      expect(entry?.fields).toEqual({ intent: 'reminders.create', slotKeys: 'date' });
+      expect(JSON.stringify(log.captured)).not.toContain('שני');
+    });
+  });
+
   describe('answering a question it asked', () => {
     /** Tomorrow, with no hour — the draft that provokes "באיזו שעה?". */
     const noTime = [

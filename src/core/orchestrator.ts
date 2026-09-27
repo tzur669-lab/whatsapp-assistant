@@ -30,7 +30,7 @@ import type { Clarify, ExecuteResult, ToolContext, ToolDefinition } from '../too
 import { ToolInputError } from '../tools/types.js';
 import { buttonId, parseButtonId } from '../confirm/pending.js';
 import type { AskedSlot } from '../confirm/questions.js';
-import { canAnswer } from '../nlu/answer.js';
+import { canAnswer, dateSlotOf } from '../nlu/answer.js';
 import type { PendingActions } from '../confirm/pending.js';
 import { SNOOZE_EXPIRY_MS } from '../confirm/undo.js';
 import type { UndoActions } from '../confirm/undo.js';
@@ -79,7 +79,21 @@ const IMPLEMENTED: Partial<Record<ToolName, ToolDefinition>> = {
   ...CALENDAR_WRITE_TOOLS,
 };
 
-export async function runIntent(draft: IntentDraft, turn: TurnContext): Promise<Reply> {
+export type RunOptions = {
+  /**
+   * Date slots whose weekday disagreed with the day the message names, and were
+   * removed (`checkNamedWeekdays`). The day is asked for before anything is
+   * resolved: where a date was only a filter, resolving without it would search
+   * every day instead of the one the user named.
+   */
+  dayInDoubt?: readonly string[];
+};
+
+export async function runIntent(
+  draft: IntentDraft,
+  turn: TurnContext,
+  options: RunOptions = {},
+): Promise<Reply> {
   const ctx = turn.tool;
 
   if (draft.intent === 'unsupported') {
@@ -91,6 +105,15 @@ export async function runIntent(draft: IntentDraft, turn: TurnContext): Promise<
   if (!tool) {
     ctx.log.info('tool_not_implemented', { tool: draft.intent });
     return { text: statusText.notAvailableYet };
+  }
+
+  const inDoubt = options.dayInDoubt ?? [];
+  if (inDoubt.length > 0) {
+    ctx.log.info('clarify', { tool: draft.intent, reason: 'weekday_mismatch' });
+    audit(turn, draft.intent, null, 'CLARIFY', 'weekday_mismatch');
+    // Recorded as a question only when the answer lands in the slot in doubt.
+    const answerable = inDoubt.length === 1 && dateSlotOf(draft.intent) === inDoubt[0];
+    return clarifyReply(draft, { code: 'missing_slot', slot: 'date' }, ctx.lang, answerable);
   }
 
   // 1. Resolve. Everything the model left out is decided here or asked about.
@@ -113,23 +136,7 @@ export async function runIntent(draft: IntentDraft, turn: TurnContext): Promise<
     ctx.log.info('clarify', { tool: draft.intent, reason: resolved.clarify.code });
     audit(turn, draft.intent, null, 'CLARIFY', resolved.clarify.code);
 
-    // A question worth asking is a question worth being able to answer. What
-    // the user already said is carried forward so the reply can be just the
-    // missing piece — "8" — rather than the whole request again (§6.11).
-    const asked = askedSlotOf(resolved.clarify);
-    return {
-      text: renderClarify(resolved.clarify, ctx.lang),
-      ...(asked && canAnswer(draft.intent, asked)
-        ? {
-            question: {
-              tool: draft.intent,
-              slots: draft.slots as Record<string, unknown>,
-              asked,
-              language: ctx.lang,
-            },
-          }
-        : {}),
-    };
+    return clarifyReply(draft, resolved.clarify, ctx.lang, true);
   }
 
   // 2. Decide, on the resolved input.
@@ -168,6 +175,30 @@ export async function runIntent(draft: IntentDraft, turn: TurnContext): Promise<
     case 'ALLOW':
       return execute(tool, resolved.input, decision, turn);
   }
+}
+
+/**
+ * The question, and a record of it when a plain reply can settle it.
+ *
+ * A question worth asking is a question worth being able to answer. What the
+ * user already said is carried forward so the reply can be just the missing
+ * piece — "8" — rather than the whole request again (§6.11).
+ */
+function clarifyReply(draft: IntentDraft, clarify: Clarify, lang: Lang, answerable: boolean): Reply {
+  const asked = answerable ? askedSlotOf(clarify) : null;
+  return {
+    text: renderClarify(clarify, lang),
+    ...(asked && canAnswer(draft.intent, asked)
+      ? {
+          question: {
+            tool: draft.intent,
+            slots: draft.slots as Record<string, unknown>,
+            asked,
+            language: lang,
+          },
+        }
+      : {}),
+  };
 }
 
 /**

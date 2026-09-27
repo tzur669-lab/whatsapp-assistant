@@ -191,6 +191,14 @@ const SLOT_NAMES: Record<string, Partial<Record<keyof AnswerPatch, string>>> = {
   'calendar.delete_event': { target: 'query_variants', date: 'date', time: 'time' },
 };
 
+/**
+ * The slot a "which day?" answer fills for this tool, if any. On a move that is
+ * `to_date`, so a doubt about `from_date` cannot be settled by one.
+ */
+export function dateSlotOf(tool: string): string | undefined {
+  return SLOT_NAMES[tool]?.date;
+}
+
 /** True when a question about this slot can ever be answered for this tool. */
 export function canAnswer(tool: string, asked: AskedSlot): boolean {
   const names = SLOT_NAMES[tool];
