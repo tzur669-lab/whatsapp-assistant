@@ -9,9 +9,13 @@ import type { NluProvider } from './provider.js';
 import { createGroqProvider } from './groq.js';
 import { createRulesProvider } from './rules-fallback.js';
 
-/** Chosen by eval; see PLAN §14. */
-export const PRIMARY_MODEL = 'openai/gpt-oss-120b';
-export const SECONDARY_MODEL = 'openai/gpt-oss-20b';
+/**
+ * Chosen by measurement — PLAN §4, decided 2026-09-27. qwen met every §11.2 accuracy
+ * threshold on prompt v5; gpt-oss-120b could not be measured to the end inside
+ * the free tier's daily budget, and per §4 the other model is the fallback.
+ */
+export const PRIMARY_MODEL = 'qwen/qwen3.8-27b';
+export const SECONDARY_MODEL = 'openai/gpt-oss-120b';
 
 export function buildNluChain(config: {
   groqApiKey: string;

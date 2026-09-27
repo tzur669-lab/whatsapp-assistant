@@ -159,7 +159,7 @@ Only `src/platform/` may import Cloudflare APIs. Everything else is plain TypeSc
 | Runtime | Cloudflare Workers (Free) + 1 SQLite-backed Durable Object | [R] |
 | Language / libs | TypeScript (strict), Hono, Zod, small tz-aware date lib — CPU measured, see §4.1 | [R] |
 | Channel | WhatsApp Cloud API directly (no BSP) behind `ChannelAdapter` | [R] |
-| LLM | Groq free: `gpt-oss-120b` vs `qwen3.8-27b` chosen by eval; loser = fallback | [R] |
+| LLM | Groq free: **primary `qwen3.8-27b`, fallback `gpt-oss-120b`** — chosen by eval 2026-09-27 (§11.9) | [R] |
 | LLM fallback 2 | Deterministic rules parser for common patterns | [R] |
 | Google | Calendar API; scopes `calendar.events.owned` + `calendar.app.created` | [R] |
 | Storage | Durable Object SQLite; numbered SQL migrations | [R] |
@@ -1342,7 +1342,7 @@ Each phase ends with its exit criteria met and tests green.
 - [x] Provider interface, Groq provider, prompt v4, Zod schema, rules fallback.
 - [x] 156 eval cases (92 he, 64 en) plus a harness with token-aware pacing, budget detection, and record/replay.
 - [x] Model comparison recorded in §14.
-- [ ] *Exit:* eval thresholds met. Best measured so far is `gpt-oss-120b` at 89.1% intent against a 97% threshold, and neither hard gate is at 100%. Certification is blocked on daily token budget, not on missing work.
+- [x] *Exit:* eval thresholds met — `qwen3.8-27b` on prompt v5, 2026-09-27: both hard gates 100%, intent 100%, exact slots 98.1%, off-topic 100% (§11.9). Latency is not yet measured from the Worker; staging measures it.
 
 **Phase 3b — Voice notes** — *code complete 2026-09-24* (pulled forward from Phase 8 at the user's request)
 
@@ -1851,7 +1851,7 @@ gates in §11.2 apply unchanged: an invented number is an invented slot.
 - [ ] Tier 3 PIN: enable from day one?
 - [ ] When to buy the dedicated number (before or after Phase 4)?
 - [ ] [O] Encrypted export backup: yes/no, and which bucket?
-- [ ] Phase 3 thresholds are not met. Options: keep iterating on the prompt, relax §11.2's 97%/95% targets for a free-tier model, or accept a paid tier. The two hard gates (no invented slots, missing-slot detection) are not negotiable. Structured output has since removed most schema rejections, so re-measure on `gpt-oss-120b` before deciding.
+- [x] **Primary model: `qwen3.8-27b`; fallback: `gpt-oss-120b`** (2026-09-27, the user's decision). qwen met every accuracy threshold on v5. gpt-oss-120b reached 20 of 156 cases before the free tier's rolling budget stalled it, with no schema refusals after the 400 repair retry; finishing it would have held every prompt change for about two more days. It is the fallback per §4, and its partial recording is kept. Open: latency — the hotspot measurements (p95 1–10 s) are not the Worker's, and the 8 s timeout will cut qwen off if staging shows it is slow.
 - [ ] Voice: should the recognizer's language be pinned to `he`? Auto-detect keeps English usable but is weakest on very short clips, which is exactly what a one-line reminder is. Measure before changing.
 - [ ] Voice: Whisper takes a `prompt` to bias spelling — useful for Hebrew names and times. It is static config, not user data, so it does not breach invariant 2, but it is unmeasured. Worth a try against recorded clips.
 - [ ] Voice: the uncertain band (`avg_logprob` between -1.0 and -0.5) currently forces CONFIRM on writes. If that fires on most real recordings it is friction, not safety — revisit after two weeks of daily use.
@@ -2009,6 +2009,7 @@ gates in §11.2 apply unchanged: an invented number is an invented slot.
 | 2026-09-27 | **A Groq 400 gets the one repair retry.** Under strict json_schema Groq validates the generation itself and answers 400 when it fails; the provider had treated that as final. On the complete qwen v5 corpus seven cases (six Hebrew) came back 400, and those sent again answered — sampling, not a request that always fails. The retry is the one §6.2 already allows for a schema failure; a server error and a rate limit are still not retried. The v5 recordings' 400s were asked again under it |
 | 2026-09-27 | **qwen on prompt v5 meets every accuracy threshold**: both hard gates 100%, intent 100%, exact slots 98.1%, off-topic 100% (§11.9). Three slot mismatches remain; `he-cal-012` reads יום שני as Tuesday |
 | 2026-09-27 | **A weekday the message names is held against the draft** (§6.2): a draft naming another weekday has that date removed and the user is asked which day, before anything resolves. Approved by the user after `he-cal-012` (יום שני read as Tuesday). Fires on that case alone across 312 recorded answers |
+| 2026-09-27 | **Primary model `qwen3.8-27b`, fallback `gpt-oss-120b`** (§4, §13; the user's decision). Replaces `gpt-oss-120b` / `gpt-oss-20b` from 2026-09-24. The gpt-oss v5 run was stopped at 20 of 156 |
 
 ---
 
@@ -2136,11 +2137,9 @@ which biases spelling for names and times at no cost (PLAN §13, still unmeasure
 *Do:* try the prompt first, against recorded clips via `--replay`. Reach for a
 second provider only if that is not enough.
 
-**B10. Phase 3 certification.** ⏳ **qwen passes, gpt-oss running —
-2026-09-27.** On prompt v5 the complete 156-case `qwen3.8-27b` corpus meets every
-accuracy threshold, both hard gates at 100% (§11.9). `gpt-oss-120b` is being run
-on v5 under the same rules and needs about two more days of rolling budget; the
-§4 choice waits for it, and latency is still unmeasured for both.
+**B10. Phase 3 certification.** ✅ **Done 2026-09-27** — `qwen3.8-27b` is primary
+on prompt v5, meeting every accuracy threshold (§11.9); `gpt-oss-120b` is the
+fallback (§13). Latency is measured on staging, not here.
 
 **B11. Nothing is measured end to end.** ✅ **Done 2026-09-25** — see §6.14. One
 `turn` line per message with a millisecond figure per stage, redaction-safe by
