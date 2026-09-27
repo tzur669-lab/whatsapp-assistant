@@ -26,6 +26,7 @@ import type { ToolName } from '../tools/registry.js';
 import { REMINDER_TOOLS } from '../tools/reminders.js';
 import { calendarListEvents } from '../tools/calendar-read.js';
 import { CALENDAR_WRITE_TOOLS } from '../tools/calendar-write.js';
+import { callsPlace } from '../tools/calls.js';
 import type { Clarify, ExecuteResult, ToolContext, ToolDefinition } from '../tools/types.js';
 import { ToolInputError } from '../tools/types.js';
 import { buttonId, parseButtonId } from '../confirm/pending.js';
@@ -43,6 +44,11 @@ import { localPartsOf } from '../time/tz.js';
 
 export type Reply = {
   text: string;
+  /**
+   * Nothing is sent now: the one reply goes out when the outcome is known —
+   * a call the phone has still to place (§6.17, invariant 10).
+   */
+  silent?: true;
   buttons?: OutboundButton[];
   /** Set when state changed in a way that moves the next alarm. */
   rescheduleAlarm?: boolean;
@@ -77,6 +83,7 @@ const IMPLEMENTED: Partial<Record<ToolName, ToolDefinition>> = {
   ...REMINDER_TOOLS,
   'calendar.list_events': calendarListEvents,
   ...CALENDAR_WRITE_TOOLS,
+  'calls.place': callsPlace,
 };
 
 export type RunOptions = {
@@ -167,6 +174,9 @@ export async function runIntent(
       return { text: decision.reason === 'paused' ? statusText.paused : statusText.rateLimited };
 
     case 'CONFIRM':
+      // Confirmed on the paired phone's screen, not in chat (§6.17): no button,
+      // no typed code. Dispatching is what asks.
+      if (decision.confirmOnDevice) return execute(tool, resolved.input, decision, turn);
       return askToConfirm(tool, resolved.input, decision, turn);
 
     case 'CLARIFY':
@@ -302,7 +312,12 @@ async function execute(
     return { text: he.internalError };
   }
 
-  audit(turn, tool.name, decision, 'ALLOW', 'ok', result.externalRef);
+  // A dispatch is not an execution: the phone still has to ask. The audit row
+  // says so, and names the dispatch rather than anything about the call.
+  const verdict = decision.confirmOnDevice ? 'CONFIRM_ON_DEVICE' : 'ALLOW';
+  audit(turn, tool.name, decision, verdict, result.replyLater ? 'dispatched' : 'ok', result.externalRef);
+
+  if (result.replyLater) return { text: '', silent: true };
 
   // Tier 1 executes immediately, so the reply carries the way back.
   if (decision.undoable && result.compensating !== undefined && tool.undo) {

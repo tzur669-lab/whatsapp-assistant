@@ -66,6 +66,11 @@ export type PolicyResult = {
   undoable: boolean;
   /** Tier 3 needs a typed code, not just a button. */
   requiresTypedCode: boolean;
+  /**
+   * The confirmation happens on the paired phone, not in chat: dispatch, and
+   * let its screen ask (PLAN §6.17). Never set on anything but CONFIRM.
+   */
+  confirmOnDevice: boolean;
 };
 
 export const DEFAULT_LIMITS: Readonly<Record<ToolName, RateLimit>> = Object.fromEntries(
@@ -105,6 +110,12 @@ export function decide(tool: ToolName, ctx: PolicyContext, extras: PolicyExtras 
   if (tier >= 2) reasons.push('tier_requires_confirmation');
 
   if (reasons.length > 0) {
+    // The phone's screen is a confirmation that shows the resolved number, out
+    // of band from the channel an injection would arrive on. It answers every
+    // escalation above — stale, forwarded, voice — as well as the tier.
+    if (spec.confirmation === 'device') {
+      return result('CONFIRM', tier, reasons[0]!, reasons, { confirmOnDevice: true });
+    }
     return result('CONFIRM', tier, reasons[0]!, reasons, {
       requiresTypedCode: tier >= 3,
     });
@@ -133,7 +144,7 @@ function result(
   tier: Tier | null,
   reason: PolicyReason,
   allReasons: PolicyReason[],
-  flags: { undoable?: boolean; requiresTypedCode?: boolean } = {},
+  flags: { undoable?: boolean; requiresTypedCode?: boolean; confirmOnDevice?: boolean } = {},
 ): PolicyResult {
   return {
     decision,
@@ -142,5 +153,6 @@ function result(
     allReasons,
     undoable: flags.undoable ?? false,
     requiresTypedCode: flags.requiresTypedCode ?? false,
+    confirmOnDevice: flags.confirmOnDevice ?? false,
   };
 }

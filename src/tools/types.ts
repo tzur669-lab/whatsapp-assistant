@@ -27,6 +27,7 @@ import type { Repository } from '../core/repo.js';
 import type { Logger } from '../security/redact.js';
 import type { CalendarClient } from '../google/calendar.js';
 import type { IcalStore } from '../ical/store.js';
+import type { CallDispatcher } from '../device/calls.js';
 
 /** One candidate when a description matched more than one thing. */
 export type TargetChoice = { id: string; label: string };
@@ -47,7 +48,9 @@ export type Clarify =
   /** The request was well-formed but there is nothing to act on. */
   | { code: 'nothing_scheduled' }
   /** Google is not connected yet. */
-  | { code: 'not_connected' };
+  | { code: 'not_connected' }
+  /** A call's target was a number, not a name on the phone (PLAN §6.17). */
+  | { code: 'call_number_refused' };
 
 export type ResolveOutcome =
   | {
@@ -77,6 +80,8 @@ export type ToolContext = {
   calendar?: CalendarClient;
   /** A subscribed iCal feed, read-only and merged into calendar reads (§6.15). */
   ical?: IcalStore;
+  /** Reaches the paired phone. Absent when calls are not configured (§6.17). */
+  calls?: CallDispatcher;
 };
 
 export type ExecuteResult = {
@@ -92,6 +97,11 @@ export type ExecuteResult = {
   externalRef?: string;
   /** Set when the action changed when the next alarm should fire. */
   rescheduleAlarm?: boolean;
+  /**
+   * The outcome is not known yet, and the one reply is sent when it is — a call
+   * the phone has still to place (§6.17). `text` is then empty and unsent.
+   */
+  replyLater?: true;
 };
 
 export interface ToolDefinition {

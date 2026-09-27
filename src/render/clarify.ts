@@ -11,6 +11,7 @@
  * guessing is that asking is cheap only when the question is a good one.
  */
 import { isolateLtr } from './bidi.js';
+import { callText } from './calls.js';
 import { formatWhen } from './format-time.js';
 import type { Lang } from './format-time.js';
 import type { Clarify, TargetChoice } from '../tools/types.js';
@@ -36,6 +37,8 @@ export function renderClarify(clarify: Clarify, lang: Lang): string {
       return lang === 'he'
         ? `יומן Google לא מחובר. יש לשלוח ${isolateLtr('/connect google')}.`
         : `Google Calendar is not connected. Send ${isolateLtr('/connect google')}.`;
+    case 'call_number_refused':
+      return callText.numberRefused(lang);
   }
 }
 

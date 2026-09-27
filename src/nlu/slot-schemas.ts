@@ -151,6 +151,18 @@ export const calendarDeleteEventSlots = z
   })
   .strict();
 
+/**
+ * "תתקשר לדוד דני". The words only — never a number, which `calls.place`
+ * refuses, and never an id: the phone matches them against its own contacts
+ * (PLAN §6.17). A new tool, but not a new slot: the wire schema's flat union
+ * is unchanged.
+ */
+export const callsPlaceSlots = z
+  .object({
+    query_variants: queryVariantsSchema.optional(),
+  })
+  .strict();
+
 // -- drift guards -------------------------------------------------------------
 // These are compile-time only. If `src/time/resolve.ts` gains a DateSpec variant
 // that this file does not model, or vice versa, typecheck fails here rather than

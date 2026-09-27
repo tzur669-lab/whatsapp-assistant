@@ -16,6 +16,7 @@ import {
   calendarDeleteEventSlots,
   calendarListEventsSlots,
   calendarMoveEventSlots,
+  callsPlaceSlots,
   remindersCancelSlots,
   remindersCreateSlots,
   remindersListSlots,
@@ -81,6 +82,7 @@ export const intentDraftSchema = z.discriminatedUnion('intent', [
   z.object({ intent: z.literal('calendar.create_event'), slots: calendarCreateEventSlots, ...common }).strict(),
   z.object({ intent: z.literal('calendar.move_event'), slots: calendarMoveEventSlots, ...common }).strict(),
   z.object({ intent: z.literal('calendar.delete_event'), slots: calendarDeleteEventSlots, ...common }).strict(),
+  z.object({ intent: z.literal('calls.place'), slots: callsPlaceSlots, ...common }).strict(),
   // Anything outside the tool list, including prompt-injection attempts.
   z.object({ intent: z.literal('unsupported'), slots: ignoredSlots, ...common }).strict(),
 ]);
@@ -112,6 +114,7 @@ const TOOL_SLOTS: Readonly<Record<string, ReadonlySet<string>>> = {
   'calendar.create_event': new Set(Object.keys(calendarCreateEventSlots.shape)),
   'calendar.move_event': new Set(Object.keys(calendarMoveEventSlots.shape)),
   'calendar.delete_event': new Set(Object.keys(calendarDeleteEventSlots.shape)),
+  'calls.place': new Set(Object.keys(callsPlaceSlots.shape)),
 };
 
 /** Every slot any tool declares — the flat union the wire schema offers the model. */

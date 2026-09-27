@@ -27,7 +27,7 @@
 import type { ToolCatalogEntry } from '../tools/registry.js';
 
 /** Bump on any wording change. Recorded with eval results in PLAN §14. */
-export const PROMPT_VERSION = 'v5';
+export const PROMPT_VERSION = 'v6';
 
 /**
  * The complete set of facts the model may receive. Adding a field here is a

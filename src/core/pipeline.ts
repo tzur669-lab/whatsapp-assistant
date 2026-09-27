@@ -42,6 +42,7 @@ import { parseWithFallback } from '../nlu/provider.js';
 import { applyAnswer, parseAnswer } from '../nlu/answer.js';
 import { validateIntentDraft } from '../nlu/intent-schema.js';
 import { checkNamedWeekdays } from '../nlu/weekday-check.js';
+import type { CallDispatcher } from '../device/calls.js';
 import { reAsk } from '../render/clarify.js';
 import { toolCatalog } from '../tools/registry.js';
 import { budgetState } from '../policy/window.js';
@@ -73,6 +74,8 @@ export type Services = {
   birthdays?: BirthdayStore;
   /** Supplied by the platform so a feed can be fetched. */
   fetchImpl?: typeof fetch;
+  /** Reaches the paired phone (§6.17). Absent until calls are configured. */
+  calls?: CallDispatcher;
 };
 
 export type PipelineDeps = {
@@ -99,7 +102,7 @@ export type PipelineOutcome =
     }
   | {
       action: 'none';
-      reason: 'duplicate' | 'status' | 'not_implemented';
+      reason: 'duplicate' | 'status' | 'not_implemented' | 'reply_deferred';
       /** A failed delivery put a reminder back in the queue (§6.8). */
       rescheduleAlarm?: boolean;
     };
@@ -708,6 +711,7 @@ function turnOf(
       monthlySent: monthlySentOf(deps.repo, now),
       ...(services.calendar ? { calendar: services.calendar } : {}),
       ...(services.ical ? { ical: services.ical } : {}),
+      ...(services.calls ? { calls: services.calls } : {}),
     },
     pending: services.pending,
     deferred: services.deferred,
@@ -720,6 +724,7 @@ function turnOf(
 }
 
 function asOutcome(reply: Reply): PipelineOutcome {
+  if (reply.silent) return { action: 'none', reason: 'reply_deferred' };
   return {
     action: 'reply',
     text: reply.text,

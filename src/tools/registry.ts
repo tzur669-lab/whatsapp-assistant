@@ -15,6 +15,7 @@ import {
   calendarDeleteEventSlots,
   calendarListEventsSlots,
   calendarMoveEventSlots,
+  callsPlaceSlots,
   remindersCancelSlots,
   remindersCreateSlots,
   remindersListSlots,
@@ -28,6 +29,7 @@ export const TOOL_NAMES = [
   'calendar.create_event',
   'calendar.move_event',
   'calendar.delete_event',
+  'calls.place',
 ] as const;
 
 export type ToolName = (typeof TOOL_NAMES)[number];
@@ -54,6 +56,12 @@ export type ToolSpec = {
   rateLimit: { perHour: number; perDay: number };
   /** The phase that gives this tool an executable body. */
   implementedIn: 4 | 5 | 6;
+  /**
+   * Where a confirmation happens. Absent means in chat: a button, or a typed
+   * code at Tier 3. `device` means on the paired phone's own screen, which
+   * replaces both and is strictly stronger (PLAN §6.17).
+   */
+  confirmation?: 'device';
 };
 
 const EVENTS_OWNED: GoogleScope = 'https://www.googleapis.com/auth/calendar.events.owned';
@@ -121,6 +129,18 @@ export const REGISTRY: Readonly<Record<ToolName, ToolSpec>> = {
     scopes: [EVENTS_OWNED],
     rateLimit: { perHour: 10, perDay: 30 },
     implementedIn: 6,
+  },
+  'calls.place': {
+    name: 'calls.place',
+    llmDescription: 'Phone a contact the user names.',
+    draftSchema: callsPlaceSlots,
+    // Irreversible and external-facing. The tap on the phone, which shows the
+    // resolved number, is the Tier 3 factor (§6.17).
+    tier: 3,
+    scopes: [],
+    rateLimit: { perHour: 5, perDay: 20 },
+    implementedIn: 6,
+    confirmation: 'device',
   },
 };
 

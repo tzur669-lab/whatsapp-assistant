@@ -189,6 +189,7 @@ const SLOT_NAMES: Record<string, Partial<Record<keyof AnswerPatch, string>>> = {
   },
   'calendar.move_event': { target: 'query_variants', date: 'to_date', time: 'to_time' },
   'calendar.delete_event': { target: 'query_variants', date: 'date', time: 'time' },
+  'calls.place': { target: 'query_variants' },
 };
 
 /**

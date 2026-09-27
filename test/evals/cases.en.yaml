@@ -550,3 +550,34 @@
       date: { kind: relative_days, offset: 1 }
       time: { hour: 9, minute: 0, meridiem: unspecified, part_of_day: unspecified }
     missing: []
+
+# ---------------------------------------------------------------- calls (PLAN §6.17)
+- id: en-call-001
+  now: "2026-09-27T12:00:00+03:00"
+  input: "call mom"
+  expect:
+    intent: calls.place
+    missing: []
+
+- id: en-call-002
+  now: "2026-09-27T12:00:00+03:00"
+  input: "ring Dani Cohen"
+  expect:
+    intent: calls.place
+    missing: []
+
+- id: en-call-003
+  now: "2026-09-27T12:00:00+03:00"
+  input: "call"
+  expect:
+    intent: calls.place
+    missing: [query_variants]
+
+- id: en-call-004
+  now: "2026-09-27T12:00:00+03:00"
+  input: "remind me to call dad tomorrow at 6pm"
+  expect:
+    intent: reminders.create
+    slots:
+      date: { kind: relative_days, offset: 1 }
+    missing: []

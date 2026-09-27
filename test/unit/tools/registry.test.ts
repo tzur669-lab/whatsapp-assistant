@@ -8,6 +8,7 @@ import { REGISTRY, TOOL_NAMES, toolCatalog } from '../../../src/tools/registry.j
 import { REMINDER_TOOLS } from '../../../src/tools/reminders.js';
 import { calendarListEvents } from '../../../src/tools/calendar-read.js';
 import { CALENDAR_WRITE_TOOLS } from '../../../src/tools/calendar-write.js';
+import { callsPlace } from '../../../src/tools/calls.js';
 import type { ToolDefinition } from '../../../src/tools/types.js';
 import { INTENT_NAMES } from '../../../src/nlu/intent-schema.js';
 
@@ -15,6 +16,7 @@ const IMPLEMENTATIONS: Record<string, ToolDefinition> = {
   ...REMINDER_TOOLS,
   'calendar.list_events': calendarListEvents,
   ...CALENDAR_WRITE_TOOLS,
+  'calls.place': callsPlace,
 };
 
 describe('every registered tool is real', () => {

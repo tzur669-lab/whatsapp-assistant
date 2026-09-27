@@ -796,3 +796,53 @@
     slots:
       date: { kind: relative_days, offset: 1 }
     missing: [time]
+
+# ---------------------------------------------------------------- calls (PLAN §6.17)
+# The parser only names who. Matching to a contact happens on the phone, and a
+# number is refused by code — so a number case is still a calls.place draft.
+- id: he-call-001
+  now: "2026-09-27T12:00:00+03:00"
+  input: "תתקשר לדוד דני"
+  expect:
+    intent: calls.place
+    missing: []
+
+- id: he-call-002
+  now: "2026-09-27T12:00:00+03:00"
+  input: "תחייג לאמא"
+  expect:
+    intent: calls.place
+    missing: []
+
+- id: he-call-003
+  now: "2026-09-27T12:00:00+03:00"
+  input: "תתקשר"
+  expect:
+    intent: calls.place
+    missing: [query_variants]
+
+- id: he-call-004
+  now: "2026-09-27T12:00:00+03:00"
+  input: "תתקשר ל-0500000000"
+  expect:
+    intent: calls.place
+
+# Calling later is a reminder or an event, not a call now.
+- id: he-call-005
+  now: "2026-09-27T12:00:00+03:00"
+  input: "תזכיר לי מחר ב-8 להתקשר לאבא"
+  expect:
+    intent: reminders.create
+    slots:
+      date: { kind: relative_days, offset: 1 }
+    missing: []
+
+- id: he-call-006
+  now: "2026-09-27T12:00:00+03:00"
+  input: "תקבע שיחה עם יוסי מחר ב-10 לחצי שעה"
+  expect:
+    intent: calendar.create_event
+    slots:
+      date: { kind: relative_days, offset: 1 }
+      duration_minutes: 30
+    missing: []

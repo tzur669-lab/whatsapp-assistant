@@ -459,6 +459,67 @@ describe('a turn, end to end', () => {
   // answer to its own question was parsed with no memory of having asked, so
   // "8" matched no tool and came back "לא הבנתי".
 
+  // PLAN §6.17: the words go to the phone; the phone's screen is the confirmation.
+  describe('a call', () => {
+    const dispatched: Array<readonly string[]> = [];
+    const calls = {
+      async dispatch(_principal: string, variants: readonly string[]) {
+        dispatched.push(variants);
+        return { ok: true as const, dispatchId: 'd'.repeat(32) };
+      },
+    };
+    const withCalls = (script: unknown[]): PipelineDeps => ({
+      repo,
+      log,
+      now: () => NOW,
+      principal: PRINCIPAL,
+      services: { reminders, pending, questions, deferred, nlu: [createFakeNlu(script)], calls },
+    });
+
+    beforeEach(() => {
+      dispatched.length = 0;
+    });
+
+    it('goes to the phone, with no chat button and no reply yet', async () => {
+      const out = await handleInbound(
+        text('תתקשר לדוד דני'),
+        withCalls([draft('calls.place', { query_variants: ['דוד דני', 'דני'] })]),
+      );
+
+      expect(out).toEqual({ action: 'none', reason: 'reply_deferred' });
+      expect(dispatched).toEqual([['דוד דני', 'דני']]);
+      expect(driver.exec('SELECT * FROM pending_actions')).toHaveLength(0);
+    });
+
+    it('audits the dispatch as confirmed on the device, naming no one', async () => {
+      await handleInbound(text('תתקשר לדוד דני'), withCalls([draft('calls.place', { query_variants: ['דוד דני'] })]));
+
+      const rows = driver.exec("SELECT * FROM audit_log WHERE tool = 'calls.place'");
+      expect(rows).toHaveLength(1);
+      expect(rows[0]).toMatchObject({ tier: 3, decision: 'CONFIRM_ON_DEVICE', outcome: 'dispatched' });
+      expect(JSON.stringify(rows)).not.toContain('דני');
+    });
+
+    it('refuses a number in the message and dispatches nothing', async () => {
+      const out = await handleInbound(
+        text('תתקשר ל-0501234567'),
+        withCalls([draft('calls.place', { query_variants: ['0501234567'] })]),
+      );
+      if (out.action !== 'reply') throw new Error('expected reply');
+
+      expect(plain(out.text)).toContain('מספר שנכתב בהודעה לא מחויג');
+      expect(dispatched).toHaveLength(0);
+    });
+
+    it('says calls are not set up when the server has no dispatcher', async () => {
+      const out = await handleInbound(
+        text('תתקשר לאמא'),
+        deps([draft('calls.place', { query_variants: ['אמא'] })]),
+      );
+      expect(out).toMatchObject({ action: 'reply', text: 'שיחות עדיין לא מוגדרות בשרת.' });
+    });
+  });
+
   // qwen v5 read "ביום שני" as weekday 2 — Tuesday — counting "second day" on a
   // Sunday-is-0 scale (PLAN §11.9). The words name the day; a draft that names
   // another is asked about, never acted on (invariant 12).
