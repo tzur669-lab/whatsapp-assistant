@@ -27,7 +27,7 @@ beforeAll(async () => {
     ['sign', 'verify'],
   )) as CryptoKeyPair;
   publicKey = pair.publicKey;
-  const pkcs8 = new Uint8Array(await crypto.subtle.exportKey('pkcs8', pair.privateKey));
+  const pkcs8 = new Uint8Array((await crypto.subtle.exportKey('pkcs8', pair.privateKey)) as ArrayBuffer);
   const body = Buffer.from(pkcs8).toString('base64').replace(/(.{64})/g, '$1\n');
   serviceAccount = JSON.stringify({
     type: 'service_account',
