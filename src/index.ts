@@ -7,6 +7,7 @@
  *   raw body -> HMAC -> parse -> allowlist -> dedupe   (CLAUDE.md invariant 9)
  */
 import { Hono } from 'hono';
+import { z } from 'zod';
 import type { AppEnv } from './core/env.js';
 import { verifyWebhookHandshake, verifyWebhookSignature } from './channels/whatsapp/verify.js';
 import { parseWebhookPayload } from './channels/whatsapp/parse.js';
@@ -157,6 +158,100 @@ app.get('/oauth/google/callback', async (c) => {
     return c.text('Could not complete the connection. Please request a new link.', 400);
   }
   return c.text('Connected. You can close this page and return to WhatsApp.', 200);
+});
+
+/**
+ * The device companion's routes (PLAN §6.17).
+ *
+ * Public, because a phone reaches them over the internet, and trusted only as
+ * far as the credential presented: a single-use pairing code, or the device
+ * token it was traded for. Everything is checked inside the Durable Object,
+ * where the token's hash lives; this layer only refuses what is malformed.
+ *
+ * A device token can fetch a dispatch, report on one, and update its own push
+ * address — nothing else. No route here reads a reminder, the calendar, or a
+ * setting. Failures say as little as the OAuth pages do.
+ */
+const MAX_DEVICE_BODY_BYTES = 4_096;
+const BEARER = /^Bearer ([A-Za-z0-9_-]{43})$/;
+const DISPATCH_ID = /^[0-9a-f]{32}$/;
+
+const pairBody = z
+  .object({ code: z.string().regex(/^[A-Za-z0-9_-]{43}$/), pushToken: z.string().min(1).max(4_096) })
+  .strict();
+const reportBody = z
+  .object({
+    dispatchId: z.string().regex(DISPATCH_ID),
+    matched: z.enum(['none', 'one', 'many']),
+    outcome: z.enum(['placed', 'cancelled', 'no_match']),
+  })
+  .strict();
+const pushTokenBody = z.object({ pushToken: z.string().min(1).max(4_096) }).strict();
+
+async function deviceJson<T>(c: { req: { text(): Promise<string> } }, schema: z.ZodType<T>): Promise<T | null> {
+  const raw = await c.req.text();
+  if (raw.length > MAX_DEVICE_BODY_BYTES) return null;
+  try {
+    const parsed = schema.safeParse(JSON.parse(raw));
+    return parsed.success ? parsed.data : null;
+  } catch {
+    return null;
+  }
+}
+
+function bearerOf(header: string | undefined): string | null {
+  return BEARER.exec(header ?? '')?.[1] ?? null;
+}
+
+app.post('/device/pair', async (c) => {
+  const body = await deviceJson(c, pairBody);
+  if (!body) return c.text('bad request', 400);
+
+  const result = await callDo<{ deviceToken?: string; error?: string }>(c.env, '/do/device/pair', body);
+  if (!result?.deviceToken) {
+    log.warn('device_pair_rejected', { errorCode: result?.error ?? 'unknown' });
+    return c.text('invalid or expired code', 400);
+  }
+  return c.json({ deviceToken: result.deviceToken });
+});
+
+app.get('/device/dispatch/:id', async (c) => {
+  const token = bearerOf(c.req.header('authorization'));
+  const id = c.req.param('id');
+  if (!token) return c.text('unauthorized', 401);
+  if (!DISPATCH_ID.test(id)) return c.text('not found', 404);
+
+  const result = await callDo<{ queryVariants?: string[]; expiresAt?: number; error?: string }>(
+    c.env,
+    '/do/device/dispatch',
+    { token, id },
+  );
+  if (result?.error === 'unauthorized') return c.text('unauthorized', 401);
+  if (!result?.queryVariants) return c.text('not found', 404);
+  return c.json({ queryVariants: result.queryVariants, expiresAt: result.expiresAt });
+});
+
+app.post('/device/report', async (c) => {
+  const token = bearerOf(c.req.header('authorization'));
+  if (!token) return c.text('unauthorized', 401);
+  const body = await deviceJson(c, reportBody);
+  if (!body) return c.text('bad request', 400);
+
+  const result = await callDo<{ ok?: boolean; error?: string }>(c.env, '/do/device/report', { token, ...body });
+  if (result?.error === 'unauthorized') return c.text('unauthorized', 401);
+  if (!result?.ok) return c.text('not found', 404);
+  return c.body(null, 204);
+});
+
+app.post('/device/push-token', async (c) => {
+  const token = bearerOf(c.req.header('authorization'));
+  if (!token) return c.text('unauthorized', 401);
+  const body = await deviceJson(c, pushTokenBody);
+  if (!body) return c.text('bad request', 400);
+
+  const result = await callDo<{ ok?: boolean }>(c.env, '/do/device/push-token', { token, ...body });
+  if (!result?.ok) return c.text('unauthorized', 401);
+  return c.body(null, 204);
 });
 
 app.notFound((c) => c.text('not found', 404));

@@ -10,7 +10,7 @@
  */
 import { isolate, isolateLtr } from './bidi.js';
 
-const SYSTEM_COMMANDS = ['/help', '/status', '/digest', '/shabbat', '/ical', '/birthday', '/pause', '/resume', '/connect google', '/budget']
+const SYSTEM_COMMANDS = ['/help', '/status', '/digest', '/shabbat', '/ical', '/birthday', '/pause', '/resume', '/connect google', '/pair', '/budget']
   .map(isolate)
   .join(' · ');
 
@@ -22,6 +22,7 @@ export const he = {
     '• רשימת תזכורות — מה התזכורות שלי',
     '• יומן — מה יש לי ביומן מחר',
     `• פגישה — תקבע פגישה עם יוסי מחר ב${isolateLtr('-14:00')}`,
+    `• שיחה — תתקשר לדוד דני (מהטלפון, אחרי חיבור ב${isolate('/pair')})`,
     '',
     'אפשר גם להקליט הודעה קולית במקום לכתוב. מה שנשמע יוצג בתשובה.',
     '',

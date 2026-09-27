@@ -40,6 +40,12 @@ import { buildDigest } from '../core/digest.js';
 import { restPeriodAt } from '../time/shabbat.js';
 import type { InboundEvent, OutboundMessage } from '../channels/types.js';
 import type { AppEnv } from '../core/env.js';
+import { DeviceStore } from '../device/store.js';
+import type { CallOutcome, Matched } from '../device/store.js';
+import { FcmClient } from '../device/fcm.js';
+import { createCallDispatcher } from '../device/calls.js';
+import type { CallDispatcher } from '../device/calls.js';
+import { callText } from '../render/calls.js';
 import { DurableObjectSqlDriver } from './sql-repo.js';
 import { MIGRATIONS } from './migrations.js';
 
@@ -64,6 +70,7 @@ export class AssistantDO implements DurableObject {
   private readonly birthdays: BirthdayStore;
   private readonly deferred: UndoActions;
   private readonly google: GoogleStore;
+  private readonly devices: DeviceStore;
   private readonly log = createLogger({ component: 'assistant_do' });
 
   /**
@@ -71,6 +78,9 @@ export class AssistantDO implements DurableObject {
    * requests. It is memory only — nothing about it is written down (§6.6).
    */
   private calendar: CalendarClient | null = null;
+
+  /** Holds FCM's access token between pushes, in memory only, like the calendar's. */
+  private fcm: FcmClient | null = null;
 
   constructor(
     private readonly ctx: DurableObjectState,
@@ -93,6 +103,12 @@ export class AssistantDO implements DurableObject {
     this.deferred = new UndoActions(this.sql, now);
     this.google = new GoogleStore(this.sql, now, () =>
       parseKeyring(this.env as unknown as Record<string, string | undefined>),
+    );
+    this.devices = new DeviceStore(
+      this.sql,
+      now,
+      () => this.env.DEVICE_TOKEN_PEPPER ?? '',
+      () => parseKeyring(this.env as unknown as Record<string, string | undefined>),
     );
 
     // blockConcurrencyWhile keeps requests queued until the schema is ready.
@@ -121,6 +137,10 @@ export class AssistantDO implements DurableObject {
       return json(await this.finishOAuth(code, state));
     }
 
+    if (url.pathname.startsWith('/do/device/') && request.method === 'POST') {
+      return json(await this.deviceRequest(url.pathname, await request.json()));
+    }
+
     if (url.pathname === '/do/maintenance' && request.method === 'POST') {
       await this.runMaintenance();
       return new Response(null, { status: 204 });
@@ -145,6 +165,11 @@ export class AssistantDO implements DurableObject {
   async alarm(): Promise<void> {
     const now = Date.now();
     const principal = await this.selfPrincipal();
+
+    // Before any of the holds below: a call that went unanswered is reported
+    // now, because it was asked for now. Shabbat does not hold a call (§6.17),
+    // and the user wrote in seconds ago, so the window is open.
+    await this.expireDispatches();
 
     // Outside the 24-hour window nothing but a paid template gets through, so a
     // send here is not a send that fails — it is one that must not be attempted.
@@ -276,6 +301,7 @@ export class AssistantDO implements DurableObject {
     this.questions.purgeExpired();
     this.deferred.expireStale();
     this.google.purgeExpired();
+    this.devices.purge();
     await this.refreshFeeds();
     await this.armAlarm();
     this.log.info('maintenance_done', {});
@@ -390,8 +416,9 @@ export class AssistantDO implements DurableObject {
       await this.reply(event.from, outcome);
     }
 
-    // A new or cancelled reminder moves when the next alarm should fire.
-    if (outcome.rescheduleAlarm) {
+    // A new or cancelled reminder moves when the next alarm should fire, and so
+    // does a call dispatch, which has to be answered for if the phone is silent.
+    if (outcome.rescheduleAlarm || (outcome.action === 'none' && outcome.reason === 'reply_deferred')) {
       await this.armAlarm();
     }
   }
@@ -402,6 +429,85 @@ export class AssistantDO implements DurableObject {
       text: outcome.text,
       ...(outcome.buttons ? { buttons: outcome.buttons } : {}),
     });
+  }
+
+  // -- the device companion (PLAN §6.17) --------------------------------------
+
+  /**
+   * The four device routes, after the Worker has checked their shape. Each
+   * credential is checked here, where its hash lives, and each answer is a
+   * stable code with nothing about why.
+   */
+  private async deviceRequest(path: string, body: unknown): Promise<unknown> {
+    if (!this.env.DEVICE_TOKEN_PEPPER) return { error: 'not_configured' };
+    const request = (body ?? {}) as Record<string, unknown>;
+    const str = (key: string) => (typeof request[key] === 'string' ? (request[key] as string) : '');
+
+    if (path === '/do/device/pair') {
+      const paired = await this.devices.pair(str('code'), str('pushToken'));
+      if (!paired.ok) return { error: paired.reason };
+      this.log.info('device_paired', { deviceId: paired.value.deviceId });
+      return { deviceToken: paired.value.deviceToken };
+    }
+
+    const device = await this.devices.authenticate(str('token'));
+    if (!device) {
+      this.log.warn('device_rejected', { errorCode: 'unauthorized' });
+      return { error: 'unauthorized' };
+    }
+
+    switch (path) {
+      case '/do/device/dispatch': {
+        const fetched = this.devices.fetchDispatch(str('id'), device.id);
+        if (!fetched.ok) return { error: fetched.reason };
+        return fetched.value;
+      }
+
+      case '/do/device/report': {
+        const reported = this.devices.report(str('dispatchId'), device.id, {
+          matched: str('matched') as Matched,
+          outcome: str('outcome') as CallOutcome,
+        });
+        if (!reported.ok) return { error: reported.reason };
+        // Outcome and count only. What the phone matched never arrives here.
+        this.log.info('call_settled', { dispatchId: str('dispatchId'), outcome: reported.value.outcome });
+        await this.send(
+          { to: this.selfWaId(), text: callText.outcome(reported.value.outcome, 'he') },
+          { kind: 'call', principal: reported.value.principal },
+        );
+        await this.armAlarm();
+        return { ok: true };
+      }
+
+      case '/do/device/push-token':
+        await this.devices.setPushToken(device.id, str('pushToken'));
+        return { ok: true };
+
+      default:
+        return { error: 'not_found' };
+    }
+  }
+
+  /** Report every dispatch the phone never answered. Once each: the sweep settles it. */
+  private async expireDispatches(): Promise<void> {
+    for (const expired of this.devices.expireDue()) {
+      this.log.info('call_settled', { dispatchId: expired.id, outcome: 'expired' });
+      await this.send(
+        { to: this.selfWaId(), text: callText.outcome('expired', 'he') },
+        { kind: 'call', principal: expired.principal },
+      );
+    }
+  }
+
+  /** Present only when both the device pepper and the push key are configured. */
+  private callDispatcher(): CallDispatcher | null {
+    if (!this.env.DEVICE_TOKEN_PEPPER || !this.env.FCM_SA_KEY) return null;
+    this.fcm ??= new FcmClient({
+      serviceAccountJson: this.env.FCM_SA_KEY,
+      ...(this.env.FCM_PROJECT_ID ? { projectId: this.env.FCM_PROJECT_ID } : {}),
+      fetchImpl: this.fetchImpl,
+    });
+    return createCallDispatcher({ store: this.devices, push: this.fcm, log: this.log });
   }
 
   // -- delivery --------------------------------------------------------------
@@ -563,6 +669,8 @@ export class AssistantDO implements DurableObject {
       google: this.google,
       publicBaseUrl: this.env.PUBLIC_BASE_URL,
       ...(this.calendarClient() ? { calendar: this.calendarClient()! } : {}),
+      ...(this.callDispatcher() ? { calls: this.callDispatcher()! } : {}),
+      ...(this.env.DEVICE_TOKEN_PEPPER ? { devices: this.devices } : {}),
     };
   }
 
@@ -599,7 +707,10 @@ export class AssistantDO implements DurableObject {
 
   /** Set the alarm to the next reminder, or clear it when there is nothing. */
   private async armAlarm(notBefore?: number): Promise<void> {
-    const next = this.reminders.nextDueAt();
+    // The earlier of the next reminder and the next call dispatch to expire.
+    const dueAt = this.reminders.nextDueAt();
+    const expiresAt = this.devices.nextExpiryAt();
+    const next = dueAt === null ? expiresAt : expiresAt === null ? dueAt : Math.min(dueAt, expiresAt);
 
     if (next === null) {
       if (notBefore === undefined) {

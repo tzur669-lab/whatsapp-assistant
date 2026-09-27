@@ -14,6 +14,10 @@ it is the way it is; this file is only what to do.
 | `POST /wa/webhook` | Inbound messages. HMAC first, then parse, then allowlist. |
 | `GET /oauth/google/start?id=…` | Redeems a one-time connect link, redirects to Google. |
 | `GET /oauth/google/callback` | Exchanges the code and stores the grant. |
+| `POST /device/pair` | The phone app trades a `/pair` code for its device token. |
+| `GET /device/dispatch/:id` | The app fetches a call request after the push wakes it. Device token only. |
+| `POST /device/report` | The app reports how a call ended: a count and an outcome, never a name or number. |
+| `POST /device/push-token` | The app sends its rotated FCM address. |
 
 **Durable Object** — one instance, `AssistantDO` named `singleton`. It holds the
 SQLite schema, the reminder alarm, and every confirmation gate.
@@ -29,7 +33,8 @@ SQLite schema, the reminder alarm, and every confirmation gate.
 - The alarm itself fires per reminder, not on a schedule.
 
 **Chat commands** — `/help`, `/status`, `/digest`, `/shabbat`, `/ical`,
-`/birthday`, `/pause`, `/resume`, `/budget`, `/connect google`, `/ping`.
+`/birthday`, `/pause`, `/resume`, `/budget`, `/connect google`, `/pair`,
+`/pair off`, `/ping`.
 
 ## Deploying to staging
 

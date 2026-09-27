@@ -30,6 +30,7 @@ const INVOCATIONS: Record<Command['kind'], string> = {
   resume: '/resume',
   budget: '/budget',
   connect_google: '/connect google',
+  pair: '/pair',
   digest: '/digest',
   shabbat: '/shabbat',
   ical: '/ical',

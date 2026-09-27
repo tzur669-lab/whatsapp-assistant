@@ -10,6 +10,8 @@ export type Command =
   | { kind: 'resume' }
   | { kind: 'budget' }
   | { kind: 'connect_google' }
+  /** `/pair` issues a code for the phone app; `/pair off` unpairs (PLAN §6.17). */
+  | { kind: 'pair'; off: boolean }
   /**
    * `/digest`, `/digest 7`, `/digest off` (PLAN §6.12). The only command that
    * carries a value, so it is matched separately from the fixed table below.
@@ -41,6 +43,8 @@ const COMMANDS: ReadonlyArray<readonly [RegExp, Command]> = [
   [/^\/shabbat\s+on$/i, { kind: 'shabbat', set: true }],
   [/^\/shabbat\s+off$/i, { kind: 'shabbat', set: false }],
   [/^\/connect\s+google$/i, { kind: 'connect_google' }],
+  [/^\/pair$/i, { kind: 'pair', off: false }],
+  [/^\/pair\s+off$/i, { kind: 'pair', off: true }],
 ];
 
 const DIGEST = /^\/digest(?:\s+(off|\d{1,2}))?$/i;

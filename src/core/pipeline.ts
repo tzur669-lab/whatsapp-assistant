@@ -43,6 +43,9 @@ import { applyAnswer, parseAnswer } from '../nlu/answer.js';
 import { validateIntentDraft } from '../nlu/intent-schema.js';
 import { checkNamedWeekdays } from '../nlu/weekday-check.js';
 import type { CallDispatcher } from '../device/calls.js';
+import type { DeviceStore } from '../device/store.js';
+import { PAIRING_TTL_MS } from '../device/store.js';
+import { callText } from '../render/calls.js';
 import { reAsk } from '../render/clarify.js';
 import { toolCatalog } from '../tools/registry.js';
 import { budgetState } from '../policy/window.js';
@@ -76,6 +79,8 @@ export type Services = {
   fetchImpl?: typeof fetch;
   /** Reaches the paired phone (§6.17). Absent until calls are configured. */
   calls?: CallDispatcher;
+  /** Pairing and unpairing the phone (§6.17). Absent without a device pepper. */
+  devices?: DeviceStore;
 };
 
 export type PipelineDeps = {
@@ -518,6 +523,9 @@ async function renderCommand(command: Command, deps: PipelineDeps, now: number):
     case 'connect_google':
       return connectLinkFor(deps);
 
+    case 'pair':
+      return pairSetting(command.off, deps);
+
     case 'digest':
       return digestSetting(command, deps);
 
@@ -551,6 +559,25 @@ async function renderCommand(command: Command, deps: PipelineDeps, now: number):
     default:
       return statusText.notAvailableYet;
   }
+}
+
+/**
+ * `/pair` and `/pair off` (PLAN §6.17).
+ *
+ * The code is a capability, like the connect link: whoever types it into the
+ * app becomes the phone calls are sent to. So it is 256 random bits, single
+ * use, ten minutes, and only its hash is kept. It goes out on the same channel
+ * the connect link does — the allowlisted chat — and nowhere else.
+ */
+async function pairSetting(off: boolean, deps: PipelineDeps): Promise<string> {
+  const devices = deps.services?.devices;
+  if (!devices) return callText.notConfigured('he');
+
+  if (off) {
+    return devices.revoke(deps.principal) > 0 ? callText.unpaired('he') : callText.nothingPaired('he');
+  }
+  const { code } = await devices.createPairing(deps.principal);
+  return callText.pairingCode(code, PAIRING_TTL_MS / 60_000, 'he');
 }
 
 /**
