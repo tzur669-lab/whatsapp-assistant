@@ -1845,9 +1845,9 @@ gates in §11.2 apply unchanged: an invented number is an invented slot.
 - [x] Default event duration: **none — CLARIFY instead** (2026-09-24). Default reminder text when none given is still open.
 - [x] **A slot that belongs to another tool is removed, not a reason to reject the draft** (2026-09-26, decided on measurement). Strict structured output cannot express per-intent slot sets, so the wire schema offers one flat union and a model sometimes fills another tool's slot. The complete `qwen3.8-27b` corpus lost four otherwise-perfect answers to exactly this, all `attendees` on a delete; removed, all four scored correct and intent accuracy went from 97.4% to 100% (§11.9). The rule is drawn tightly because strict is still what makes the output safe to act on: only a name another tool declares is removed, only at the top of `slots`; a name no tool declares, any nested extra key, and any declared slot with a bad value all still reject. The removed names are counted in `nlu_parsed` and in the eval report, so a model that starts leaning on the tolerance is visible. The wire schema and the prompt are byte-identical before and after — this is validation only, and prompt v4 is still v4.
 - [ ] Should moving or deleting **assistant-created** events drop to Tier 1 (execute + Undo)?
-- [ ] **FCM is a new dependency and a new processor** (§6.17). The alternative with no third party is a hibernatable WebSocket from the phone to the DO, which Android will not keep alive through Doze — so the honest choice is FCM, or a call that only works while the phone is awake. Needs approval either way.
+- [x] **FCM approved** (2026-09-27, the user). A new processor, but not a new dependency: the Worker signs a service-account JWT with WebCrypto and makes two fetches (`src/device/fcm.ts`), no SDK. What it carries is an opaque dispatch id and nothing else.
 - [ ] Android 14 restricts `USE_FULL_SCREEN_INTENT` to calling and alarm apps. **Verify a companion dialer qualifies before building.** The fallback is a high-priority heads-up notification: one more tap, no less safe.
-- [ ] Should `calls.place` be refused while `/pause` is on? A pause means "stop writing things" and a call writes to no store — but one predictable meaning of pause is worth more than the exception, so probably DENY.
+- [x] **`calls.place` is refused while `/pause` is on** (2026-09-27). One predictable meaning of pause is worth more than the exception; the policy engine denies every write when paused and a call is a write.
 - [ ] Tier 3 PIN: enable from day one?
 - [ ] When to buy the dedicated number (before or after Phase 4)?
 - [ ] [O] Encrypted export backup: yes/no, and which bucket?
@@ -2010,6 +2010,7 @@ gates in §11.2 apply unchanged: an invented number is an invented slot.
 | 2026-09-27 | **qwen on prompt v5 meets every accuracy threshold**: both hard gates 100%, intent 100%, exact slots 98.1%, off-topic 100% (§11.9). Three slot mismatches remain; `he-cal-012` reads יום שני as Tuesday |
 | 2026-09-27 | **A weekday the message names is held against the draft** (§6.2): a draft naming another weekday has that date removed and the user is asked which day, before anything resolves. Approved by the user after `he-cal-012` (יום שני read as Tuesday). Fires on that case alone across 312 recorded answers |
 | 2026-09-27 | **Primary model `qwen3.8-27b`, fallback `gpt-oss-120b`** (§4, §13; the user's decision). Replaces `gpt-oss-120b` / `gpt-oss-20b` from 2026-09-24. The gpt-oss v5 run was stopped at 20 of 156 |
+| 2026-09-27 | **B15 Worker side built** (§6.17): pairing (`/pair`, `/pair off`), device tokens as keyed hashes, dispatches that expire in two minutes, FCM v1 with no SDK, and `calls.place` at Tier 3 confirmed on the phone's screen. One reply per call, sent when the phone reports or the dispatch expires. FCM approved; `/pause` denies calls. Prompt v6 adds the tool to the catalog |
 
 ---
 
@@ -2175,9 +2176,33 @@ Worker has no contact list, no SIM and no dialer and cannot be given one. The
 design's whole value is that **four hundred contacts work from the first minute
 with nothing typed in**, and its whole safety is that the device's contact list is
 the allowlist: a number written in a message is refused, so no phone number ever
-enters a draft, the database, a log, or Meta. Blocked on two things — approval for
-FCM as a new processor, and the same prompt-version gate as B6 and B8, since
-`calls.place` adds a tool to the catalog even though it needs no new slot.
+enters a draft, the database, a log, or Meta.
+
+⏳ **Worker side built 2026-09-27** (`src/device/`, `src/tools/calls.ts`); the
+Android app is its own repo and comes next. Prompt v6 carries the tool; its eval
+is running. What building it decided, beyond §6.17:
+
+- **One reply, at the end.** §6.17's table lists "מחכה לאישור בטלפון" and "יש כמה
+  אנשי קשר" as replies, but sending them *and* the outcome would be two messages
+  for one command (invariant 10). The dispatch is silent in chat — the phone's
+  full-screen notification is the feedback — and the one reply is the outcome:
+  placed, cancelled, no contact, or unavailable (push failed, or two minutes
+  without a report). The in-between states are the phone's to show.
+- **The phone's screen answers every escalation, not only the tier.** A stale,
+  forwarded or uncertain-voice request still goes to the device rather than to a
+  chat button: the device shows the resolved number, which is strictly more
+  than a chat confirmation could, and it is out of band from the channel an
+  injection would use. The policy engine marks this `confirmOnDevice`, only for
+  a tool whose registry entry says `confirmation: 'device'`; the audit row says
+  `CONFIRM_ON_DEVICE` / `dispatched`.
+- **A fourth route, `POST /device/push-token`.** FCM rotates registration
+  tokens, and a phone that cannot say so stops receiving calls silently.
+- **The report's schema is strict at the Worker.** A report carrying a name or a
+  number is a 400, so "no number reaches the Worker" holds even against a buggy
+  app, not only against a well-behaved one.
+- **Unanswered dispatches are reported before any hold** in the alarm, so
+  Shabbat and the 24-hour window cannot delay a reply to something asked for a
+  minute ago.
 
 ### Deliberately not doing
 

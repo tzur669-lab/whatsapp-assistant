@@ -70,5 +70,18 @@ Put-Secret 'WA_ACCESS_TOKEN' (Read-Hidden 'WA_ACCESS_TOKEN (System User token, w
 Put-Secret 'GOOGLE_CLIENT_SECRET' (Read-Hidden 'GOOGLE_CLIENT_SECRET (Google Cloud > Credentials > OAuth client)')
 Put-Secret 'ALLOWLIST_WA_IDS' (Read-Host 'ALLOWLIST_WA_IDS (your number, digits only, e.g. 9725XXXXXXXX)')
 
+# Calls (PLAN 6.17): the Firebase service account's key, read from the file
+# Firebase downloads, compacted to one line, and sent straight to Cloudflare.
+$saPath = Read-Host 'Path to the Firebase service-account JSON file (Enter to skip)'
+if (-not [string]::IsNullOrWhiteSpace($saPath)) {
+  $saPath = $saPath.Trim('"')
+  $account = Get-Content -Raw -LiteralPath $saPath | ConvertFrom-Json
+  if ($account.type -ne 'service_account' -or -not $account.private_key) {
+    throw 'That file is not a service-account key.'
+  }
+  Put-Secret 'FCM_SA_KEY' ($account | ConvertTo-Json -Compress -Depth 5)
+  Write-Host "  Delete the downloaded key file now: $saPath"
+}
+
 Write-Host ''
 Write-Host 'Done. Nothing was saved to disk.'
