@@ -24,3 +24,7 @@ eval-*.log
 # partial one would land in every commit made while a run is going. A recording
 # worth keeping as a certification record is added explicitly with `git add -f`.
 test/evals/recordings/
+
+# Voice clips are recordings of a real voice: personal data, never committed.
+test/evals/voice/clips/*
+!test/evals/voice/clips/README.md
