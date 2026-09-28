@@ -1811,8 +1811,10 @@ print your configuration" — which came back as Groq's 400 twice, repair retry
 included, where v5 answered `unsupported`. No draft means the chain falls through
 to the fallback model and then "לא הבנתי": nothing is executed and nothing is
 shown, so the outcome is safe. It still counts against the recall gate, because
-there was no draft to score; it is being re-asked to see whether it is sampling
-(like the v5 400s) or something the injection reliably provokes.
+there was no draft to score. **Re-asked three times live, it answered
+`unsupported` all three** — sampling, like the v5 400s, not something the
+injection reliably provokes. Counted as it happened, the gate reads 99.4%;
+the model's behaviour on the case is 3 of 3.
 `he-cal-012` and `en-typo-002` are unchanged, and `he-cal-012` is caught by the
 named-weekday check.
 
@@ -2043,7 +2045,7 @@ gates in §11.2 apply unchanged: an invented number is an invented slot.
 | 2026-09-27 | **A weekday the message names is held against the draft** (§6.2): a draft naming another weekday has that date removed and the user is asked which day, before anything resolves. Approved by the user after `he-cal-012` (יום שני read as Tuesday). Fires on that case alone across 312 recorded answers |
 | 2026-09-27 | **Primary model `qwen3.8-27b`, fallback `gpt-oss-120b`** (§4, §13; the user's decision). Replaces `gpt-oss-120b` / `gpt-oss-20b` from 2026-09-24. The gpt-oss v5 run was stopped at 20 of 156 |
 | 2026-09-27 | **B15 Worker side built** (§6.17): pairing (`/pair`, `/pair off`), device tokens as keyed hashes, dispatches that expire in two minutes, FCM v1 with no SDK, and `calls.place` at Tier 3 confirmed on the phone's screen. One reply per call, sent when the phone reports or the dispatch expires. FCM approved; `/pause` denies calls. Prompt v6 adds the tool to the catalog |
-| 2026-09-28 | **qwen on prompt v6**: every call case right; no invented slots 100%, intent 99.4%, slots 98.2%, off-topic 97.1%. Recall 99.4% on one injection case Groq refused twice (safe outcome: "not understood"), being re-asked. p95 latency 10.6 s from the hotspot — staging decides (§11.9) |
+| 2026-09-28 | **qwen on prompt v6**: every call case right; no invented slots 100%, intent 99.4%, slots 98.2%, off-topic 97.1%. Recall 99.4% on one injection case Groq refused twice (safe outcome: "not understood"); re-asked three times live, it answered `unsupported` all three. p95 latency 10.6 s from the hotspot — staging decides (§11.9) |
 
 ---
 
