@@ -159,8 +159,15 @@ describe('cold start', () => {
     //
     // So this catches a catastrophe — a missing index, an accidental O(n²), a
     // migration that rebuilds a table — and nothing subtler. The number worth
-    // watching (~1 ms, 10% of a request) comes from `pnpm bench`, which is run
-    // deliberately and on a quiet machine. §4.1 records it.
+    // watching comes from `pnpm bench`, which is run deliberately and on a
+    // quiet machine. §4.1 records it.
+    //
+    // 100 ms rather than 50 since migration 10 (2026-09-29): its seven ALTERs
+    // added ~4 ms on a quiet machine, and a loaded one multiplies that past 50.
+    // The bound can afford it. A fresh schema is applied once in a Durable
+    // Object's life — the version is stored, so every later start applies
+    // nothing — and a Durable Object request may use 30 s of CPU, not the
+    // Worker's 10 ms (checked against Cloudflare's limits page, 2026-09-29).
     const migrate = await medianMs(10, () => {
       const fresh = new TestSqlDriver();
       new Repository(fresh).migrate(MIGRATIONS);
@@ -168,6 +175,6 @@ describe('cold start', () => {
     });
 
     expect(migrate, `${migrate.toFixed(3)} ms to apply ${MIGRATIONS.length} migrations`)
-      .toBeLessThan(50);
+      .toBeLessThan(100);
   });
 });

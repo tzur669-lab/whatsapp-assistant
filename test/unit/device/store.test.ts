@@ -1,14 +1,17 @@
 /**
- * The device companion's state (PLAN §6.17): pairing, the device token, and the
- * lifecycle of a call dispatch. Every credential here is a bearer secret, so the
- * tests are about what a replay, a guess or a stale row can and cannot do.
+ * The paired phone's state (PLAN §6.17, §6.18): pairing by MAC, the signing
+ * key, nonces, and the lifecycle of a call dispatch. The tests are about what a
+ * replay, a guess, an interceptor or a stale row can and cannot do.
  */
 import { describe, expect, it, beforeEach, afterEach } from 'vitest';
 import { readdirSync, readFileSync } from 'node:fs';
 import { Repository } from '../../../src/core/repo.js';
 import { DeviceStore, DISPATCH_TTL_MS, PAIRING_TTL_MS } from '../../../src/device/store.js';
 import { parseKeyring } from '../../../src/security/crypto.js';
+import { parsePair } from '../../../src/channels/app/parse.js';
+import { CLOCK_SKEW_MS } from '../../../src/channels/app/verify.js';
 import { TestSqlDriver } from '../../integration/sqlite-driver.js';
+import { FakePhone, FAKE_PUSH_TOKEN } from '../../integration/fake-phone.js';
 
 const MIGRATIONS = readdirSync(new URL('../../../migrations/', import.meta.url))
   .filter((file) => file.endsWith('.sql'))
@@ -22,7 +25,7 @@ const NOW = Date.parse('2026-09-27T12:00:00Z');
 const PRINCIPAL = 'p_test';
 const PEPPER = 'test-pepper-not-a-real-secret';
 const KEYRING = parseKeyring({ TOKEN_ENC_KEY_V1: Buffer.alloc(32, 7).toString('base64') });
-const PUSH = 'fake-fcm-registration-token';
+const BOOTSTRAP = 'ABCD-EFGH-JKMN-PQRS-TVWX';
 
 describe('DeviceStore', () => {
   let driver: TestSqlDriver;
@@ -37,80 +40,137 @@ describe('DeviceStore', () => {
   });
   afterEach(() => driver.close());
 
-  const paired = async () => {
+  const request = async (phone: FakePhone, code: string, timestamp = clock) =>
+    parsePair(await phone.pairBody(code, { timestamp }))!;
+
+  const pairWith = async (phone: FakePhone, code: string, bootstrapCode: string | null = null) =>
+    store.pair(await request(phone, code), { principal: PRINCIPAL, bootstrapCode });
+
+  const paired = async (phone = new FakePhone()) => {
     const { code } = await store.createPairing(PRINCIPAL);
-    const result = await store.pair(code, PUSH);
+    const result = await pairWith(phone, code);
     if (!result.ok) throw new Error(`pairing failed: ${result.reason}`);
-    return result.value;
+    return { phone, deviceId: result.value.deviceId };
   };
 
-  describe('pairing', () => {
-    it('issues a 256-bit code and stores only its hash', async () => {
+  describe('pairing with a /pair code', () => {
+    it('issues 20 Crockford characters, shown in groups, and stores no plain copy', async () => {
       const { code } = await store.createPairing(PRINCIPAL);
-      expect(code).toMatch(/^[A-Za-z0-9_-]{43}$/);
-      expect(JSON.stringify(driver.exec('SELECT * FROM device_pairings'))).not.toContain(code);
+      expect(code).toMatch(/^([0-9A-HJKMNP-TV-Z]{4}-){4}[0-9A-HJKMNP-TV-Z]{4}$/);
+      const rows = JSON.stringify(driver.exec('SELECT * FROM device_pairings'));
+      expect(rows).not.toContain(code.replace(/-/g, ''));
+      expect(rows).toContain('enc.1.');
     });
 
-    it('trades the code for a device token, once', async () => {
-      const { code } = await store.createPairing(PRINCIPAL);
-      const first = await store.pair(code, PUSH);
-      expect(first.ok).toBe(true);
-      expect(await store.pair(code, PUSH)).toEqual({ ok: false, reason: 'already_used' });
+    it('pairs the phone that proves it knows the code', async () => {
+      const { phone, deviceId } = await paired();
+      expect(store.signingDevice(deviceId)).toEqual({ id: deviceId, principal: PRINCIPAL, publicKey: phone.publicKey });
     });
 
-    it('refuses an expired code', async () => {
+    it('lets the same key retry after a lost answer, and refuses any other key', async () => {
       const { code } = await store.createPairing(PRINCIPAL);
+      const phone = new FakePhone();
+      const first = await pairWith(phone, code);
+      const again = await pairWith(phone, code);
+      expect(again).toEqual({ ok: true, value: { deviceId: first.ok ? first.value.deviceId : '', reused: true } });
+
+      expect(await pairWith(new FakePhone(), code)).toEqual({ ok: false, reason: 'already_used' });
+    });
+
+    it('refuses a MAC over a swapped key — what an interceptor would send', async () => {
+      const { code } = await store.createPairing(PRINCIPAL);
+      const honest = await request(new FakePhone(), code);
+      const swapped = { ...honest, publicKey: new FakePhone().publicKey };
+      expect(await store.pair(swapped, { principal: PRINCIPAL, bootstrapCode: null })).toEqual({
+        ok: false,
+        reason: 'not_found',
+      });
+    });
+
+    it('refuses an expired code, a wrong code, and a stale timestamp', async () => {
+      const { code } = await store.createPairing(PRINCIPAL);
+      expect((await pairWith(new FakePhone(), 'ZZZZ-ZZZZ-ZZZZ-ZZZZ-ZZZZ')).ok).toBe(false);
+
+      const stale = await request(new FakePhone(), code, clock - CLOCK_SKEW_MS - 1);
+      expect(await store.pair(stale, { principal: PRINCIPAL, bootstrapCode: null })).toEqual({
+        ok: false,
+        reason: 'expired',
+      });
+
       clock += PAIRING_TTL_MS + 1;
-      expect(await store.pair(code, PUSH)).toEqual({ ok: false, reason: 'expired' });
+      expect(await pairWith(new FakePhone(), code)).toEqual({ ok: false, reason: 'not_found' });
     });
 
-    it('refuses a code it never issued', async () => {
-      const result = await store.pair('A'.repeat(43), PUSH);
-      expect(result).toEqual({ ok: false, reason: 'not_found' });
-    });
-
-    it('stores the device token only as a hash, and the push address only encrypted', async () => {
-      const { deviceToken } = await paired();
+    it('stores the push address only encrypted', async () => {
+      await paired();
       const rows = JSON.stringify(driver.exec('SELECT * FROM devices'));
-      expect(rows).not.toContain(deviceToken);
-      expect(rows).not.toContain(PUSH);
+      expect(rows).not.toContain(FAKE_PUSH_TOKEN);
       expect(rows).toContain('enc.1.');
     });
 
     it('replaces the previous phone: one paired device at a time', async () => {
       const first = await paired();
       const second = await paired();
-      expect(await store.authenticate(first.deviceToken)).toBeNull();
-      expect((await store.authenticate(second.deviceToken))?.id).toBe(second.deviceId);
+      expect(store.signingDevice(first.deviceId)).toBeNull();
+      expect(store.signingDevice(second.deviceId)?.id).toBe(second.deviceId);
     });
   });
 
-  describe('the device token', () => {
-    it('authenticates the paired device', async () => {
-      const { deviceToken, deviceId } = await paired();
-      const device = await store.authenticate(deviceToken);
-      expect(device).toMatchObject({ id: deviceId, principal: PRINCIPAL });
+  describe('the bootstrap code', () => {
+    it('pairs once, and a used code stays used after maintenance', async () => {
+      const first = await pairWith(new FakePhone(), BOOTSTRAP, BOOTSTRAP);
+      expect(first.ok).toBe(true);
+
+      store.purge();
+      clock += 24 * 60 * 60 * 1000;
+      store.purge();
+      expect(await pairWith(new FakePhone(), BOOTSTRAP, BOOTSTRAP)).toEqual({ ok: false, reason: 'already_used' });
     });
 
-    it('refuses a wrong token and a malformed one', async () => {
-      await paired();
-      expect(await store.authenticate('B'.repeat(43))).toBeNull();
-      expect(await store.authenticate('not a token')).toBeNull();
-      expect(await store.authenticate('')).toBeNull();
+    it('is re-armed by a new code, which replaces the phone paired with the old one', async () => {
+      const first = await pairWith(new FakePhone(), BOOTSTRAP, BOOTSTRAP);
+      const next = 'ZYXW-VTSR-QPNM-KJHG-FEDC';
+      const second = await pairWith(new FakePhone(), next, next);
+      expect(second.ok).toBe(true);
+      expect(first.ok && store.signingDevice(first.value.deviceId)).toBeNull();
     });
 
-    it('refuses every token after /pair off', async () => {
-      const { deviceToken } = await paired();
+    it('accepts what the user typed, however it was typed', async () => {
+      expect((await pairWith(new FakePhone(), 'abcd efgh jkmn pqrs tvwx', BOOTSTRAP)).ok).toBe(true);
+    });
+  });
+
+  describe('signed requests', () => {
+    it('spends a nonce once', async () => {
+      const { deviceId } = await paired();
+      expect(store.claimNonce(deviceId, 'a'.repeat(32), clock + 60_000)).toBe(true);
+      expect(store.claimNonce(deviceId, 'a'.repeat(32), clock + 60_000)).toBe(false);
+    });
+
+    it('forgets a nonce only after it could no longer be accepted', async () => {
+      const { deviceId } = await paired();
+      store.claimNonce(deviceId, 'b'.repeat(32), clock + 60_000);
+      clock += 59_000;
+      expect(store.claimNonce(deviceId, 'b'.repeat(32), clock + 60_000)).toBe(false);
+      clock += 2_000;
+      expect(store.claimNonce(deviceId, 'b'.repeat(32), clock + 60_000)).toBe(true);
+    });
+
+    it('knows no revoked device', async () => {
+      const { deviceId } = await paired();
       expect(store.revoke(PRINCIPAL)).toBe(1);
-      expect(await store.authenticate(deviceToken)).toBeNull();
+      expect(store.signingDevice(deviceId)).toBeNull();
+      expect(store.isActive(deviceId)).toBe(false);
       expect(store.activeDevice(PRINCIPAL)).toBeNull();
     });
 
     it('gives the push address back only decrypted, only for the active device', async () => {
       const { deviceId } = await paired();
-      expect(await store.pushTokenOf(deviceId)).toBe(PUSH);
+      expect(await store.pushTokenOf(deviceId)).toBe(FAKE_PUSH_TOKEN);
       await store.setPushToken(deviceId, 'rotated-token');
       expect(await store.pushTokenOf(deviceId)).toBe('rotated-token');
+      store.forgetPushToken(deviceId);
+      expect(await store.pushTokenOf(deviceId)).toBeNull();
     });
   });
 
@@ -193,6 +253,11 @@ describe('DeviceStore', () => {
       store.purge();
       const ids = driver.exec('SELECT id FROM call_dispatches').map((r) => r['id']);
       expect(ids).toEqual([open.id]);
+
+      // A used /pair code is kept until it expires, so a lost answer can be retried.
+      expect(driver.exec('SELECT * FROM device_pairings')).toHaveLength(1);
+      clock += PAIRING_TTL_MS;
+      store.purge();
       expect(driver.exec('SELECT * FROM device_pairings')).toEqual([]);
     });
   });

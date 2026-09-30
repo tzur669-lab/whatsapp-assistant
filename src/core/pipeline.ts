@@ -44,6 +44,7 @@ import { validateIntentDraft } from '../nlu/intent-schema.js';
 import { checkNamedWeekdays } from '../nlu/weekday-check.js';
 import type { CallDispatcher } from '../device/calls.js';
 import type { DeviceStore } from '../device/store.js';
+import type { AppOutbox } from '../channels/app/outbox.js';
 import { PAIRING_TTL_MS } from '../device/store.js';
 import { callText } from '../render/calls.js';
 import { reAsk } from '../render/clarify.js';
@@ -54,7 +55,7 @@ import { he } from '../render/he.js';
 import { statusText } from '../render/status.js';
 import { eventText } from '../render/events.js';
 import { localPartsOf, offsetMinutesAt, ZONE } from '../time/tz.js';
-import { STALE_MESSAGE_MS } from '../channels/whatsapp/limits.js';
+import { STALE_MESSAGE_MS } from '../channels/limits.js';
 
 /** The stateful collaborators the Durable Object owns and hands in. */
 export type Services = {
@@ -81,6 +82,8 @@ export type Services = {
   calls?: CallDispatcher;
   /** Pairing and unpairing the phone (§6.17). Absent without a device pepper. */
   devices?: DeviceStore;
+  /** Messages waiting for the app (§6.18). Present only on the app channel. */
+  outbox?: AppOutbox;
 };
 
 export type PipelineDeps = {
@@ -95,6 +98,8 @@ export type PipelineDeps = {
   services?: Services;
   /** Set by `handleInbound` for the turn it is handling (§6.14). */
   watch?: Stopwatch;
+  /** The channel this turn arrived on. WhatsApp when absent (§6.18). */
+  channel?: 'whatsapp' | 'app';
 };
 
 export type PipelineOutcome =
@@ -104,6 +109,12 @@ export type PipelineOutcome =
       buttons?: OutboundButton[];
       /** The next reminder moved; the caller re-arms its alarm. */
       rescheduleAlarm?: boolean;
+      /**
+       * For a voice note: the same answer without the echo of what was heard.
+       * Anything stored — the app's outbox — keeps this one, because the
+       * transcript is never written down (§6.10, §6.18).
+       */
+      withoutEcho?: string;
     }
   | {
       action: 'none';
@@ -284,7 +295,11 @@ async function handleAudio(
 
   const transcribe = deps.transcribe;
   const outcome = await timed(deps, 'voice', () =>
-    transcribe({ mediaId: event.mediaId, mimeType: event.mimeType }),
+    transcribe({
+      mediaId: event.mediaId,
+      mimeType: event.mimeType,
+      ...(event.bytes ? { bytes: event.bytes } : {}),
+    }),
   );
 
   if (outcome.status !== 'ok') {
@@ -311,7 +326,7 @@ async function handleAudio(
 
   // The echo goes on every answer, including the ones that worked. It is the
   // only place the transcript is ever shown, and it goes only to its author.
-  return { ...reply, text: `${he.heard(outcome.text)}\n\n${reply.text}` };
+  return { ...reply, text: `${he.heard(outcome.text)}\n\n${reply.text}`, withoutEcho: reply.text };
 }
 
 // -- text ---------------------------------------------------------------------
@@ -503,7 +518,7 @@ async function renderCommand(command: Command, deps: PipelineDeps, now: number):
 
   switch (command.kind) {
     case 'help':
-      return he.help;
+      return deps.channel === 'app' ? he.helpApp : he.help;
     case 'ping':
       return he.pong;
 
@@ -518,6 +533,7 @@ async function renderCommand(command: Command, deps: PipelineDeps, now: number):
       return statusText.resumed;
 
     case 'budget':
+      if (deps.channel === 'app') return statusText.budgetNotInApp;
       return statusText.budget(budgetState(monthlySentOf(repo, now)));
 
     case 'connect_google':
@@ -546,7 +562,7 @@ async function renderCommand(command: Command, deps: PipelineDeps, now: number):
       return statusText.status({
         connected: deps.services?.google?.isConnected() ?? false,
         pendingReminders: deps.services?.reminders.listUpcoming(deps.principal).length ?? 0,
-        budget: budgetState(monthlySentOf(repo, now)),
+        ...(deps.channel === 'app' ? {} : { budget: budgetState(monthlySentOf(repo, now)) }),
         llmFallbacksToday: repo.counters(Repository.dayKey(now)).fallbacks,
         undeliveredToday: repo.undeliveredSince(now - DAY_MS),
         digestHour: repo.digestHour(),
@@ -572,6 +588,24 @@ async function renderCommand(command: Command, deps: PipelineDeps, now: number):
 async function pairSetting(off: boolean, deps: PipelineDeps): Promise<string> {
   const devices = deps.services?.devices;
   if (!devices) return callText.notConfigured('he');
+
+  if (deps.channel === 'app') {
+    // A code in a reply would be readable to anything intercepting the
+    // connection; in the app a phone is paired only with a code typed in by
+    // hand (§6.18).
+    if (!off) return callText.pairNotInApp('he');
+
+    const services = deps.services;
+    const revoked = deps.repo.transaction(() => {
+      // Nothing may wait for a phone that is no longer ours. Reminders already
+      // handed to the outbox go back in the queue; with no device paired they
+      // are held until the next one is (§6.18).
+      const cleared = services?.outbox?.clearForRevoke() ?? { reminderIds: [] };
+      for (const id of cleared.reminderIds) services?.reminders.reopenForRetry(id);
+      return devices.revoke(deps.principal);
+    });
+    return revoked > 0 ? callText.unpairedApp('he') : callText.nothingPaired('he');
+  }
 
   if (off) {
     return devices.revoke(deps.principal) > 0 ? callText.unpaired('he') : callText.nothingPaired('he');
@@ -736,6 +770,7 @@ function turnOf(
       log: deps.log,
       lastInboundAt: deps.repo.lastInboundAt(deps.principal),
       monthlySent: monthlySentOf(deps.repo, now),
+      ...(deps.channel ? { channel: deps.channel } : {}),
       ...(services.calendar ? { calendar: services.calendar } : {}),
       ...(services.ical ? { ical: services.ical } : {}),
       ...(services.calls ? { calls: services.calls } : {}),

@@ -1,6 +1,19 @@
 # Set the staging Worker's secrets (PLAN §7.2). Run by the human, never by Claude Code.
 #
-#   powershell -ExecutionPolicy Bypass -File scripts\set-staging-secrets.ps1
+#   powershell -ExecutionPolicy Bypass -File scripts\set-staging-secrets.ps1              # the app (default)
+#   powershell -ExecutionPolicy Bypass -File scripts\set-staging-secrets.ps1 -Channel whatsapp
+#   powershell -ExecutionPolicy Bypass -File scripts\set-staging-secrets.ps1 -PairCode    # a new pairing code, only
+#
+# -Channel says which secrets to ask for. It does not switch the Worker: CHANNEL
+# is a var in wrangler.jsonc. With the app (PLAN §6.18) the Meta secrets are not
+# needed and are not asked for.
+#
+# -PairCode makes a fresh bootstrap pairing code, sets it as PAIR_BOOTSTRAP_CODE,
+# and shows it ONCE so it can be typed into the app. It is the one exception to
+# "nothing is echoed" below, and it is on its own switch, away from the first-run
+# keys: re-arming pairing after a lost phone must never regenerate
+# TOKEN_ENC_KEY_V1. Each code pairs one phone; a new code replaces the old phone.
+# Do not run it inside Start-Transcript, which would write the code to a file.
 #
 # Staging only: the environment is fixed below and cannot be passed in. Production
 # secrets are set by hand, one at a time, and never from a script (PLAN §7.2).
@@ -12,6 +25,11 @@
 #   Leave one blank to skip it and set it on a later run.
 # - Nothing is written to disk, and nothing is echoed except WA_VERIFY_TOKEN,
 #   which Meta's webhook form needs pasted into it.
+
+param(
+  [switch]$PairCode,
+  [ValidateSet('app', 'whatsapp')][string]$Channel = 'app'
+)
 
 $ErrorActionPreference = 'Stop'
 $Env = 'staging'
@@ -52,7 +70,33 @@ function Read-Hidden([string]$Prompt) {
   finally { [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($bstr) }
 }
 
-Write-Host "Setting secrets for the '$Env' Worker (wa-assistant-staging)."
+# 20 Crockford base32 characters, 5 bits each: 100 bits, uniform (256 = 8 x 32).
+# Enough against offline guessing from the pairing MAC, short enough to type.
+function New-PairingCode {
+  $alphabet = '0123456789ABCDEFGHJKMNPQRSTVWXYZ'
+  $buffer = New-Object byte[] 20
+  $rng = [System.Security.Cryptography.RandomNumberGenerator]::Create()
+  $rng.GetBytes($buffer)
+  $rng.Dispose()
+  return -join ($buffer | ForEach-Object { $alphabet[$_ -band 31] })
+}
+
+if ($PairCode) {
+  $code = New-PairingCode
+  Put-Secret 'PAIR_BOOTSTRAP_CODE' $code
+  $shown = ($code -split '(.{4})' | Where-Object { $_ }) -join '-'
+  Write-Host ''
+  Write-Host 'Type this into the app''s pairing screen. It is shown once and saved nowhere:'
+  Write-Host "  $shown"
+  Write-Host ''
+  Write-Host 'Pairing with it replaces whichever phone was paired before.'
+  Write-Host 'Pair over mobile data, not the home Wi-Fi.'
+  $null = Read-Host 'Press Enter once it is typed in, to clear the screen'
+  Clear-Host
+  exit 0
+}
+
+Write-Host "Setting secrets for the '$Env' Worker (wa-assistant-staging), channel: $Channel."
 Write-Host ''
 
 $generate = Read-Host 'Generate the internal keys? Only on the FIRST run [y/N]'
@@ -61,19 +105,32 @@ if ($generate -eq 'y') {
   Put-Secret 'TOKEN_ENC_KEY_V1' (Random-Base64 32)
   Put-Secret 'LOG_HASH_KEY' (Random-Base64 32)
   Put-Secret 'DEVICE_TOKEN_PEPPER' (Random-Base64 32)
-  Put-Secret 'WA_VERIFY_TOKEN' $verify
-  Write-Host ''
-  Write-Host 'Paste this into Meta > WhatsApp > Configuration > Webhook > Verify token:'
-  Write-Host "  $verify"
+  if ($Channel -eq 'whatsapp') {
+    Put-Secret 'WA_VERIFY_TOKEN' $verify
+    Write-Host ''
+    Write-Host 'Paste this into Meta > WhatsApp > Configuration > Webhook > Verify token:'
+    Write-Host "  $verify"
+  }
   Write-Host ''
 }
 
 Write-Host 'External values. Input is hidden; press Enter to skip one.'
 Put-Secret 'GROQ_API_KEY' (Read-Hidden 'GROQ_API_KEY (console.groq.com > API Keys)')
-Put-Secret 'WA_APP_SECRET' (Read-Hidden 'WA_APP_SECRET (Meta app > App settings > Basic > App secret)')
-Put-Secret 'WA_ACCESS_TOKEN' (Read-Hidden 'WA_ACCESS_TOKEN (System User token, whatsapp_business_messaging)')
+if ($Channel -eq 'whatsapp') {
+  Put-Secret 'WA_APP_SECRET' (Read-Hidden 'WA_APP_SECRET (Meta app > App settings > Basic > App secret)')
+  Put-Secret 'WA_ACCESS_TOKEN' (Read-Hidden 'WA_ACCESS_TOKEN (System User token, whatsapp_business_messaging)')
+}
 Put-Secret 'GOOGLE_CLIENT_SECRET' (Read-Hidden 'GOOGLE_CLIENT_SECRET (Google Cloud > Credentials > OAuth client)')
-Put-Secret 'ALLOWLIST_WA_IDS' (Read-Host 'ALLOWLIST_WA_IDS (your number, digits only, e.g. 9725XXXXXXXX)')
+
+# The identity every record belongs to is derived from the FIRST number here,
+# on the app channel too. Changing it — or its order — orphans every reminder,
+# the paired phone and the Google connection (PLAN §6.18). Set it once.
+$ids = (Read-Host 'ALLOWLIST_WA_IDS (your number, digits only, e.g. 9725XXXXXXXX; Enter skips)').Trim()
+if ($ids -ne '' -and $ids -notmatch '^[0-9]{8,15}(,[0-9]{8,15})*$') {
+  Write-Host '  That is not a list of numbers. Nothing was sent.'
+} else {
+  Put-Secret 'ALLOWLIST_WA_IDS' $ids
+}
 
 # Calls (PLAN 6.17): the Firebase service account's key, read from the file
 # Firebase downloads, compacted to one line, and sent straight to Cloudflare.
@@ -102,4 +159,7 @@ if (-not [string]::IsNullOrWhiteSpace($saPath)) {
 }
 
 Write-Host ''
+if ($Channel -eq 'app') {
+  Write-Host 'For the app, also run once with -PairCode to get the code the phone pairs with.'
+}
 Write-Host 'Done. Nothing was saved to disk.'

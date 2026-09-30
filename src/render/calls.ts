@@ -69,6 +69,27 @@ export const callText = {
         ].join('\n');
   },
 
+  /** In the app a call is confirmed on the same phone, in a notification (§6.18). */
+  sentToPhone(lang: Lang): string {
+    return lang === 'he'
+      ? 'בקשת השיחה נשלחה. האישור בהתראה בטלפון.'
+      : 'Call request sent. Confirm it in the notification.';
+  },
+
+  /** `/pair` in the app: a code in a reply would be readable on the way (§6.18). */
+  pairNotInApp(lang: Lang): string {
+    return lang === 'he'
+      ? 'באפליקציה מחברים טלפון חדש עם קוד צימוד חדש מסקריפט ההגדרה, לא דרך הצ׳אט.'
+      : 'In the app, a new phone is paired with a fresh code from the setup script, not through the chat.';
+  },
+
+  /** `/pair off` in the app: this phone stops being ours (§6.18). */
+  unpairedApp(lang: Lang): string {
+    return lang === 'he'
+      ? 'הטלפון נותק. כדי לחבר אותו שוב צריך קוד צימוד חדש. תזכורות שלא נמסרו יחכו לחיבור הבא.'
+      : 'The phone is unpaired. Pairing again needs a new code. Undelivered reminders wait for the next pairing.';
+  },
+
   unpaired(lang: Lang): string {
     return lang === 'he'
       ? 'הטלפון נותק. שיחות לא ייצאו עד חיבור מחדש.'

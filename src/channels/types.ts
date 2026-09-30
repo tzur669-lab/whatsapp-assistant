@@ -24,6 +24,12 @@ export type InboundAudio = {
   sentAtMs: number;
   mediaId: string;
   mimeType: string;
+  /**
+   * The recording itself, when the channel delivers it in the request (the
+   * app, §6.18) rather than as a media id to fetch. In memory only — never
+   * stored, never logged.
+   */
+  bytes?: Uint8Array;
   /** True for a pressed-and-held voice note, false for an attached audio file. */
   voiceNote: boolean;
   forwarded: boolean;

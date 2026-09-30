@@ -35,11 +35,11 @@ export const FREE_MESSAGES_PER_MONTH = 1_000;
 /** Where the app warns, leaving room to notice before delivery stops. */
 export const BUDGET_WARN_AT = 800;
 
-export type Channel = 'whatsapp' | 'calendar';
+export type Channel = 'whatsapp' | 'calendar' | 'app';
 
 export type DeliveryPlan = {
   channel: Channel;
-  reason: 'in_window' | 'window_closed' | 'budget_exhausted';
+  reason: 'in_window' | 'window_closed' | 'budget_exhausted' | 'app';
   /**
    * When to look again, for a plan that may still change. A reminder routed to
    * the calendar can come back to WhatsApp if the user writes in the meantime,
@@ -62,7 +62,16 @@ export function planDelivery(params: {
   lastInboundAt: number | null;
   nowMs: number;
   monthlySent: number;
+  /**
+   * The app has neither a window nor a budget (§6.18): a reminder goes to the
+   * phone, and no calendar stand-in is written for it.
+   */
+  channel?: 'whatsapp' | 'app';
 }): DeliveryPlan {
+  if (params.channel === 'app') {
+    return { channel: 'app', reason: 'app', recheckAt: null };
+  }
+
   // The budget is checked first: it is the more actionable of the two, and
   // unlike the window it will not fix itself when the user writes back.
   if (budgetState(params.monthlySent).level === 'exhausted') {

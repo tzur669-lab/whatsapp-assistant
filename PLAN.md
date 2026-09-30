@@ -158,7 +158,7 @@ Only `src/platform/` may import Cloudflare APIs. Everything else is plain TypeSc
 |---|---|---|
 | Runtime | Cloudflare Workers (Free) + 1 SQLite-backed Durable Object | [R] |
 | Language / libs | TypeScript (strict), Hono, Zod, small tz-aware date lib — CPU measured, see §4.1 | [R] |
-| Channel | WhatsApp Cloud API directly (no BSP) behind `ChannelAdapter` | [R] |
+| Channel | **The Android app** (§6.18), chosen by `CHANNEL`; WhatsApp Cloud API directly (no BSP) frozen behind the same switch | [R] |
 | LLM | Groq free: **primary `qwen3.8-27b`, fallback `gpt-oss-120b`** — chosen by eval 2026-09-27 (§11.9) | [R] |
 | LLM fallback 2 | Deterministic rules parser for common patterns | [R] |
 | Google | Calendar API; scopes `calendar.events.owned` + `calendar.app.created` | [R] |
@@ -234,6 +234,14 @@ Node on a developer laptop can settle it.
 different isolate, a different machine, and Cloudflare counts CPU rather than
 wall time. Awaiting Groq or Google does not consume CPU, so network latency —
 which dominates a real turn's wall clock — does not enter this budget at all.
+**Correction, 2026-09-29:** the 10 ms is the *Worker's* limit. A Durable
+Object request may use 30 s of CPU by default, on the Free plan too
+(Cloudflare's Durable Objects limits page, checked 2026-09-29), and everything
+above except the webhook's HMAC runs inside the Durable Object. The Worker's own
+share — routing, the size cap, the forward — is small. Migration 10 raised a
+fresh schema's cold start to ~10 ms on this machine; it is paid once in a
+Durable Object's life, since the applied version is stored.
+
 The authoritative figure is `cpuMs` from `wrangler tail` against staging, which
 is still outstanding and needs a deploy.
 ---
@@ -582,6 +590,10 @@ Policy is code plus static config. **Nothing in chat can change it.**
 | `settings` | default_event_minutes, rule toggles (R5/R6/R9), paused, tier3_pin_hash | permanent |
 | `birthdays` | id PK, principal, name, day, month, year nullable — see §6.16 | until removed |
 | `window_state` | principal, last_inbound_at | permanent |
+| `app_outbox` | seq PK, kind, reminder_id UNIQUE, in_reply_to, **text**, buttons_json, expires_at, next_push_at, pushes — §6.18 | until acked; 7 days (reminder) or 24 h (other), then retired |
+| `app_nonces` | (device_id, nonce) PK, expires_at | until the signed timestamp + 6 min |
+| `devices` | id, principal, public_key, push_token_enc, paired_at, revoked_at (`token_hash` left from the bearer era, `''` for new rows) | revoked rows kept |
+| `device_pairings` | code_hash PK, kind (`pair` / `bootstrap`), code_enc while live, public_key_hash, device_id | `pair`: until expiry; `bootstrap`: permanent, so a used code never works again |
 
 - **Migrations:** `migrations/NNNN_name.sql`, applied at DO startup inside a transaction. The schema version is stored in `settings`.
 - **Encryption:** tokens are encrypted at the app level. Everything else stays minimal and is protected by platform storage.
@@ -1134,12 +1146,12 @@ the dialer. The reliable pattern is a high-priority FCM message and a full-scree
 notification. That platform restriction and the Tier 3 requirement happen to ask
 for the same thing, so the tap is a design, not a workaround.
 
-**Pairing** follows §6.6's one-time-link shape exactly. `/pair` replies with a
-single-use 256-bit code, 10-minute TTL; the app exchanges it at
-`POST /device/pair` for a device token, stored only as a keyed hash and compared
-in constant time. A device token authorizes fetching a dispatch and reporting an
-outcome — **nothing else**. It cannot read reminders, the calendar, or settings.
-`/pair off` revokes it.
+**Pairing** — *superseded 2026-09-29 by §6.18.* It began as §6.6's one-time-link
+shape: `/pair` replied with a single-use 256-bit code the app traded at
+`POST /device/pair` for a bearer device token. The bearer token is gone. The
+phone now proves it knows a code with a MAC over its own Keystore public key,
+never sending the code, and signs every request (§6.18). On WhatsApp, `/pair`
+still issues the code (now 20 Crockford characters); `/pair off` still revokes.
 
 **Replies** (code templates; Latin and digits in FSI/PDI isolates as everywhere)
 
@@ -1183,6 +1195,155 @@ the model comparison §11.9 is half of. The Worker side lives in `src/device/`;
 the app is its own repo outside this one.
 
 
+### 6.18 The app channel [R]
+
+**Why.** WhatsApp turned out to be the most expensive part of the system to
+keep: a Meta Business account, a dedicated number, a 24-hour window, 1,000
+free messages a month from 2026-10-01, paid templates, a privacy-policy page to
+go Live, and Meta's policy on AI assistants hanging over all of it. Telegram
+was not wanted. The phone half of §6.17 already existed — pairing, FCM, a
+Keystore, HTTPS straight to the Worker — so it became the whole front end: a
+chat screen, hold-to-record voice, and notifications for reminders. The engine
+behind it (NLU, time, policy, confirmations, reminders, calendar, Shabbat,
+iCal, birthdays) did not change. `pnpm eval` was not needed: the prompt and the
+tool catalog are byte-identical, and `test/unit/nlu/catalog-snapshot.test.ts`
+now pins the catalog so a later change cannot slip past the same reasoning.
+
+`CHANNEL` (a var, per environment) chooses: `whatsapp` (the default, and what
+an unset value means), `app`, or `off`. WhatsApp is frozen, not deleted: its
+code and tests stay, and its routes answer 404 unless it is the channel.
+
+```
+ the app (Kotlin, apps/call-companion)
+   │  POST /app/message · /app/voice/<id> · /app/pair   (signed with a Keystore key)
+   ▼
+ Worker ── route exists on this CHANNEL · no query · identity encoding ·
+           Content-Type · byte-counted size cap ──► body forwarded byte for byte
+   ▼
+ AssistantDO
+   1. the device's public key (sync)
+   2. ECDSA verify over the canonical string (awaited, no state touched)
+   3. one transaction: device still active · nonce spent
+   4. strict Zod · handleInbound — whose first act, before any await, is the
+      one dedupe (recordInbound)
+   5. the answer → app_outbox (in_reply_to = the message id), and back in the
+      HTTP response too
+   ▲
+   │  GET /app/outbox (every unacked row, 50 a page) · POST /app/outbox/ack {seqs}
+   └── FCM {kind: "outbox"} — nothing else ◄── reminder · digest · call outcome ·
+                                               a reply not acked within 60 s
+```
+
+**Every request is signed** (`src/channels/app/verify.ts`). At pairing the
+phone makes a P-256 key in the Android Keystore that cannot be exported and
+sends only its public half. Each request carries `x-device-id`, `x-timestamp`
+(ms), `x-nonce` (128 random bits, hex) and `x-signature` (DER, as Android's
+`SHA256withECDSA` makes it) over, in UTF-8, joined by `\n`:
+
+```
+ASSISTANT-REQ-v1 · METHOD · path · deviceId · timestamp · nonce · hex(sha256(raw body))
+```
+
+The body enters only as the hash of its raw bytes, so there is no JSON
+canonicalisation to get wrong — which is also why the Worker must forward the
+bytes untouched. A query string is refused, since the path is what is signed.
+DER is parsed strictly (short-form lengths, minimal positive integers,
+`r, s ∈ [1, n-1]`, nothing trailing). High-S signatures are accepted: nothing
+is ever keyed on signature bytes, and replay is stopped by the nonce, which is
+inside the signed string. The timestamp must be within five minutes of ours;
+the nonce is remembered, per device, until five minutes plus one after that
+timestamp. A 401 says `unpaired`, `clock` or `unauthorized`; a 409 is a spent
+nonce, which the app answers by signing again. The signed timestamp is the
+message's `sentAtMs`, so the staleness rule reads one clock.
+
+**Why signatures and not a bearer token:** Netspark intercepts TLS on the home
+network. A bearer token seen once opens everything, for as long as it lives. A
+signature seen once opens nothing new. The call routes of §6.17 moved to the
+same scheme; the bearer token is gone everywhere.
+
+**Pairing never sends the code.** The code — the bootstrap secret
+`PAIR_BOOTSTRAP_CODE`, or on WhatsApp a `/pair` code — is typed into the app,
+which sends its public key, its push address, a timestamp, and
+`HMAC-SHA256(code, "ASSISTANT-PAIR-v1\n" + publicKey + "\n" + pushToken + "\n" + timestamp)`.
+The server computes the MAC for every live code and compares all of them in
+constant time. An interceptor sees a MAC bound to the phone's own key and
+cannot substitute its own. Codes are 20 Crockford base32 characters — 100 bits,
+short enough to type, long enough that the observable MAC cannot be
+brute-forced offline. The consumption is one statement inside the transaction
+that inserts the device (`UPDATE … RETURNING` for a `/pair` code, `INSERT … ON
+CONFLICT` for the bootstrap code), so two concurrent attempts cannot both win.
+A retry by the **same** public key after a lost answer gets the same device
+back; any other key gets `already_used`. A used bootstrap code is remembered
+by keyed hash forever, so it never works twice; a new value of the secret
+re-arms pairing, and pairing revokes the previous phone. In the app, `/pair`
+in chat is refused — a code in a reply would be readable on the way.
+
+**One mechanism for everything outbound** (`src/channels/app/outbox.ts`). Each
+message is a row in `app_outbox`. Writing the row is the *acceptance* — the
+equivalent of Meta's 200 — and happens in one transaction with
+`recordOutbound(wamid = "app:<seq>")` and, for a reminder, `markSent` and its
+audit row. The push is sent afterwards and is best-effort; its failure changes
+no state. **Delivered means acked by the phone.** The ack names seqs
+explicitly — never "everything up to" — so a row written while the phone was
+fetching cannot be swallowed. An ack advances `outbound_messages` to
+`delivered`, deletes the row, and only then removes a calendar stand-in left
+from WhatsApp days; that removal is separate, because a leftover popup is
+harmless and a lost ack is not.
+
+**A phone that is off is not a failure.** A reminder's row is not re-queued;
+it waits, pushed again after 15 minutes, an hour and four hours, and fetched
+whenever the app opens. After seven days unacked it is deleted, its outbound
+record marked `failed` (`E_APP_UNACKED`, counted by `/status`), and the
+reminder retired. Other rows live 24 hours. A reply that went back in the HTTP
+response is pushed once, if not acked within 60 seconds. `canDeliver` in the
+app needs only an active device: without one — after the migration, after
+`/pair off` — reminders are **held**, before `claimDue`, so no attempts are
+spent. `/pair off` clears the outbox and re-queues the reminders that were in
+it, in one transaction; its own answer goes back in the response only, so it
+does not wait for a phone that can no longer fetch it. The outbox work runs in
+`alarm()` next to `expireDispatches()`, before the Shabbat and window holds.
+With `CHANNEL=off` nothing is pushed, expiry still runs (the rows hold message
+text), and the alarm waits for expiries only, so it cannot spin.
+
+**A retried message never runs twice.** The app retries with the same message
+id (and a new nonce). A duplicate is answered from the outbox — the row whose
+`in_reply_to` is that id — or with `pending` while the first attempt is still
+running, `done` if it finished without an answer, and `unknown` if it was
+recorded more than two minutes ago with no decision: a turn that died
+part-way, whose tool may or may not have run. The app says so rather than
+guessing. A turn that throws writes `he.unknownOutcome` for the same reason.
+Every finished turn writes a row with `in_reply_to`, a call included ("sent to
+the phone"); the call's later outcome carries the same `in_reply_to`. The
+Worker keeps the Durable Object call alive with `waitUntil`, so a phone that
+drops the connection mid-turn still finds its answer in the outbox. The app
+sends one request at a time and keeps its input locked until the answer, so
+turns do not interleave around the parser's await.
+
+**Voice** (§6.10, invariant 13). The recording arrives with the request —
+`POST /app/voice/<message id>`, AAC in MP4, at most 1 MB (60 s is about 480 KB)
+— and goes to the same transcriber and the same path as typed text. At most
+60 recordings an hour reach Whisper. The HTTP answer carries the echo of what
+was heard; the outbox copy never does — it carries "(התמלול לא נשמר.)" instead —
+because the transcript is never stored.
+
+**Identity.** The Durable Object sets `from = selfWaId()` after verification;
+the body has no `from`. The principal is still `HMAC(LOG_HASH_KEY, first entry
+of ALLOWLIST_WA_IDS)`, so that secret stays required and **unchanged** on the
+app channel too — changing it, reordering it, or rotating `LOG_HASH_KEY`
+orphans every reminder, the paired device and the Google connection. A device
+whose stored principal no longer matches is told `unpaired`.
+
+**Limits and costs.** Bodies: message and pairing 8 KB, ack 4 KB (200 seqs),
+report 1 KB, voice 1 MB, read with a byte counter; a declared
+`Content-Length` is only used to refuse early. A compressed body is refused.
+FCM is free; the push carries `{kind: "outbox"}` or a dispatch id, never text.
+
+**Deliberately not built.** Several devices (one at a time, as §6.17); a local
+alarm on the phone as a second delivery path (FCM high priority plus a visible
+notification is the reminder path WhatsApp itself used on Android); an offline
+send queue in the app (it says "no connection" instead); certificate pinning
+(it would simply fail on the home network).
+
 ---
 
 ## 7. Security
@@ -1223,6 +1384,14 @@ the app is its own repo outside this one.
 | The device token as a second front door | Stored only as a keyed hash, compared in constant time, issued against a single-use pairing code with a 10-minute TTL (§6.6's shape), revoked by `/pair off`. It authorizes fetching a dispatch and reporting an outcome and nothing else — not reminders, not the calendar, not settings |
 | Contact data leaving the phone | The device reports `matched` and an outcome, never a name or a number. FCM carries an opaque dispatch id, so the contact name does not reach Google either. Nothing about a contact is ever stored in the DO (§6.17) |
 | The companion app as new surface on the phone | Two sensitive permissions (`READ_CONTACTS`, `CALL_PHONE`), sideloaded rather than published, no exported components and no listening socket. It accepts work from one paired Worker over outbound HTTPS and from nowhere else |
+| TLS interception on the home network (Netspark) reading app traffic | Every request signed with a non-exportable Keystore key; a nonce per request; the pairing code never sent, only a MAC bound to the phone's key; 100-bit codes so the MAC cannot be brute-forced offline. **Accepted:** response bodies (reminder text, replies, the voice echo, a `/connect google` link) are readable to the interceptor — pair and connect Google over mobile data (§6.18) |
+| A forged, replayed or re-routed app request | ECDSA over method, path, device, timestamp, nonce and the body's hash; the Worker forwards bytes untouched and refuses a query; ±5 min clock window; nonces kept until they could no longer be accepted (§6.18) |
+| The app's device key as the one front door | Non-exportable, hardware-backed where the phone has it; one device at a time; `/pair off` or a new bootstrap code revokes it; a device whose principal no longer matches is refused (§6.18) |
+| A lost or stolen phone | A new bootstrap code (`-PairCode`) pairs the replacement and revokes the old one; `/pause`; `CHANNEL=off` as the kill switch (§6.18) |
+| A retried message running twice | The client message id is the dedupe key, recorded before the pipeline's first await (`test/unit/core/concurrency.test.ts`); a duplicate is answered from the outbox or as `pending` / `done` / `unknown`, never re-run (§6.18) |
+| A reminder lost between the server and the phone | Delivered means acked; unacked rows are re-pushed and wait seven days; a failed push changes no state; rows are written in one transaction with `markSent` (§6.18) |
+| The outbox as message content at rest | Deleted on ack, after 7 days (reminders) or 24 h; cleared on `/pair off`; never a voice transcript (§6.18) |
+| Chat history leaving the phone | Android backup and device transfer exclude every domain; recordings live in `noBackupFilesDir` and are deleted after the upload (§6.18) |
 
 ### 7.2 Secrets inventory
 
@@ -1232,16 +1401,18 @@ the app is its own repo outside this one.
 | `WA_VERIFY_TOKEN` | secret | Webhook handshake (random ≥32 bytes) |
 | `WA_ACCESS_TOKEN` | secret | System User token, `whatsapp_business_messaging` only |
 | `WA_PHONE_NUMBER_ID` | var | Sender id |
-| `ALLOWLIST_WA_IDS` | secret | Keeps my number out of the repo |
+| `ALLOWLIST_WA_IDS` | secret | Keeps my number out of the repo. **Also the identity:** the principal is derived from its first entry, on the app channel too — never change or reorder it (§6.18) |
 | `GROQ_API_KEY` | secret | NLU |
 | `GOOGLE_CLIENT_ID` | var | OAuth |
 | `GOOGLE_CLIENT_SECRET` | secret | OAuth |
 | `TOKEN_ENC_KEY_V1` | secret | AES-256-GCM key for stored tokens (versioned for rotation) |
-| `LOG_HASH_KEY` | secret | Keyed hash for phone numbers in logs |
+| `LOG_HASH_KEY` | secret | Keyed hash for phone numbers in logs — and for the principal, so rotating it orphans every record (§6.18) |
 | `TIER3_PIN_HASH` | secret | [O] PIN for Tier 3 |
 | `FCM_PROJECT_ID` | var | Firebase project used to push a call dispatch to the phone (§6.17) |
 | `FCM_SA_KEY` | secret | Service-account private key; RS256-signed JWT exchanged for an FCM access token |
-| `DEVICE_TOKEN_PEPPER` | secret | Keyed hash for stored device tokens. Separate from `LOG_HASH_KEY`: a log key and an auth key rotate on different schedules |
+| `DEVICE_TOKEN_PEPPER` | secret | Keyed hash for used pairing codes and public keys (§6.18; device tokens until then). Separate from `LOG_HASH_KEY`: a log key and an auth key rotate on different schedules |
+| `PAIR_BOOTSTRAP_CODE` | secret | The code a phone pairs with in the app (§6.18). 20 Crockford characters from `set-staging-secrets.ps1 -PairCode`; each value works once, and a new value re-arms pairing |
+| `CHANNEL` | var | `app` / `whatsapp` / `off`, per environment; unset means `whatsapp` (§6.18) |
 
 **Rules**
 
@@ -1391,6 +1562,16 @@ Each phase ends with its exit criteria met and tests green.
 - [x] 792 tests green. §11.4–§11.6 pass.
 - [ ] [O] Export backup, [O] uptime check — still optional, still not built.
 - [ ] *Exit:* met in code. The live checks (Meta handshake, Google consent) need staging.
+
+**Phase 9 — The app channel (§6.18)** — *server code complete 2026-09-29; the app next*
+
+- [x] Signed requests, pairing by MAC, the bootstrap code, nonces, `CHANNEL` (`app` / `whatsapp` / `off`).
+- [x] The outbox: acceptance in one transaction, ack by explicit seqs, re-push, seven-day retirement, held reminders without a device, `/pair off`.
+- [x] Retries answered, never re-run: `pending` / `done` / `unknown`; `waitUntil` in the Worker.
+- [x] Voice in the request, 1 MB cap, 60 an hour; the stored answer without the echo.
+- [x] Transactions (`SqlDriver.transaction`), every migration inside one.
+- [ ] The app: chat, pairing, signing, notifications, recording (`apps/call-companion`).
+- [ ] *Exit:* on staging, over mobile data — pair, text, a Tier 2 confirmation, a reminder with the screen off and snoozed from the notification, airplane mode through a reminder, a calendar query, a call, a voice note, `/pair off`, and pairing again with a new code.
 
 **Phase 8 — Production**
 
@@ -1869,6 +2050,8 @@ gates in §11.2 apply unchanged: an invented number is an invented slot.
 | Lost or stolen phone | WhatsApp PIN + app lock, Tier 3 code/PIN, daily caps, `/pause`, token revocation runbook |
 | Business number lapses (prepaid SIM) | Two-step PIN on the number; keep the line active |
 | Scope creep into a general chatbot | Every capability is a typed tool with a tier; no free-form answer path |
+| FCM does not wake the phone (Doze, a force-stopped app, an OEM battery killer) | High-priority data message; every push ends in a visible notification, a generic one when the fetch fails; re-push at 15 min, 1 h, 4 h; the app fetches on every open; pairing points to the "unrestricted" battery setting (§6.18) |
+| The sideloaded app falls behind the server | The signature scheme and routes are versioned (`ASSISTANT-REQ-v1`); a change to either ships both halves together |
 
 ---
 
@@ -1885,6 +2068,7 @@ gates in §11.2 apply unchanged: an invented number is an invented slot.
 - [ ] Tier 3 PIN: enable from day one?
 - [ ] When to buy the dedicated number (before or after Phase 4)?
 - [ ] [O] Encrypted export backup: yes/no, and which bucket?
+- [x] **The app replaces WhatsApp as the channel** (2026-09-29, the user): Android only; voice by hold-to-record, transcribed on the server; WhatsApp frozen, not deleted (§6.18).
 - [x] **Primary model: `qwen3.8-27b`; fallback: `gpt-oss-120b`** (2026-09-27, the user's decision). qwen met every accuracy threshold on v5. gpt-oss-120b reached 20 of 156 cases before the free tier's rolling budget stalled it, with no schema refusals after the 400 repair retry; finishing it would have held every prompt change for about two more days. It is the fallback per §4, and its partial recording is kept. Open: latency — the hotspot measurements (p95 1–10 s) are not the Worker's, and the 8 s timeout will cut qwen off if staging shows it is slow.
 - [ ] Voice: should the recognizer's language be pinned to `he`? Auto-detect keeps English usable but is weakest on very short clips, which is exactly what a one-line reminder is. Measure before changing.
 - [ ] Voice: Whisper takes a `prompt` to bias spelling — useful for Hebrew names and times. It is static config, not user data, so it does not breach invariant 2, but it is unmeasured. Worth a try against recorded clips.
@@ -2045,6 +2229,9 @@ gates in §11.2 apply unchanged: an invented number is an invented slot.
 | 2026-09-27 | **A weekday the message names is held against the draft** (§6.2): a draft naming another weekday has that date removed and the user is asked which day, before anything resolves. Approved by the user after `he-cal-012` (יום שני read as Tuesday). Fires on that case alone across 312 recorded answers |
 | 2026-09-27 | **Primary model `qwen3.8-27b`, fallback `gpt-oss-120b`** (§4, §13; the user's decision). Replaces `gpt-oss-120b` / `gpt-oss-20b` from 2026-09-24. The gpt-oss v5 run was stopped at 20 of 156 |
 | 2026-09-27 | **B15 Worker side built** (§6.17): pairing (`/pair`, `/pair off`), device tokens as keyed hashes, dispatches that expire in two minutes, FCM v1 with no SDK, and `calls.place` at Tier 3 confirmed on the phone's screen. One reply per call, sent when the phone reports or the dispatch expires. FCM approved; `/pause` denies calls. Prompt v6 adds the tool to the catalog |
+| 2026-09-29 | **The app channel** (§6.18). WhatsApp replaced by the Android app, chosen by `CHANNEL`; WhatsApp frozen. Every request ECDSA-signed with a Keystore key; pairing by MAC, the code never sent; a bootstrap code for the first phone. One outbox for everything outbound: acceptance in one transaction with `markSent`, delivered on ack by explicit seqs, re-push 15 min / 1 h / 4 h, retired after 7 days, reminders held while no phone is paired. Retries answered, never re-run. The prompt and catalog unchanged, so no eval; the catalog is now pinned by a test |
+| 2026-09-29 | **Transactions**: `SqlDriver.transaction` (`transactionSync` on the Durable Object); every migration runs inside one |
+| 2026-09-29 | **A Durable Object request has 30 s of CPU, not 10 ms** (§4.1). The cold-start guard's bound goes from 50 ms to 100 ms after migration 10's seven ALTERs |
 | 2026-09-28 | **qwen on prompt v6**: every call case right; no invented slots 100%, intent 99.4%, slots 98.2%, off-topic 97.1%. Recall 99.4% on one injection case Groq refused twice (safe outcome: "not understood"); re-asked three times live, it answered `unsupported` all three. p95 latency 10.6 s from the hotspot — staging decides (§11.9) |
 
 ---

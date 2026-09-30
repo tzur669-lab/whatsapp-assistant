@@ -2,6 +2,14 @@
  * The env contract. Secrets arrive as bindings only (PLAN §7.2) and are never
  * read from files. Nothing here is logged.
  */
+export type ChannelMode = 'whatsapp' | 'app' | 'off';
+
+/** Anything but the two other known values is WhatsApp, the historic default. */
+export function channelOf(env: { CHANNEL?: string | undefined }): ChannelMode {
+  const value = (env.CHANNEL ?? '').trim().toLowerCase();
+  return value === 'app' || value === 'off' ? value : 'whatsapp';
+}
+
 export interface AppEnv {
   ENVIRONMENT: string;
 
@@ -21,6 +29,11 @@ export interface AppEnv {
   DEVICE_TOKEN_PEPPER?: string;
   /** The Firebase service account's JSON key, whole. */
   FCM_SA_KEY?: string;
+  /**
+   * The bootstrap pairing code (§6.18): 20 Crockford characters, typed into the
+   * app by hand and never sent. Each value works once; a new one re-arms it.
+   */
+  PAIR_BOOTSTRAP_CODE?: string;
 
   // Vars
   WA_PHONE_NUMBER_ID: string;
@@ -33,4 +46,14 @@ export interface AppEnv {
   PUBLIC_BASE_URL: string;
   /** Overrides the service account's own project id. Usually left empty. */
   FCM_PROJECT_ID?: string;
+  /**
+   * Which channel the assistant speaks on (§6.18): `whatsapp` (the default,
+   * and what an unset value means), `app`, or `off` — the kill switch, where
+   * every channel route answers 404 and nothing is delivered.
+   *
+   * With `app`, the WhatsApp secrets may be empty, but `ALLOWLIST_WA_IDS` must
+   * stay set and unchanged: the principal every record belongs to is derived
+   * from its first entry.
+   */
+  CHANNEL?: string;
 }

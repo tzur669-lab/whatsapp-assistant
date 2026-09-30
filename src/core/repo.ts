@@ -61,12 +61,21 @@ export class Repository {
 
     const pending = [...migrations].filter((m) => m.id > current).sort((a, b) => a.id - b.id);
     for (const migration of pending) {
-      for (const statement of splitStatements(migration.sql)) {
-        this.sql.exec(statement);
-      }
-      this.setSetting(SCHEMA_VERSION_KEY, String(migration.id));
+      // One transaction per migration, version bump included: a migration cut
+      // off half-way leaves nothing behind, and the next start runs it whole.
+      this.sql.transaction(() => {
+        for (const statement of splitStatements(migration.sql)) {
+          this.sql.exec(statement);
+        }
+        this.setSetting(SCHEMA_VERSION_KEY, String(migration.id));
+      });
     }
     return this.schemaVersion();
+  }
+
+  /** See `SqlDriver.transaction`. Synchronous callbacks only. */
+  transaction<T>(fn: () => T): T {
+    return this.sql.transaction(fn);
   }
 
   schemaVersion(): number {
@@ -126,6 +135,15 @@ export class Repository {
       fields.decision ?? null,
       fields.errorCode ?? null,
       wamid,
+    );
+  }
+
+  /** How many messages of one kind arrived since `sinceMs` — the voice cap in the app (§6.18). */
+  inboundCountSince(kind: string, sinceMs: number): number {
+    return Number(
+      this.sql.exec('SELECT COUNT(*) AS n FROM inbound_messages WHERE kind = ? AND received_at >= ?', kind, sinceMs)[0]?.[
+        'n'
+      ] ?? 0,
     );
   }
 

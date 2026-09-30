@@ -32,6 +32,9 @@ export function createFakeDoState(): FakeDoState {
         return { toArray: () => rows };
       },
     },
+    transactionSync<T>(fn: () => T): T {
+      return driver.transaction(fn);
+    },
     async setAlarm(at: number) {
       alarm = at;
       alarmHistory.push(at);

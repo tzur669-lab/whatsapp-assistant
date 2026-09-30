@@ -21,8 +21,10 @@ Steps 2 and 4 are never swapped — revoking first causes an outage.
 | `GROQ_API_KEY` | Groq console | Confirm Zero Data Retention is still on |
 | `GOOGLE_CLIENT_SECRET` | Google Cloud → Credentials | Existing refresh tokens survive a client-secret rotation |
 | `TOKEN_ENC_KEY_V1` | Self-generated AES-256 key | Add `TOKEN_ENC_KEY_V2` and re-encrypt; never edit V1 in place |
-| `LOG_HASH_KEY` | Self-generated | Changing it breaks correlation with older log lines, by design |
-| `ALLOWLIST_WA_IDS` | Not a secret to rotate | Clearing it is the kill switch — see `ops/revoke-tokens.md` |
+| `LOG_HASH_KEY` | Self-generated | **Do not rotate casually.** It keys the log hash *and the principal every record belongs to*: a new value orphans every reminder, the paired phone and the Google connection. Rotate only after a leak, and then plan to reconnect Google, re-pair the phone, and re-create pending reminders |
+| `ALLOWLIST_WA_IDS` | Not a secret to rotate | Never change or reorder it: its first entry is the identity (PLAN §6.18), on the app channel too. It is no longer the kill switch — `CHANNEL=off` is, see `ops/revoke-tokens.md` |
+| `DEVICE_TOKEN_PEPPER` | Self-generated | Keys the hashes of used pairing codes and public keys. Rotating it lets a used bootstrap code work once more — set a new `PAIR_BOOTSTRAP_CODE` in the same step |
+| `PAIR_BOOTSTRAP_CODE` | `scripts/set-staging-secrets.ps1 -PairCode` | Each value pairs one phone and then never works again. Setting a new one is how a replacement phone is paired; pairing revokes the old one |
 
 ## `TOKEN_ENC_KEY` rotation
 

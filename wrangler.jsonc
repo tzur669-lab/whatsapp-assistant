@@ -15,6 +15,9 @@
       "name": "wa-assistant-staging",
       "vars": {
         "ENVIRONMENT": "staging",
+        // Which channel the assistant speaks on (PLAN §6.18): app | whatsapp | off.
+        // Vars are not inherited between environments; set it in each.
+        "CHANNEL": "app",
         "WA_PHONE_NUMBER_ID": "",
         "GOOGLE_CLIENT_ID": "",
         // Must match the redirect URI registered with Google, exactly.
@@ -32,6 +35,8 @@
       "name": "wa-assistant",
       "vars": {
         "ENVIRONMENT": "production",
+        // Unchanged until the app has had its two weeks on staging (PLAN §6.18).
+        "CHANNEL": "whatsapp",
         "WA_PHONE_NUMBER_ID": "",
         "GOOGLE_CLIENT_ID": "",
         // Must match the redirect URI registered with Google, exactly.

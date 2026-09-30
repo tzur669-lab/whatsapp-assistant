@@ -10,7 +10,7 @@
  */
 import { REGISTRY, TOOL_NAMES } from '../tools/registry.js';
 import type { Tier, ToolName } from '../tools/registry.js';
-import { STALE_MESSAGE_MS } from '../channels/whatsapp/limits.js';
+import { STALE_MESSAGE_MS } from '../channels/limits.js';
 
 export type Decision = 'ALLOW' | 'CLARIFY' | 'CONFIRM' | 'DENY';
 

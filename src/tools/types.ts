@@ -73,6 +73,8 @@ export type ToolContext = {
   lastInboundAt: number | null;
   /** Service messages used this month, for the same decision (§5). */
   monthlySent: number;
+  /** Which channel the assistant speaks on. The app has no window and no budget (§6.18). */
+  channel?: 'whatsapp' | 'app';
   /**
    * Present once Google is connected. Absent is not an error: a calendar tool
    * answers "not connected" rather than failing (PLAN §6.6).

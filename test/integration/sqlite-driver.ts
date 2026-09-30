@@ -30,6 +30,25 @@ export class TestSqlDriver implements SqlDriver {
     return [];
   }
 
+  private depth = 0;
+
+  /** BEGIN/COMMIT, with savepoints for nesting — the shape `transactionSync` gives. */
+  transaction<T>(fn: () => T): T {
+    const savepoint = `sp_${this.depth}`;
+    this.db.exec(this.depth === 0 ? 'BEGIN' : `SAVEPOINT ${savepoint}`);
+    this.depth++;
+    try {
+      const result = fn();
+      this.depth--;
+      this.db.exec(this.depth === 0 ? 'COMMIT' : `RELEASE ${savepoint}`);
+      return result;
+    } catch (error) {
+      this.depth--;
+      this.db.exec(this.depth === 0 ? 'ROLLBACK' : `ROLLBACK TO ${savepoint}; RELEASE ${savepoint}`);
+      throw error;
+    }
+  }
+
   close(): void {
     this.db.close();
   }

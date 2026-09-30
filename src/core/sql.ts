@@ -11,4 +11,14 @@ export type SqlRow = Record<string, unknown>;
 export interface SqlDriver {
   /** Run a statement and return all result rows (empty for writes). */
   exec(query: string, ...bindings: unknown[]): SqlRow[];
+
+  /**
+   * Run `fn` as one transaction: every write inside it lands, or none does,
+   * including across a crash. `fn` must be synchronous — an `await` inside
+   * would let another request in half-way. Nested calls join the outer one.
+   *
+   * On a Durable Object this is `storage.transactionSync`; `BEGIN` is not
+   * allowed through `sql.exec` there, which is why this is its own method.
+   */
+  transaction<T>(fn: () => T): T;
 }

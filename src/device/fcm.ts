@@ -20,6 +20,12 @@ const TOKEN_LIFETIME_S = 3600;
 const REFRESH_MARGIN_MS = 60_000;
 /** The dispatch's own lifetime: a push delivered later than this is useless. */
 const PUSH_TTL = '120s';
+/**
+ * "There is something in the outbox" (PLAN §6.18). Worth delivering for a
+ * while — the row it points at waits up to a week — but the alarm pushes again
+ * anyway, so a stale signal is not kept forever.
+ */
+const SIGNAL_TTL = '14400s';
 const TIMEOUT_MS = 8_000;
 
 export type PushResult =
@@ -49,7 +55,20 @@ export class FcmClient {
     this.account = parseServiceAccount(config.serviceAccountJson, config.projectId);
   }
 
-  async send(pushToken: string, dispatchId: string): Promise<PushResult> {
+  /** A call dispatch: its opaque id and nothing else (§6.17). */
+  send(pushToken: string, dispatchId: string): Promise<PushResult> {
+    return this.post(pushToken, { dispatch_id: dispatchId }, PUSH_TTL);
+  }
+
+  /**
+   * Wake the app to fetch its outbox (§6.18). The message carries only its
+   * kind: no text, no row id, nothing a reader at Google could learn from.
+   */
+  signal(pushToken: string): Promise<PushResult> {
+    return this.post(pushToken, { kind: 'outbox' }, SIGNAL_TTL);
+  }
+
+  private async post(pushToken: string, data: Record<string, string>, ttl: string): Promise<PushResult> {
     if (!this.account) return { ok: false, reason: 'not_configured' };
 
     try {
@@ -64,8 +83,8 @@ export class FcmClient {
           body: JSON.stringify({
             message: {
               token: pushToken,
-              data: { dispatch_id: dispatchId },
-              android: { priority: 'HIGH', ttl: PUSH_TTL },
+              data,
+              android: { priority: 'HIGH', ttl },
             },
           }),
           signal: AbortSignal.timeout(TIMEOUT_MS),

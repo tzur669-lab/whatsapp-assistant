@@ -77,8 +77,12 @@ export type VoiceOutcome =
   | { status: 'too_long' }
   | { status: 'failed'; errorCode: AsrErrorCode | 'media_error' };
 
-/** What the channel adapter needs to fetch the audio behind a message. */
-export type VoiceRequest = { mediaId: string; mimeType: string };
+/**
+ * The audio behind a message: a media id the channel adapter fetches
+ * (WhatsApp), or the bytes themselves when they came with the request (the
+ * app, §6.18).
+ */
+export type VoiceRequest = { mediaId: string; mimeType: string; bytes?: Uint8Array };
 
 /**
  * Fetch and grade one recording. Declared here rather than in the WhatsApp

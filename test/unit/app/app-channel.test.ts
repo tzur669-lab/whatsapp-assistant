@@ -1,0 +1,385 @@
+/**
+ * The app channel end to end through the Durable Object (PLAN §6.18).
+ *
+ * The state transitions the review asked to see pinned: no device → paired →
+ * revoked; a message accepted → answered (HTTP and outbox) → acked; a retry of
+ * the same message; a turn lost part-way; a reminder pushed, re-pushed, held,
+ * expired; `/pair off`; the kill switch; and voice, whose transcript must never
+ * be stored.
+ */
+import { describe, expect, it, beforeEach, afterEach, beforeAll, vi } from 'vitest';
+import { AssistantDO } from '../../../src/platform/assistant-do.js';
+import { createFakeDoState } from '../../integration/fake-do-state.js';
+import type { FakeDoState } from '../../integration/fake-do-state.js';
+import { FakePhone, createFakeGoogle, createServiceAccount, messageId } from '../../integration/fake-phone.js';
+import type { FakeGoogle } from '../../integration/fake-phone.js';
+import { ReminderStore } from '../../../src/tools/reminder-store.js';
+import { Repository } from '../../../src/core/repo.js';
+import { he } from '../../../src/render/he.js';
+import { stripIsolates } from '../../../src/render/bidi.js';
+import { REMINDER_ROW_TTL_MS, REPUSH_AFTER_MS } from '../../../src/channels/app/outbox.js';
+import { CLOCK_SKEW_MS } from '../../../src/channels/app/verify.js';
+import type { AppEnv } from '../../../src/core/env.js';
+
+const NOW = Date.parse('2026-09-29T09:00:00Z'); // a Tuesday
+const SELF = '972500000000';
+const KEY = Buffer.alloc(32, 9).toString('base64');
+const BOOTSTRAP = 'ABCD-EFGH-JKMN-PQRS-TVWX';
+
+let serviceAccount: string;
+beforeAll(async () => {
+  serviceAccount = await createServiceAccount();
+});
+
+const baseEnv = (): AppEnv => ({
+  ENVIRONMENT: 'test',
+  WA_APP_SECRET: '',
+  WA_VERIFY_TOKEN: '',
+  WA_ACCESS_TOKEN: '',
+  ALLOWLIST_WA_IDS: SELF,
+  GROQ_API_KEY: '',
+  GOOGLE_CLIENT_SECRET: 'x',
+  TOKEN_ENC_KEY_V1: KEY,
+  LOG_HASH_KEY: 'test-key',
+  DEVICE_TOKEN_PEPPER: 'test-pepper-not-a-real-secret',
+  FCM_SA_KEY: serviceAccount,
+  PAIR_BOOTSTRAP_CODE: BOOTSTRAP,
+  CHANNEL: 'app',
+  WA_PHONE_NUMBER_ID: '',
+  GOOGLE_CLIENT_ID: 'x',
+  PUBLIC_BASE_URL: 'https://assistant.example.test',
+});
+
+type Reply = { status: string; row?: { seq: number; text: string; inReplyTo: string | null; buttons: { id: string }[] } };
+
+describe('the app channel', () => {
+  let fake: FakeDoState;
+  let google: FakeGoogle;
+  let env: AppEnv;
+  let assistant: AssistantDO;
+  let reminders: ReminderStore;
+  let repo: Repository;
+  let principal: string;
+
+  const build = (overrides: Partial<AppEnv> = {}) => {
+    env = { ...baseEnv(), ...overrides };
+    assistant = new AssistantDO(fake.state as never, env, google.fetchImpl);
+  };
+
+  const send = async (request: Request) => {
+    const response = await assistant.fetch(request);
+    return { status: response.status, body: (await response.json()) as Record<string, unknown> };
+  };
+
+  const pair = async (code = BOOTSTRAP) => {
+    const phone = new FakePhone();
+    const paired = await send(await phone.pairToDo(code));
+    expect(paired.status).toBe(200);
+    phone.deviceId = String(paired.body['deviceId']);
+    return phone;
+  };
+
+  const say = async (phone: FakePhone, text: string, id = messageId()) =>
+    (await send(await phone.toDo('POST', '/app/message', { id, kind: 'text', text }))).body as unknown as Reply;
+
+  const outbox = async (phone: FakePhone) =>
+    (await send(await phone.toDo('GET', '/app/outbox'))).body as {
+      rows: { seq: number; kind: string; text: string; inReplyTo: string | null }[];
+      more: boolean;
+    };
+
+  const ack = async (phone: FakePhone, seqs: number[]) =>
+    send(await phone.toDo('POST', '/app/outbox/ack', { seqs }));
+
+  beforeEach(async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(NOW);
+    fake = createFakeDoState();
+    google = createFakeGoogle();
+    build();
+    await Promise.resolve();
+
+    repo = new Repository(fake.driver);
+    reminders = new ReminderStore(fake.driver, () => Date.now());
+    const { hashPrincipal } = await import('../../../src/security/redact.js');
+    principal = await hashPrincipal(SELF, 'test-key');
+  });
+
+  afterEach(() => {
+    fake.close();
+    vi.useRealTimers();
+  });
+
+  describe('pairing', () => {
+    it('pairs with the bootstrap code, and an old phone stops working when a new one pairs', async () => {
+      const first = await pair();
+      expect((await outbox(first)).rows).toEqual([]);
+
+      build({ PAIR_BOOTSTRAP_CODE: 'ZYXW-VTSR-QPNM-KJHG-FEDC' });
+      const second = await pair('ZYXW-VTSR-QPNM-KJHG-FEDC');
+
+      expect((await send(await first.toDo('GET', '/app/outbox'))).status).toBe(401);
+      expect((await send(await second.toDo('GET', '/app/outbox'))).status).toBe(200);
+    });
+
+    it('refuses the used bootstrap code to anyone but the phone that used it', async () => {
+      const phone = new FakePhone();
+      const first = await send(await phone.pairToDo(BOOTSTRAP));
+      const retry = await send(await phone.pairToDo(BOOTSTRAP));
+      expect(retry.body['deviceId']).toBe(first.body['deviceId']);
+
+      expect((await send(await new FakePhone().pairToDo(BOOTSTRAP))).status).toBe(400);
+    });
+
+    it('sends the held reminders once a phone pairs', async () => {
+      const held = reminders.schedule({ principal, text: 'לשתות מים', dueAtUtc: NOW - 1_000, localWallTime: '', tz: 'Asia/Jerusalem' });
+      await assistant.alarm();
+      // Held, not spent: no phone yet, so it was never claimed.
+      expect(reminders.byId(held.id)).toMatchObject({ status: 'scheduled', attempts: 0 });
+
+      const phone = await pair();
+      await assistant.alarm();
+      const rows = (await outbox(phone)).rows;
+      expect(rows.map((r) => r.kind)).toEqual(['reminder']);
+      expect(stripIsolates(rows[0]!.text)).toContain('לשתות מים');
+    });
+  });
+
+  describe('signed requests', () => {
+    it('refuses a phone clock more than five minutes off, and says why', async () => {
+      const phone = await pair();
+      const skewed = await send(await phone.toDo('GET', '/app/outbox', undefined, { timestamp: NOW - CLOCK_SKEW_MS - 1 }));
+      expect(skewed).toEqual({ status: 401, body: { error: 'clock' } });
+    });
+
+    it('refuses a body changed after signing', async () => {
+      const phone = await pair();
+      const request = await phone.toDo('POST', '/app/message', { id: messageId(), kind: 'text', text: '/help' });
+      const tampered = new Request(request.url, {
+        method: 'POST',
+        headers: request.headers,
+        body: JSON.stringify({ id: messageId(), kind: 'text', text: '/pair off' }),
+      });
+      expect((await send(tampered)).status).toBe(401);
+    });
+
+    it('refuses a replayed nonce with 409, which the app answers by signing again', async () => {
+      const phone = await pair();
+      const nonce = 'd'.repeat(32);
+      await send(await phone.toDo('GET', '/app/outbox', undefined, { nonce }));
+      expect((await send(await phone.toDo('GET', '/app/outbox', undefined, { nonce }))).status).toBe(409);
+    });
+  });
+
+  describe('a message and its answer', () => {
+    it('answers in the HTTP response and keeps the same answer in the outbox until acked', async () => {
+      const phone = await pair();
+      const id = messageId();
+      const reply = await say(phone, '/help', id);
+
+      expect(reply.status).toBe('reply');
+      expect(reply.row?.inReplyTo).toBe(id);
+      expect(reply.row?.text).toBe(he.helpApp);
+
+      const rows = (await outbox(phone)).rows;
+      expect(rows.map((r) => r.seq)).toEqual([reply.row!.seq]);
+
+      expect((await ack(phone, [reply.row!.seq])).status).toBe(200);
+      expect((await outbox(phone)).rows).toEqual([]);
+      expect(repo.getOutbound(`app:${reply.row!.seq}`)?.['delivery_status']).toBe('delivered');
+    });
+
+    it('runs a retried message once, and gives the retry the same answer', async () => {
+      const phone = await pair();
+      const id = messageId();
+      const first = await say(phone, '/pause', id);
+      const retry = await say(phone, '/pause', id);
+
+      expect(retry).toEqual(first);
+      expect(repo.isPaused()).toBe(true);
+      expect((await outbox(phone)).rows).toHaveLength(1);
+    });
+
+    it('says "done" for a retry after the answer was acked', async () => {
+      const phone = await pair();
+      const id = messageId();
+      const first = await say(phone, '/help', id);
+      await ack(phone, [first.row!.seq]);
+      expect(await say(phone, '/help', id)).toEqual({ status: 'done' });
+    });
+
+    it('says "unknown" for a message recorded long ago that never finished, and does not run it', async () => {
+      const phone = await pair();
+      const id = messageId();
+      repo.recordInbound({ wamid: `app:in:${id}`, principal, receivedAt: NOW - 3 * 60_000, sentAt: NOW, kind: 'text' });
+      expect(await say(phone, '/pause', id)).toEqual({ status: 'unknown' });
+      expect(repo.isPaused()).toBe(false);
+    });
+
+    it('does not spend a message id on a malformed body', async () => {
+      const phone = await pair();
+      const id = messageId();
+      const bad = await send(await phone.toDo('POST', '/app/message', { id, kind: 'text', text: '' }));
+      expect(bad.status).toBe(400);
+      expect((await say(phone, '/help', id)).status).toBe('reply');
+    });
+
+    it('only acks the rows named, never "everything up to"', async () => {
+      const phone = await pair();
+      const a = await say(phone, '/help');
+      const b = await say(phone, '/status');
+      await ack(phone, [b.row!.seq]);
+      expect((await outbox(phone)).rows.map((r) => r.seq)).toEqual([a.row!.seq]);
+    });
+
+    it('has no message budget in the app', async () => {
+      const phone = await pair();
+      expect((await say(phone, '/budget')).row?.text).toBe('באפליקציה אין מגבלת הודעות חודשית.');
+      expect(stripIsolates((await say(phone, '/status')).row!.text)).not.toContain('הודעות החודש');
+    });
+
+    it('does not hand out a pairing code in a reply', async () => {
+      const phone = await pair();
+      const text = (await say(phone, '/pair')).row!.text;
+      expect(text).not.toMatch(/[0-9A-HJKMNP-TV-Z]{4}-[0-9A-HJKMNP-TV-Z]{4}/);
+    });
+  });
+
+  describe('reminders', () => {
+    const due = (text: string, at = NOW - 1_000) =>
+      reminders.schedule({ principal, text, dueAtUtc: at, localWallTime: '', tz: 'Asia/Jerusalem' });
+
+    it('are accepted into the outbox, pushed with nothing but "there is something", and delivered on ack', async () => {
+      const phone = await pair();
+      const reminder = due('להתקשר לאבא');
+      await assistant.alarm();
+
+      expect(reminders.byId(reminder.id)?.status).toBe('sent');
+      expect(google.pushes).toEqual([{ kind: 'outbox' }]);
+
+      const [row] = (await outbox(phone)).rows;
+      expect(row?.kind).toBe('reminder');
+      expect(repo.getOutbound(`app:${row!.seq}`)?.['delivery_status']).toBe('accepted');
+
+      await ack(phone, [row!.seq]);
+      expect(repo.getOutbound(`app:${row!.seq}`)?.['delivery_status']).toBe('delivered');
+    });
+
+    it('are pushed again after 15 minutes, an hour and four hours — and then left waiting', async () => {
+      await pair();
+      due('לקחת תרופה');
+      await assistant.alarm();
+      expect(google.pushes).toHaveLength(1);
+
+      let at = NOW;
+      for (const delay of REPUSH_AFTER_MS) {
+        at += delay;
+        vi.setSystemTime(at);
+        await assistant.alarm();
+      }
+      expect(google.pushes).toHaveLength(1 + REPUSH_AFTER_MS.length);
+
+      vi.setSystemTime(at + 24 * 60 * 60 * 1000);
+      await assistant.alarm();
+      expect(google.pushes).toHaveLength(1 + REPUSH_AFTER_MS.length);
+    });
+
+    it('are retired, not silently dropped, after seven days unfetched', async () => {
+      await pair();
+      const reminder = due('משהו');
+      await assistant.alarm();
+      const seq = Number(fake.driver.exec('SELECT seq FROM app_outbox')[0]!['seq']);
+
+      vi.setSystemTime(NOW + REMINDER_ROW_TTL_MS);
+      await assistant.alarm();
+
+      expect(fake.driver.exec('SELECT * FROM app_outbox WHERE seq = ?', seq)).toEqual([]);
+      expect(repo.getOutbound(`app:${seq}`)?.['delivery_status']).toBe('failed');
+      expect(['failed', 'done']).toContain(reminders.byId(reminder.id)?.status);
+    });
+
+    it('keep their schedule when a push fails, and forget an address FCM calls gone', async () => {
+      const phone = await pair();
+      google.failPushes(404);
+      due('משהו');
+      await assistant.alarm();
+      expect(google.pushes).toHaveLength(1);
+      expect((await outbox(phone)).rows).toHaveLength(1);
+      expect(fake.driver.exec('SELECT push_token_enc FROM devices WHERE id = ?', phone.deviceId)[0]!['push_token_enc']).toBeNull();
+    });
+
+    it('are not held by the 24-hour window, which the app does not have', async () => {
+      await pair();
+      vi.setSystemTime(NOW + 3 * 24 * 60 * 60 * 1000);
+      due('אחרי שלושה ימים של שקט', Date.now() - 1_000);
+      await assistant.alarm();
+      expect(fake.driver.exec('SELECT kind FROM app_outbox')).toEqual([{ kind: 'reminder' }]);
+    });
+
+    it('go back in the queue on /pair off, and wait for the next phone', async () => {
+      const phone = await pair();
+      const reminder = due('משהו');
+      await assistant.alarm();
+
+      const reply = await say(phone, '/pair off');
+      expect(stripIsolates(reply.row!.text)).toContain('הטלפון נותק');
+      expect(reply.row!.seq).toBe(0); // in the response only: nothing waits for a phone that is gone
+      expect(reminders.byId(reminder.id)?.status).toBe('scheduled');
+      expect(fake.driver.exec('SELECT * FROM app_outbox')).toEqual([]);
+      expect((await send(await phone.toDo('GET', '/app/outbox'))).status).toBe(401);
+
+      await assistant.alarm();
+      expect(reminders.byId(reminder.id)?.status).toBe('scheduled');
+
+      build({ PAIR_BOOTSTRAP_CODE: 'ZYXW-VTSR-QPNM-KJHG-FEDC' });
+      const next = await pair('ZYXW-VTSR-QPNM-KJHG-FEDC');
+      await assistant.alarm();
+      expect((await outbox(next)).rows.map((r) => r.kind)).toEqual(['reminder']);
+    });
+
+    it('are held, not sent and not spent, with the kill switch on', async () => {
+      await pair();
+      build({ CHANNEL: 'off' });
+      const reminder = due('משהו');
+      await assistant.alarm();
+      expect(reminders.byId(reminder.id)?.status).toBe('scheduled');
+      expect(reminders.byId(reminder.id)?.attempts).toBe(0);
+      expect(google.pushes).toEqual([]);
+    });
+  });
+
+  describe('voice', () => {
+    const record = async (phone: FakePhone, id = messageId(), contentType = 'audio/mp4') =>
+      send(await phone.toDo('POST', `/app/voice/${id}`, new Uint8Array([1, 2, 3, 4]), { contentType }));
+
+    it('echoes what was heard in the response, and stores the answer without it', async () => {
+      build({ GROQ_API_KEY: 'test-key-not-real' });
+      google.transcript = 'עזרה';
+      const phone = await pair();
+
+      const reply = (await record(phone)).body as unknown as Reply;
+      expect(stripIsolates(reply.row!.text).startsWith('שמעתי: עזרה')).toBe(true);
+
+      const stored = String(fake.driver.exec('SELECT text FROM app_outbox')[0]!['text']);
+      expect(stored).not.toContain('שמעתי');
+      expect(stored).toContain(he.heardNotKept);
+    });
+
+    it('refuses a type it cannot transcribe', async () => {
+      const phone = await pair();
+      expect((await record(phone, messageId(), 'image/png')).status).toBe(415);
+    });
+
+    it('stops paying for Whisper after an hour’s worth of recordings', async () => {
+      build({ GROQ_API_KEY: 'test-key-not-real' });
+      google.transcript = 'עזרה';
+      const phone = await pair();
+      for (let i = 0; i < 60; i++) {
+        repo.recordInbound({ wamid: `app:in:${messageId()}`, principal, receivedAt: NOW - 1_000, sentAt: NOW, kind: 'audio' });
+      }
+      const reply = (await record(phone)).body as unknown as Reply;
+      expect(reply.row?.text).toBe(he.voiceTooMany);
+      expect(google.requests.some((url) => url.includes('/audio/transcriptions'))).toBe(false);
+    });
+  });
+});

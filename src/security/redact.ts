@@ -52,6 +52,19 @@ export const BANNED_LOG_FIELDS = [
   'media_id',
   'mediaUrl',
   'audio',
+  // The app channel (§6.18). A pairing code or its MAC is a capability, a push
+  // token an address to a person's phone; a signature and a nonce are single-use
+  // but say which request was which, and a public key names a device.
+  // Not bare `code`: nested error codes (`{ code: 'E_…' }`) are what a log is for.
+  'pairingCode',
+  'bootstrapCode',
+  'mac',
+  'pushToken',
+  'push_token',
+  'signature',
+  'nonce',
+  'publicKey',
+  'public_key',
 ] as const;
 
 const BANNED = new Set<string>(BANNED_LOG_FIELDS);

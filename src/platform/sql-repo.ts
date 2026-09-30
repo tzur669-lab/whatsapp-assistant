@@ -12,4 +12,8 @@ export class DurableObjectSqlDriver implements SqlDriver {
     const cursor = this.storage.sql.exec(query, ...(bindings as never[]));
     return cursor.toArray() as SqlRow[];
   }
+
+  transaction<T>(fn: () => T): T {
+    return this.storage.transactionSync(fn);
+  }
 }

@@ -1,14 +1,19 @@
 /**
  * Worker entry. Its job is to get untrusted requests validated and handed to
- * the Durable Object as fast as possible, then return 200 so Meta does not
- * retry (PLAN §3.2).
+ * the Durable Object as fast as possible (PLAN §3.2).
  *
- * The ingress order is fixed and must not be rearranged:
- *   raw body -> HMAC -> parse -> allowlist -> dedupe   (CLAUDE.md invariant 9)
+ * The ingress order is fixed and must not be rearranged (CLAUDE.md invariant 9):
+ *   WhatsApp: raw body -> HMAC -> parse -> allowlist -> dedupe
+ *   the app:  route + size (here) -> signature -> device + nonce -> parse -> dedupe (in the DO)
+ *
+ * `CHANNEL` decides which exist (§6.18). `off` is the kill switch: every
+ * channel route, and the OAuth pair, answers 404.
  */
 import { Hono } from 'hono';
-import { z } from 'zod';
+import type { Context } from 'hono';
 import type { AppEnv } from './core/env.js';
+import { channelOf } from './core/env.js';
+import { checkAppRequest } from './channels/app/ingress.js';
 import { verifyWebhookHandshake, verifyWebhookSignature } from './channels/whatsapp/verify.js';
 import { parseWebhookPayload } from './channels/whatsapp/parse.js';
 import { isAllowed, parseAllowlist } from './security/allowlist.js';
@@ -26,6 +31,7 @@ const log = createLogger({ component: 'worker' });
 app.get('/health', (c) => c.text('ok'));
 
 app.get('/wa/webhook', (c) => {
+  if (channelOf(c.env) !== 'whatsapp') return c.text('not found', 404);
   const result = verifyWebhookHandshake(
     {
       mode: c.req.query('hub.mode'),
@@ -43,6 +49,8 @@ app.get('/wa/webhook', (c) => {
 });
 
 app.post('/wa/webhook', async (c) => {
+  if (channelOf(c.env) !== 'whatsapp') return c.text('not found', 404);
+
   // 1. Raw body. The signature covers these exact bytes.
   const rawBody = await c.req.text();
   if (rawBody.length > MAX_WEBHOOK_BODY_BYTES) {
@@ -117,6 +125,7 @@ app.post('/wa/webhook', async (c) => {
  * with the URL, and "which of link/state was wrong" is not worth telling them.
  */
 app.get('/oauth/google/start', async (c) => {
+  if (channelOf(c.env) === 'off') return c.text('not found', 404);
   const id = c.req.query('id') ?? '';
   if (!/^[0-9a-f]{64}$/.test(id)) {
     log.warn('oauth_start_rejected', { errorCode: 'malformed_id' });
@@ -135,6 +144,7 @@ app.get('/oauth/google/start', async (c) => {
 });
 
 app.get('/oauth/google/callback', async (c) => {
+  if (channelOf(c.env) === 'off') return c.text('not found', 404);
   // The user pressed Cancel on the consent screen.
   if (c.req.query('error')) {
     log.info('oauth_declined', {});
@@ -157,102 +167,63 @@ app.get('/oauth/google/callback', async (c) => {
     log.warn('oauth_callback_rejected', { errorCode: result?.error ?? 'unknown' });
     return c.text('Could not complete the connection. Please request a new link.', 400);
   }
-  return c.text('Connected. You can close this page and return to WhatsApp.', 200);
+  return c.text('Connected. You can close this page and return to the assistant.', 200);
 });
 
 /**
- * The device companion's routes (PLAN §6.17).
+ * The app's routes, and the call companion's (PLAN §6.17, §6.18).
  *
  * Public, because a phone reaches them over the internet, and trusted only as
- * far as the credential presented: a single-use pairing code, or the device
- * token it was traded for. Everything is checked inside the Durable Object,
- * where the token's hash lives; this layer only refuses what is malformed.
- *
- * A device token can fetch a dispatch, report on one, and update its own push
- * address — nothing else. No route here reads a reminder, the calendar, or a
- * setting. Failures say as little as the OAuth pages do.
+ * far as the signature: checked in the Durable Object, where the keys live.
+ * This layer refuses what is malformed or too big, and passes the body on
+ * byte for byte — re-serialising it would change what was signed.
  */
-const MAX_DEVICE_BODY_BYTES = 4_096;
-const BEARER = /^Bearer ([A-Za-z0-9_-]{43})$/;
-const DISPATCH_ID = /^[0-9a-f]{32}$/;
+const SIGNED_HEADERS = ['x-device-id', 'x-timestamp', 'x-nonce', 'x-signature'] as const;
 
-const pairBody = z
-  .object({ code: z.string().regex(/^[A-Za-z0-9_-]{43}$/), pushToken: z.string().min(1).max(4_096) })
-  .strict();
-const reportBody = z
-  .object({
-    dispatchId: z.string().regex(DISPATCH_ID),
-    matched: z.enum(['none', 'one', 'many']),
-    outcome: z.enum(['placed', 'cancelled', 'no_match']),
-  })
-  .strict();
-const pushTokenBody = z.object({ pushToken: z.string().min(1).max(4_096) }).strict();
+async function forwardToApp(c: Context<{ Bindings: Bindings }>): Promise<Response> {
+  const checked = await checkAppRequest(c.req.raw, channelOf(c.env));
+  if (!checked.ok) {
+    if (checked.status !== 404) log.warn('app_request_refused', { status: checked.status });
+    return c.text(checked.status === 404 ? 'not found' : 'bad request', checked.status);
+  }
 
-async function deviceJson<T>(c: { req: { text(): Promise<string> } }, schema: z.ZodType<T>): Promise<T | null> {
-  const raw = await c.req.text();
-  if (raw.length > MAX_DEVICE_BODY_BYTES) return null;
+  const headers = new Headers({
+    'x-app-method': checked.method,
+    'x-app-path': checked.path,
+    'x-app-content-type': checked.contentType,
+  });
+  for (const name of SIGNED_HEADERS) {
+    const value = c.req.header(name);
+    if (value !== undefined) headers.set(name, value);
+  }
+
+  const stub = c.env.ASSISTANT.get(c.env.ASSISTANT.idFromName('singleton'));
+  const pending = stub.fetch('https://do/do/app', { method: 'POST', headers, body: checked.body });
+
+  // If the phone drops the connection mid-turn, the turn still finishes and its
+  // answer still reaches the outbox (§6.18).
   try {
-    const parsed = schema.safeParse(JSON.parse(raw));
-    return parsed.success ? parsed.data : null;
+    c.executionCtx.waitUntil(pending.then(
+      () => undefined,
+      () => undefined,
+    ));
   } catch {
-    return null;
+    // No execution context outside the runtime (tests). Nothing to extend.
+  }
+
+  try {
+    const response = await pending;
+    return new Response(response.body, {
+      status: response.status,
+      headers: { 'content-type': 'application/json', 'cache-control': 'no-store' },
+    });
+  } catch (error) {
+    log.error('do_call_failed', { errorCode: error instanceof Error ? error.name : 'E_UNKNOWN' });
+    return c.text('unavailable', 503);
   }
 }
 
-function bearerOf(header: string | undefined): string | null {
-  return BEARER.exec(header ?? '')?.[1] ?? null;
-}
-
-app.post('/device/pair', async (c) => {
-  const body = await deviceJson(c, pairBody);
-  if (!body) return c.text('bad request', 400);
-
-  const result = await callDo<{ deviceToken?: string; error?: string }>(c.env, '/do/device/pair', body);
-  if (!result?.deviceToken) {
-    log.warn('device_pair_rejected', { errorCode: result?.error ?? 'unknown' });
-    return c.text('invalid or expired code', 400);
-  }
-  return c.json({ deviceToken: result.deviceToken });
-});
-
-app.get('/device/dispatch/:id', async (c) => {
-  const token = bearerOf(c.req.header('authorization'));
-  const id = c.req.param('id');
-  if (!token) return c.text('unauthorized', 401);
-  if (!DISPATCH_ID.test(id)) return c.text('not found', 404);
-
-  const result = await callDo<{ queryVariants?: string[]; expiresAt?: number; error?: string }>(
-    c.env,
-    '/do/device/dispatch',
-    { token, id },
-  );
-  if (result?.error === 'unauthorized') return c.text('unauthorized', 401);
-  if (!result?.queryVariants) return c.text('not found', 404);
-  return c.json({ queryVariants: result.queryVariants, expiresAt: result.expiresAt });
-});
-
-app.post('/device/report', async (c) => {
-  const token = bearerOf(c.req.header('authorization'));
-  if (!token) return c.text('unauthorized', 401);
-  const body = await deviceJson(c, reportBody);
-  if (!body) return c.text('bad request', 400);
-
-  const result = await callDo<{ ok?: boolean; error?: string }>(c.env, '/do/device/report', { token, ...body });
-  if (result?.error === 'unauthorized') return c.text('unauthorized', 401);
-  if (!result?.ok) return c.text('not found', 404);
-  return c.body(null, 204);
-});
-
-app.post('/device/push-token', async (c) => {
-  const token = bearerOf(c.req.header('authorization'));
-  if (!token) return c.text('unauthorized', 401);
-  const body = await deviceJson(c, pushTokenBody);
-  if (!body) return c.text('bad request', 400);
-
-  const result = await callDo<{ ok?: boolean }>(c.env, '/do/device/push-token', { token, ...body });
-  if (!result?.ok) return c.text('unauthorized', 401);
-  return c.body(null, 204);
-});
+app.on(['GET', 'POST'], ['/app/*', '/device/*'], forwardToApp);
 
 app.notFound((c) => c.text('not found', 404));
 

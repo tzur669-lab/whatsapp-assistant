@@ -1,6 +1,7 @@
 # Runbook
 
-Operational procedures for the WhatsApp assistant. See `PLAN.md` for why any of
+Operational procedures for the assistant — reached through its Android app,
+with WhatsApp frozen behind `CHANNEL` (PLAN §6.18). See `PLAN.md` for why any of
 it is the way it is; this file is only what to do.
 
 ## What exists today
@@ -10,14 +11,23 @@ it is the way it is; this file is only what to do.
 | Route | Purpose |
 |---|---|
 | `GET /health` | Public liveness. Returns `ok` and nothing about state. |
-| `GET /wa/webhook` | Meta's subscription handshake. |
-| `POST /wa/webhook` | Inbound messages. HMAC first, then parse, then allowlist. |
-| `GET /oauth/google/start?id=…` | Redeems a one-time connect link, redirects to Google. |
-| `GET /oauth/google/callback` | Exchanges the code and stores the grant. |
-| `POST /device/pair` | The phone app trades a `/pair` code for its device token. |
-| `GET /device/dispatch/:id` | The app fetches a call request after the push wakes it. Device token only. |
-| `POST /device/report` | The app reports how a call ended: a count and an outcome, never a name or number. |
-| `POST /device/push-token` | The app sends its rotated FCM address. |
+| `GET /wa/webhook` | Meta's subscription handshake. `CHANNEL=whatsapp` only. |
+| `POST /wa/webhook` | Inbound messages. HMAC first, then parse, then allowlist. `CHANNEL=whatsapp` only. |
+| `GET /oauth/google/start?id=…` | Redeems a one-time connect link, redirects to Google. Not with `CHANNEL=off`. |
+| `GET /oauth/google/callback` | Exchanges the code and stores the grant. Not with `CHANNEL=off`. |
+| `POST /app/pair` | The phone pairs: its public key and a MAC proving it knows the code. The code itself is never sent. |
+| `POST /app/message` | A text message or a button tap, signed. `CHANNEL=app` only. |
+| `POST /app/voice/:id` | A recording (AAC in MP4, ≤ 1 MB), signed. `CHANNEL=app` only. |
+| `GET /app/outbox` | Every message the phone has not acked, 50 at a time, signed. `CHANNEL=app` only. |
+| `POST /app/outbox/ack` | The seqs the phone has stored, signed. `CHANNEL=app` only. |
+| `POST /app/push-token` | The app sends its rotated FCM address, signed. |
+| `GET /device/dispatch/:id` | The app fetches a call request after the push wakes it, signed. |
+| `POST /device/report` | The app reports how a call ended: a count and an outcome, never a name or number. Signed. |
+
+Every `/app/*` and `/device/*` request after pairing carries `x-device-id`,
+`x-timestamp`, `x-nonce` and `x-signature` (PLAN §6.18). A 401 body says why:
+`unpaired`, `clock` (the phone's clock is more than five minutes off) or
+`unauthorized`; a 409 is a replayed nonce.
 
 **Durable Object** — one instance, `AssistantDO` named `singleton`. It holds the
 SQLite schema, the reminder alarm, and every confirmation gate.
@@ -34,7 +44,8 @@ SQLite schema, the reminder alarm, and every confirmation gate.
 
 **Chat commands** — `/help`, `/status`, `/digest`, `/shabbat`, `/ical`,
 `/birthday`, `/pause`, `/resume`, `/budget`, `/connect google`, `/pair`,
-`/pair off`, `/ping`.
+`/pair off`, `/ping`. In the app, `/budget` says there is no budget and `/pair`
+says to pair with a code from the script; `/pair off` unpairs this phone.
 
 ## Deploying to staging
 
@@ -56,6 +67,12 @@ asks for the external ones with hidden input. It is fixed to staging and writes
 nothing to disk. Run it yourself; Claude Code never sets secrets.
 
     powershell -ExecutionPolicy Bypass -File scripts\set-staging-secrets.ps1
+    powershell -ExecutionPolicy Bypass -File scripts\set-staging-secrets.ps1 -PairCode
+
+The first asks only for what the app needs (add `-Channel whatsapp` for the Meta
+secrets). The second makes the code the phone pairs with and shows it once —
+type it into the app straight away, over mobile data rather than the home
+Wi-Fi.
 
 Staging lives at `https://wa-assistant-staging.moneytime-pro-api.workers.dev`.
 
@@ -98,6 +115,9 @@ lines that are there are the ones worth reading.
 | Calendar says not connected | Grant revoked or lapsed | Logs for `google_disconnected`; re-run `/connect google` |
 | Reminder arrived twice | Should be impossible | Check `reminders.status` and `lease_until`; this is a bug, not an operation |
 | Reminder said sent, never arrived | Meta accepted it and then failed | `/status` undelivered count; `outbound_messages.error_code` for the wamid |
+| App: a reminder showed only when the app was opened | The push did not wake the phone — battery restriction, a force-stopped app, notifications off | Logs for `outbox_push_failed` / `outbox_push_skipped`; `E_PUSH_UNREGISTERED` in `/status` means the app must send a new push address (open it once). On the phone: battery "unrestricted", notifications on |
+| App: every request answers 401 `clock` | The phone's clock is more than five minutes off | Turn on automatic time on the phone |
+| App: 401 `unpaired` | The phone was replaced, `/pair off` was sent, or `ALLOWLIST_WA_IDS` / `LOG_HASH_KEY` changed | Pair again with a new code (`-PairCode`) |
 | No digest | Off, wrong hour, or the window was shut | `/digest` reports the setting; logs for `digest_skipped` |
 | Nothing arrives on Shabbat | Working as asked | `/shabbat` reports it; logs for `delivery_deferred` with `rest_period` |
 | Subscribed calendar is stale | The refresh is failing | `/ical` reports the last error code; logs for `ical_fetch_failed` |
@@ -112,10 +132,14 @@ line with a message, use the `wamid`.
 already scheduled still fire; nothing new is created, moved or deleted.
 `/resume` undoes it.
 
-To stop everything including deliveries, clear `ALLOWLIST_WA_IDS` — inbound
-messages are then dropped before any parsing, and see `ops/revoke-tokens.md`.
+To stop everything including deliveries, deploy with `CHANNEL=off`: every
+channel route answers 404 and reminders are held until it is switched back. See
+`ops/revoke-tokens.md`. (Clearing `ALLOWLIST_WA_IDS` used to be the answer; it
+now orphans every record, because the identity is derived from it.)
 
 ## Budget
+
+WhatsApp only — the app has no message budget and no 24-hour window.
 
 1,000 free service messages per number per month, with no payment method on the
 account, which is the deliberate cost cap (PLAN §5). At 800 the next reply

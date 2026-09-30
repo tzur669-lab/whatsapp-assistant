@@ -1,132 +1,157 @@
 /**
- * The device routes at the Worker (PLAN §6.17). This layer only refuses what is
- * malformed — the credential itself is checked in the Durable Object — so these
- * tests are about what never gets that far, and about what the phone is told.
+ * The app and call routes at the Worker (PLAN §6.17, §6.18). This layer checks
+ * only what can be checked without a key — route, channel, shape, size — and
+ * then hands the body on byte for byte, because the signature covers those
+ * exact bytes. The credential is the Durable Object's to check.
  */
 import { describe, expect, it, beforeEach } from 'vitest';
 import app from '../../src/index.js';
 
-const TOKEN = 'A'.repeat(43);
-const DISPATCH = 'f'.repeat(32);
+type Reached = { headers: Record<string, string>; body: Uint8Array };
 
-let reached: Array<{ path: string; body: Record<string, unknown> }>;
-let answer: unknown;
+let reached: Reached[];
+let answer: { status: number; body: unknown };
 
-function makeEnv() {
+function makeEnv(channel?: string) {
   const stub = {
-    fetch: (url: string, init: { body?: string }) => {
-      reached.push({ path: new URL(url).pathname, body: JSON.parse(init.body ?? '{}') as Record<string, unknown> });
-      return Promise.resolve(new Response(JSON.stringify(answer), { status: 200 }));
+    fetch: async (_url: string, init: { headers: Headers; body: Uint8Array }) => {
+      const headers: Record<string, string> = {};
+      init.headers.forEach((value, name) => {
+        headers[name] = value;
+      });
+      reached.push({ headers, body: new Uint8Array(init.body) });
+      return new Response(JSON.stringify(answer.body), { status: answer.status });
     },
   };
   return {
     ENVIRONMENT: 'test',
+    ...(channel === undefined ? {} : { CHANNEL: channel }),
     ASSISTANT: { idFromName: () => 'id', get: () => stub },
   } as unknown as Parameters<typeof app.fetch>[1];
 }
 
-const request = (path: string, init: RequestInit = {}) =>
-  app.fetch(new Request(`https://w.example.test${path}`, init), makeEnv());
+const SIGNED = {
+  'x-device-id': '0123456789abcdef0123456789abcdef',
+  'x-timestamp': '1790000000000',
+  'x-nonce': 'fedcba9876543210fedcba9876543210',
+  'x-signature': 'MAYCAQECAQE=',
+};
 
-const post = (path: string, body: unknown, token?: string) =>
-  request(path, {
-    method: 'POST',
-    body: typeof body === 'string' ? body : JSON.stringify(body),
-    headers: token ? { authorization: `Bearer ${token}` } : {},
-  });
+const request = (path: string, init: RequestInit, channel = 'app') =>
+  app.fetch(new Request(`https://w.example.test${path}`, init), makeEnv(channel));
+
+const postJson = (path: string, body: string, channel = 'app', extra: Record<string, string> = {}) =>
+  request(path, { method: 'POST', body, headers: { 'content-type': 'application/json', ...SIGNED, ...extra } }, channel);
 
 beforeEach(() => {
   reached = [];
-  answer = {};
+  answer = { status: 200, body: { status: 'reply' } };
 });
 
-describe('POST /device/pair', () => {
-  it('trades a well-formed code for a device token', async () => {
-    answer = { deviceToken: TOKEN };
-    const response = await post('/device/pair', { code: 'B'.repeat(43), pushToken: 'push' });
-    expect(response.status).toBe(200);
-    expect(await response.json()).toEqual({ deviceToken: TOKEN });
+describe('which routes exist', () => {
+  it('serves the assistant only when the app is the channel', async () => {
+    expect((await postJson('/app/message', '{}', 'app')).status).toBe(200);
+    expect((await postJson('/app/message', '{}', 'whatsapp')).status).toBe(404);
+    expect((await postJson('/app/message', '{}', 'off')).status).toBe(404);
   });
 
-  it('says the same thing for every refused code', async () => {
-    answer = { error: 'expired' };
-    const refused = await post('/device/pair', { code: 'B'.repeat(43), pushToken: 'push' });
-    expect(refused.status).toBe(400);
-    expect(await refused.text()).toBe('invalid or expired code');
+  it('serves pairing and the call routes on WhatsApp too, and on nothing when off', async () => {
+    expect((await postJson('/app/pair', '{}', 'whatsapp')).status).toBe(200);
+    expect((await request(`/device/dispatch/${'f'.repeat(32)}`, { headers: SIGNED }, 'whatsapp')).status).toBe(200);
+    expect((await postJson('/app/pair', '{}', 'off')).status).toBe(404);
   });
 
-  it('never reaches the DO with a malformed body', async () => {
-    for (const body of ['not json', { code: 'short', pushToken: 'p' }, { code: 'B'.repeat(43) }, { code: 'B'.repeat(43), pushToken: 'p', extra: 1 }]) {
-      expect((await post('/device/pair', body)).status).toBe(400);
-    }
-    expect((await post('/device/pair', 'x'.repeat(5_000))).status).toBe(400);
-    expect(reached).toHaveLength(0);
-  });
-});
-
-describe('GET /device/dispatch/:id', () => {
-  it('needs a bearer token of the right shape', async () => {
-    expect((await request(`/device/dispatch/${DISPATCH}`)).status).toBe(401);
-    const wrongShape = await request(`/device/dispatch/${DISPATCH}`, { headers: { authorization: 'Bearer short' } });
-    expect(wrongShape.status).toBe(401);
-    expect(reached).toHaveLength(0);
-  });
-
-  it('refuses an id that is not one it could have issued', async () => {
-    const response = await request('/device/dispatch/../../do/maintenance', {
-      headers: { authorization: `Bearer ${TOKEN}` },
-    });
+  it('treats an unset channel as WhatsApp, as before', async () => {
+    const response = await app.fetch(
+      new Request('https://w.example.test/app/message', { method: 'POST', body: '{}', headers: { 'content-type': 'application/json' } }),
+      makeEnv(undefined),
+    );
     expect(response.status).toBe(404);
-    expect(reached).toHaveLength(0);
   });
 
-  it('returns the words to match, and passes the token only to the DO', async () => {
-    answer = { queryVariants: ['דוד דני'], expiresAt: 1 };
-    const response = await request(`/device/dispatch/${DISPATCH}`, { headers: { authorization: `Bearer ${TOKEN}` } });
-    expect(await response.json()).toEqual({ queryVariants: ['דוד דני'], expiresAt: 1 });
-    expect(reached).toEqual([{ path: '/do/device/dispatch', body: { token: TOKEN, id: DISPATCH } }]);
+  it('closes the WhatsApp webhook when the app is the channel', async () => {
+    expect((await request('/wa/webhook', { method: 'POST', body: '{}' }, 'app')).status).toBe(404);
+    expect((await request('/wa/webhook?hub.mode=subscribe', { method: 'GET' }, 'off')).status).toBe(404);
   });
 
-  it('answers 401 when the DO does not know the token', async () => {
-    answer = { error: 'unauthorized' };
-    const response = await request(`/device/dispatch/${DISPATCH}`, { headers: { authorization: `Bearer ${TOKEN}` } });
-    expect(response.status).toBe(401);
-  });
-});
-
-describe('POST /device/report', () => {
-  const report = { dispatchId: DISPATCH, matched: 'one', outcome: 'placed' };
-
-  it('accepts a count and an outcome', async () => {
-    answer = { ok: true };
-    expect((await post('/device/report', report, TOKEN)).status).toBe(204);
+  it('closes the OAuth pair with the kill switch on', async () => {
+    expect((await request(`/oauth/google/start?id=${'a'.repeat(64)}`, { method: 'GET' }, 'off')).status).toBe(404);
   });
 
-  it('refuses a report that carries a name or a number', async () => {
-    // The strict schema is what keeps "No number ever reaches the Worker" true
-    // even for a buggy or hostile app: an extra field is a 400, not a log line.
-    for (const extra of [{ name: 'דוד דני' }, { number: '0500000000' }]) {
-      expect((await post('/device/report', { ...report, ...extra }, TOKEN)).status).toBe(400);
-    }
-    expect(reached).toHaveLength(0);
-  });
-
-  it('refuses an outcome outside the closed set', async () => {
-    expect((await post('/device/report', { ...report, outcome: 'hacked' }, TOKEN)).status).toBe(400);
-    expect((await post('/device/report', { ...report, matched: 2 }, TOKEN)).status).toBe(400);
-  });
-
-  it('needs the token', async () => {
-    expect((await post('/device/report', report)).status).toBe(401);
+  it('refuses an id that is not one it could have issued, without reaching the DO', async () => {
+    expect((await request('/device/dispatch/../../do/maintenance', { headers: SIGNED })).status).toBe(404);
     expect(reached).toHaveLength(0);
   });
 });
 
-describe('POST /device/push-token', () => {
-  it('updates with the token, and says 401 otherwise', async () => {
-    answer = { ok: true };
-    expect((await post('/device/push-token', { pushToken: 'new' }, TOKEN)).status).toBe(204);
-    answer = { error: 'unauthorized' };
-    expect((await post('/device/push-token', { pushToken: 'new' }, TOKEN)).status).toBe(401);
+describe('what never reaches the Durable Object', () => {
+  it('a body over the cap, whether declared or not', async () => {
+    expect((await postJson('/app/message', 'x'.repeat(9_000))).status).toBe(413);
+
+    const streamed = new ReadableStream<Uint8Array>({
+      start(controller) {
+        for (let i = 0; i < 20; i++) controller.enqueue(new Uint8Array(1_000));
+        controller.close();
+      },
+    });
+    const response = await request('/app/message', {
+      method: 'POST',
+      body: streamed,
+      headers: { 'content-type': 'application/json', ...SIGNED },
+      // @ts-expect-error — Node needs this for a streamed request body.
+      duplex: 'half',
+    });
+    expect(response.status).toBe(413);
+    expect(reached).toHaveLength(0);
+  });
+
+  it('a recording over a megabyte', async () => {
+    const response = await request(`/app/voice/3f2b8c1e-4d5a-4b6c-8d7e-9f0a1b2c3d4e`, {
+      method: 'POST',
+      body: new Uint8Array(1024 * 1024 + 1),
+      headers: { 'content-type': 'audio/mp4', ...SIGNED },
+    });
+    expect(response.status).toBe(413);
+  });
+
+  it('the wrong content type, and any compression', async () => {
+    expect((await postJson('/app/message', '{}', 'app', { 'content-type': 'text/plain' })).status).toBe(415);
+    expect((await postJson('/app/message', '{}', 'app', { 'content-encoding': 'gzip' })).status).toBe(415);
+    const voice = await request(`/app/voice/3f2b8c1e-4d5a-4b6c-8d7e-9f0a1b2c3d4e`, {
+      method: 'POST',
+      body: new Uint8Array(4),
+      headers: { 'content-type': 'image/png', ...SIGNED },
+    });
+    expect(voice.status).toBe(415);
+    expect(reached).toHaveLength(0);
+  });
+
+  it('a query string, which the signature does not cover', async () => {
+    expect((await request('/app/outbox?all=1', { headers: SIGNED })).status).toBe(400);
+    expect(reached).toHaveLength(0);
+  });
+});
+
+describe('what does', () => {
+  it('the exact bytes, the signed headers, and the method and path checked', async () => {
+    const body = '{"id":"3f2b8c1e-4d5a-4b6c-8d7e-9f0a1b2c3d4e", "kind":"text","text":"שלום"}';
+    await postJson('/app/message', body);
+
+    expect(reached).toHaveLength(1);
+    expect(new TextDecoder().decode(reached[0]!.body)).toBe(body);
+    expect(reached[0]!.headers).toMatchObject({
+      'x-app-method': 'POST',
+      'x-app-path': '/app/message',
+      'x-app-content-type': 'application/json',
+      ...SIGNED,
+    });
+  });
+
+  it('passes the Durable Object’s answer and status through, never cached', async () => {
+    answer = { status: 409, body: { error: 'replay' } };
+    const response = await postJson('/app/message', '{}');
+    expect(response.status).toBe(409);
+    expect(await response.json()).toEqual({ error: 'replay' });
+    expect(response.headers.get('cache-control')).toBe('no-store');
   });
 });

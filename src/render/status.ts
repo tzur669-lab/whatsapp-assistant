@@ -16,7 +16,8 @@ import type { BudgetState } from '../policy/window.js';
 export type StatusReport = {
   connected: boolean;
   pendingReminders: number;
-  budget: BudgetState;
+  /** Absent in the app, which has no message budget (§6.18). */
+  budget?: BudgetState;
   llmFallbacksToday: number;
   /** Messages Meta accepted and then reported as undelivered (§6.8). */
   undeliveredToday: number;
@@ -38,7 +39,9 @@ export const statusText = {
       '',
       `• יומן Google: ${report.connected ? 'מחובר' : `לא מחובר — יש לשלוח ${isolate('/connect google')}`}`,
       `• תזכורות ממתינות: ${isolateLtr(String(report.pendingReminders))}`,
-      `• הודעות החודש: ${isolateLtr(`${report.budget.sent}/${report.budget.remaining + report.budget.sent}`)}`,
+      ...(report.budget
+        ? [`• הודעות החודש: ${isolateLtr(`${report.budget.sent}/${report.budget.remaining + report.budget.sent}`)}`]
+        : []),
       `• נפילות לפרסר גיבוי היום: ${isolateLtr(String(report.llmFallbacksToday))}`,
     ];
 
@@ -83,6 +86,9 @@ export const statusText = {
   alreadyPaused: 'המערכת כבר מושהית.',
 
   alreadyRunning: 'המערכת כבר פעילה.',
+
+  /** `/budget` in the app: there is nothing to count (§6.18). */
+  budgetNotInApp: 'באפליקציה אין מגבלת הודעות חודשית.',
 
   /** `/budget` — the hard cap is 1,000 free messages a month (PLAN §5). */
   budget(state: BudgetState): string {

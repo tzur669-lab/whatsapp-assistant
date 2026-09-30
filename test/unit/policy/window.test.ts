@@ -141,3 +141,16 @@ describe('budgetState', () => {
     expect(budgetState(BUDGET_WARN_AT + 1).shouldWarn).toBe(false);
   });
 });
+
+describe('planDelivery on the app channel (§6.18)', () => {
+  it('goes to the phone whatever the window or the budget says', () => {
+    const plan = planDelivery({
+      dueAtUtc: Date.UTC(2026, 9, 10, 9, 0, 0),
+      lastInboundAt: null,
+      nowMs: Date.UTC(2026, 8, 29, 9, 0, 0),
+      monthlySent: FREE_MESSAGES_PER_MONTH,
+      channel: 'app',
+    });
+    expect(plan).toEqual({ channel: 'app', reason: 'app', recheckAt: null });
+  });
+});

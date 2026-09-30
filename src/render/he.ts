@@ -14,15 +14,22 @@ const SYSTEM_COMMANDS = ['/help', '/status', '/digest', '/shabbat', '/ical', '/b
   .map(isolate)
   .join(' · ');
 
-export const he = {
-  help: [
+/** In the app there is no message budget, and a phone is paired with a code, not `/pair` (§6.18). */
+const APP_COMMANDS = ['/help', '/status', '/digest', '/shabbat', '/ical', '/birthday', '/pause', '/resume', '/connect google', '/pair off']
+  .map(isolate)
+  .join(' · ');
+
+function helpText(channel: 'whatsapp' | 'app'): string {
+  return [
     'עוזר אישי. אפשר לבקש:',
     '',
     `• תזכורת — תזכיר לי מחר ב${isolateLtr('-8')} להתקשר לאבא`,
     '• רשימת תזכורות — מה התזכורות שלי',
     '• יומן — מה יש לי ביומן מחר',
     `• פגישה — תקבע פגישה עם יוסי מחר ב${isolateLtr('-14:00')}`,
-    `• שיחה — תתקשר לדוד דני (מהטלפון, אחרי חיבור ב${isolate('/pair')})`,
+    channel === 'app'
+      ? '• שיחה — תתקשר לדוד דני (האישור בהתראה בטלפון)'
+      : `• שיחה — תתקשר לדוד דני (מהטלפון, אחרי חיבור ב${isolate('/pair')})`,
     '',
     'אפשר גם להקליט הודעה קולית במקום לכתוב. מה שנשמע יוצג בתשובה.',
     '',
@@ -30,8 +37,15 @@ export const he = {
     `לחיבור יומן חיצוני: ${isolate('/ical')} ואחריו קישור ה-ics.`,
     `ימי הולדת: ${isolate('/birthday דנה 14.3')} — יופיעו בתקציר ביום עצמו.`,
     '',
-    `פקודות מערכת: ${SYSTEM_COMMANDS}`,
-  ].join('\n'),
+    `פקודות מערכת: ${channel === 'app' ? APP_COMMANDS : SYSTEM_COMMANDS}`,
+  ].join('\n');
+}
+
+export const he = {
+  help: helpText('whatsapp'),
+
+  /** `/help` in the app (§6.18). */
+  helpApp: helpText('app'),
 
   pong: 'פונג ✅',
 
@@ -60,9 +74,25 @@ export const he = {
 
   voiceTooLong: 'ההקלטה ארוכה מדי לתמלול. כדאי להקליט הודעה קצרה יותר.',
 
+  /** More recordings in the last hour than the app channel allows (§6.18). */
+  voiceTooMany: 'נשלחו יותר מדי הקלטות בשעה האחרונה. אפשר לכתוב את הבקשה בינתיים.',
+
+  /**
+   * Stands in for the echo when the answer to a voice note arrives from the
+   * outbox rather than in the HTTP response. The transcript is never stored,
+   * so the stored copy cannot carry it (§6.10, §6.18).
+   */
+  heardNotKept: '(התמלול לא נשמר.)',
+
   /** NLU could not produce a usable intent. Never guess — ask again. */
   notUnderstood: `לא הבנתי את הבקשה. אפשר לנסח מחדש, או לשלוח ${isolate('/help')} לרשימת הפקודות.`,
 
   /** Generic failure. Carries no error details — those go to the log only. */
   internalError: 'קרתה תקלה זמנית והפעולה לא בוצעה. כדאי לנסות שוב בעוד רגע.',
+
+  /**
+   * A turn that failed part-way in the app. Unlike `internalError` it does not
+   * promise that nothing happened: a tool may have run before the failure (§6.18).
+   */
+  unknownOutcome: 'קרתה תקלה באמצע. לא בטוח שהבקשה בוצעה. כדאי לבדוק לפני ששולחים שוב.',
 } as const;

@@ -1,6 +1,6 @@
 # CLAUDE.md — WhatsApp Personal Assistant
 
-A single-user WhatsApp assistant for reminders and Google Calendar. It runs on Cloudflare Workers with one SQLite-backed Durable Object and uses Groq for intent parsing.
+A single-user assistant for reminders and Google Calendar, reached through its own Android app (PLAN §6.18) — WhatsApp is frozen behind `CHANNEL`, not deleted. It runs on Cloudflare Workers with one SQLite-backed Durable Object and uses Groq for intent parsing.
 
 **Before starting any task:**
 
@@ -28,11 +28,13 @@ A single-user WhatsApp assistant for reminders and Google Calendar. It runs on C
 6. **Every tool has a tier (0–3) in the registry.** Tier 2 and 3 must go through `confirm/`. There is no Tier 4 code path — never implement permission changes, secret access, data forwarding, or code execution.
 7. **Confirmations and button replies never go through the LLM.** They are handled deterministically in the Durable Object with atomic checks: status, expiry, sender, nonce, input hash. Execute the *stored* validated input, never a re-parsed one.
 8. **Policy is code and static config only.** Nothing received over chat may change permissions, allowlists, tiers, or limits.
-9. **Webhook security order is fixed:** raw body → HMAC `X-Hub-Signature-256` (constant-time) → parse → allowlist → dedupe. Senders not on the allowlist are dropped silently, with no reply and no LLM call.
+9. **Ingress security order is fixed.**
+   - WhatsApp: raw body → HMAC `X-Hub-Signature-256` (constant-time) → parse → allowlist → dedupe. Senders not on the allowlist are dropped silently, with no reply and no LLM call.
+   - The app (PLAN §6.18): route, channel and a byte-counted size cap in the Worker, which forwards the body **byte for byte** → the device's public key → ECDSA signature over the canonical string (awaited, no state touched) → one synchronous transaction: device still active, nonce spent → strict Zod → dedupe (`recordInbound`, before the pipeline's first await). An unknown or revoked device gets 401 and never reaches the LLM. A pairing code never crosses the network: the phone proves it with a MAC over its own key.
 10. **One user command → at most one action and one reply message.** No autonomous loops or chained tool calls.
 11. **Only `src/platform/` may import Cloudflare APIs.** Everything else must run on plain Node for portability.
 12. **Fail safe.** On ambiguity, errors, stale messages (>10 min old), or forwarded messages: CLARIFY or CONFIRM. Never guess and execute.
-13. **A voice note is message text, one step earlier.** Audio is transcribed and graded (`src/voice/`, PLAN §6.10), then follows exactly the same router / NLU / policy / tool path as typed text — never a parallel one. A transcript the recognizer is unsure of never reaches the parser, and every reply to a voice note echoes what was heard, because the user has not seen it. The transcript is message content: never logged, never stored.
+13. **A voice note is message text, one step earlier.** Audio is transcribed and graded (`src/voice/`, PLAN §6.10), then follows exactly the same router / NLU / policy / tool path as typed text — never a parallel one. A transcript the recognizer is unsure of never reaches the parser, and every reply to a voice note echoes what was heard, because the user has not seen it. The transcript is message content: never logged, never stored. In the app the recording arrives with the request (≤ 1 MB) instead of as a media id, and the answer's stored copy in the outbox never carries the echo.
 
 ## Secrets and privacy
 

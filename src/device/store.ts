@@ -1,46 +1,55 @@
 /**
- * The device companion's state (PLAN §6.17).
+ * The paired phone's state (PLAN §6.17, §6.18).
  *
- * Three credentials, each a bearer secret, each kept only as something that
- * cannot be turned back into it:
+ *   pairing code   a single-use capability: a `/pair` code (10 minutes) or the
+ *                  bootstrap code set as a secret. It is never sent over the
+ *                  network — the phone proves it knows the code with a MAC over
+ *                  its own public key (`channels/app/verify.ts`). A live `/pair`
+ *                  code is kept as ciphertext, because checking a MAC needs the
+ *                  code; a used one is remembered by keyed hash.
+ *   public key     the phone's Keystore key, P-256. Every request is signed with
+ *                  it. Public, so stored as is; nothing here can sign.
+ *   push address   the phone's FCM registration token. Not a credential, but an
+ *                  address that reaches a person's phone, so AES-GCM ciphertext.
  *
- *   pairing code   `/pair` sends it; the app trades it for a device token.
- *                  256 bits, 10 minutes, single use; stored as a keyed hash.
- *   device token   what the app authenticates with. 256 bits, stored as a
- *                  keyed hash, compared in constant time. It can fetch a
- *                  dispatch and report on one — nothing else.
- *   push address   the phone's FCM registration token. Not a secret that
- *                  grants anything, but an address to reach a person's phone,
- *                  so it is stored as AES-GCM ciphertext like a refresh token.
- *
- * Consumption is one statement (UPDATE … RETURNING), as for the OAuth link: a
- * read-then-write would let a replay through the gap.
+ * One device at a time: pairing revokes the previous one, so a lost phone is
+ * replaced, not joined. Consumption is one statement (UPDATE … RETURNING or
+ * INSERT … ON CONFLICT), inside a transaction with the device insert.
  *
  * Nothing the device matched is ever written here. It reports how many
  * contacts matched and what happened, never which contact or which number.
  */
 import type { SqlDriver } from '../core/sql.js';
-import { hmacSha256Hex, timingSafeEqualHex } from '../security/hmac.js';
+import { hmacSha256Hex } from '../security/hmac.js';
 import { decryptToken, encryptToken } from '../security/crypto.js';
 import type { Keyring } from '../security/crypto.js';
+import {
+  formatPairingCode,
+  generatePairingCode,
+  normalizePairingCode,
+  pairingMac,
+  pairingMacMatches,
+  withinClockSkew,
+} from '../channels/app/verify.js';
+import type { PairRequest } from '../channels/app/parse.js';
 
 export const PAIRING_TTL_MS = 10 * 60 * 1000;
 /** A push that arrives late must not ring somebody half an hour later (§6.17). */
 export const DISPATCH_TTL_MS = 2 * 60 * 1000;
 
-/** 32 random bytes, base64url, no padding. */
-const BEARER = /^[A-Za-z0-9_-]{43}$/;
-
 export type ConsumeFailure = 'not_found' | 'expired' | 'already_used';
 export type Consumed<T> = { ok: true; value: T } | { ok: false; reason: ConsumeFailure };
 
 export type Device = { id: string; principal: string };
+export type SigningDevice = Device & { publicKey: string };
 
 /** How many of the phone's contacts the words matched. Never which. */
 export type Matched = 'none' | 'one' | 'many';
 export type CallOutcome = 'placed' | 'cancelled' | 'no_match';
 
 const OPEN = "('pending', 'fetched')";
+
+type Candidate = { kind: 'pair' | 'bootstrap'; code: string; codeHash: string; principal: string };
 
 export class DeviceStore {
   constructor(
@@ -52,81 +61,150 @@ export class DeviceStore {
 
   // -- pairing ----------------------------------------------------------------
 
+  /** `/pair` in chat. The code is shown once, formatted for typing. */
   async createPairing(principal: string): Promise<{ code: string; expiresAt: number }> {
-    const code = randomBase64Url(32);
+    const code = generatePairingCode();
     const createdAt = this.now();
     const expiresAt = createdAt + PAIRING_TTL_MS;
+    const codeHash = await this.hash('pair', code);
 
     this.sql.exec(
-      'INSERT INTO device_pairings (code_hash, principal, created_at, expires_at) VALUES (?, ?, ?, ?)',
-      await this.hash('pair', code),
+      `INSERT INTO device_pairings (code_hash, principal, created_at, expires_at, kind, code_enc)
+       VALUES (?, ?, ?, ?, 'pair', ?)`,
+      codeHash,
       principal,
       createdAt,
       expiresAt,
+      await this.encryptCode(codeHash, code),
     );
-    return { code, expiresAt };
+    return { code: formatPairingCode(code), expiresAt };
   }
 
   /**
-   * Trade a pairing code for a device token. The phone paired before this one
-   * is revoked: one device at a time, so a lost phone is replaced, not joined.
+   * Pair the phone that proved it knows a live code (PLAN §6.18).
+   *
+   * The code is either a `/pair` code or the bootstrap secret. Every candidate's
+   * MAC is computed and compared, so timing says nothing about which one, if
+   * any, matched. The phone paired before this one is revoked.
+   *
+   * A retry by the same public key after the code was used — the answer to the
+   * first attempt was lost — gets the same device back. Anyone else gets
+   * `already_used`.
    */
   async pair(
-    code: string,
-    pushToken: string,
-  ): Promise<Consumed<{ deviceId: string; deviceToken: string }>> {
-    if (!BEARER.test(code)) return { ok: false, reason: 'not_found' };
-
-    const codeHash = await this.hash('pair', code);
+    request: PairRequest,
+    context: { principal: string; bootstrapCode: string | null },
+  ): Promise<Consumed<{ deviceId: string; reused: boolean }>> {
     const now = this.now();
-    const rows = this.sql.exec(
-      `UPDATE device_pairings SET used_at = ?
-       WHERE code_hash = ? AND used_at IS NULL AND expires_at > ?
-       RETURNING principal`,
-      now,
-      codeHash,
-      now,
-    );
-    const principal = rows[0]?.['principal'];
-    if (typeof principal !== 'string') {
-      return { ok: false, reason: this.whyPairingFailed(codeHash) };
+    if (!withinClockSkew(request.timestamp, now)) return { ok: false, reason: 'expired' };
+
+    let matched: Candidate | null = null;
+    for (const candidate of await this.candidates(context)) {
+      const expected = await pairingMac(candidate.code, request.publicKey, request.pushToken, request.timestamp);
+      if (pairingMacMatches(expected, request.mac) && matched === null) matched = candidate;
     }
+    if (!matched) return { ok: false, reason: 'not_found' };
 
-    this.revoke(principal);
-
+    const keyHash = await this.hash('key', request.publicKey);
     const deviceId = randomHex(16);
-    const deviceToken = randomBase64Url(32);
-    this.sql.exec(
-      `INSERT INTO devices (id, principal, token_hash, push_token_enc, paired_at)
-       VALUES (?, ?, ?, ?, ?)`,
-      deviceId,
-      principal,
-      await this.hash('device', deviceToken),
-      await this.encryptPush(deviceId, pushToken),
-      now,
-    );
-    return { ok: true, value: { deviceId, deviceToken } };
+    const pushTokenEnc = await this.encryptPush(deviceId, request.pushToken);
+    const candidate = matched;
+
+    return this.sql.transaction((): Consumed<{ deviceId: string; reused: boolean }> => {
+      const consumed =
+        candidate.kind === 'bootstrap'
+          ? this.sql.exec(
+              `INSERT INTO device_pairings (code_hash, principal, created_at, expires_at, used_at, kind, public_key_hash)
+               VALUES (?, ?, ?, ?, ?, 'bootstrap', ?)
+               ON CONFLICT(code_hash) DO NOTHING
+               RETURNING principal`,
+              candidate.codeHash,
+              candidate.principal,
+              now,
+              now,
+              now,
+              keyHash,
+            )
+          : this.sql.exec(
+              `UPDATE device_pairings SET used_at = ?, public_key_hash = ?
+               WHERE code_hash = ? AND used_at IS NULL AND expires_at > ?
+               RETURNING principal`,
+              now,
+              keyHash,
+              candidate.codeHash,
+              now,
+            );
+
+      if (consumed.length === 0) {
+        // Used already. The same key asking again gets its device back.
+        const used = this.sql.exec(
+          `SELECT p.device_id AS device_id FROM device_pairings p
+           JOIN devices d ON d.id = p.device_id AND d.revoked_at IS NULL
+           WHERE p.code_hash = ? AND p.public_key_hash = ?`,
+          candidate.codeHash,
+          keyHash,
+        )[0];
+        return used
+          ? { ok: true, value: { deviceId: String(used['device_id']), reused: true } }
+          : { ok: false, reason: 'already_used' };
+      }
+
+      this.revoke(candidate.principal);
+      // `token_hash` is the bearer era's column, NOT NULL; an empty string is a
+      // value no presented token can ever match (0010_app.sql).
+      this.sql.exec(
+        `INSERT INTO devices (id, principal, token_hash, public_key, push_token_enc, paired_at)
+         VALUES (?, ?, '', ?, ?, ?)`,
+        deviceId,
+        candidate.principal,
+        request.publicKey,
+        pushTokenEnc,
+        now,
+      );
+      // The code's ciphertext stays until the code expires, so the same key
+      // retrying after a lost answer is matched again — see `candidates`.
+      this.sql.exec('UPDATE device_pairings SET device_id = ? WHERE code_hash = ?', deviceId, candidate.codeHash);
+      return { ok: true, value: { deviceId, reused: false } };
+    });
   }
 
-  // -- the device token -------------------------------------------------------
+  // -- signed requests ----------------------------------------------------------
 
-  /** The device a token belongs to, or null. Constant-time on the hash. */
-  async authenticate(deviceToken: string): Promise<Device | null> {
-    if (!BEARER.test(deviceToken)) return null;
-    const presented = await this.hash('device', deviceToken);
+  /** The device a signature must be checked against. Revoked devices do not exist here. */
+  signingDevice(deviceId: string): SigningDevice | null {
+    const row = this.sql.exec(
+      `SELECT id, principal, public_key FROM devices
+       WHERE id = ? AND revoked_at IS NULL AND public_key IS NOT NULL`,
+      deviceId,
+    )[0];
+    if (!row) return null;
+    return { id: String(row['id']), principal: String(row['principal']), publicKey: String(row['public_key']) };
+  }
 
-    let found: Device | null = null;
-    const rows = this.sql.exec(
-      'SELECT id, principal, token_hash FROM devices WHERE revoked_at IS NULL',
+  isActive(deviceId: string): boolean {
+    return this.sql.exec('SELECT 1 FROM devices WHERE id = ? AND revoked_at IS NULL', deviceId).length > 0;
+  }
+
+  /**
+   * Spend a nonce. False when this device has used it already. Expired nonces
+   * go first, so the table holds only the few minutes that matter.
+   */
+  claimNonce(deviceId: string, nonce: string, expiresAt: number): boolean {
+    this.purgeNonces(this.now());
+    return (
+      this.sql.exec(
+        `INSERT INTO app_nonces (device_id, nonce, expires_at) VALUES (?, ?, ?)
+         ON CONFLICT(device_id, nonce) DO NOTHING
+         RETURNING nonce`,
+        deviceId,
+        nonce,
+        expiresAt,
+      ).length > 0
     );
-    // Every row is compared, match or not, so timing says nothing about which.
-    for (const row of rows) {
-      const matches = timingSafeEqualHex(presented, String(row['token_hash']));
-      if (matches && found === null) {
-        found = { id: String(row['id']), principal: String(row['principal']) };
-      }
-    }
-    return found;
+  }
+
+  purgeNonces(nowMs: number): void {
+    this.sql.exec('DELETE FROM app_nonces WHERE expires_at < ?', nowMs);
   }
 
   activeDevice(principal: string): Device | null {
@@ -162,7 +240,12 @@ export class DeviceStore {
     );
   }
 
-  /** `/pair off`. Returns how many devices it revoked. */
+  /** FCM said this address is gone. The device stays paired; pushes stop until it sends a new one. */
+  forgetPushToken(deviceId: string): void {
+    this.sql.exec('UPDATE devices SET push_token_enc = NULL WHERE id = ?', deviceId);
+  }
+
+  /** `/pair off`, and every new pairing. Returns how many devices it revoked. */
   revoke(principal: string): number {
     return this.sql.exec(
       'UPDATE devices SET revoked_at = ? WHERE principal = ? AND revoked_at IS NULL RETURNING id',
@@ -239,6 +322,26 @@ export class DeviceStore {
     return { ok: true, value: { principal: String(row['principal']), outcome: report.outcome } };
   }
 
+  /**
+   * Tie the dispatch a turn just created to the message that asked for it, so
+   * the outcome that arrives later answers the same message in the app.
+   */
+  linkLatestDispatch(inReplyTo: string, sinceMs: number): void {
+    this.sql.exec(
+      `UPDATE call_dispatches SET in_reply_to = ?
+       WHERE id = (SELECT id FROM call_dispatches
+                   WHERE in_reply_to IS NULL AND created_at >= ?
+                   ORDER BY created_at DESC LIMIT 1)`,
+      inReplyTo,
+      sinceMs,
+    );
+  }
+
+  inReplyToOf(id: string): string | null {
+    const value = this.sql.exec('SELECT in_reply_to FROM call_dispatches WHERE id = ?', id)[0]?.['in_reply_to'];
+    return typeof value === 'string' ? value : null;
+  }
+
   /** The push never reached the phone. Settled now, so the sweep does not reply twice. */
   markFailed(id: string): void {
     this.sql.exec(
@@ -269,34 +372,69 @@ export class DeviceStore {
     return typeof at === 'number' ? at : null;
   }
 
-  /** Daily maintenance. The words to match go with the row. */
+  /**
+   * Daily maintenance. The words to match go with the row. A `/pair` code goes
+   * once it has expired; a used bootstrap code stays, or it would work again.
+   */
   purge(): void {
+    const now = this.now();
     this.sql.exec(`DELETE FROM call_dispatches WHERE status NOT IN ${OPEN}`);
-    this.sql.exec(
-      'DELETE FROM device_pairings WHERE used_at IS NOT NULL OR expires_at <= ?',
-      this.now(),
-    );
+    this.sql.exec("DELETE FROM device_pairings WHERE kind = 'pair' AND expires_at <= ?", now);
+    this.purgeNonces(now);
   }
 
   // -- internals --------------------------------------------------------------
 
-  /** Domain-separated, so a pairing code can never pass as a device token. */
-  private hash(kind: 'pair' | 'device', value: string): Promise<string> {
+  /**
+   * Every code the phone could have used: the bootstrap secret, and each
+   * `/pair` code still inside its ten minutes — used ones included, so a
+   * pairing whose answer was lost can be retried by the same key.
+   */
+  private async candidates(context: { principal: string; bootstrapCode: string | null }): Promise<Candidate[]> {
+    const out: Candidate[] = [];
+    const bootstrap = context.bootstrapCode ? normalizePairingCode(context.bootstrapCode) : null;
+    if (bootstrap) {
+      out.push({
+        kind: 'bootstrap',
+        code: bootstrap,
+        codeHash: await this.hash('bootstrap', bootstrap),
+        principal: context.principal,
+      });
+    }
+
+    const rows = this.sql.exec(
+      `SELECT code_hash, principal, code_enc FROM device_pairings
+       WHERE kind = 'pair' AND code_enc IS NOT NULL AND expires_at > ?
+       ORDER BY created_at DESC LIMIT 20`,
+      this.now(),
+    );
+    for (const row of rows) {
+      const codeHash = String(row['code_hash']);
+      const code = await this.decryptCode(codeHash, String(row['code_enc']));
+      if (code) out.push({ kind: 'pair', code, codeHash, principal: String(row['principal']) });
+    }
+    return out;
+  }
+
+  /** Domain-separated, so a value of one kind can never pass as another. */
+  private hash(kind: 'pair' | 'bootstrap' | 'key', value: string): Promise<string> {
     return hmacSha256Hex(this.pepper(), `${kind}:${value}`);
+  }
+
+  private encryptCode(codeHash: string, code: string): Promise<string> {
+    return encryptToken(code, this.keyring(), { provider: 'pairing', account: codeHash });
+  }
+
+  private async decryptCode(codeHash: string, ciphertext: string): Promise<string | null> {
+    try {
+      return await decryptToken(ciphertext, this.keyring(), { provider: 'pairing', account: codeHash });
+    } catch {
+      return null;
+    }
   }
 
   private encryptPush(deviceId: string, pushToken: string): Promise<string> {
     return encryptToken(pushToken, this.keyring(), { provider: 'fcm', account: deviceId });
-  }
-
-  private whyPairingFailed(codeHash: string): ConsumeFailure {
-    const row = this.sql.exec(
-      'SELECT used_at, expires_at FROM device_pairings WHERE code_hash = ?',
-      codeHash,
-    )[0];
-    if (!row) return 'not_found';
-    if (row['used_at'] !== null && row['used_at'] !== undefined) return 'already_used';
-    return 'expired';
   }
 
   private whyDispatchFailed(id: string, deviceId: string): ConsumeFailure {
@@ -320,8 +458,3 @@ function randomHex(bytes: number): string {
   return [...randomBytes(bytes)].map((b) => b.toString(16).padStart(2, '0')).join('');
 }
 
-function randomBase64Url(bytes: number): string {
-  let binary = '';
-  for (const b of randomBytes(bytes)) binary += String.fromCharCode(b);
-  return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
-}

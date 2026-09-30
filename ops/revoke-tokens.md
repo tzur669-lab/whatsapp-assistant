@@ -4,15 +4,26 @@ Use when the phone is lost or stolen, or a secret may have leaked.
 
 ## Immediate — stop the bot from acting
 
-1. Send `/pause` from any allowlisted number. This denies every write.
+1. Send `/pause` from the app (or, on WhatsApp, any allowlisted number). This
+   denies every write.
 2. If the phone itself is compromised, skip to step 3.
 
 ## Cut off the channel
 
-3. Meta Business → System Users → revoke the access token.
+3. **The kill switch:** deploy with `CHANNEL` set to `off` (`wrangler.jsonc`,
+   then the deploy — the human does it). Every channel route and the OAuth pair
+   answer 404, nothing is pushed, and reminders are *held*, not spent: they go
+   out when the channel is switched back.
+4. **A lost phone, app channel:** run `scripts/set-staging-secrets.ps1 -PairCode`
+   (or set a new `PAIR_BOOTSTRAP_CODE` by hand in production) and pair the
+   replacement. Pairing revokes the lost phone at once: its key signs nothing
+   the server accepts any more. Without a replacement at hand, the new code
+   alone does not revoke — use step 3.
+5. **WhatsApp channel:** Meta Business → System Users → revoke the access token.
    The webhook keeps arriving but nothing can be sent.
-4. Or clear `ALLOWLIST_WA_IDS` — every inbound message is then dropped silently
-   before any LLM call.
+
+Clearing `ALLOWLIST_WA_IDS` is **no longer** a kill switch: its first entry is
+the identity every record belongs to (PLAN §6.18), so clearing it orphans them.
 
 ## Cut off Google
 
@@ -35,7 +46,9 @@ They are tagged `extendedProperties.private.assistant = "1"`, so they can be
 found and removed from the Google Calendar UI by searching that calendar.
 
 Revoking the Meta token does not stop webhooks arriving. It stops replies. To
-stop processing as well, clear `ALLOWLIST_WA_IDS`: inbound messages are then
-dropped before parsing, before any LLM call, and before anything is stored.
+stop processing as well, use `CHANNEL=off`.
+
+Revoking the phone (`/pair off`, or pairing a new one) does not delete its chat
+history, which lives only on that phone.
 7. Review `audit_log` for entries around the window.
 8. Re-authorize with `/connect google`.

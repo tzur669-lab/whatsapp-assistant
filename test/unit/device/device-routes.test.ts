@@ -1,12 +1,14 @@
 /**
- * The device companion through the Durable Object (PLAN §6.17): pair, fetch a
- * dispatch, report on it, and let one expire. The one reply per call goes out
- * here — when the phone reports, or when two minutes pass without it.
+ * The call companion through the Durable Object, on the WhatsApp channel
+ * (PLAN §6.17): pair with a `/pair` code, fetch a dispatch, report on it, and
+ * let one expire. Every request after pairing is signed (§6.18) — the bearer
+ * token is gone. The one reply per call goes out here, over WhatsApp.
  */
 import { describe, expect, it, beforeEach, afterEach, vi } from 'vitest';
 import { AssistantDO } from '../../../src/platform/assistant-do.js';
 import { createFakeDoState, createFakeMeta } from '../../integration/fake-do-state.js';
 import type { FakeDoState, FakeMeta } from '../../integration/fake-do-state.js';
+import { FakePhone } from '../../integration/fake-phone.js';
 import { DeviceStore, DISPATCH_TTL_MS } from '../../../src/device/store.js';
 import { parseKeyring } from '../../../src/security/crypto.js';
 import { Repository } from '../../../src/core/repo.js';
@@ -33,25 +35,24 @@ const ENV: AppEnv = {
   PUBLIC_BASE_URL: 'https://assistant.example.test',
 };
 
-describe('the device routes', () => {
+describe('the call routes on WhatsApp', () => {
   let fake: FakeDoState;
   let meta: FakeMeta;
   let assistant: AssistantDO;
   let store: DeviceStore;
   let principal: string;
 
-  const call = async (path: string, body: unknown) => {
-    const response = await assistant.fetch(
-      new Request(`https://do/do/device/${path}`, { method: 'POST', body: JSON.stringify(body) }),
-    );
-    return (await response.json()) as Record<string, unknown>;
+  const send = async (request: Request) => {
+    const response = await assistant.fetch(request);
+    return { status: response.status, body: (await response.json()) as Record<string, unknown> };
   };
 
   const pairPhone = async () => {
+    const phone = new FakePhone();
     const { code } = await store.createPairing(principal);
-    const paired = await call('pair', { code, pushToken: 'fake-push-token' });
-    const deviceId = store.activeDevice(principal)!.id;
-    return { token: String(paired['deviceToken']), deviceId };
+    const paired = await send(await phone.pairToDo(code));
+    phone.deviceId = String(paired.body['deviceId']);
+    return phone;
   };
 
   beforeEach(async () => {
@@ -79,47 +80,66 @@ describe('the device routes', () => {
     vi.useRealTimers();
   });
 
-  it('pairs with a code, once', async () => {
+  it('pairs with a code, once — and only the phone that proved it', async () => {
+    const phone = new FakePhone();
     const { code } = await store.createPairing(principal);
-    const first = await call('pair', { code, pushToken: 'fake-push-token' });
-    expect(first['deviceToken']).toMatch(/^[A-Za-z0-9_-]{43}$/);
-    expect(await call('pair', { code, pushToken: 'fake-push-token' })).toEqual({ error: 'already_used' });
+    const first = await send(await phone.pairToDo(code));
+    expect(first.status).toBe(200);
+    expect(first.body['deviceId']).toMatch(/^[0-9a-f]{32}$/);
+
+    const stranger = await send(await new FakePhone().pairToDo(code));
+    expect(stranger).toEqual({ status: 400, body: { error: 'invalid_code' } });
   });
 
-  it('hands the phone the words to match, and nothing to a wrong token', async () => {
-    const { token, deviceId } = await pairPhone();
-    const { id } = store.createDispatch(principal, deviceId, ['דוד דני']);
+  it('hands the phone the words to match, only on a valid signature', async () => {
+    const phone = await pairPhone();
+    const { id } = store.createDispatch(principal, phone.deviceId!, ['דוד דני']);
 
-    expect(await call('dispatch', { token: 'C'.repeat(43), id })).toEqual({ error: 'unauthorized' });
-    expect(await call('dispatch', { token, id })).toEqual({
-      queryVariants: ['דוד דני'],
-      expiresAt: NOW + DISPATCH_TTL_MS,
+    expect(await send(await phone.toDo('GET', `/device/dispatch/${id}`))).toEqual({
+      status: 200,
+      body: { queryVariants: ['דוד דני'], expiresAt: NOW + DISPATCH_TTL_MS },
+    });
+
+    // Another phone's key, claiming this phone's id.
+    const impostor = new FakePhone();
+    impostor.deviceId = phone.deviceId;
+    expect((await send(await impostor.toDo('GET', `/device/dispatch/${id}`))).status).toBe(401);
+  });
+
+  it('refuses the same signed request twice', async () => {
+    const phone = await pairPhone();
+    const { id } = store.createDispatch(principal, phone.deviceId!, ['דוד דני']);
+    const nonce = 'c'.repeat(32);
+    await send(await phone.toDo('GET', `/device/dispatch/${id}`, undefined, { nonce }));
+    expect(await send(await phone.toDo('GET', `/device/dispatch/${id}`, undefined, { nonce }))).toEqual({
+      status: 409,
+      body: { error: 'replay' },
     });
   });
 
   it('replies once, when the phone reports the call placed', async () => {
-    const { token, deviceId } = await pairPhone();
-    const { id } = store.createDispatch(principal, deviceId, ['דוד דני']);
+    const phone = await pairPhone();
+    const { id } = store.createDispatch(principal, phone.deviceId!, ['דוד דני']);
+    const report = { dispatchId: id, matched: 'one', outcome: 'placed' };
 
-    expect(await call('report', { token, dispatchId: id, matched: 'one', outcome: 'placed' })).toEqual({ ok: true });
-    expect(await call('report', { token, dispatchId: id, matched: 'one', outcome: 'placed' })).toEqual({
-      error: 'already_used',
-    });
+    expect(await send(await phone.toDo('POST', '/device/report', report))).toEqual({ status: 200, body: { ok: true } });
+    expect((await send(await phone.toDo('POST', '/device/report', report))).status).toBe(404);
 
     expect(meta.sent.map((m) => stripIsolates(m.text))).toEqual(['יצאה שיחה.']);
     expect(meta.sent[0]!.to).toBe(SELF);
   });
 
-  it('says there is no such contact when the phone found none', async () => {
-    const { token, deviceId } = await pairPhone();
-    const { id } = store.createDispatch(principal, deviceId, ['מישהו']);
-    await call('report', { token, dispatchId: id, matched: 'none', outcome: 'no_match' });
-    expect(meta.sent[0]!.text).toBe('אין איש קשר בשם הזה בטלפון.');
+  it('refuses a report that carries a name or a number', async () => {
+    const phone = await pairPhone();
+    const { id } = store.createDispatch(principal, phone.deviceId!, ['מישהו']);
+    const report = { dispatchId: id, matched: 'none', outcome: 'no_match', number: '0500000000' };
+    expect((await send(await phone.toDo('POST', '/device/report', report))).status).toBe(400);
+    expect(meta.sent).toHaveLength(0);
   });
 
   it('arms the alarm for the expiry, and reports an unanswered call once', async () => {
-    const { deviceId } = await pairPhone();
-    store.createDispatch(principal, deviceId, ['דוד דני']);
+    const phone = await pairPhone();
+    store.createDispatch(principal, phone.deviceId!, ['דוד דני']);
 
     await assistant.alarm();
     expect(fake.alarmAt()).toBe(NOW + DISPATCH_TTL_MS);
@@ -134,8 +154,8 @@ describe('the device routes', () => {
   it('does not hold a call reply for Shabbat', async () => {
     new Repository(fake.driver).setRestHold(true);
     vi.setSystemTime(Date.parse('2026-09-26T09:00:00Z')); // Saturday noon, local
-    const { deviceId } = await pairPhone();
-    store.createDispatch(principal, deviceId, ['דוד דני']);
+    const phone = await pairPhone();
+    store.createDispatch(principal, phone.deviceId!, ['דוד דני']);
     new Repository(fake.driver).touchWindow(principal, Date.now());
 
     vi.setSystemTime(Date.parse('2026-09-26T09:00:00Z') + DISPATCH_TTL_MS);
@@ -143,19 +163,25 @@ describe('the device routes', () => {
     expect(meta.sent).toHaveLength(1);
   });
 
-  it('lets the phone update its push address, and only with its token', async () => {
-    const { token, deviceId } = await pairPhone();
-    expect(await call('push-token', { token, pushToken: 'rotated' })).toEqual({ ok: true });
-    expect(await store.pushTokenOf(deviceId)).toBe('rotated');
-    expect(await call('push-token', { token: 'D'.repeat(43), pushToken: 'x' })).toEqual({ error: 'unauthorized' });
+  it('lets the phone update its push address, signed', async () => {
+    const phone = await pairPhone();
+    expect(await send(await phone.toDo('POST', '/app/push-token', { pushToken: 'rotated' }))).toEqual({
+      status: 200,
+      body: { ok: true },
+    });
+    expect(await store.pushTokenOf(phone.deviceId!)).toBe('rotated');
+  });
+
+  it('does not serve the app’s own routes on WhatsApp', async () => {
+    const phone = await pairPhone();
+    expect((await send(await phone.toDo('GET', '/app/outbox'))).status).toBe(404);
   });
 
   it('refuses everything when the device pepper is not configured', async () => {
     const { DEVICE_TOKEN_PEPPER: _unset, ...withoutPepper } = ENV;
     const bare = new AssistantDO(fake.state as never, withoutPepper, meta.fetchImpl);
-    const response = await bare.fetch(
-      new Request('https://do/do/device/pair', { method: 'POST', body: JSON.stringify({ code: 'x' }) }),
-    );
+    const response = await bare.fetch(await new FakePhone().pairToDo('ABCD-EFGH-JKMN-PQRS-TVWX'));
+    expect(response.status).toBe(503);
     expect(await response.json()).toEqual({ error: 'not_configured' });
   });
 });

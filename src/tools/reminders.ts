@@ -114,6 +114,7 @@ export const remindersCreate: ToolDefinition = {
       lastInboundAt: ctx.lastInboundAt,
       nowMs: ctx.nowMs,
       monthlySent: ctx.monthlySent,
+      ...(ctx.channel ? { channel: ctx.channel } : {}),
     });
 
     const view = viewOf(input);
@@ -127,9 +128,9 @@ export const remindersCreate: ToolDefinition = {
 
     return {
       text:
-        plan.channel === 'whatsapp'
-          ? reminderText.created(view, ctx.lang)
-          : reminderText.createdViaCalendar(view, ctx.lang),
+        plan.channel === 'calendar'
+          ? reminderText.createdViaCalendar(view, ctx.lang)
+          : reminderText.created(view, ctx.lang),
       compensating: { reminderId: reminder.id },
       externalRef: reminder.id,
       rescheduleAlarm: true,

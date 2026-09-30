@@ -23,20 +23,26 @@ export type VoiceTranscriberConfig = {
 };
 
 export function createVoiceTranscriber(config: VoiceTranscriberConfig): VoiceTranscriber {
-  return async ({ mediaId, mimeType }) => {
+  return async ({ mediaId, mimeType, bytes }) => {
     const started = Date.now();
 
     let audio;
-    try {
-      audio = await fetchWhatsAppMedia(mediaId, {
-        accessToken: config.accessToken,
-        ...(config.fetchImpl ? { fetchImpl: config.fetchImpl } : {}),
-      });
-    } catch (error) {
-      const reason = error instanceof MediaError ? error.reason : 'download_failed';
-      // The id and the url are omitted: both resolve back to the audio itself.
-      config.log.warn('voice_media_failed', { errorCode: reason, mimeType });
-      return reason === 'too_large' ? { status: 'too_long' } : { status: 'failed', errorCode: 'media_error' };
+    if (bytes) {
+      // The app sent the recording with the request (§6.18). Nothing to fetch;
+      // the Worker already capped its size.
+      audio = { bytes, mimeType };
+    } else {
+      try {
+        audio = await fetchWhatsAppMedia(mediaId, {
+          accessToken: config.accessToken,
+          ...(config.fetchImpl ? { fetchImpl: config.fetchImpl } : {}),
+        });
+      } catch (error) {
+        const reason = error instanceof MediaError ? error.reason : 'download_failed';
+        // The id and the url are omitted: both resolve back to the audio itself.
+        config.log.warn('voice_media_failed', { errorCode: reason, mimeType });
+        return reason === 'too_large' ? { status: 'too_long' } : { status: 'failed', errorCode: 'media_error' };
+      }
     }
 
     const outcome = await transcribeVoice(config.provider, audio);
