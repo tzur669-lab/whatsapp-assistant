@@ -32,14 +32,17 @@
     "tsx": "^4.19.2",
     "typescript": "^5.7.3",
     "typescript-eslint": "^8.20.0",
-    "vitest": "^2.1.8",
-    "wrangler": "^4.133.0",
+    "vitest": "^3.2.7",
+    "wrangler": "^4.146.0",
     "yaml": "^2.7.0"
   },
   "pnpm": {
     "onlyBuiltDependencies": [
       "esbuild",
       "workerd"
-    ]
+    ],
+    "overrides": {
+      "vite": "^6.4.3"
+    }
   }
 }
