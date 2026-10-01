@@ -102,6 +102,30 @@ describe('CalendarClient', () => {
     expect(result).toMatchObject({ ok: true });
   });
 
+  it('never sends an attendee without an email, which Google rejects with 400', async () => {
+    let sent: Record<string, unknown> = {};
+    const fetchImpl = (async (input: string | URL | Request, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes('oauth2.googleapis.com/token')) {
+        return new Response(JSON.stringify({ access_token: 'at', expires_in: 3599 }), { status: 200 });
+      }
+      sent = JSON.parse(String(init?.body)) as Record<string, unknown>;
+      return new Response(JSON.stringify({ ...EVENT, summary: sent['summary'] }), { status: 200 });
+    }) as unknown as typeof fetch;
+
+    const result = await client(fetchImpl).createEvent({
+      title: 'פגישה',
+      startUtc: NOW,
+      endUtc: NOW + 3_600_000,
+      attendees: ['יוסי', 'דנה'],
+    });
+
+    expect(result.ok).toBe(true);
+    expect(sent).not.toHaveProperty('attendees');
+    expect(sent['description']).toContain('יוסי');
+    expect(sent['description']).toContain('דנה');
+  });
+
   it('lists events in the window', async () => {
     const { fetchImpl, calls } = fakeGoogle([{ body: { items: [EVENT] } }]);
     const result = await client(fetchImpl).listEvents({ startUtc: NOW, endUtc: NOW + 86_400_000 });

@@ -364,14 +364,17 @@ function timeOf(value: unknown): { utcMs: number; allDay: boolean } | null {
   return null;
 }
 
+const ATTENDEES_LABEL = 'משתתפים:';
+
 function toGoogleEvent(draft: EventDraft): Record<string, unknown> {
   return {
     summary: draft.title,
     start: { dateTime: new Date(draft.startUtc).toISOString(), timeZone: ZONE },
     end: { dateTime: new Date(draft.endUtc).toISOString(), timeZone: ZONE },
-    ...(draft.attendees?.length
-      ? { attendees: draft.attendees.map((displayName) => ({ displayName })) }
-      : {}),
+    // Names only, never `attendees`: Google requires an email for each one and
+    // answers 400 without it, and a name is all a message gives us. Nobody is
+    // invited either way (`sendUpdates=none`), so the names go in the notes.
+    ...(draft.attendees?.length ? { description: `${ATTENDEES_LABEL} ${draft.attendees.join(', ')}` } : {}),
     ...(draft.popupAtStart
       ? { reminders: { useDefault: false, overrides: [{ method: 'popup', minutes: 0 }] } }
       : {}),
