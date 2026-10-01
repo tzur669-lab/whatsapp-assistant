@@ -1,0 +1,22 @@
+# build / tooling
+.gradle/
+build/
+app/build/
+local.properties
+.idea/
+*.iml
+captures/
+.kotlin/
+
+# The Firebase config for this device's project. Download it from the Firebase
+# console into app/ — it identifies the project, so it stays out of git.
+app/google-services.json
+
+# Signing
+*.jks
+*.keystore
+keystore.properties
+
+# Built installers
+*.apk
+*.aab

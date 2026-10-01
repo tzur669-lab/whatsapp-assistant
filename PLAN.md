@@ -2541,6 +2541,7 @@ measured on the app channel. To finish with `--resume`.
 | 2026-10-01 | **Gmail, Phase D**: `mail.search` (Tier 0, every result taints) and `mail.draft` (Tier 2, drafts only — never sent, no send scope). The model gives names and words; code builds the query (operators stripped), finds a reply's thread, and holds every address — rendered replies carry the sender's name, never an address. Mail text reaches the model scrubbed and capped like every read. Four injection-through-data cases (three via mail, one via news) join the agent eval. **Tools of a Google grant are offered only while it is connected** (`OfferOptions.grants`): the catalog is ~3,400 tokens per call with all of them, against an 8K minute, so an unconnected grant costs nothing |
 | 2026-10-01 | **Google Drive file search**: `drive.search`, Tier 0, tainting, offered only while the `drive` grant is connected. Names and dates only (`drive.metadata.readonly`), no links — the user opens the file in Drive. Two eval cases |
 | 2026-10-01 | **The phone's location for the weather** (the user's request). When the user allows coarse location in the app, a text message carries `location {latitude, longitude}` and a voice note an `@lat,lon` segment in its signed path, both at two decimals (≈1 km); the server rounds again when it uses them. A place named in the message still wins, then this, then `/city`. **Data minimization:** the location lives for that one message — in `ToolContext` only, never stored (not in history, a suspended turn, the outbox or any table), never logged, and never sent to the model: the rendered reply says "your current location", with no coordinates and no reverse geocoding. It goes only to Open-Meteo and Hebcal, the same services a city's coordinates already went to. No taint: it is the user's own device data. No new tool, scope or prompt change |
+| 2026-10-01 | **One repository.** The Android app moved from `tzur669-lab/call-companion` into `apps/call-companion` here, with its history (a subtree merge), so the server and the app are cloned, pulled and versioned together. Gradle stays self-contained in that folder; the server's typecheck, lint and tests do not reach it, and its own `.gitignore` keeps `google-services.json`, `local.properties` and builds out. The old repository is to be archived |
 
 ---
 
@@ -2709,7 +2710,7 @@ the allowlist: a number written in a message is refused, so no phone number ever
 enters a draft, the database, a log, or Meta.
 
 ⏳ **Built 2026-09-27, not yet live.** Worker side in `src/device/` and
-`src/tools/calls.ts`; the Android app in its own repo, `apps/call-companion`
+`src/tools/calls.ts`; the Android app in `apps/call-companion` (its own repository until 2026-10-01, now in this one)
 (Kotlin, one dependency — Firebase Messaging; contact matching unit-tested on
 the JVM; the device token sealed with an Android Keystore key and excluded from
 backup). The Firebase project is `tzur-call-companion`, with the Android app
