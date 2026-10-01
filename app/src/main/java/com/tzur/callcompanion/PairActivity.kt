@@ -8,6 +8,7 @@ import android.graphics.Typeface
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.os.PowerManager
 import android.provider.Settings
 import android.text.InputType
 import android.view.View
@@ -19,28 +20,33 @@ import android.widget.TextView
 import com.google.firebase.messaging.FirebaseMessaging
 
 /**
- * Pairing and permissions. Everything the app does afterwards happens from a
- * push, so this screen exists to be set up once and then forgotten.
+ * Pairing, permissions and battery (PLAN §6.18). Opened on first run, when the
+ * server no longer knows the phone, and from the chat's settings button.
+ *
+ * The code is typed here and never sent: the app makes a Keystore key and
+ * proves it knows the code with an HMAC over that key ([Protocol.pairingMac]).
  */
-class MainActivity : Activity() {
-    private lateinit var vault: TokenVault
+class PairActivity : Activity() {
+    private lateinit var signer: Signer
     private lateinit var status: TextView
     private lateinit var codeField: EditText
     private lateinit var pairButton: Button
-    private lateinit var unpairButton: Button
+    private lateinit var chatButton: Button
     private val permissionRows = mutableListOf<Pair<Button, () -> Boolean>>()
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        vault = TokenVault(this)
+        signer = Signer(this)
+        Notifier.ensureChannels(this)
         CallNotifier.ensureChannel(this)
         window.decorView.layoutDirection = View.LAYOUT_DIRECTION_RTL
         setContentView(buildLayout())
+        if (intent.getBooleanExtra(EXTRA_UNPAIRED, false)) status.text = getString(R.string.status_unpaired_by_server)
     }
 
     override fun onResume() {
         super.onResume()
-        refresh()
+        refresh(keepStatus = intent.getBooleanExtra(EXTRA_UNPAIRED, false) && !signer.isPaired)
     }
 
     private fun buildLayout(): View {
@@ -50,9 +56,16 @@ class MainActivity : Activity() {
             setPadding(pad, pad, pad, pad)
         }
 
-        column.addView(heading(getString(R.string.app_name), 24f))
+        column.addView(heading(getString(R.string.pair_title), 24f))
         status = TextView(this).apply { textSize = 16f }
         column.addView(status)
+
+        chatButton = Button(this).apply {
+            text = getString(R.string.button_open_chat)
+            isAllCaps = false
+            setOnClickListener { openChat() }
+        }
+        column.addView(chatButton)
 
         column.addView(TextView(this).apply {
             text = getString(R.string.pair_instructions)
@@ -60,7 +73,8 @@ class MainActivity : Activity() {
         })
         codeField = EditText(this).apply {
             hint = getString(R.string.pair_hint)
-            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
+            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS or
+                InputType.TYPE_TEXT_FLAG_CAP_CHARACTERS
             textDirection = View.TEXT_DIRECTION_LTR
             typeface = Typeface.MONOSPACE
             isSingleLine = true
@@ -68,30 +82,32 @@ class MainActivity : Activity() {
         column.addView(codeField)
         pairButton = Button(this).apply {
             text = getString(R.string.button_pair)
+            isAllCaps = false
             setOnClickListener { pair() }
         }
         column.addView(pairButton)
-        unpairButton = Button(this).apply {
-            text = getString(R.string.button_unpair)
-            setOnClickListener {
-                vault.clear()
-                status.text = getString(R.string.unpaired_note)
-                refresh(keepStatus = true)
-            }
-        }
-        column.addView(unpairButton)
+        column.addView(TextView(this).apply {
+            text = getString(R.string.unpair_note)
+            textSize = 13f
+        })
 
         column.addView(heading(getString(R.string.perm_title), 20f).apply { setPadding(0, pad, 0, 0) })
+        if (Build.VERSION.SDK_INT >= 33) {
+            permissionRow(column, R.string.perm_notifications, { granted(Manifest.permission.POST_NOTIFICATIONS) }) {
+                requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), 3)
+            }
+        }
+        permissionRow(column, R.string.perm_battery, { batteryUnrestricted() }) {
+            startActivity(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS))
+        }
+        permissionRow(column, R.string.perm_microphone, { granted(Manifest.permission.RECORD_AUDIO) }) {
+            requestPermissions(arrayOf(Manifest.permission.RECORD_AUDIO), 4)
+        }
         permissionRow(column, R.string.perm_contacts, { granted(Manifest.permission.READ_CONTACTS) }) {
             requestPermissions(arrayOf(Manifest.permission.READ_CONTACTS), 1)
         }
         permissionRow(column, R.string.perm_phone, { granted(Manifest.permission.CALL_PHONE) }) {
             requestPermissions(arrayOf(Manifest.permission.CALL_PHONE), 2)
-        }
-        if (Build.VERSION.SDK_INT >= 33) {
-            permissionRow(column, R.string.perm_notifications, { granted(Manifest.permission.POST_NOTIFICATIONS) }) {
-                requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), 3)
-            }
         }
         if (Build.VERSION.SDK_INT >= 34) {
             permissionRow(column, R.string.perm_fullscreen, { CallNotifier.canUseFullScreen(this) }) {
@@ -107,7 +123,9 @@ class MainActivity : Activity() {
             textSize = 13f
         })
 
-        return ScrollView(this).apply { addView(column) }
+        val scroll = ScrollView(this).apply { addView(column) }
+        Ui.fitSystemBars(scroll)
+        return scroll
     }
 
     private fun heading(text: String, size: Float) = TextView(this).apply {
@@ -118,12 +136,18 @@ class MainActivity : Activity() {
 
     private fun permissionRow(column: LinearLayout, label: Int, isGranted: () -> Boolean, request: () -> Unit) {
         column.addView(TextView(this).apply { text = getString(label) })
-        val button = Button(this).apply { setOnClickListener { request() } }
+        val button = Button(this).apply {
+            isAllCaps = false
+            setOnClickListener { request() }
+        }
         column.addView(button)
         permissionRows += button to isGranted
     }
 
     private fun granted(permission: String) = checkSelfPermission(permission) == PackageManager.PERMISSION_GRANTED
+
+    private fun batteryUnrestricted(): Boolean =
+        getSystemService(PowerManager::class.java).isIgnoringBatteryOptimizations(packageName)
 
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
@@ -131,9 +155,9 @@ class MainActivity : Activity() {
     }
 
     private fun refresh(keepStatus: Boolean = false) {
-        val paired = vault.get() != null
+        val paired = signer.isPaired
         if (!keepStatus) status.text = getString(if (paired) R.string.status_paired else R.string.status_unpaired)
-        unpairButton.visibility = if (paired) View.VISIBLE else View.GONE
+        chatButton.visibility = if (paired) View.VISIBLE else View.GONE
         for ((button, isGranted) in permissionRows) {
             val ok = isGranted()
             button.text = getString(if (ok) R.string.perm_ok else R.string.perm_grant)
@@ -142,9 +166,9 @@ class MainActivity : Activity() {
     }
 
     private fun pair() {
-        val code = codeField.text.toString().trim()
-        if (!CODE.matches(code)) {
-            status.text = getString(R.string.pair_failed)
+        val code = Protocol.normalizePairingCode(codeField.text.toString())
+        if (code == null) {
+            status.text = getString(R.string.pair_bad_code)
             return
         }
         status.text = getString(R.string.pairing)
@@ -157,25 +181,48 @@ class MainActivity : Activity() {
                 pairButton.isEnabled = true
                 return@addOnCompleteListener
             }
+            val app = applicationContext
             Thread {
-                val result = Api.pair(code, pushToken)
+                val outcome = try {
+                    // The same pending key on every attempt until one succeeds: a
+                    // retry after a lost answer gets the same device back.
+                    val publicKey = signer.pendingPublicKey()
+                    val timestamp = System.currentTimeMillis()
+                    val mac = Protocol.pairingMac(code, publicKey, pushToken, timestamp)
+                    when (val result = Api.pair(publicKey, pushToken, timestamp, mac)) {
+                        is Api.PairResult.Paired -> {
+                            signer.completePairing(result.deviceId)
+                            PushToken.markSent(app)
+                            R.string.status_paired
+                        }
+                        Api.PairResult.Refused -> R.string.pair_failed
+                        Api.PairResult.Unreachable -> R.string.pair_network
+                    }
+                } catch (_: Exception) {
+                    R.string.pair_key_failed
+                }
                 runOnUiThread {
                     pairButton.isEnabled = true
-                    when (result) {
-                        is Api.PairResult.Paired -> {
-                            vault.set(result.deviceToken)
-                            codeField.text.clear()
-                            refresh()
-                        }
-                        Api.PairResult.Refused -> status.text = getString(R.string.pair_failed)
-                        Api.PairResult.Unreachable -> status.text = getString(R.string.pair_network)
+                    status.text = getString(outcome)
+                    if (outcome == R.string.status_paired) {
+                        codeField.text.clear()
+                        intent.removeExtra(EXTRA_UNPAIRED)
+                        refresh(keepStatus = true)
+                        // Anything held while no phone was paired comes now.
+                        Thread { Sync.run(app, Api.SHORT_TIMEOUT_MS) }.start()
+                        openChat()
                     }
                 }
             }.start()
         }
     }
 
-    private companion object {
-        val CODE = Regex("^[A-Za-z0-9_-]{43}$")
+    private fun openChat() {
+        startActivity(Intent(this, ChatActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP))
+        finish()
+    }
+
+    companion object {
+        const val EXTRA_UNPAIRED = "unpaired_by_server"
     }
 }

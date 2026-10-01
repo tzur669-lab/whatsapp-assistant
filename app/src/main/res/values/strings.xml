@@ -1,28 +1,72 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name">חיוג מהעוזר</string>
+    <string name="app_name">העוזר</string>
 
-    <!-- Pairing screen -->
-    <string name="status_paired">מחובר. בקשות חיוג מהעוזר יגיעו לכאן.</string>
-    <string name="status_unpaired">לא מחובר.</string>
-    <string name="pair_instructions">יש לשלוח ⁨/pair⁩ בצ׳אט עם העוזר, להעתיק את הקוד שחוזר ולהדביק כאן.</string>
-    <string name="pair_hint">קוד חיבור</string>
-    <string name="button_pair">חיבור</string>
-    <string name="button_unpair">ניתוק הטלפון הזה</string>
-    <string name="pairing">מתחבר…</string>
-    <string name="pair_failed">החיבור נכשל: הקוד פג או שכבר נוצל. יש לבקש קוד חדש.</string>
+    <!-- Chat -->
+    <string name="chat_title">העוזר</string>
+    <string name="chat_settings">הגדרות</string>
+    <string name="chat_hint">הודעה לעוזר</string>
+    <string name="chat_send">שליחה</string>
+    <string name="chat_mic">🎤</string>
+    <string name="chat_mic_description">הקלטה: להחזיק את הכפתור ולדבר, לשחרר כדי לשלוח</string>
+    <string name="chat_empty">אפשר לכתוב לעוזר או להקליט לו. למשל: תזכיר לי מחר ב־9 לשלם חשבון.</string>
+    <string name="chat_busy">ממתינים לתשובה…</string>
+    <string name="chat_recording">ההקלטה פועלת. שחרור הכפתור שולח אותה.</string>
+    <string name="chat_too_short">ההקלטה קצרה מדי. יש להחזיק את הכפתור בזמן הדיבור.</string>
+    <string name="chat_mic_failed">לא ניתן להפעיל את המיקרופון. יש לנסות שוב.</string>
+    <string name="chat_mic_permission">בלי הרשאה למיקרופון אי אפשר להקליט. אפשר לתת אותה במסך ההגדרות.</string>
+    <string name="chat_mic_ready">אפשר להקליט עכשיו: להחזיק את הכפתור ולדבר.</string>
+    <string name="chat_voice_label">🎤 הודעה קולית · %1$s</string>
+    <string name="chat_meta_sending">%1$s · בשליחה…</string>
+    <string name="chat_meta_failed">%1$s · לא נשלחה</string>
+    <string name="chat_meta_late">%1$s · הגיעה באיחור</string>
+    <string name="chat_notifications_off">ההתראות כבויות, ולכן תזכורות לא יופיעו. יש להקיש כאן כדי להפעיל אותן.</string>
+
+    <!-- Lines the app adds to the chat itself -->
+    <string name="notice_no_connection">אין חיבור לשרת, וההודעה לא נשלחה. אם בכל זאת הגיעה, התשובה תופיע כאן.</string>
+    <string name="notice_slow">התשובה מתעכבת. כשתגיע, היא תופיע כאן.</string>
+    <string name="notice_unknown">קרתה תקלה באמצע. לא בטוח שהבקשה בוצעה. כדאי לבדוק לפני ששולחים שוב.</string>
+    <string name="notice_clock">השעון בטלפון לא מדויק, ולכן השרת דוחה את הבקשות. יש להפעיל שעה אוטומטית בהגדרות הטלפון.</string>
+    <string name="notice_refused">השרת דחה את ההודעה. אפשר לנסות שוב בעוד כמה דקות.</string>
+    <string name="notice_too_large">ההקלטה גדולה מדי לשליחה. אפשר להקליט הודעה קצרה יותר.</string>
+    <string name="notice_not_available">העוזר לא זמין באפליקציה כרגע.</string>
+
+    <!-- Notifications -->
+    <string name="channel_reminders">תזכורות</string>
+    <string name="channel_messages">הודעות מהעוזר</string>
+    <string name="notif_reminder_title">תזכורת</string>
+    <string name="notif_message_title">העוזר</string>
+    <string name="notif_public_reminder">תזכורת מהעוזר</string>
+    <string name="notif_public_message">הודעה מהעוזר</string>
+    <string name="notif_generic">יש הודעה חדשה מהעוזר. יש לפתוח את האפליקציה כדי לראות אותה.</string>
+
+    <!-- Pairing and settings -->
+    <string name="pair_title">צימוד הטלפון</string>
+    <string name="status_paired">הטלפון מצומד לעוזר.</string>
+    <string name="status_unpaired">הטלפון לא מצומד.</string>
+    <string name="status_unpaired_by_server">הצימוד בוטל בשרת. כדי לצמד שוב צריך קוד צימוד חדש.</string>
+    <string name="pair_instructions">יש להריץ במחשב את סקריפט ההגדרה עם ⁨-PairCode⁩ ולהקליד כאן את הקוד שמוצג. כל קוד עובד פעם אחת. עדיף לצמד בחבילת הגלישה ולא ברשת ה־⁨Wi-Fi⁩ של הבית.</string>
+    <string name="pair_hint">קוד צימוד, 20 תווים</string>
+    <string name="button_pair">צימוד</string>
+    <string name="button_open_chat">מעבר לצ׳אט</string>
+    <string name="pairing">הצימוד מתבצע…</string>
+    <string name="pair_bad_code">קוד הצימוד הוא 20 תווים: אותיות באנגלית וספרות. יש לבדוק ולהקליד שוב.</string>
+    <string name="pair_failed">הקוד לא התקבל. ייתכן שהוא שגוי או שכבר נוצל, או שהשעון בטלפון לא מדויק.</string>
     <string name="pair_network">אין חיבור לשרת. יש לנסות שוב.</string>
-    <string name="pair_no_push">אין חיבור לשירותי ההתראות של Google. יש לנסות שוב.</string>
-    <string name="unpaired_note">הטלפון נותק כאן. כדי לנתק גם בשרת, יש לשלוח ⁨/pair off⁩ לעוזר.</string>
+    <string name="pair_no_push">אין חיבור לשירותי ההתראות של ⁨Google⁩. יש לנסות שוב.</string>
+    <string name="pair_key_failed">לא ניתן ליצור בטלפון את מפתח האבטחה. יש לנסות שוב.</string>
+    <string name="unpair_note">כדי לנתק את הטלפון יש לשלוח ⁨/pair off⁩ בצ׳אט. טלפון חדש מצומד עם קוד חדש, והטלפון הקודם מתנתק אוטומטית.</string>
 
     <string name="perm_title">הרשאות</string>
-    <string name="perm_contacts">אנשי קשר — כדי למצוא את מי לחייג</string>
-    <string name="perm_phone">שיחות — כדי לחייג אחרי האישור</string>
-    <string name="perm_notifications">התראות — כדי להציג את בקשת החיוג</string>
-    <string name="perm_fullscreen">מסך מלא — כדי שהבקשה תופיע מיד, גם במסך נעול</string>
-    <string name="perm_grant">מתן הרשאה</string>
-    <string name="perm_ok">✓ ניתנה</string>
-    <string name="privacy_note">השמות והמספרים נשארים בטלפון. לשרת נשלח רק אם השיחה יצאה, בוטלה או שלא נמצא איש קשר.</string>
+    <string name="perm_notifications">התראות: כדי שתזכורות ותשובות יופיעו</string>
+    <string name="perm_battery">סוללה ללא הגבלה: כדי שתזכורות יגיעו גם כשהטלפון במנוחה</string>
+    <string name="perm_microphone">מיקרופון: כדי לשלוח הודעות קוליות</string>
+    <string name="perm_contacts">אנשי קשר: כדי למצוא את מי לחייג</string>
+    <string name="perm_phone">שיחות: כדי לחייג אחרי האישור</string>
+    <string name="perm_fullscreen">מסך מלא: כדי שבקשת חיוג תופיע מיד, גם במסך נעול</string>
+    <string name="perm_grant">הפעלה</string>
+    <string name="perm_ok">✓ פעיל</string>
+    <string name="privacy_note">היסטוריית הצ׳אט שמורה רק בטלפון הזה ולא נכנסת לגיבוי. הקלטות נמחקות מהטלפון מיד אחרי השליחה. שמות ומספרים של אנשי קשר לא יוצאים מהטלפון.</string>
 
     <!-- A call request -->
     <string name="channel_name">בקשות חיוג</string>

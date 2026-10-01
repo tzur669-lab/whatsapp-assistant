@@ -16,8 +16,8 @@ android {
         applicationId = "com.tzur.callcompanion"
         minSdk = 26
         targetSdk = 35
-        versionCode = 1
-        versionName = "0.1.0"
+        versionCode = 2
+        versionName = "0.2.0"
         buildConfigField("String", "SERVER_URL", "\"$serverUrl\"")
     }
 
@@ -37,8 +37,9 @@ android {
 }
 
 dependencies {
-    // The only dependency: FCM, to be woken for a call request (PLAN §6.17).
-    // Everything else — HTTP, JSON, the Keystore — is the platform's own.
+    // The only dependency: FCM, to be woken for a message or a call request
+    // (PLAN §6.17, §6.18). Everything else — HTTP, JSON, SQLite, the Keystore,
+    // the recorder — is the platform's own.
     implementation(libs.firebase.messaging)
     testImplementation(libs.junit)
 }

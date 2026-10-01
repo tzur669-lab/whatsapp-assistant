@@ -116,5 +116,10 @@ object CallNotifier {
             context.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED
 
     /** A phone number inside Hebrew text keeps its digit order. */
-    fun ltr(text: String): String = "⁦$text⁩"
+    fun ltr(text: String): String = "$LRI$text$PDI"
+
+    // Built from code points: a literal isolate in source is invisible, and lint
+    // rightly treats invisible direction controls in a string as a spoofing risk.
+    private val LRI = Char(0x2066)
+    private val PDI = Char(0x2069)
 }
