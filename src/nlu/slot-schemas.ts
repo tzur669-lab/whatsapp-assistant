@@ -258,6 +258,25 @@ export const phoneSmsSlots = z
   })
   .strict();
 
+// -- public lookups (2026-10-01) ------------------------------------------------
+//
+// Agent-only, like the phone reads. One tool for four kinds of public data, so
+// the catalog grows by one entry rather than four (every tool is prompt tokens).
+
+export const LOOKUP_TOPICS = ['weather', 'jewish_calendar', 'exchange_rate', 'news'] as const;
+
+export const infoLookupSlots = z
+  .object({
+    topic: z.enum(LOOKUP_TOPICS),
+    /** A city, for weather and candle lighting. Absent: the user's home city. */
+    place: z.string().min(1).max(60).optional(),
+    date: dateSpecSchema.optional(),
+    /** An ISO 4217 code, for exchange rates. */
+    currency: z.string().regex(/^[A-Za-z]{3}$/).optional(),
+    amount: z.number().positive().max(1_000_000_000).optional(),
+  })
+  .strict();
+
 // -- drift guards -------------------------------------------------------------
 // These are compile-time only. If `src/time/resolve.ts` gains a DateSpec variant
 // that this file does not model, or vice versa, typecheck fails here rather than

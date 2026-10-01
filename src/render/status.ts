@@ -113,6 +113,16 @@ export const statusText = {
     return `${summary}\n\nלאשר?`;
   },
 
+  /** `/city` (2026-10-01). */
+  cityIs(city: string, withHowTo: boolean): string {
+    const line = `העיר לתחזית ולזמני שבת: ${city}.`;
+    return withHowTo ? `${line} לשינוי: ${isolate('/city')} ואחריו שם העיר.` : line;
+  },
+
+  cityNotFound(name: string, current: string): string {
+    return `לא מצאתי עיר בשם ${name}. העיר נשארה ${current}.`;
+  },
+
   confirmed: 'בוצע.',
 
   cancelled: 'בוטל.',

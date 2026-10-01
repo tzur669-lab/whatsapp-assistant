@@ -90,6 +90,8 @@ export type ToolContext = {
   ical?: IcalStore;
   /** Reaches the paired phone. Absent when calls are not configured (§6.17). */
   calls?: CallDispatcher;
+  /** For tools that read public data (`info.lookup`). Supplied by the platform. */
+  fetchImpl?: typeof fetch;
 };
 
 export type ExecuteResult = {
@@ -105,6 +107,11 @@ export type ExecuteResult = {
   externalRef?: string;
   /** Set when the action changed when the next alarm should fire. */
   rescheduleAlarm?: boolean;
+  /**
+   * This read carried text someone else wrote, so the agent's turn is tainted
+   * from here on (§6.19) — for tools where only some results do (`info.lookup`).
+   */
+  tainting?: true;
   /**
    * The outcome is not known yet, and the one reply is sent when it is — a call
    * the phone has still to place (§6.17). `text` is then empty and unsent.

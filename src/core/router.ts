@@ -21,6 +21,8 @@ export type Command =
   | { kind: 'digest'; set: number | 'off' | null }
   /** `/shabbat`, `/shabbat on`, `/shabbat off` (PLAN §6.13). Off by default. */
   | { kind: 'shabbat'; set: boolean | null }
+  /** `/city`, `/city <name>`: the home city for weather and Shabbat times (2026-10-01). */
+  | { kind: 'city'; set: string | null }
   /** `/ical <url>`, `/ical off`, `/ical` (PLAN §6.15). */
   | { kind: 'ical'; set: string | 'off' | null }
   /** `/birthday`, `/birthday <name> <d.m>`, `/birthday מחק <name>` (PLAN §6.16). */
@@ -54,6 +56,8 @@ const DIGEST = /^\/digest(?:\s+(off|\d{1,2}))?$/i;
 
 /** The argument is a URL, so it is captured loosely here and validated in `ical/url.ts`. */
 const ICAL = /^\/ical(?:\s+(\S{1,2100}))?$/i;
+
+const CITY = /^\/(?:city|עיר)(?:\s+(.{1,60}))?$/i;
 
 const BIRTHDAY = /^\/(?:birthday|יומולדת)(?:\s+(.{1,120}))?$/i;
 /** `מחק`/`הסר`/`remove`/`delete`, then the name. */
@@ -94,6 +98,12 @@ export function matchCommand(text: string): Command | null {
 
   const birthday = birthdayCommand(trimmed);
   if (birthday) return birthday;
+
+  const city = CITY.exec(trimmed);
+  if (city) {
+    const name = city[1]?.trim();
+    return { kind: 'city', set: name ? name : null };
+  }
 
   const ical = ICAL.exec(trimmed);
   if (ical) {

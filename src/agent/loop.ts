@@ -332,7 +332,7 @@ async function drive(loop: Loop, deps: AgentDeps): Promise<AgentResult> {
       };
     }
 
-    if (TAINTING_TOOLS.has(outcome.tool)) loop.tainted = true;
+    if (TAINTING_TOOLS.has(outcome.tool) || reply.tainting) loop.tainted = true;
     loop.readText = reply.text;
     loop.messages.push({ role: 'assistant', content: null, tool_calls: [wireToolCall(toolCall)] });
     loop.messages.push({ role: 'tool', tool_call_id: toolCall.id, content: resultForModel(reply.text) });

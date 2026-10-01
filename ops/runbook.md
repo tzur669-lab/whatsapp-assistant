@@ -42,10 +42,11 @@ SQLite schema, the reminder alarm, and every confirmation gate.
   is what decides.
 - The alarm itself fires per reminder, not on a schedule.
 
-**Chat commands** — `/help`, `/status`, `/digest`, `/shabbat`, `/ical`,
+**Chat commands** — `/help`, `/status`, `/digest`, `/shabbat`, `/ical`, `/city`,
 `/birthday`, `/pause`, `/resume`, `/forget`, `/budget`, `/connect google`, `/pair`,
 `/pair off`, `/ping`. In the app, `/budget` says there is no budget and `/pair`
 says to pair with a code from the script; `/pair off` unpairs this phone.
+`/city` sets the home city for weather and Shabbat times (Jerusalem until set).
 `/forget` deletes the agent's encrypted conversation history (PLAN §6.19) and
 any turn still waiting for the phone to read (§6.21); `/pair off` does too.
 
@@ -122,6 +123,7 @@ lines that are there are the ones worth reading.
 | App: 401 `unpaired` | The phone was replaced, `/pair off` was sent, or `ALLOWLIST_WA_IDS` / `LOG_HASH_KEY` changed | Pair again with a new code (`-PairCode`) |
 | No digest | Off, wrong hour, or the window was shut | `/digest` reports the setting; logs for `digest_skipped` |
 | Nothing arrives on Shabbat | Working as asked | `/shabbat` reports it; logs for `delivery_deferred` with `rest_period` |
+| Weather, Hebrew calendar, rates or news answer "unavailable" | The public API is down or changed shape | logs for `lookup_failed` (topic only); try the URL in `src/lookup/` by hand |
 | Subscribed calendar is stale | The refresh is failing | `/ical` reports the last error code; logs for `ical_fetch_failed` |
 
 Every log line carries a stable `errorCode`. None of them carries message

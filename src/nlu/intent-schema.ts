@@ -24,6 +24,7 @@ import {
   phoneContactsSlots,
   phoneNotificationsSlots,
   phoneSmsSlots,
+  infoLookupSlots,
   remindersCancelSlots,
   remindersCreateSlots,
   remindersListSlots,
@@ -78,6 +79,8 @@ const ignoredSlots = remindersCreateSlots
   .merge(phoneContactsSlots)
   .merge(phoneNotificationsSlots)
   .merge(phoneSmsSlots)
+  // Partial: `topic` is required of a lookup, never of an ignored draft.
+  .merge(infoLookupSlots.partial())
   .strict();
 
 const common = {
@@ -111,6 +114,8 @@ export const intentDraftSchema = z.discriminatedUnion('intent', [
   z.object({ intent: z.literal('phone.contacts'), slots: phoneContactsSlots, ...common }).strict(),
   z.object({ intent: z.literal('phone.notifications'), slots: phoneNotificationsSlots, ...common }).strict(),
   z.object({ intent: z.literal('phone.sms'), slots: phoneSmsSlots, ...common }).strict(),
+  // Public lookups (2026-10-01). Agent-only.
+  z.object({ intent: z.literal('info.lookup'), slots: infoLookupSlots, ...common }).strict(),
   // Anything outside the tool list, including prompt-injection attempts.
   z.object({ intent: z.literal('unsupported'), slots: ignoredSlots, ...common }).strict(),
 ]);
@@ -152,6 +157,7 @@ const TOOL_SLOTS: Readonly<Record<string, ReadonlySet<string>>> = {
   'phone.contacts': new Set(Object.keys(phoneContactsSlots.shape)),
   'phone.notifications': new Set(Object.keys(phoneNotificationsSlots.shape)),
   'phone.sms': new Set(Object.keys(phoneSmsSlots.shape)),
+  'info.lookup': new Set(Object.keys(infoLookupSlots.shape)),
 };
 
 /** Every slot any tool declares — the flat union the wire schema offers the model. */

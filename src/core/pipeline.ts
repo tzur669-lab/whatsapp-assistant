@@ -16,6 +16,7 @@
  * Plain TypeScript throughout — no platform imports (invariant 11). The Durable
  * Object supplies the services and the clock.
  */
+import { DEFAULT_PLACE, findPlace, HOME_CITY_KEY } from '../lookup/place.js';
 import type { InboundEvent, OutboundButton } from '../channels/types.js';
 import { Repository } from './repo.js';
 import { Stopwatch } from './timing.js';
@@ -785,6 +786,9 @@ async function renderCommand(command: Command, deps: PipelineDeps, now: number):
     case 'ical':
       return icalSetting(command, deps, now);
 
+    case 'city':
+      return citySetting(command, deps);
+
     case 'birthday':
       return birthdaySetting(command, deps);
 
@@ -903,6 +907,22 @@ function digestSetting(command: Extract<Command, { kind: 'digest' }>, deps: Pipe
  * "I will tell you tomorrow" is not an answer, and a link that is wrong is
  * wrong now.
  */
+/**
+ * `/city` (2026-10-01): where weather and candle lighting are about. A new name
+ * is checked against the geocoder first, and stored as the name it knows, so
+ * a typo does not quietly move every forecast somewhere else.
+ */
+async function citySetting(command: Extract<Command, { kind: 'city' }>, deps: PipelineDeps): Promise<string> {
+  const current = deps.repo.getSetting(HOME_CITY_KEY) ?? DEFAULT_PLACE.name;
+  if (command.set === null) return statusText.cityIs(current, true);
+
+  const fetchImpl = deps.services?.fetchImpl;
+  const place = fetchImpl ? await findPlace(fetchImpl, command.set) : null;
+  if (!place) return statusText.cityNotFound(command.set, current);
+  deps.repo.setSetting(HOME_CITY_KEY, place.name);
+  return statusText.cityIs(place.name, false);
+}
+
 async function icalSetting(
   command: Extract<Command, { kind: 'ical' }>,
   deps: PipelineDeps,
@@ -1022,6 +1042,7 @@ function turnOf(
       ...(services.calendar ? { calendar: services.calendar } : {}),
       ...(services.ical ? { ical: services.ical } : {}),
       ...(services.calls ? { calls: services.calls } : {}),
+      ...(services.fetchImpl ? { fetchImpl: services.fetchImpl } : {}),
     },
     pending: services.pending,
     deferred: services.deferred,

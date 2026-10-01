@@ -194,6 +194,33 @@ describe('the settings commands', () => {
     });
   });
 
+  describe('/city (2026-10-01)', () => {
+    const found = () => new Response(JSON.stringify({ results: [{ name: 'חיפה', latitude: 32.79, longitude: 34.99 }] }), { status: 200 });
+
+    it('is Jerusalem until set', async () => {
+      expect(await reply('/city')).toBe('העיר לתחזית ולזמני שבת: ירושלים. לשינוי: /city ואחריו שם העיר.');
+    });
+
+    it('sets the home city by the name the geocoder knows, and says so', async () => {
+      served = found();
+      expect(await reply('/city  חיפה ')).toBe('העיר לתחזית ולזמני שבת: חיפה.');
+      expect(repo.getSetting('home_city')).toBe('חיפה');
+      expect(await reply('/עיר')).toContain('חיפה');
+    });
+
+    it('keeps the old city when the new one is not found', async () => {
+      served = new Response(JSON.stringify({ results: [] }), { status: 200 });
+      expect(await reply('/city אין כזה')).toBe('לא מצאתי עיר בשם אין כזה. העיר נשארה ירושלים.');
+      expect(repo.getSetting('home_city')).toBeNull();
+    });
+
+    it('never reaches the parser', async () => {
+      served = found();
+      await reply('/city חיפה');
+      expect(nlu.inputs).toHaveLength(0);
+    });
+  });
+
   describe('/status', () => {
     it('stays quiet about features that are not in use', async () => {
       // A status report that lists every feature whether or not it is on stops

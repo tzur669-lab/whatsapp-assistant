@@ -11,6 +11,7 @@ import { CALENDAR_WRITE_TOOLS } from '../../../src/tools/calendar-write.js';
 import { callsPlace } from '../../../src/tools/calls.js';
 import { PHONE_ACTION_TOOLS } from '../../../src/tools/phone-actions.js';
 import { PHONE_READ_TOOLS } from '../../../src/tools/phone-reads.js';
+import { infoLookup } from '../../../src/tools/lookup.js';
 import type { ToolDefinition } from '../../../src/tools/types.js';
 import { INTENT_NAMES } from '../../../src/nlu/intent-schema.js';
 
@@ -21,6 +22,7 @@ const IMPLEMENTATIONS: Record<string, ToolDefinition> = {
   'calls.place': callsPlace,
   ...(PHONE_ACTION_TOOLS as Record<string, ToolDefinition>),
   ...(PHONE_READ_TOOLS as Record<string, ToolDefinition>),
+  'info.lookup': infoLookup,
 };
 
 describe('every registered tool is real', () => {

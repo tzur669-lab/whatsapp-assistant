@@ -25,6 +25,7 @@ import { REGISTRY } from '../tools/registry.js';
 import type { ToolName } from '../tools/registry.js';
 import { REMINDER_TOOLS } from '../tools/reminders.js';
 import { calendarListEvents } from '../tools/calendar-read.js';
+import { infoLookup } from '../tools/lookup.js';
 import { CALENDAR_WRITE_TOOLS } from '../tools/calendar-write.js';
 import { callsPlace } from '../tools/calls.js';
 import { PHONE_ACTION_TOOLS } from '../tools/phone-actions.js';
@@ -75,6 +76,8 @@ export type Reply = {
    * tool result; every other outcome ends the agent's turn as it is (§6.19).
    */
   read?: true;
+  /** This read carried text someone else wrote: the agent's turn is tainted from here (§6.19). */
+  tainting?: true;
   /** A phone action for the app to claim and run (§6.20). */
   card?: ActionCard;
   /**
@@ -121,6 +124,7 @@ const IMPLEMENTED: Partial<Record<ToolName, ToolDefinition>> = {
   'calls.place': callsPlace,
   ...PHONE_ACTION_TOOLS,
   ...PHONE_READ_TOOLS,
+  'info.lookup': infoLookup,
 };
 
 export type RunOptions = {
@@ -406,6 +410,7 @@ async function execute(
     text: result.text,
     ...(result.rescheduleAlarm ? { rescheduleAlarm: true } : {}),
     ...(decision.decision === 'ALLOW' && decision.tier === 0 ? { read: true } : {}),
+    ...(result.tainting ? { tainting: true as const } : {}),
   };
 }
 

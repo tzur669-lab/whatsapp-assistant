@@ -11,12 +11,12 @@
  */
 import { isolate, isolateLtr } from './bidi.js';
 
-const SYSTEM_COMMANDS = ['/help', '/status', '/digest', '/shabbat', '/ical', '/birthday', '/pause', '/resume', '/forget', '/connect google', '/pair', '/budget']
+const SYSTEM_COMMANDS = ['/help', '/status', '/digest', '/shabbat', '/ical', '/city', '/birthday', '/pause', '/resume', '/forget', '/connect google', '/pair', '/budget']
   .map(isolate)
   .join(' · ');
 
 /** In the app there is no message budget, and a phone is paired with a code, not `/pair` (§6.18). */
-const APP_COMMANDS = ['/help', '/status', '/digest', '/shabbat', '/ical', '/birthday', '/pause', '/resume', '/forget', '/connect google', '/pair off']
+const APP_COMMANDS = ['/help', '/status', '/digest', '/shabbat', '/ical', '/city', '/birthday', '/pause', '/resume', '/forget', '/connect google', '/pair off']
   .map(isolate)
   .join(' · ');
 
@@ -39,6 +39,7 @@ function helpText(channel: 'whatsapp' | 'app'): string {
     '',
     `לתקציר יומי: ${isolate('/digest 7')} — המספר הוא השעה. ביום ריק לא נשלחת הודעה.`,
     `לחיבור יומן חיצוני: ${isolate('/ical')} ואחריו קישור ה-ics.`,
+    `מזג אוויר, לוח עברי וזמני שבת, שערי מטבע וחדשות: פשוט לשאול. העיר נקבעת ב${isolate('/city')}.`,
     `ימי הולדת: ${isolate('/birthday דנה 14.3')} — יופיעו בתקציר ביום עצמו.`,
     '',
     `פקודות מערכת: ${channel === 'app' ? APP_COMMANDS : SYSTEM_COMMANDS}`,

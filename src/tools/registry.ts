@@ -23,6 +23,7 @@ import {
   phoneContactsSlots,
   phoneNotificationsSlots,
   phoneSmsSlots,
+  infoLookupSlots,
   remindersCancelSlots,
   remindersCreateSlots,
   remindersListSlots,
@@ -50,6 +51,8 @@ export const TOOL_NAMES = [
   'phone.contacts',
   'phone.notifications',
   'phone.sms',
+  // Public data (2026-10-01): weather, the Hebrew calendar, exchange rates, news.
+  'info.lookup',
 ] as const;
 
 export type ToolName = (typeof TOOL_NAMES)[number];
@@ -288,6 +291,18 @@ export const REGISTRY: Readonly<Record<ToolName, ToolSpec>> = {
     rateLimit: { perHour: 20, perDay: 100 },
     implementedIn: 6,
     phoneRead: true,
+  },
+  'info.lookup': {
+    name: 'info.lookup',
+    llmDescription:
+      'Look up public data: weather (forecast for a place and day), jewish_calendar (Hebrew date, Shabbat times, parasha, holidays), exchange_rate (Bank of Israel), news (headlines).',
+    draftSchema: infoLookupSlots,
+    // Reads public data and changes nothing. News and Hebcal titles are text
+    // others wrote: those reads taint the turn (the tool says so per result).
+    tier: 0,
+    scopes: [],
+    rateLimit: { perHour: 30, perDay: 200 },
+    implementedIn: 6,
   },
 };
 

@@ -183,3 +183,74 @@
   expect:
     intent: phone.contacts
     missing: [query_variants]
+
+# Public lookups (2026-10-01, prompt a4): one agent-only tool, `info.lookup`.
+
+- id: lk-weather-001
+  now: "2026-10-01T08:00:00+03:00"
+  input: "מה מזג האוויר מחר?"
+  expect:
+    intent: info.lookup
+    slots:
+      topic: weather
+      date: { kind: relative_days, offset: 1 }
+    missing: []
+
+- id: lk-weather-002
+  now: "2026-10-01T08:00:00+03:00"
+  input: "יהיה גשם בחיפה היום?"
+  expect:
+    intent: info.lookup
+    slots:
+      topic: weather
+      place: "חיפה"
+    missing: []
+
+- id: lk-jewish-001
+  now: "2026-10-01T08:00:00+03:00"
+  input: "מתי נכנסת שבת?"
+  expect:
+    intent: info.lookup
+    slots:
+      topic: jewish_calendar
+    missing: []
+
+- id: lk-jewish-002
+  now: "2026-10-01T08:00:00+03:00"
+  input: "what's the parasha this week"
+  expect:
+    intent: info.lookup
+    slots:
+      topic: jewish_calendar
+    missing: []
+
+- id: lk-rate-001
+  now: "2026-10-01T08:00:00+03:00"
+  input: "כמה זה 100 דולר בשקלים?"
+  expect:
+    intent: info.lookup
+    slots:
+      topic: exchange_rate
+      currency: USD
+      amount: 100
+    missing: []
+
+- id: lk-rate-002
+  now: "2026-10-01T08:00:00+03:00"
+  input: "מה שער היורו?"
+  expect:
+    intent: info.lookup
+    slots:
+      topic: exchange_rate
+      currency: EUR
+    missing: []
+
+- id: lk-news-001
+  now: "2026-10-01T08:00:00+03:00"
+  input: "מה החדשות?"
+  expect:
+    intent: info.lookup
+    slots:
+      topic: news
+    missing: []
+

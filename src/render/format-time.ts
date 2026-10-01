@@ -28,6 +28,11 @@ export function formatWhen(local: LocalParts, lang: Lang): string {
   return `${weekdayOf(local, lang)} ${isolateLtr(dateOf(local, lang))}${SEPARATOR}${isolateLtr(timeOf(local))}`;
 }
 
+/** A day without a time: `יום ו׳ 25.9` / `Fri 25 Sep`. */
+export function formatDay(local: LocalParts, lang: Lang): string {
+  return `${weekdayOf(local, lang)} ${isolateLtr(dateOf(local, lang))}`;
+}
+
 /**
  * A range. Same-day ranges share one date and isolate the whole span, so
  * `14:00-15:00` cannot render as `15:00-14:00`.
