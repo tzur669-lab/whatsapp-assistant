@@ -42,6 +42,8 @@ export const APP_ROUTES: readonly AppRoute[] = [
     channels: ['app'],
   },
   { method: 'GET', pattern: /^\/app\/outbox$/, maxBytes: 0, channels: ['app'] },
+  // The quota screen (2026-10-01): numbers only.
+  { method: 'GET', pattern: /^\/app\/quota$/, maxBytes: 0, channels: ['app'] },
   { method: 'POST', pattern: /^\/app\/outbox\/ack$/, maxBytes: 4_096, contentType: JSON_TYPE, channels: ['app'] },
   // Action cards (§6.20): a claim consumes the card and returns what to run.
   { method: 'POST', pattern: /^\/app\/action\/claim$/, maxBytes: 1_024, contentType: JSON_TYPE, channels: ['app'] },

@@ -466,6 +466,74 @@ describe('the app channel', () => {
     });
   });
 
+  describe('quotas (2026-10-01)', () => {
+    type Quota = {
+      at: number;
+      models: Array<{
+        model: string;
+        role: string;
+        requests: { limit: number; remaining: number } | null;
+        minuteTokens: { limit: number; remaining: number } | null;
+        dayTokens: { limit: number; used: number } | null;
+      }>;
+      voice: { used: number; limit: number };
+      workerRequests: { limit: number; used: number };
+    };
+
+    const buildWithGroq = () => {
+      env = { ...baseEnv(), GROQ_API_KEY: 'test-groq-key', AGENT: 'on' };
+      const fetchImpl = (async (input: string | URL | Request, init?: RequestInit) => {
+        const url = String(input instanceof Request ? input.url : input);
+        if (!url.endsWith('/chat/completions')) return google.fetchImpl(input as never, init);
+        return new Response(
+          JSON.stringify({ choices: [{ message: { content: 'שלום' } }], usage: { prompt_tokens: 900, completion_tokens: 40 } }),
+          {
+            status: 200,
+            headers: {
+              'content-type': 'application/json',
+              'x-ratelimit-limit-requests': '1000',
+              'x-ratelimit-remaining-requests': '812',
+              'x-ratelimit-reset-requests': '4m10s',
+              'x-ratelimit-limit-tokens': '8000',
+              'x-ratelimit-remaining-tokens': '7060',
+              'x-ratelimit-reset-tokens': '7.5s',
+            },
+          },
+        );
+      }) as unknown as typeof fetch;
+      assistant = new AssistantDO(fake.state as never, env, fetchImpl);
+    };
+
+    const quota = async (phone: FakePhone) => (await send(await phone.toDo('GET', '/app/quota'))).body as unknown as Quota;
+
+    it('shows what Groq reported, the tokens counted here, and the requests of the day', async () => {
+      buildWithGroq();
+      const phone = await pair();
+      await say(phone, 'מה נשמע?');
+
+      const report = await quota(phone);
+      const primary = report.models.find((m) => m.role === 'primary')!;
+      expect(primary.requests).toMatchObject({ limit: 1000, remaining: 812 });
+      expect(primary.minuteTokens).toMatchObject({ limit: 8000, remaining: 7060 });
+      expect(primary.dayTokens).toEqual({ limit: 200_000, used: 940 });
+
+      // Heard nothing yet about the fallback or Whisper: unknown, not full.
+      expect(report.models.find((m) => m.role === 'fallback')!.requests).toBeNull();
+      expect(report.models.find((m) => m.role === 'voice')!.dayTokens).toBeNull();
+
+      expect(report.voice).toEqual({ used: 0, limit: 60 });
+      // Pairing, the message and this request itself.
+      expect(report.workerRequests.used).toBeGreaterThanOrEqual(3);
+      expect(report.workerRequests.limit).toBe(100_000);
+    });
+
+    it('is only for a paired phone', async () => {
+      await pair();
+      const response = await send(await new FakePhone().toDo('GET', '/app/quota', undefined, { unsigned: true }));
+      expect(response.status).toBe(401);
+    });
+  });
+
   describe('action cards (PLAN §6.20)', () => {
     const card = (tier = 1, channel: 'card' | 'chat' = 'card') =>
       new PendingActions(fake.driver, () => Date.now()).create({

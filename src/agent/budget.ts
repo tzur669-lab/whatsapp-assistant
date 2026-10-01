@@ -26,7 +26,11 @@ export class TokenBudget {
   private readonly spends = new Map<string, Spend[]>();
   private readonly exhaustedUntil = new Map<string, number>();
 
-  constructor(private readonly now: () => number) {}
+  constructor(
+    private readonly now: () => number,
+    /** Told of every real spend, for the quota screen's daily count. Never of a 429's fill. */
+    private readonly onSpend?: (model: string, tokens: number) => void,
+  ) {}
 
   /** Tokens this model has used in the last minute. */
   usedInWindow(model: string): number {
@@ -58,6 +62,11 @@ export class TokenBudget {
 
   record(model: string, tokens: number): void {
     if (tokens <= 0) return;
+    this.fill(model, tokens);
+    this.onSpend?.(model, tokens);
+  }
+
+  private fill(model: string, tokens: number): void {
     const list = this.spends.get(model) ?? [];
     list.push({ at: this.now(), tokens });
     this.spends.set(model, list);
@@ -73,8 +82,9 @@ export class TokenBudget {
       this.exhaustedUntil.set(model, this.now() + seconds * 1000);
       return;
     }
-    // Fill the window so the next turn waits out the minute instead of retrying into it.
-    this.record(model, MINUTE_TOKEN_LIMIT);
+    // Fill the window so the next turn waits out the minute instead of retrying
+    // into it. Not a spend: nothing was billed.
+    this.fill(model, MINUTE_TOKEN_LIMIT);
   }
 }
 

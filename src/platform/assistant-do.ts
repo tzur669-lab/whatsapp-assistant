@@ -72,10 +72,12 @@ import { createCallDispatcher } from '../device/calls.js';
 import type { CallDispatcher } from '../device/calls.js';
 import { callText } from '../render/calls.js';
 import { agentEnabled } from '../core/env.js';
-import { PRIMARY_MODEL } from '../nlu/index.js';
+import { PRIMARY_MODEL, SECONDARY_MODEL } from '../nlu/index.js';
 import { createGroqAgentProvider } from '../agent/provider.js';
 import { meterParsers, TokenBudget } from '../agent/budget.js';
 import { ConversationHistory } from '../agent/history.js';
+import { QuotaStore, meterGroqFetch } from '../core/quota.js';
+import type { ModelSpec } from '../core/quota.js';
 import { AgentLock } from '../agent/lock.js';
 import { SuspendedTurns } from '../agent/turns.js';
 import { defangLinks } from '../security/scrub.js';
@@ -127,8 +129,18 @@ export class AssistantDO implements DurableObject {
   private readonly agentLock: AgentLock;
   /** Agent turns waiting for the phone to read (§6.21). */
   private readonly agentTurns: SuspendedTurns;
-  /** Memory only: the last minute of Groq spend per model (§6.19). */
-  private readonly tokenBudget = new TokenBudget(() => Date.now());
+  /**
+   * Memory only: the last minute of Groq spend per model (§6.19). Each real
+   * spend is also written down, for the quota screen's rolling day.
+   */
+  private readonly tokenBudget = new TokenBudget(
+    () => Date.now(),
+    (model, tokens) => this.quota.recordTokens(model, tokens),
+  );
+  /** What Groq reports and what this object counts, for the quota screen (2026-10-01). */
+  private readonly quota: QuotaStore;
+  /** The fetch every Groq provider gets: it notes the rate-limit headers on the way back. */
+  private readonly groqFetch: typeof fetch;
   private readonly log = createLogger({ component: 'assistant_do' });
 
   /** Imported device keys, by device id. Public keys, so nothing secret is cached. */
@@ -173,6 +185,8 @@ export class AssistantDO implements DurableObject {
     );
 
     this.outbox = new AppOutbox(this.sql, this.repo, now);
+    this.quota = new QuotaStore(this.sql, now);
+    this.groqFetch = meterGroqFetch(this.fetchImpl, (model, limits) => this.quota.recordLimits(model, limits), now);
     // One keyring for the object's life, so the imported AES key is reused
     // across turns instead of re-imported on every one (§4.1).
     let keyring: ReturnType<typeof parseKeyring> | null = null;
@@ -193,6 +207,11 @@ export class AssistantDO implements DurableObject {
 
   async fetch(request: Request): Promise<Response> {
     const url = new URL(request.url);
+    try {
+      this.quota.countRequest();
+    } catch {
+      // A count for the quota screen is never worth refusing a request over.
+    }
 
     if (url.pathname === '/do/inbound' && request.method === 'POST') {
       const event = (await request.json()) as InboundEvent;
@@ -622,6 +641,7 @@ export class AssistantDO implements DurableObject {
     }
 
     if (app && method === 'GET' && path === '/app/outbox') return json(this.outbox.list());
+    if (app && method === 'GET' && path === '/app/quota') return json(this.quotaReport());
     if (app && method === 'POST' && path === '/app/outbox/ack') return this.appAck(body);
     if (method === 'POST' && path === '/app/push-token') return this.appPushToken(body, device);
     if (app && method === 'POST' && path === '/app/action/claim') return this.appClaim(body, principal);
@@ -636,6 +656,20 @@ export class AssistantDO implements DurableObject {
     if (method === 'POST' && path === '/device/report') return this.appReport(body, device);
 
     return appError(404, 'not_found');
+  }
+
+  /**
+   * The quota screen's numbers (2026-10-01): Groq's own, as of its last
+   * response for each model, and this object's own counts. Numbers only.
+   */
+  private quotaReport() {
+    const models: ModelSpec[] = [
+      { model: PRIMARY_MODEL, role: 'primary', dayTokens: true },
+      { model: SECONDARY_MODEL, role: 'fallback', dayTokens: true },
+      { model: WHISPER_MODEL, role: 'voice', dayTokens: false },
+    ];
+    const voice = { used: this.repo.inboundCountSince('audio', Date.now() - HOUR_MS), limit: VOICE_PER_HOUR };
+    return this.quota.report(models, voice);
   }
 
   /** Pairing: the phone proves it knows a live code without sending it (§6.18). */
@@ -1370,7 +1404,7 @@ export class AssistantDO implements DurableObject {
       deferred: this.deferred,
       // The parser spends from the same per-model budget as the agent (plan K3).
       nlu: meterParsers(
-        buildNluChain({ groqApiKey: this.env.GROQ_API_KEY, fetchImpl: this.fetchImpl }),
+        buildNluChain({ groqApiKey: this.env.GROQ_API_KEY, fetchImpl: this.groqFetch }),
         this.tokenBudget,
       ),
       ...(agentEnabled(this.env) && this.env.GROQ_API_KEY
@@ -1381,7 +1415,7 @@ export class AssistantDO implements DurableObject {
               // 2026-10-01). It stays the parser's fallback, where strict
               // structured output constrains it (§6.19, §13).
               providers: [
-                createGroqAgentProvider({ apiKey: this.env.GROQ_API_KEY, model: PRIMARY_MODEL, fetchImpl: this.fetchImpl }),
+                createGroqAgentProvider({ apiKey: this.env.GROQ_API_KEY, model: PRIMARY_MODEL, fetchImpl: this.groqFetch }),
               ],
               budget: this.tokenBudget,
               history: this.history,
@@ -1423,7 +1457,7 @@ export class AssistantDO implements DurableObject {
       provider: createGroqWhisperProvider({
         apiKey: this.env.GROQ_API_KEY,
         model: WHISPER_MODEL,
-        fetchImpl: this.fetchImpl,
+        fetchImpl: this.groqFetch,
       }),
       log: this.log,
       fetchImpl: this.fetchImpl,

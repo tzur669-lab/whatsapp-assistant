@@ -17,6 +17,7 @@ import agent0011 from '../../migrations/0011_agent.sql';
 import cards0012 from '../../migrations/0012_cards.sql';
 import phoneReads0013 from '../../migrations/0013_phone_reads.sql';
 import conversations0014 from '../../migrations/0014_conversations.sql';
+import quota0015 from '../../migrations/0015_quota.sql';
 
 export const MIGRATIONS = [
   { id: 1, sql: init0001 },
@@ -33,4 +34,5 @@ export const MIGRATIONS = [
   { id: 12, sql: cards0012 },
   { id: 13, sql: phoneReads0013 },
   { id: 14, sql: conversations0014 },
+  { id: 15, sql: quota0015 },
 ] as const;

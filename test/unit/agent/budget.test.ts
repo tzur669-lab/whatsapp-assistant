@@ -88,3 +88,14 @@ describe('meterParsers', () => {
     expect(same!.name).toBe('rules');
   });
 });
+
+describe('TokenBudget spend sink (quota screen, 2026-10-01)', () => {
+  it('reports real spend, and not the window it fills on a 429', () => {
+    const spent: Array<[string, number]> = [];
+    const budget = new TokenBudget(() => 1_000, (model, tokens) => spent.push([model, tokens]));
+    budget.record('m', 1_234);
+    budget.rateLimited('m', 5);
+    budget.rateLimited('m', 600);
+    expect(spent).toEqual([['m', 1_234]]);
+  });
+});
