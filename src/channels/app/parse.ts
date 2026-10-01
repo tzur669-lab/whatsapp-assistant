@@ -34,6 +34,18 @@ const buttonIdSchema = z.string().min(1).max(256).regex(/^[a-z0-9:]+$/);
 const conversationId = messageId.optional();
 
 /**
+ * The town the phone's geocoder found for its location (2026-10-01), which the
+ * reply names. Letters, spaces and a few marks only: no digits, so never a
+ * street number, and nothing a link could be made of.
+ */
+export const MAX_PLACE_NAME_CHARS = 40;
+export const placeNameSchema = z
+  .string()
+  .min(1)
+  .max(MAX_PLACE_NAME_CHARS)
+  .regex(/^[\p{L}\p{M}][\p{L}\p{M} '"׳״.-]*$/u);
+
+/**
  * Where the phone is (2026-10-01), when the user allowed it: for the weather
  * and the Hebrew calendar's times in this message only. The app rounds it to
  * two decimals; this side rounds again when it is used.
@@ -42,6 +54,7 @@ export const locationSchema = z
   .object({
     latitude: z.number().finite().min(-90).max(90),
     longitude: z.number().finite().min(-180).max(180),
+    name: placeNameSchema.optional(),
   })
   .strict();
 
@@ -118,15 +131,30 @@ const deviceResultSchema = z
 
 /**
  * A voice note's location, which rides in its signed path because the body is
- * the recording: `@31.77,35.21`. Null when absent or off-shape.
+ * the recording: `@31.77,35.21`, then optionally the town's name as the hex of
+ * its UTF-8 (`,d799d7a8...`). Null when absent or off-shape.
  */
-export const VOICE_LOCATION = /^@(-?[0-9]{1,2}\.[0-9]{1,2}),(-?[0-9]{1,3}\.[0-9]{1,2})$/;
+export const VOICE_LOCATION = /^@(-?[0-9]{1,2}\.[0-9]{1,2}),(-?[0-9]{1,3}\.[0-9]{1,2})(?:,((?:[0-9a-f]{2}){1,160}))?$/;
 
 export function parseVoiceLocation(segment: string | null): z.infer<typeof locationSchema> | null {
   if (segment === null) return null;
   const match = VOICE_LOCATION.exec(segment);
   if (!match) return null;
-  const parsed = locationSchema.safeParse({ latitude: Number(match[1]), longitude: Number(match[2]) });
+  let name: string | undefined;
+  if (match[3] !== undefined) {
+    const bytes = new Uint8Array(match[3].length / 2);
+    for (let i = 0; i < bytes.length; i++) bytes[i] = parseInt(match[3].slice(i * 2, i * 2 + 2), 16);
+    try {
+      name = new TextDecoder('utf-8', { fatal: true, ignoreBOM: false }).decode(bytes);
+    } catch {
+      return null;
+    }
+  }
+  const parsed = locationSchema.safeParse({
+    latitude: Number(match[1]),
+    longitude: Number(match[2]),
+    ...(name === undefined ? {} : { name }),
+  });
   return parsed.success ? parsed.data : null;
 }
 

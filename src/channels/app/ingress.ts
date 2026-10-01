@@ -35,9 +35,10 @@ export const APP_ROUTES: readonly AppRoute[] = [
   {
     method: 'POST',
     // The message id, then optionally the conversation it was recorded in, then
-    // optionally where the phone was (`@lat,lon`, two decimals).
+    // optionally where the phone was (`@lat,lon`, two decimals, then optionally
+    // `,` and the town's name as hex).
     pattern:
-      /^\/app\/voice\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}(?:\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})?(?:\/@-?[0-9]{1,2}\.[0-9]{1,2},-?[0-9]{1,3}\.[0-9]{1,2})?$/,
+      /^\/app\/voice\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}(?:\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})?(?:\/@-?[0-9]{1,2}\.[0-9]{1,2},-?[0-9]{1,3}\.[0-9]{1,2}(?:,(?:[0-9a-f]{2}){1,160})?)?$/,
     maxBytes: MAX_VOICE_BYTES,
     contentType: ['audio/mp4', 'audio/aac', 'audio/ogg', 'audio/webm'],
     channels: ['app'],

@@ -6,9 +6,11 @@
 /**
  * Where the phone is, as the app sends it with a message (2026-10-01): two
  * decimals, about a kilometre. For this one message only — never stored,
- * never logged, never shown to the model.
+ * never logged; the coordinates are never shown to the model. `name` is the
+ * town the phone's own geocoder found for them (letters only, capped), which
+ * the reply names.
  */
-export type DeviceLocation = { latitude: number; longitude: number };
+export type DeviceLocation = { latitude: number; longitude: number; name?: string | undefined };
 
 export type InboundText = {
   kind: 'text';

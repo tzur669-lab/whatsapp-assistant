@@ -107,7 +107,8 @@ object Api {
     // (ChatLogic.wireConversation): the server keeps its memory per conversation.
 
     // A typed or spoken message may carry where the phone is (0.8): coarse,
-    // for the weather, read once before the first attempt and reused on retries.
+    // for the weather, read once before the first attempt and reused on retries,
+    // with the town's name when the phone's geocoder found one.
 
     fun sendText(
         context: Context,
@@ -118,7 +119,11 @@ object Api {
     ): Pair<Result, Answer?> {
         val body = JSONObject().put("id", messageId).put("kind", "text").put("text", text)
         ChatLogic.wireConversation(conversation)?.let { body.put("conversationId", it) }
-        location?.let { body.put("location", JSONObject().put("latitude", it.latitude).put("longitude", it.longitude)) }
+        location?.let {
+            val place = JSONObject().put("latitude", it.latitude).put("longitude", it.longitude)
+            it.name?.let { name -> place.put("name", name) }
+            body.put("location", place)
+        }
         return answerOf(signed(context, "POST", "/app/message", JSON_TYPE, utf8(body), TEXT_TIMEOUT_MS))
     }
 

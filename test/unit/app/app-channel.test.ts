@@ -526,9 +526,33 @@ describe('the app channel', () => {
       expect(dump).not.toMatch(/32\.0|34\.7/);
     });
 
+    it('names the town the phone found for its location', async () => {
+      buildWithWeather();
+      const phone = await pair();
+      const response = await send(
+        await phone.toDo('POST', '/app/message', {
+          id: messageId(),
+          kind: 'text',
+          text: 'מה מזג האוויר?',
+          location: { ...HERE, name: 'תל אביב-יפו' },
+        }),
+      );
+      expect(response.status).toBe(200);
+      expect(stripIsolates(bodies[1]!)).toContain('מזג האוויר בתל אביב-יפו, לפי המיקום הנוכחי שלך');
+      for (const body of bodies) expect(body).not.toMatch(/32\.0|34\.7/);
+    });
+
     it('refuses a location off-shape', async () => {
       const phone = await pair();
-      for (const location of [{ latitude: 91, longitude: 0 }, { latitude: 1, longitude: 2, accuracy: 3 }, { lat: 1, lon: 2 }]) {
+      for (const location of [
+        { latitude: 91, longitude: 0 },
+        { latitude: 1, longitude: 2, accuracy: 3 },
+        { lat: 1, lon: 2 },
+        { latitude: 1, longitude: 2, name: 'הרצל 12' },
+        { latitude: 1, longitude: 2, name: 'example.com/x' },
+        { latitude: 1, longitude: 2, name: '' },
+        { latitude: 1, longitude: 2, name: 'א'.repeat(41) },
+      ]) {
         const response = await send(await phone.toDo('POST', '/app/message', { id: messageId(), kind: 'text', text: 'x', location }));
         expect(response.status).toBe(400);
       }
@@ -539,7 +563,12 @@ describe('the app channel', () => {
       google.transcript = 'עזרה';
       const phone = await pair();
       const A = '11111111-1111-4111-8111-111111111111';
-      for (const path of [`/app/voice/${messageId()}/@32.09,34.78`, `/app/voice/${messageId()}/${A}/@-33.87,151.21`]) {
+      const hex = (text: string) => Buffer.from(text, 'utf8').toString('hex');
+      for (const path of [
+        `/app/voice/${messageId()}/@32.09,34.78`,
+        `/app/voice/${messageId()}/${A}/@-33.87,151.21`,
+        `/app/voice/${messageId()}/@32.79,34.99,${hex('חיפה')}`,
+      ]) {
         const response = await send(await phone.toDo('POST', path, new Uint8Array([1, 2, 3, 4]), { contentType: 'audio/mp4' }));
         expect(response.status).toBe(200);
       }
@@ -547,6 +576,15 @@ describe('the app channel', () => {
         await phone.toDo('POST', `/app/voice/${messageId()}/@99.99,34.78`, new Uint8Array([1, 2, 3, 4]), { contentType: 'audio/mp4' }),
       );
       expect(bad.status).toBe(400);
+      // A name with digits, or bytes that are not UTF-8, is refused like a bad location.
+      for (const name of [hex('הרצל 12'), 'ff']) {
+        const refused = await send(
+          await phone.toDo('POST', `/app/voice/${messageId()}/@32.79,34.99,${name}`, new Uint8Array([1, 2, 3, 4]), {
+            contentType: 'audio/mp4',
+          }),
+        );
+        expect(refused.status).toBe(400);
+      }
     });
   });
 

@@ -373,9 +373,23 @@ class ChatActivity : Activity(), ChatEvents.Listener {
         return panel
     }
 
-    private fun locationLabel(): String = getString(
-        if (PhoneLocation.isOn(this) && PhoneLocation.granted(this)) R.string.location_on else R.string.location_off,
-    )
+    /** On shows the town the phone was last found in, once it is known. */
+    private fun locationLabel(): String {
+        if (!PhoneLocation.isOn(this) || !PhoneLocation.granted(this)) return getString(R.string.location_off)
+        val town = PhoneLocation.lastName ?: return getString(R.string.location_on)
+        return getString(R.string.location_on_at, Ui.isolate(town))
+    }
+
+    /** Finds where the phone is now, off the main thread, and puts the town in the menu. */
+    private fun refreshLocationLabel() {
+        locationButton?.text = locationLabel()
+        if (!PhoneLocation.isOn(this) || !PhoneLocation.granted(this)) return
+        val app = applicationContext
+        Thread {
+            PhoneLocation.now(app)
+            runOnUiThread { locationButton?.text = locationLabel() }
+        }.start()
+    }
 
     /** On asks for the permission when it is missing; off stops sending, whatever the permission. */
     private fun toggleLocation(button: Button) {
@@ -389,6 +403,7 @@ class ChatActivity : Activity(), ChatEvents.Listener {
             }
         }
         button.text = locationLabel()
+        refreshLocationLabel()
     }
 
     private fun drawerItem(label: String, bold: Boolean, onClick: () -> Unit) = TextView(this).apply {
@@ -401,8 +416,9 @@ class ChatActivity : Activity(), ChatEvents.Listener {
     }
 
     private fun openDrawer() {
-        // The permission may have been changed in the system settings meanwhile.
-        locationButton?.text = locationLabel()
+        // The permission may have been changed in the system settings meanwhile,
+        // and the phone may have moved.
+        refreshLocationLabel()
         conversations = store.conversations()
         conversationsAdapter.notifyDataSetChanged()
         scrim.visibility = View.VISIBLE
@@ -554,7 +570,7 @@ class ChatActivity : Activity(), ChatEvents.Listener {
         if (requestCode == REQUEST_LOCATION) {
             val granted = grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED
             Toast.makeText(this, if (granted) R.string.location_ready else R.string.location_denied, Toast.LENGTH_LONG).show()
-            locationButton?.text = locationLabel()
+            refreshLocationLabel()
             return
         }
         if (requestCode != REQUEST_MIC) return

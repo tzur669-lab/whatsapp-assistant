@@ -13,7 +13,14 @@ object LocationLogic {
     /** How long a message may wait for a fresh fix before it goes without one. */
     const val FIX_TIMEOUT_MS = 4_000L
 
-    class Coarse(val latitude: Double, val longitude: Double)
+    /** The longest town name sent; the server refuses more. */
+    const val MAX_NAME_CHARS = 40
+
+    /** [name] is the town the phone's geocoder found, when it found one. */
+    class Coarse(val latitude: Double, val longitude: Double, val name: String? = null)
+
+    // What the server takes for a town's name: letters, spaces and a few marks — no digits.
+    private val NAME = Regex("^[\\p{L}\\p{M}][\\p{L}\\p{M} '\"׳״.-]*$")
 
     /** Null for anything that is not a place on Earth. */
     fun coarse(latitude: Double, longitude: Double): Coarse? {
@@ -24,9 +31,26 @@ object LocationLogic {
 
     fun isFresh(fixAtMs: Long, nowMs: Long): Boolean = nowMs - fixAtMs in 0..MAX_AGE_MS
 
-    /** A voice note's path segment, which the server matches exactly: `@32.09,34.78`. */
-    fun pathSegment(location: Coarse): String =
-        "@${fixed(location.latitude)},${fixed(location.longitude)}"
+    /** The same place, named — when [raw] is a name the server will take. */
+    fun named(location: Coarse, raw: String?): Coarse =
+        Coarse(location.latitude, location.longitude, placeName(raw))
+
+    /** A geocoder's town as the server takes it, or null: spaces collapsed, no digits, capped. */
+    fun placeName(raw: String?): String? {
+        val name = raw?.trim()?.replace(Regex("\\s+"), " ") ?: return null
+        if (name.isEmpty() || name.length > MAX_NAME_CHARS) return null
+        return if (NAME.matches(name)) name else null
+    }
+
+    /**
+     * A voice note's path segment, which the server matches exactly: `@32.09,34.78`,
+     * then, when named, `,` and the name's UTF-8 as lowercase hex.
+     */
+    fun pathSegment(location: Coarse): String {
+        val at = "@${fixed(location.latitude)},${fixed(location.longitude)}"
+        val name = location.name ?: return at
+        return at + "," + name.toByteArray(Charsets.UTF_8).joinToString("") { "%02x".format(Locale.ROOT, it.toInt() and 0xff) }
+    }
 
     private fun round2(value: Double): Double = Math.round(value * 100.0) / 100.0
 

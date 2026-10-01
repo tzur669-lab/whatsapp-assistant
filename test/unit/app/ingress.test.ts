@@ -25,6 +25,15 @@ describe('the voice route', () => {
     expect(await status(`/app/voice/${ID}/${CONV}/@-33.9,151.21`)).toBe(200);
   });
 
+  it("takes the town's name after the location, as hex", async () => {
+    const name = Buffer.from('חיפה', 'utf8').toString('hex');
+    expect(await status(`/app/voice/${ID}/@32.79,34.99,${name}`)).toBe(200);
+    expect(await status(`/app/voice/${ID}/${CONV}/@32.79,34.99,${name}`)).toBe(200);
+    expect(await status(`/app/voice/${ID}/@32.79,34.99,abc`)).toBe(404);
+    expect(await status(`/app/voice/${ID}/@32.79,34.99,ZZ`)).toBe(404);
+    expect(await status(`/app/voice/${ID}/@32.79,34.99,${'ab'.repeat(161)}`)).toBe(404);
+  });
+
   it('refuses anything finer than two decimals, or out of place', async () => {
     expect(await status(`/app/voice/${ID}/@32.085,34.78`)).toBe(404);
     expect(await status(`/app/voice/${ID}/@32.09,34.78/${CONV}`)).toBe(404);

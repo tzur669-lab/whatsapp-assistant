@@ -39,6 +39,7 @@
     <string name="guide_open">📖 מדריך ופקודות</string>
     <string name="quota_open">📊 מכסות</string>
     <string name="location_on">📍 מיקום למזג אוויר: פועל</string>
+    <string name="location_on_at">📍 מיקום למזג אוויר: פועל (%1$s)</string>
     <string name="location_off">📍 מיקום למזג אוויר: כבוי</string>
     <string name="location_ready">מזג האוויר וזמני השבת יהיו לפי המיקום שלך.</string>
     <string name="location_denied">בלי הרשאת מיקום, מזג האוויר יהיה לפי העיר שהוגדרה ב-/city.</string>

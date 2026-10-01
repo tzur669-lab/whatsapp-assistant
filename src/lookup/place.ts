@@ -7,6 +7,7 @@
  */
 import { getJson, num, str } from './http.js';
 import type { DeviceLocation } from '../channels/types.js';
+import { isolate } from '../render/bidi.js';
 
 export type Place = { name: string; latitude: number; longitude: number };
 
@@ -34,13 +35,23 @@ export async function findPlace(fetchImpl: typeof fetch, name: string): Promise<
 
 /**
  * The phone's location as a place (2026-10-01). Rounded again to two decimals,
- * about a kilometre, whatever the app sent. It has no name: the reply says
- * "your current location", so no coordinates and no reverse lookup are needed.
+ * about a kilometre, whatever the app sent. Named by the town the phone's own
+ * geocoder found, when it sent one, and always marked as where the phone is;
+ * never by its coordinates.
  */
 export function currentPlace(location: DeviceLocation, lang: 'he' | 'en'): Place {
   const round = (value: number) => Math.round(value * 100) / 100;
+  const town = location.name === undefined ? null : isolate(location.name);
+  const name =
+    lang === 'he'
+      ? town === null
+        ? 'מיקום הנוכחי שלך'
+        : `${town}, לפי המיקום הנוכחי שלך`
+      : town === null
+        ? 'your current location'
+        : `${town}, where you are now`;
   return {
-    name: lang === 'he' ? 'מיקום הנוכחי שלך' : 'your current location',
+    name,
     latitude: round(location.latitude),
     longitude: round(location.longitude),
   };

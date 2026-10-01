@@ -167,6 +167,16 @@ describe('info.lookup', () => {
       expect(named.plain.startsWith('מזג האוויר בחיפה')).toBe(true);
     });
 
+    it("names the town the phone found, and still says it is where the phone is", async () => {
+      ctx.location = { latitude: 32.08531, longitude: 34.78177, name: 'תל אביב-יפו' };
+      const here = await run({ topic: 'weather' }, [GEOCODER, FORECAST]);
+      expect(here.plain.startsWith('מזג האוויר בתל אביב-יפו, לפי המיקום הנוכחי שלך ·')).toBe(true);
+      // Named by the phone: no geocoding here, and the forecast is still for the coordinates.
+      expect(here.urls).toHaveLength(1);
+      expect(new URL(here.urls[0]!).searchParams.get('latitude')).toBe('32.09');
+      expect(here.plain).not.toMatch(/32\.|34\./);
+    });
+
     it('says so when a place is not found, and when the service is down', async () => {
       expect((await run({ topic: 'weather', place: 'אין כזה' }, [GEOCODER, FORECAST])).plain).toBe('לא מצאתי מקום בשם אין כזה.');
       expect((await run({ topic: 'weather' }, [])).plain).toContain('לא זמין');

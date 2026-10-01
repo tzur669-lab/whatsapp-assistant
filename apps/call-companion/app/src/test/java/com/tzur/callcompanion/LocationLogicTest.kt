@@ -33,6 +33,30 @@ class LocationLogicTest {
     }
 
     @Test
+    fun namesTheTownOnlyAsTheServerTakesIt() {
+        assertEquals("תל אביב-יפו", LocationLogic.placeName("  תל   אביב-יפו "))
+        assertEquals("Tel Aviv-Yafo", LocationLogic.placeName("Tel Aviv-Yafo"))
+        assertNull(LocationLogic.placeName(null))
+        assertNull(LocationLogic.placeName(" "))
+        assertNull(LocationLogic.placeName("הרצל 12"))
+        assertNull(LocationLogic.placeName("example.com/x"))
+        assertNull(LocationLogic.placeName("א".repeat(41)))
+    }
+
+    @Test
+    fun writesTheNameInTheVoicePathAsHex() {
+        val server = Regex("^@-?[0-9]{1,2}\\.[0-9]{1,2},-?[0-9]{1,3}\\.[0-9]{1,2}(?:,(?:[0-9a-f]{2}){1,160})?$")
+        val here = LocationLogic.named(LocationLogic.coarse(32.79, 34.99)!!, "חיפה")
+        val segment = LocationLogic.pathSegment(here)
+        assertEquals("@32.79,34.99,d797d799d7a4d794", segment)
+        assertTrue(server.matches(segment))
+        val longest = LocationLogic.named(LocationLogic.coarse(32.79, 34.99)!!, "ש".repeat(LocationLogic.MAX_NAME_CHARS))
+        assertTrue(server.matches(LocationLogic.pathSegment(longest)))
+        // A name the server would refuse is dropped, not sent.
+        assertEquals("@32.79,34.99", LocationLogic.pathSegment(LocationLogic.named(LocationLogic.coarse(32.79, 34.99)!!, "רחוב 5")))
+    }
+
+    @Test
     fun aFixIsFreshForFifteenMinutes() {
         val now = 1_000_000_000L
         assertTrue(LocationLogic.isFresh(now - 14 * 60_000L, now))
