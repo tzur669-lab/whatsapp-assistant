@@ -466,6 +466,90 @@ describe('the app channel', () => {
     });
   });
 
+  describe("the phone's location (2026-10-01)", () => {
+    const HERE = { latitude: 32.0853, longitude: 34.7818 };
+    let bodies: string[];
+    let forecasts: URL[];
+
+    /** An agent that reads the weather once, then answers; and a forecast service. */
+    const buildWithWeather = () => {
+      env = { ...baseEnv(), GROQ_API_KEY: 'test-groq-key', AGENT: 'on' };
+      const fetchImpl = (async (input: string | URL | Request, init?: RequestInit) => {
+        const url = String(input instanceof Request ? input.url : input);
+        if (url.startsWith('https://api.open-meteo.com/')) {
+          forecasts.push(new URL(url));
+          return new Response(
+            JSON.stringify({
+              daily: { time: ['2026-09-29'], weather_code: [0], temperature_2m_max: [30], temperature_2m_min: [20], precipitation_probability_max: [0] },
+            }),
+            { status: 200, headers: { 'content-type': 'application/json' } },
+          );
+        }
+        if (!url.endsWith('/chat/completions')) return google.fetchImpl(input as never, init);
+        bodies.push(String(init?.body));
+        const message =
+          bodies.length === 1
+            ? { content: null, tool_calls: [{ id: 'c1', type: 'function', function: { name: 'info__lookup', arguments: '{"topic":"weather"}' } }] }
+            : { content: 'חם היום.' };
+        return new Response(JSON.stringify({ choices: [{ message }], usage: { prompt_tokens: 900, completion_tokens: 40 } }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        });
+      }) as unknown as typeof fetch;
+      assistant = new AssistantDO(fake.state as never, env, fetchImpl);
+    };
+
+    beforeEach(() => {
+      bodies = [];
+      forecasts = [];
+    });
+
+    it('reads the weather where the phone is, and keeps the coordinates from the model and from storage', async () => {
+      buildWithWeather();
+      const phone = await pair();
+      const response = await send(
+        await phone.toDo('POST', '/app/message', { id: messageId(), kind: 'text', text: 'מה מזג האוויר?', location: HERE }),
+      );
+      expect(response.status).toBe(200);
+
+      expect(forecasts).toHaveLength(1);
+      expect(forecasts[0]!.searchParams.get('latitude')).toBe('32.09');
+      expect(forecasts[0]!.searchParams.get('longitude')).toBe('34.78');
+      // The model read "your current location", never a number for it.
+      expect(stripIsolates(bodies[1]!)).toContain('מזג האוויר במיקום הנוכחי שלך');
+      for (const body of bodies) expect(body).not.toMatch(/32\.0|34\.7/);
+
+      const tables = fake.driver
+        .exec("SELECT name FROM sqlite_master WHERE type = 'table'")
+        .map((row) => String(row['name']));
+      const dump = tables.map((table) => JSON.stringify(fake.driver.exec(`SELECT * FROM ${table}`))).join('\n');
+      expect(dump).not.toMatch(/32\.0|34\.7/);
+    });
+
+    it('refuses a location off-shape', async () => {
+      const phone = await pair();
+      for (const location of [{ latitude: 91, longitude: 0 }, { latitude: 1, longitude: 2, accuracy: 3 }, { lat: 1, lon: 2 }]) {
+        const response = await send(await phone.toDo('POST', '/app/message', { id: messageId(), kind: 'text', text: 'x', location }));
+        expect(response.status).toBe(400);
+      }
+    });
+
+    it("takes a voice note's location in its path, after the conversation or without one", async () => {
+      build({ GROQ_API_KEY: 'test-key-not-real' });
+      google.transcript = 'עזרה';
+      const phone = await pair();
+      const A = '11111111-1111-4111-8111-111111111111';
+      for (const path of [`/app/voice/${messageId()}/@32.09,34.78`, `/app/voice/${messageId()}/${A}/@-33.87,151.21`]) {
+        const response = await send(await phone.toDo('POST', path, new Uint8Array([1, 2, 3, 4]), { contentType: 'audio/mp4' }));
+        expect(response.status).toBe(200);
+      }
+      const bad = await send(
+        await phone.toDo('POST', `/app/voice/${messageId()}/@99.99,34.78`, new Uint8Array([1, 2, 3, 4]), { contentType: 'audio/mp4' }),
+      );
+      expect(bad.status).toBe(400);
+    });
+  });
+
   describe('quotas (2026-10-01)', () => {
     type Quota = {
       at: number;

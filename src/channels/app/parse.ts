@@ -33,9 +33,27 @@ const buttonIdSchema = z.string().min(1).max(256).regex(/^[a-z0-9:]+$/);
  */
 const conversationId = messageId.optional();
 
+/**
+ * Where the phone is (2026-10-01), when the user allowed it: for the weather
+ * and the Hebrew calendar's times in this message only. The app rounds it to
+ * two decimals; this side rounds again when it is used.
+ */
+export const locationSchema = z
+  .object({
+    latitude: z.number().finite().min(-90).max(90),
+    longitude: z.number().finite().min(-180).max(180),
+  })
+  .strict();
+
 const messageSchema = z.discriminatedUnion('kind', [
   z
-    .object({ id: messageId, kind: z.literal('text'), text: z.string().min(1).max(MAX_TEXT_CHARS), conversationId })
+    .object({
+      id: messageId,
+      kind: z.literal('text'),
+      text: z.string().min(1).max(MAX_TEXT_CHARS),
+      conversationId,
+      location: locationSchema.optional(),
+    })
     .strict(),
   z.object({ id: messageId, kind: z.literal('button'), buttonId: buttonIdSchema, conversationId }).strict(),
 ]);
@@ -97,6 +115,20 @@ const deviceResultSchema = z
     result: phoneReadResultSchema,
   })
   .strict();
+
+/**
+ * A voice note's location, which rides in its signed path because the body is
+ * the recording: `@31.77,35.21`. Null when absent or off-shape.
+ */
+export const VOICE_LOCATION = /^@(-?[0-9]{1,2}\.[0-9]{1,2}),(-?[0-9]{1,3}\.[0-9]{1,2})$/;
+
+export function parseVoiceLocation(segment: string | null): z.infer<typeof locationSchema> | null {
+  if (segment === null) return null;
+  const match = VOICE_LOCATION.exec(segment);
+  if (!match) return null;
+  const parsed = locationSchema.safeParse({ latitude: Number(match[1]), longitude: Number(match[2]) });
+  return parsed.success ? parsed.data : null;
+}
 
 export function parseDeviceResult(body: Uint8Array): z.infer<typeof deviceResultSchema> | null {
   return parseWith(deviceResultSchema, body);

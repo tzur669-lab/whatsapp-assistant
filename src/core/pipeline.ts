@@ -21,7 +21,7 @@ import type { GmailClient } from '../google/gmail.js';
 import type { TasksClient } from '../google/tasks.js';
 import type { GrantName } from '../google/grants.js';
 import { DEFAULT_PLACE, findPlace, HOME_CITY_KEY } from '../lookup/place.js';
-import type { InboundEvent, OutboundButton } from '../channels/types.js';
+import type { DeviceLocation, InboundEvent, OutboundButton } from '../channels/types.js';
 import { Repository } from './repo.js';
 import { Stopwatch } from './timing.js';
 import type { Stage } from './timing.js';
@@ -1040,7 +1040,9 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 
 function turnOf(
   deps: PipelineDeps,
-  event: Pick<Extract<InboundEvent, { kind: 'text' | 'audio' | 'button' }>, 'sentAtMs' | 'forwarded'>,
+  event: Pick<Extract<InboundEvent, { kind: 'text' | 'audio' | 'button' }>, 'sentAtMs' | 'forwarded'> & {
+    location?: DeviceLocation;
+  },
   now: number,
   source: TextSource,
   lang: Lang,
@@ -1063,6 +1065,7 @@ function turnOf(
       ...(services.ical ? { ical: services.ical } : {}),
       ...(services.calls ? { calls: services.calls } : {}),
       ...(services.fetchImpl ? { fetchImpl: services.fetchImpl } : {}),
+      ...(event.location ? { location: event.location } : {}),
       ...(services.tasks ? { tasks: services.tasks } : {}),
       ...(services.gmail ? { gmail: services.gmail } : {}),
       ...(services.drive ? { drive: services.drive } : {}),

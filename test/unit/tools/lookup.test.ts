@@ -150,6 +150,23 @@ describe('info.lookup', () => {
       expect(home.plain.startsWith('מזג האוויר בחיפה')).toBe(true);
     });
 
+    it("uses where the phone is over the home city, rounded, without naming it or geocoding", async () => {
+      ctx.repo.setSetting(HOME_CITY_KEY, 'חיפה');
+      ctx.location = { latitude: 32.08531, longitude: 34.78177 };
+      const here = await run({ topic: 'weather' }, [GEOCODER, FORECAST]);
+      expect(here.plain.startsWith('מזג האוויר במיקום הנוכחי שלך ·')).toBe(true);
+      expect(here.urls).toHaveLength(1);
+      const url = new URL(here.urls[0]!);
+      expect(url.searchParams.get('latitude')).toBe('32.09');
+      expect(url.searchParams.get('longitude')).toBe('34.78');
+      // The coordinates are never in the text the model reads.
+      expect(here.plain).not.toMatch(/32\.|34\./);
+
+      // A place named in the message still wins.
+      const named = await run({ topic: 'weather', place: 'חיפה' }, [GEOCODER, FORECAST]);
+      expect(named.plain.startsWith('מזג האוויר בחיפה')).toBe(true);
+    });
+
     it('says so when a place is not found, and when the service is down', async () => {
       expect((await run({ topic: 'weather', place: 'אין כזה' }, [GEOCODER, FORECAST])).plain).toBe('לא מצאתי מקום בשם אין כזה.');
       expect((await run({ topic: 'weather' }, [])).plain).toContain('לא זמין');
@@ -173,6 +190,13 @@ describe('info.lookup', () => {
       expect(url.searchParams.get('i')).toBe('on');
       expect(url.searchParams.get('latitude')).toBe('31.7683');
       expect(url.searchParams.get('start')).toBe('2026-10-01');
+    });
+
+    it("gives times for where the phone is, when the app sent it", async () => {
+      ctx.location = { latitude: 32.794, longitude: 34.989 };
+      const out = await run({ topic: 'jewish_calendar' }, [HEBCAL]);
+      expect(out.plain).toContain('(זמנים למיקום הנוכחי שלך)');
+      expect(new URL(out.urls[0]!).searchParams.get('latitude')).toBe('32.79');
     });
 
     it('computes the Hebrew date here', () => {

@@ -44,7 +44,7 @@ import { statusText } from '../render/status.js';
 import { localPartsOf, ZONE } from '../time/tz.js';
 import { buildDigest } from '../core/digest.js';
 import { restPeriodAt } from '../time/shabbat.js';
-import type { InboundEvent, OutboundButton, OutboundMessage } from '../channels/types.js';
+import type { DeviceLocation, InboundEvent, OutboundButton, OutboundMessage } from '../channels/types.js';
 import type { AppEnv, ChannelMode } from '../core/env.js';
 import { channelOf } from '../core/env.js';
 import { AppOutbox } from '../channels/app/outbox.js';
@@ -66,6 +66,7 @@ import {
   parseDeviceResult,
   parseClaim,
   parseMessage,
+  parseVoiceLocation,
   parsePair,
   parsePushToken,
   parseReport,
@@ -687,9 +688,11 @@ export class AssistantDO implements DurableObject {
 
     if (app && method === 'POST' && path === '/app/message') return this.appMessage(body, signed, device, principal);
 
-    const voice = /^\/app\/voice\/([0-9a-f-]{36})(?:\/([0-9a-f-]{36}))?$/.exec(path);
+    const voice = /^\/app\/voice\/([0-9a-f-]{36})(?:\/([0-9a-f-]{36}))?(?:\/(@[^/]+))?$/.exec(path);
     if (app && method === 'POST' && voice) {
-      return this.appVoice(voice[1]!, voice[2] ?? null, body, request.contentType, signed, device, principal);
+      const location = voice[3] === undefined ? null : parseVoiceLocation(voice[3]);
+      if (voice[3] !== undefined && location === null) return appError(400, 'bad_request');
+      return this.appVoice(voice[1]!, voice[2] ?? null, location, body, request.contentType, signed, device, principal);
     }
 
     if (app && method === 'GET' && path === '/app/outbox') return json(this.outbox.list());
@@ -764,7 +767,7 @@ export class AssistantDO implements DurableObject {
     };
     const event: InboundEvent =
       message.kind === 'text'
-        ? { kind: 'text', ...base, text: message.text }
+        ? { kind: 'text', ...base, text: message.text, ...(message.location ? { location: message.location } : {}) }
         : { kind: 'button', ...base, buttonId: message.buttonId };
     return this.runAppTurn(event, message.id, device.id, principal);
   }
@@ -772,6 +775,7 @@ export class AssistantDO implements DurableObject {
   private appVoice(
     messageId: string,
     conversationId: string | null,
+    location: DeviceLocation | null,
     body: Uint8Array,
     contentType: string,
     signed: SignedHeaders,
@@ -804,6 +808,7 @@ export class AssistantDO implements DurableObject {
       voiceNote: true,
       forwarded: false,
       ...(conversationId ? { conversationId } : {}),
+      ...(location ? { location } : {}),
     };
     return this.runAppTurn(event, messageId, device.id, principal);
   }

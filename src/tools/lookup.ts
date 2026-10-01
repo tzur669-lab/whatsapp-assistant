@@ -12,7 +12,7 @@ import { infoLookupSlots, LOOKUP_TOPICS } from '../nlu/slot-schemas.js';
 import { resolveWhen } from '../time/resolve.js';
 import type { DateSpec } from '../time/resolve.js';
 import { localPartsOf, ZONE } from '../time/tz.js';
-import { DEFAULT_PLACE, findPlace, HOME_CITY_KEY, MAX_PLACE_CHARS } from '../lookup/place.js';
+import { currentPlace, DEFAULT_PLACE, findPlace, HOME_CITY_KEY, MAX_PLACE_CHARS } from '../lookup/place.js';
 import type { Place } from '../lookup/place.js';
 import { weatherFor } from '../lookup/weather.js';
 import { jewishCalendarFor } from '../lookup/jewish.js';
@@ -118,8 +118,12 @@ export const infoLookup: ToolDefinition = {
   },
 };
 
-/** The place named in the message, else the home city (`/city`), else Jerusalem. */
+/**
+ * The place named in the message, else where the phone is now (when the app
+ * sent it), else the home city (`/city`), else Jerusalem.
+ */
 async function placeFor(named: string | undefined, ctx: ToolContext, fetchImpl: typeof fetch): Promise<Place | null> {
+  if (!named && ctx.location) return currentPlace(ctx.location, ctx.lang);
   const wanted = named ?? ctx.repo.getSetting(HOME_CITY_KEY);
   if (!wanted) return DEFAULT_PLACE;
   return findPlace(fetchImpl, wanted);

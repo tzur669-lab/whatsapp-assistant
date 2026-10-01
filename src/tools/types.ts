@@ -24,6 +24,7 @@ import type { ClarifyTime } from '../time/resolve.js';
 import type { ToolName } from './registry.js';
 import type { ReminderStore } from './reminder-store.js';
 import type { Repository } from '../core/repo.js';
+import type { DeviceLocation } from '../channels/types.js';
 import type { Logger } from '../security/redact.js';
 import type { CalendarClient } from '../google/calendar.js';
 import type { IcalStore } from '../ical/store.js';
@@ -96,6 +97,11 @@ export type ToolContext = {
   ical?: IcalStore;
   /** Reaches the paired phone. Absent when calls are not configured (§6.17). */
   calls?: CallDispatcher;
+  /**
+   * Where the phone was when this message was sent (2026-10-01), for the
+   * weather and the Hebrew calendar's times. This message only; never stored.
+   */
+  location?: DeviceLocation;
   /** For tools that read public data (`info.lookup`). Supplied by the platform. */
   fetchImpl?: typeof fetch;
   /** Google Tasks, once its grant is connected (2026-10-01). */

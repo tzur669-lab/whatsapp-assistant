@@ -1,10 +1,12 @@
 /**
- * Where "the weather" and "candle lighting" are about. The user's home city,
- * set with `/city`, or Jerusalem until they set one; a place named in the
- * message wins for that message. Names become coordinates through Open-Meteo's
+ * Where "the weather" and "candle lighting" are about. A place named in the
+ * message wins for that message; then where the phone is, when the app sent
+ * its location with the message; then the user's home city, set with
+ * `/city`; then Jerusalem. Names become coordinates through Open-Meteo's
  * geocoder, which needs no key.
  */
 import { getJson, num, str } from './http.js';
+import type { DeviceLocation } from '../channels/types.js';
 
 export type Place = { name: string; latitude: number; longitude: number };
 
@@ -28,4 +30,18 @@ export async function findPlace(fetchImpl: typeof fetch, name: string): Promise<
   const longitude = num(first['longitude']);
   if (latitude === null || longitude === null) return null;
   return { name: str(first['name'], MAX_PLACE_CHARS) ?? query, latitude, longitude };
+}
+
+/**
+ * The phone's location as a place (2026-10-01). Rounded again to two decimals,
+ * about a kilometre, whatever the app sent. It has no name: the reply says
+ * "your current location", so no coordinates and no reverse lookup are needed.
+ */
+export function currentPlace(location: DeviceLocation, lang: 'he' | 'en'): Place {
+  const round = (value: number) => Math.round(value * 100) / 100;
+  return {
+    name: lang === 'he' ? 'מיקום הנוכחי שלך' : 'your current location',
+    latitude: round(location.latitude),
+    longitude: round(location.longitude),
+  };
 }

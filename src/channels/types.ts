@@ -3,6 +3,13 @@
  * but the risk register (PLAN §12) calls for being able to swap it quickly.
  */
 
+/**
+ * Where the phone is, as the app sends it with a message (2026-10-01): two
+ * decimals, about a kilometre. For this one message only — never stored,
+ * never logged, never shown to the model.
+ */
+export type DeviceLocation = { latitude: number; longitude: number };
+
 export type InboundText = {
   kind: 'text';
   wamid: string;
@@ -12,6 +19,8 @@ export type InboundText = {
   forwarded: boolean;
   /** The app's conversation this was written in (§6.18). Absent: the one shared thread. */
   conversationId?: string;
+  /** The phone's location when this was sent, when the user allowed it. */
+  location?: DeviceLocation;
 };
 
 /**
@@ -36,6 +45,7 @@ export type InboundAudio = {
   voiceNote: boolean;
   forwarded: boolean;
   conversationId?: string;
+  location?: DeviceLocation;
 };
 
 export type InboundButton = {
