@@ -22,6 +22,7 @@
 import type { SqlDriver } from '../../core/sql.js';
 import type { Repository } from '../../core/repo.js';
 import type { OutboundButton } from '../types.js';
+import { defangLinks } from '../../security/scrub.js';
 
 export type OutboxKind = 'reply' | 'reminder' | 'digest' | 'call' | 'notice';
 
@@ -72,8 +73,13 @@ export class AppOutbox {
     inReplyTo?: string;
     reminderId?: string;
     principal?: string;
+    /** Only the one-time connect link stays a link (PLAN §6.19). */
+    keepLinks?: boolean;
   }): Accepted {
     const now = this.now();
+    // Every row the app will show passes here, so here is where links are
+    // defanged: a reminder, a digest or a reply can carry text from outside.
+    const text = message.keepLinks ? message.text : defangLinks(message.text);
     const ttl = message.kind === 'reminder' ? REMINDER_ROW_TTL_MS : OTHER_ROW_TTL_MS;
     const firstPush = message.kind === 'reply' ? now + REPLY_PUSH_DELAY_MS : now;
 
@@ -85,7 +91,7 @@ export class AppOutbox {
       message.kind,
       message.reminderId ?? null,
       message.inReplyTo ?? null,
-      message.text,
+      text,
       message.buttons && message.buttons.length > 0 ? JSON.stringify(message.buttons) : null,
       now,
       now + ttl,

@@ -17,7 +17,8 @@
     "eval": "tsx test/evals/run-evals.ts",
     "bench": "tsx scripts/bench-turn.ts",
     "dev": "wrangler dev --env staging",
-    "deploy:staging": "wrangler deploy --env staging"
+    "deploy:staging": "wrangler deploy --env staging",
+    "eval:agent": "tsx test/evals/run-agent-evals.ts"
   },
   "dependencies": {
     "hono": "^4.6.14",

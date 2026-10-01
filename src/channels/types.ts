@@ -81,6 +81,11 @@ export type OutboundMessage = {
   to: string;
   text: string;
   buttons?: OutboundButton[];
+  /**
+   * The one-time connect link is the only link that must stay clickable.
+   * Everything else is defanged where it leaves (PLAN §6.19).
+   */
+  keepLinks?: true;
 };
 
 export interface ChannelAdapter {

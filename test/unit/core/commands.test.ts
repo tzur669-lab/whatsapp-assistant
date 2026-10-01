@@ -29,6 +29,7 @@ const INVOCATIONS: Record<Command['kind'], string> = {
   pause: '/pause',
   resume: '/resume',
   budget: '/budget',
+  forget: '/forget',
   connect_google: '/connect google',
   pair: '/pair',
   digest: '/digest',

@@ -1,6 +1,6 @@
 # CLAUDE.md — WhatsApp Personal Assistant
 
-A single-user assistant for reminders and Google Calendar, reached through its own Android app (PLAN §6.18) — WhatsApp is frozen behind `CHANNEL`, not deleted. It runs on Cloudflare Workers with one SQLite-backed Durable Object and uses Groq for intent parsing.
+A single-user assistant for reminders and Google Calendar, reached through its own Android app (PLAN §6.18) — WhatsApp is frozen behind `CHANNEL`, not deleted. It runs on Cloudflare Workers with one SQLite-backed Durable Object and uses Groq for a bounded tool-calling agent (PLAN §6.19, behind `AGENT`), with the single-shot parser as its fallback.
 
 **Before starting any task:**
 
@@ -14,24 +14,25 @@ A single-user assistant for reminders and Google Calendar, reached through its o
 - `pnpm install` — install dependencies. **Ask before adding any new dependency.**
 - `pnpm typecheck` · `pnpm lint` · `pnpm test` — run all three before calling a task done.
 - `pnpm eval` — NLU evals against the real provider (needs `GROQ_API_KEY` in `.dev.vars`). Required after any change to `src/nlu/`.
+- `pnpm eval:agent` — agent evals (first tool choice on the same corpus, plus injection-through-data). Required after any change to `src/agent/` prompt, catalog or provider. Resumable with `--resume`; one full run can exceed a model's daily budget.
 - `pnpm dev` — `wrangler dev` with staging config.
 - `pnpm deploy:staging` — only with explicit approval in the session.
 - **Never** run production deploys, `wrangler secret put`, `wrangler rollback`, or anything with `--env production`. The human does those.
 
 ## Architecture invariants (non-negotiable)
 
-1. **The LLM is a parser, not an agent.** It receives only the user's message text, the current local date/time/weekday, and the enabled tool catalog. It returns one `IntentDraft`.
-2. **Never send data to the LLM.** No calendar contents, event IDs or titles, reminder lists, tokens, tool results, error details, or phone numbers go into a prompt. If a feature seems to need this, stop and ask.
-3. **LLM output is untrusted input.** It must pass the strict Zod `IntentDraft` schema (closed enums, `.strict()`, length caps) before any use.
+1. **The LLM is a bounded agent; code decides** (PLAN §6.19, since 2026-10-01). It may call registry tools in a loop that code caps (model calls, tokens, one model per turn). Every tool call goes through strict Zod → weekday check → `resolve` → policy → confirm, exactly like a parsed draft. Only a Tier 0 read returns to the model; every other outcome ends the turn with a code-rendered reply. The single-shot parser (one `IntentDraft`) is the fallback, and runs only when no tool ran.
+2. **Data minimization.** The model may receive the user's text, the encrypted short history, and **code-built read results passed through `scrubForModel`** (no numbers, addresses, codes or links). Never: tokens, secrets, raw ids, phone numbers, email addresses, error details. Text someone else wrote **taints** the turn (`PolicyContext.tainted`): every write it leads to is CONFIRM, and the taint carries through open questions and history. A new data source needs a scrubbed, capped result shape and a taint decision — if unsure, stop and ask.
+3. **LLM output is untrusted input.** Tool arguments and drafts must pass the strict Zod schemas (closed enums, `.strict()`, length caps) before any use. Model free text is display-only, capped, never parsed into an action, and every outbound message is link-defanged where it leaves (`defangLinks`), except the one-time connect link.
 4. **Code computes all dates and times.** Use `src/time/resolve.ts` with zone `Asia/Jerusalem` and rules R1–R12 (PLAN §6.3). Never ask the LLM for ISO timestamps. Never default a missing time — return CLARIFY.
-5. **Code finds targets.** Event and reminder lookup uses `query_variants` from the draft, matched in code. The LLM never supplies IDs.
+5. **Code finds targets.** Event and reminder lookup uses `query_variants`, matched in code. The LLM never supplies IDs.
 6. **Every tool has a tier (0–3) in the registry.** Tier 2 and 3 must go through `confirm/`. There is no Tier 4 code path — never implement permission changes, secret access, data forwarding, or code execution.
 7. **Confirmations and button replies never go through the LLM.** They are handled deterministically in the Durable Object with atomic checks: status, expiry, sender, nonce, input hash. Execute the *stored* validated input, never a re-parsed one.
 8. **Policy is code and static config only.** Nothing received over chat may change permissions, allowlists, tiers, or limits.
 9. **Ingress security order is fixed.**
    - WhatsApp: raw body → HMAC `X-Hub-Signature-256` (constant-time) → parse → allowlist → dedupe. Senders not on the allowlist are dropped silently, with no reply and no LLM call.
    - The app (PLAN §6.18): route, channel and a byte-counted size cap in the Worker, which forwards the body **byte for byte** → the device's public key → ECDSA signature over the canonical string (awaited, no state touched) → one synchronous transaction: device still active, nonce spent → strict Zod → dedupe (`recordInbound`, before the pipeline's first await). An unknown or revoked device gets 401 and never reaches the LLM. A pairing code never crosses the network: the phone proves it with a MAC over its own key.
-10. **One user command → at most one action and one reply message.** No autonomous loops or chained tool calls.
+10. **One user command → at most one action and one reply message.** Reads may repeat within the agent's caps; any write, question or confirmation ends the turn. No autonomous loops beyond one message, no chained writes.
 11. **Only `src/platform/` may import Cloudflare APIs.** Everything else must run on plain Node for portability.
 12. **Fail safe.** On ambiguity, errors, stale messages (>10 min old), or forwarded messages: CLARIFY or CONFIRM. Never guess and execute.
 13. **A voice note is message text, one step earlier.** Audio is transcribed and graded (`src/voice/`, PLAN §6.10), then follows exactly the same router / NLU / policy / tool path as typed text — never a parallel one. A transcript the recognizer is unsure of never reaches the parser, and every reply to a voice note echoes what was heard, because the user has not seen it. The transcript is message content: never logged, never stored. In the app the recording arrives with the request (≤ 1 MB) instead of as a media id, and the answer's stored copy in the outbox never carries the echo.
@@ -65,7 +66,7 @@ A single-user assistant for reminders and Google Calendar, reached through its o
 
 ## Testing rules
 
-- **Test first** for anything in `src/time/`, `src/policy/`, `src/confirm/`, `src/security/`, `src/channels/whatsapp/verify.ts`, and `src/channels/whatsapp/media.ts`. Write failing tests, then implement.
+- **Test first** for anything in `src/time/`, `src/policy/`, `src/confirm/`, `src/security/`, `src/agent/`, `src/channels/whatsapp/verify.ts`, and `src/channels/whatsapp/media.ts`. Write failing tests, then implement.
 - Unit tests make **no network calls.** Use the fakes in `test/integration/` (fake Meta, Google, NLU).
 - Freeze clocks with Vitest fake timers. Never depend on the real current date.
 - Any change to `src/nlu/` (prompt, schema, provider, model) requires `pnpm eval`. Report the metrics against PLAN §11.2 thresholds; "no invented slots" and "missing-slot detection" must stay at 100%.
@@ -81,7 +82,7 @@ A single-user assistant for reminders and Google Calendar, reached through its o
 ## Definition of done
 
 - [ ] `pnpm typecheck`, `pnpm lint`, `pnpm test` all green.
-- [ ] `pnpm eval` run and thresholds met, if `src/nlu/` changed.
+- [ ] `pnpm eval` run and thresholds met, if `src/nlu/` changed; `pnpm eval:agent`, if `src/agent/` changed.
 - [ ] No new secrets, PII, or message content in code, fixtures, or logs.
 - [ ] New or changed tools have a tier, tests, and eval cases.
 - [ ] `PLAN.md` updated if behavior or architecture changed.

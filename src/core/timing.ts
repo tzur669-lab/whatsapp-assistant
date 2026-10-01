@@ -27,9 +27,9 @@
  * The stages a turn can spend time in. Closed, so a log line's shape is known
  * at compile time and cannot grow a field that carries content.
  */
-export type Stage = 'voice' | 'nlu' | 'act';
+export type Stage = 'voice' | 'nlu' | 'agent' | 'act';
 
-const STAGES: readonly Stage[] = ['voice', 'nlu', 'act'];
+const STAGES: readonly Stage[] = ['voice', 'nlu', 'agent', 'act'];
 
 export type Timings = Record<string, number>;
 

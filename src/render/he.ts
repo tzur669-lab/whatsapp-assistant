@@ -1,6 +1,7 @@
 /**
- * Hebrew reply templates. Every user-facing string is code-authored — the LLM
- * never writes a reply (CLAUDE.md invariant 1).
+ * Hebrew reply templates. Every system reply is code-authored. The agent's own
+ * chat answers are model text (PLAN §6.19), but anything that reports, asks to
+ * confirm, or refuses an action is written here.
  *
  * Conventions:
  * - Gender-neutral phrasing throughout ("יש לשלוח", not "תשלח").
@@ -10,12 +11,12 @@
  */
 import { isolate, isolateLtr } from './bidi.js';
 
-const SYSTEM_COMMANDS = ['/help', '/status', '/digest', '/shabbat', '/ical', '/birthday', '/pause', '/resume', '/connect google', '/pair', '/budget']
+const SYSTEM_COMMANDS = ['/help', '/status', '/digest', '/shabbat', '/ical', '/birthday', '/pause', '/resume', '/forget', '/connect google', '/pair', '/budget']
   .map(isolate)
   .join(' · ');
 
 /** In the app there is no message budget, and a phone is paired with a code, not `/pair` (§6.18). */
-const APP_COMMANDS = ['/help', '/status', '/digest', '/shabbat', '/ical', '/birthday', '/pause', '/resume', '/connect google', '/pair off']
+const APP_COMMANDS = ['/help', '/status', '/digest', '/shabbat', '/ical', '/birthday', '/pause', '/resume', '/forget', '/connect google', '/pair off']
   .map(isolate)
   .join(' · ');
 
@@ -30,6 +31,9 @@ function helpText(channel: 'whatsapp' | 'app'): string {
     channel === 'app'
       ? '• שיחה — תתקשר לדוד דני (האישור בהתראה בטלפון)'
       : `• שיחה — תתקשר לדוד דני (מהטלפון, אחרי חיבור ב${isolate('/pair')})`,
+    '',
+    'אפשר גם לשאול שאלות ולשוחח בחופשיות. השיחה נזכרת לכמה שעות, מוצפנת.',
+    `למחיקת זיכרון השיחה: ${isolate('/forget')}`,
     '',
     'אפשר גם להקליט הודעה קולית במקום לכתוב. מה שנשמע יוצג בתשובה.',
     '',
@@ -95,4 +99,22 @@ export const he = {
    * promise that nothing happened: a tool may have run before the failure (§6.18).
    */
   unknownOutcome: 'קרתה תקלה באמצע. לא בטוח שהבקשה בוצעה. כדאי לבדוק לפני ששולחים שוב.',
+
+  /** A second message while the agent is still answering the first (PLAN §6.19). */
+  agentBusy: 'רגע, אני עוד עונה על ההודעה הקודמת. אפשר לשלוח שוב בעוד כמה שניות.',
+
+  /**
+   * The agent stopped after a tool had already run. Nothing is re-run, and the
+   * reply does not claim that nothing happened (§6.19).
+   */
+  agentIncomplete: 'לא הצלחתי להשלים את התשובה. כדאי לבדוק מה כבר בוצע לפני ששולחים שוב.',
+
+  /** `/forget` (§6.19). */
+  forgotten: 'זיכרון השיחה נמחק.',
+
+  /**
+   * Stands in for a voice note in the conversation history. The transcript is
+   * message content and is never stored (invariant 13).
+   */
+  voicePlaceholder: '[הודעה קולית]',
 } as const;

@@ -189,6 +189,12 @@ describe('the app channel', () => {
       expect(repo.getOutbound(`app:${reply.row!.seq}`)?.['delivery_status']).toBe('delivered');
     });
 
+    it('keeps the one-time connect link a link, though every other link is defanged (PLAN §6.19)', async () => {
+      const phone = await pair();
+      const reply = await say(phone, '/connect google');
+      expect(reply.row?.text).toContain('https://assistant.example.test/oauth/google/start?id=');
+    });
+
     it('runs a retried message once, and gives the retry the same answer', async () => {
       const phone = await pair();
       const id = messageId();
@@ -263,6 +269,15 @@ describe('the app channel', () => {
 
       await ack(phone, [row!.seq]);
       expect(repo.getOutbound(`app:${row!.seq}`)?.['delivery_status']).toBe('delivered');
+    });
+
+    it('leave with any link in them defanged (PLAN §6.19)', async () => {
+      const phone = await pair();
+      due('להיכנס ל-https://evil.example/x ולשלם');
+      await assistant.alarm();
+      const [row] = (await outbox(phone)).rows;
+      expect(row?.text).toContain('evil[.]example/x');
+      expect(row?.text).not.toContain('https://');
     });
 
     it('are pushed again after 15 minutes, an hour and four hours — and then left waiting', async () => {

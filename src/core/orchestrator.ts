@@ -62,7 +62,14 @@ export type Reply = {
     slots: Record<string, unknown>;
     asked: AskedSlot;
     language: Lang;
+    /** Asked in a turn that read text someone else wrote (PLAN §6.19). */
+    tainted?: boolean;
   };
+  /**
+   * A Tier 0 read that ran. The agent hands its text back to the model as a
+   * tool result; every other outcome ends the agent's turn as it is (§6.19).
+   */
+  read?: true;
 };
 
 export type TurnContext = {
@@ -76,6 +83,8 @@ export type TurnContext = {
   paused: boolean;
   source: 'text' | 'voice';
   voiceConfidence?: 'high' | 'uncertain';
+  /** The turn read text someone else wrote, or builds on one that did (§6.19). */
+  tainted?: boolean;
 };
 
 /** The tools with an executable body. The rest parse but cannot yet run. */
@@ -157,6 +166,7 @@ export async function runIntent(
     horizonExceeded: resolved.needsConfirm === true,
     source: turn.source,
     ...(turn.voiceConfidence ? { voiceConfidence: turn.voiceConfidence } : {}),
+    ...(turn.tainted ? { tainted: true } : {}),
   }, { hasAttendees: hasAttendees(resolved.input) });
 
   ctx.log.info('policy_decision', {
@@ -335,7 +345,11 @@ async function execute(
     };
   }
 
-  return { text: result.text, ...(result.rescheduleAlarm ? { rescheduleAlarm: true } : {}) };
+  return {
+    text: result.text,
+    ...(result.rescheduleAlarm ? { rescheduleAlarm: true } : {}),
+    ...(decision.decision === 'ALLOW' && decision.tier === 0 ? { read: true } : {}),
+  };
 }
 
 // -- button replies -----------------------------------------------------------

@@ -65,6 +65,17 @@ export const BANNED_LOG_FIELDS = [
   'nonce',
   'publicKey',
   'public_key',
+  // The agent (§6.19). Its history, the model's reply and its tool arguments are
+  // message content; a result can carry what others wrote — mail, notifications.
+  'history',
+  'reply',
+  'arguments',
+  'args',
+  'result',
+  'messages',
+  'snippet',
+  'notification',
+  'sms',
 ] as const;
 
 const BANNED = new Set<string>(BANNED_LOG_FIELDS);

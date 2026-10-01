@@ -18,6 +18,8 @@
 import type { SqlDriver } from '../core/sql.js';
 
 const EXPIRY_MS = 5 * 60 * 1000;
+/** How long past its expiry a row is kept before it is deleted. */
+const PURGE_AFTER_MS = 60 * 60 * 1000;
 const ID_BYTES = 12;
 const NONCE_BYTES = 16;
 
@@ -243,6 +245,15 @@ export class PendingActions {
       `UPDATE pending_actions SET status = 'expired' WHERE status = 'pending' AND expires_at <= ?`,
       this.now(),
     );
+  }
+
+  /**
+   * Delete rows an hour past their expiry, whatever their status. Their input
+   * and summary are message text in plaintext — a reminder body, an event title
+   * — and an expired or used row has no further purpose (PLAN §6.19, plan D4).
+   */
+  purgeOld(): void {
+    this.sql.exec('DELETE FROM pending_actions WHERE expires_at <= ?', this.now() - PURGE_AFTER_MS);
   }
 
   /**

@@ -22,6 +22,7 @@ export type PolicyReason =
   | 'forwarded'
   | 'far_future'
   | 'voice_uncertain'
+  | 'tainted'
   | 'tier_requires_confirmation'
   | 'allowed';
 
@@ -49,6 +50,13 @@ export type PolicyContext = {
    * confirmation, where the echoed transcript is there to be checked.
    */
   voiceConfidence?: 'high' | 'uncertain';
+  /**
+   * The agent read text someone else wrote in this turn — a calendar invitation,
+   * later mail or a notification — or builds on a turn that did. Any write it
+   * leads to is put behind a confirmation the user sees rendered by code, so an
+   * instruction hidden in that text cannot act on its own (PLAN §6.19).
+   */
+  tainted?: boolean;
 };
 
 export type PolicyExtras = {
@@ -107,6 +115,7 @@ export function decide(tool: ToolName, ctx: PolicyContext, extras: PolicyExtras 
   if (isWrite && ctx.source === 'voice' && ctx.voiceConfidence === 'uncertain') {
     reasons.push('voice_uncertain');
   }
+  if (isWrite && ctx.tainted) reasons.push('tainted');
   if (tier >= 2) reasons.push('tier_requires_confirmation');
 
   if (reasons.length > 0) {

@@ -244,3 +244,29 @@ describe('voice notes', () => {
     ).toMatchObject({ decision: 'DENY', reason: 'paused' });
   });
 });
+
+describe('tainted turns (agent, plan invariant 4)', () => {
+  it('puts a Tier 1 write behind a confirmation once the turn read text others wrote', () => {
+    const res = decide('reminders.create', ctx({ tainted: true }));
+    expect(res).toMatchObject({ decision: 'CONFIRM', reason: 'tainted', undoable: false });
+  });
+
+  it('still lets a read through, since a read changes nothing', () => {
+    expect(decide('calendar.list_events', ctx({ tainted: true }))).toMatchObject({ decision: 'ALLOW' });
+  });
+
+  it('records taint beside the tier on a write that already needed confirming', () => {
+    const res = decide('calendar.delete_event', ctx({ tainted: true }));
+    expect(res.decision).toBe('CONFIRM');
+    expect(res.allReasons).toContain('tainted');
+  });
+
+  it('keeps a call on the phone screen, which answers taint as it answers every escalation', () => {
+    const res = decide('calls.place', ctx({ tainted: true }));
+    expect(res).toMatchObject({ decision: 'CONFIRM', confirmOnDevice: true });
+  });
+
+  it('changes nothing when the turn is clean', () => {
+    expect(decide('reminders.create', ctx({ tainted: false }))).toMatchObject({ decision: 'ALLOW' });
+  });
+});

@@ -43,9 +43,11 @@ SQLite schema, the reminder alarm, and every confirmation gate.
 - The alarm itself fires per reminder, not on a schedule.
 
 **Chat commands** — `/help`, `/status`, `/digest`, `/shabbat`, `/ical`,
-`/birthday`, `/pause`, `/resume`, `/budget`, `/connect google`, `/pair`,
+`/birthday`, `/pause`, `/resume`, `/forget`, `/budget`, `/connect google`, `/pair`,
 `/pair off`, `/ping`. In the app, `/budget` says there is no budget and `/pair`
 says to pair with a code from the script; `/pair off` unpairs this phone.
+`/forget` deletes the agent's encrypted conversation history (PLAN §6.19);
+`/pair off` does too.
 
 ## Deploying to staging
 

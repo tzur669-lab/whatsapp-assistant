@@ -18,6 +18,9 @@
         // Which channel the assistant speaks on (PLAN §6.18): app | whatsapp | off.
         // Vars are not inherited between environments; set it in each.
         "CHANNEL": "app",
+        // The tool-calling agent (PLAN §6.19): on | off. On only once Groq Zero
+        // Data Retention is enabled, since the agent sends calendar titles.
+        "AGENT": "off",
         "WA_PHONE_NUMBER_ID": "",
         // The OAuth client in the Google Cloud project `tzur-call-companion`. Not a secret.
         "GOOGLE_CLIENT_ID": "1002488382572-j5hod9r4viunvs95j716nb2vn2uv9ecd.apps.googleusercontent.com",
@@ -38,6 +41,7 @@
         "ENVIRONMENT": "production",
         // Unchanged until the app has had its two weeks on staging (PLAN §6.18).
         "CHANNEL": "whatsapp",
+        "AGENT": "off",
         "WA_PHONE_NUMBER_ID": "",
         "GOOGLE_CLIENT_ID": "",
         // Must match the redirect URI registered with Google, exactly.

@@ -50,3 +50,8 @@ which is the intent.
 
 **Never edit V1 in place.** Overwriting it makes existing ciphertext
 undecryptable with no path back.
+
+The agent's conversation history (`conversation_turns`, PLAN §6.19) is encrypted
+with the same keyring. It is not re-encrypted: once V1 is removed, its rows no
+longer decrypt and are deleted on the next read — the chat simply starts fresh.
+That is intended; the history lives 12 hours at most anyway.

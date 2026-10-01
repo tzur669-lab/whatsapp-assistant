@@ -61,6 +61,13 @@ import { FcmClient } from '../device/fcm.js';
 import { createCallDispatcher } from '../device/calls.js';
 import type { CallDispatcher } from '../device/calls.js';
 import { callText } from '../render/calls.js';
+import { agentEnabled } from '../core/env.js';
+import { PRIMARY_MODEL } from '../nlu/index.js';
+import { createGroqAgentProvider } from '../agent/provider.js';
+import { meterParsers, TokenBudget } from '../agent/budget.js';
+import { ConversationHistory } from '../agent/history.js';
+import { AgentLock } from '../agent/lock.js';
+import { defangLinks } from '../security/scrub.js';
 import { DurableObjectSqlDriver } from './sql-repo.js';
 import { MIGRATIONS } from './migrations.js';
 
@@ -105,6 +112,10 @@ export class AssistantDO implements DurableObject {
   private readonly google: GoogleStore;
   private readonly devices: DeviceStore;
   private readonly outbox: AppOutbox;
+  private readonly history: ConversationHistory;
+  private readonly agentLock: AgentLock;
+  /** Memory only: the last minute of Groq spend per model (§6.19). */
+  private readonly tokenBudget = new TokenBudget(() => Date.now());
   private readonly log = createLogger({ component: 'assistant_do' });
 
   /** Imported device keys, by device id. Public keys, so nothing secret is cached. */
@@ -149,6 +160,14 @@ export class AssistantDO implements DurableObject {
     );
 
     this.outbox = new AppOutbox(this.sql, this.repo, now);
+    // One keyring for the object's life, so the imported AES key is reused
+    // across turns instead of re-imported on every one (§4.1).
+    let keyring: ReturnType<typeof parseKeyring> | null = null;
+    this.history = new ConversationHistory(this.sql, now, () => {
+      keyring ??= parseKeyring(this.env as unknown as Record<string, string | undefined>);
+      return keyring;
+    });
+    this.agentLock = new AgentLock(this.sql, now);
 
     // blockConcurrencyWhile keeps requests queued until the schema is ready.
     void this.ctx.blockConcurrencyWhile(async () => {
@@ -204,6 +223,11 @@ export class AssistantDO implements DurableObject {
   async alarm(): Promise<void> {
     const now = Date.now();
     const principal = await this.selfPrincipal();
+
+    // Message text has a short life here; it is not left for the daily cron
+    // (plan D4). Cheap, synchronous, and each is a no-op when nothing is due.
+    this.pending.purgeOld();
+    this.history.purgeExpired();
 
     // Before any of the holds below: a call that went unanswered is reported
     // now, because it was asked for now. Shabbat does not hold a call (§6.17),
@@ -342,6 +366,8 @@ export class AssistantDO implements DurableObject {
     this.repo.purgeInboundBefore(Date.now() - RETENTION_INBOUND_MS);
     this.repo.purgeOutboundBefore(Date.now() - RETENTION_INBOUND_MS);
     this.pending.expireStale();
+    this.pending.purgeOld();
+    this.history.purgeExpired();
     this.questions.purgeExpired();
     this.deferred.expireStale();
     this.google.purgeExpired();
@@ -472,6 +498,7 @@ export class AssistantDO implements DurableObject {
       to,
       text: outcome.text,
       ...(outcome.buttons ? { buttons: outcome.buttons } : {}),
+      ...(outcome.keepLinks ? { keepLinks: true } : {}),
     });
   }
 
@@ -704,6 +731,16 @@ export class AssistantDO implements DurableObject {
       return json(this.duplicateAnswer(messageId));
     }
 
+    // The app's answers leave here rather than through `send`, so they are
+    // defanged here, the same way (§6.19).
+    if (outcome.action === 'reply' && !outcome.keepLinks) {
+      outcome = {
+        ...outcome,
+        text: defangLinks(outcome.text),
+        ...(outcome.withoutEcho === undefined ? {} : { withoutEcho: defangLinks(outcome.withoutEcho) }),
+      };
+    }
+
     // The turn unpaired this phone (`/pair off`). Its answer goes back in the
     // response only: stored, it would wait for a phone that can no longer
     // fetch it, and greet whichever phone pairs next.
@@ -721,7 +758,7 @@ export class AssistantDO implements DurableObject {
       // The stored copy never carries the transcript (§6.10).
       const stored =
         outcome.withoutEcho === undefined ? outcome.text : `${outcome.withoutEcho}\n\n${he.heardNotKept}`;
-      row = this.acceptReply(messageId, principal, outcome.text, stored, outcome.buttons ?? []);
+      row = this.acceptReply(messageId, principal, outcome.text, stored, outcome.buttons ?? [], outcome.keepLinks === true);
     } else if (outcome.reason === 'reply_deferred') {
       // A call: its outcome comes later, as an answer to this same message.
       this.devices.linkLatestDispatch(messageId, startedAt);
@@ -740,9 +777,10 @@ export class AssistantDO implements DurableObject {
     httpText: string,
     storedText: string,
     buttons: readonly OutboundButton[],
+    keepLinks = false,
   ): OutboxRow {
     const accepted = this.sql.transaction(() =>
-      this.outbox.accept({ kind: 'reply', text: storedText, buttons, inReplyTo: messageId, principal }),
+      this.outbox.accept({ kind: 'reply', text: storedText, buttons, inReplyTo: messageId, principal, keepLinks }),
     );
     const row = this.outbox.get(accepted.seq);
     return { ...(row ?? { seq: accepted.seq, kind: 'reply', inReplyTo: messageId, buttons: [...buttons], createdAt: Date.now() }), text: httpText };
@@ -1021,6 +1059,8 @@ export class AssistantDO implements DurableObject {
     /** What this message is, and which reminder it carries (PLAN §6.8). */
     track: { kind: string; principal?: string; reminderId?: string; inReplyTo?: string } = { kind: 'reply' },
   ): Promise<SendOutcome> {
+    // Every message leaves defanged, except a link that must stay one (§6.19).
+    if (!message.keepLinks) message = { ...message, text: defangLinks(message.text) };
     const channel = this.channel();
     if (channel === 'app') return this.sendToApp(message, track);
     if (channel === 'off') {
@@ -1089,6 +1129,7 @@ export class AssistantDO implements DurableObject {
         ...(track.principal ? { principal: track.principal } : {}),
         ...(track.reminderId ? { reminderId: track.reminderId } : {}),
         ...(track.inReplyTo ? { inReplyTo: track.inReplyTo } : {}),
+        ...(message.keepLinks ? { keepLinks: true } : {}),
       }),
     );
     this.log.info('app_message_queued', { seq: accepted.seq, kind });
@@ -1118,7 +1159,27 @@ export class AssistantDO implements DurableObject {
       birthdays: this.birthdays,
       fetchImpl: this.fetchImpl,
       deferred: this.deferred,
-      nlu: buildNluChain({ groqApiKey: this.env.GROQ_API_KEY, fetchImpl: this.fetchImpl }),
+      // The parser spends from the same per-model budget as the agent (plan K3).
+      nlu: meterParsers(
+        buildNluChain({ groqApiKey: this.env.GROQ_API_KEY, fetchImpl: this.fetchImpl }),
+        this.tokenBudget,
+      ),
+      ...(agentEnabled(this.env) && this.env.GROQ_API_KEY
+        ? {
+            agent: {
+              // qwen only. gpt-oss-120b invents times as an agent ("when I get
+              // home" → today 21:00; 93% no-invented-slots on the corpus,
+              // 2026-10-01). It stays the parser's fallback, where strict
+              // structured output constrains it (§6.19, §13).
+              providers: [
+                createGroqAgentProvider({ apiKey: this.env.GROQ_API_KEY, model: PRIMARY_MODEL, fetchImpl: this.fetchImpl }),
+              ],
+              budget: this.tokenBudget,
+              history: this.history,
+              lock: this.agentLock,
+            },
+          }
+        : {}),
       google: this.google,
       publicBaseUrl: this.env.PUBLIC_BASE_URL,
       ...(this.calendarClient() ? { calendar: this.calendarClient()! } : {}),

@@ -47,6 +47,12 @@ export type OpenQuestion = {
   language: 'he' | 'en';
   createdAt: number;
   expiresAt: number;
+  /**
+   * Asked in an agent turn that read text someone else wrote. The answer runs
+   * under the same taint, so it cannot complete an unconfirmed write that the
+   * injected text set up (PLAN §6.19).
+   */
+  tainted: boolean;
 };
 
 export class OpenQuestions {
@@ -67,18 +73,20 @@ export class OpenQuestions {
     slots: Record<string, unknown>;
     asked: AskedSlot;
     language: 'he' | 'en';
+    tainted?: boolean;
   }): void {
     const createdAt = this.now();
     this.sql.exec(
-      `INSERT INTO open_questions (principal, tool, slots_json, asked, language, created_at, expires_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?)
+      `INSERT INTO open_questions (principal, tool, slots_json, asked, language, created_at, expires_at, tainted)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(principal) DO UPDATE SET
          tool = excluded.tool,
          slots_json = excluded.slots_json,
          asked = excluded.asked,
          language = excluded.language,
          created_at = excluded.created_at,
-         expires_at = excluded.expires_at`,
+         expires_at = excluded.expires_at,
+         tainted = excluded.tainted`,
       params.principal,
       params.tool,
       JSON.stringify(params.slots),
@@ -86,6 +94,7 @@ export class OpenQuestions {
       params.language,
       createdAt,
       createdAt + QUESTION_EXPIRY_MS,
+      params.tainted ? 1 : 0,
     );
   }
 
@@ -126,6 +135,7 @@ export class OpenQuestions {
       language,
       createdAt: Number(row['created_at']),
       expiresAt: Number(row['expires_at']),
+      tainted: Number(row['tainted']) === 1,
     };
   }
 

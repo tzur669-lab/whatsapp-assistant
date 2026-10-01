@@ -56,6 +56,20 @@ import { statusText } from '../render/status.js';
 import { eventText } from '../render/events.js';
 import { localPartsOf, offsetMinutesAt, ZONE } from '../time/tz.js';
 import { STALE_MESSAGE_MS } from '../channels/limits.js';
+import type { AgentProvider } from '../agent/provider.js';
+import type { TokenBudget } from '../agent/budget.js';
+import type { ConversationHistory } from '../agent/history.js';
+import type { AgentLock } from '../agent/lock.js';
+import { runAgentTurn } from '../agent/loop.js';
+
+/** The agent and what it keeps (PLAN §6.19). Absent: the parser answers, as before. */
+export type AgentServices = {
+  /** In order of preference. A turn runs on one of them. */
+  providers: readonly AgentProvider[];
+  budget: TokenBudget;
+  history: ConversationHistory;
+  lock: AgentLock;
+};
 
 /** The stateful collaborators the Durable Object owns and hands in. */
 export type Services = {
@@ -84,6 +98,8 @@ export type Services = {
   devices?: DeviceStore;
   /** Messages waiting for the app (§6.18). Present only on the app channel. */
   outbox?: AppOutbox;
+  /** The tool-calling agent (§6.19). Absent: free text goes to the parser. */
+  agent?: AgentServices;
 };
 
 export type PipelineDeps = {
@@ -115,6 +131,11 @@ export type PipelineOutcome =
        * transcript is never written down (§6.10, §6.18).
        */
       withoutEcho?: string;
+      /**
+       * The reply carries a link that must stay a link: the one-time Google
+       * connect link. Every other reply is defanged where it leaves (§6.19).
+       */
+      keepLinks?: true;
     }
   | {
       action: 'none';
@@ -347,7 +368,11 @@ async function respondToText(
     log.info('command', { wamid: event.wamid, intent: command.kind, stale, source: source.kind });
     repo.markInboundOutcome(event.wamid, { intent: command.kind, decision: 'ALLOW' });
     repo.audit({ ts: now, principal, tool: command.kind, tier: 0, decision: 'ALLOW', outcome: 'ok' });
-    return { action: 'reply', text: await renderCommand(command, deps, now) };
+    return {
+      action: 'reply',
+      text: await renderCommand(command, deps, now),
+      ...(command.kind === 'connect_google' ? { keepLinks: true } : {}),
+    };
   }
 
   if (!deps.services) {
@@ -395,7 +420,14 @@ async function respondToText(
     log.info('question_abandoned', { tool: open.tool, asked: open.asked });
   }
 
-  // 3. The LLM, at last, and only as a parser.
+  // 3. The agent (§6.19). It falls back to the parser below only when nothing
+  //    ran — a fallback after a tool had run would run the message twice.
+  if (deps.services.agent) {
+    const answered = await respondWithAgent(deps.services.agent, text, source, event, deps, now);
+    if (answered) return answered;
+  }
+
+  // 3b. The LLM as a parser: the path before the agent, and its fallback.
   const nlu = deps.services.nlu;
   const parsed = await timed(deps, 'nlu', () =>
     parseWithFallback(nlu, promptInputFor(text, now), log),
@@ -424,6 +456,76 @@ async function respondToText(
   );
   repo.markInboundOutcome(event.wamid, { intent: checked.draft.intent, decision: 'ALLOW' });
   return replyOutcome(reply, deps);
+}
+
+/**
+ * One agent turn (PLAN §6.19). Returns null to hand the message to the parser —
+ * only ever when no tool ran, so the fallback cannot act twice (plan D1).
+ *
+ * The lock is taken here, synchronously, before the first await: while the
+ * model is thinking, a second message from the same sender must not start a
+ * second turn on the same history (plan C3).
+ */
+async function respondWithAgent(
+  agent: AgentServices,
+  text: string,
+  source: TextSource,
+  event: Extract<InboundEvent, { kind: 'text' | 'audio' }>,
+  deps: PipelineDeps,
+  now: number,
+): Promise<PipelineOutcome | null> {
+  const { repo, log, principal } = deps;
+  const turnId = event.wamid;
+
+  if (!agent.lock.acquire(principal, turnId)) {
+    log.info('agent_busy', { wamid: event.wamid });
+    repo.markInboundOutcome(event.wamid, { decision: 'CLARIFY', errorCode: 'E_AGENT_BUSY' });
+    return { action: 'reply', text: he.agentBusy };
+  }
+
+  try {
+    const lang = languageOf(text);
+    const history = await agent.history.recent(principal);
+    const result = await timed(deps, 'agent', () =>
+      runAgentTurn(
+        { text, lang, nowMs: now, turn: turnOf(deps, event, now, source, lang), history },
+        { providers: agent.providers, budget: agent.budget, log },
+      ),
+    );
+
+    if (result.kind === 'failed') {
+      repo.bumpCounter(Repository.dayKey(now), 'fallbacks');
+      repo.setLastErrorCode(`E_AGENT_${result.errorCode.toUpperCase()}`);
+      log.info('agent_failed', { wamid: event.wamid, errorCode: result.errorCode, toolRan: result.toolRan });
+      if (!result.toolRan) return null;
+
+      // A read completed and the model did not get to word it: the code-rendered
+      // read is a complete answer on its own.
+      const fallback = result.readText ?? he.agentIncomplete;
+      repo.markInboundOutcome(event.wamid, { intent: 'agent', decision: 'ALLOW', errorCode: 'E_AGENT_PARTIAL' });
+      return { action: 'reply', text: fallback };
+    }
+
+    repo.markInboundOutcome(event.wamid, { intent: 'agent', decision: 'ALLOW' });
+    const outcome = replyOutcome(result.reply, deps);
+
+    if (outcome.action === 'reply') {
+      await agent.history.append(principal, {
+        // A transcript is never stored (invariant 13); the reply carries the context.
+        user: source.kind === 'voice' ? he.voicePlaceholder : text,
+        reply: outcome.text,
+        tainted: result.tainted,
+      });
+    }
+    return outcome;
+  } finally {
+    agent.lock.release(principal, turnId);
+  }
+}
+
+/** Hebrew if there is any Hebrew in it; the assistant's default user writes Hebrew. */
+function languageOf(text: string): Lang {
+  return /[֐-׿]/.test(text) || !/[A-Za-z]/.test(text) ? 'he' : 'en';
 }
 
 /** Time a stage when a stopwatch is running, and simply run it when not. */
@@ -506,7 +608,12 @@ async function answerOpenQuestion(
   }
 
   log.info('question_answered', { tool: open.tool, asked: open.asked, source: source.kind });
-  const reply = await runIntent(validated.draft, turnOf(deps, event, now, source, open.language));
+  // A question asked in a tainted agent turn is answered under the same taint
+  // (§6.19): the answer cannot finish, unconfirmed, what injected text began.
+  const reply = await runIntent(validated.draft, {
+    ...turnOf(deps, event, now, source, open.language),
+    ...(open.tainted ? { tainted: true } : {}),
+  });
   repo.markInboundOutcome(event.wamid, { intent: validated.draft.intent, decision: 'ALLOW' });
   return replyOutcome(reply, deps);
 }
@@ -538,6 +645,10 @@ async function renderCommand(command: Command, deps: PipelineDeps, now: number):
 
     case 'connect_google':
       return connectLinkFor(deps);
+
+    case 'forget':
+      forgetConversation(deps);
+      return he.forgotten;
 
     case 'pair':
       return pairSetting(command.off, deps);
@@ -596,6 +707,8 @@ async function pairSetting(off: boolean, deps: PipelineDeps): Promise<string> {
     if (!off) return callText.pairNotInApp('he');
 
     const services = deps.services;
+    // The conversation belongs to the phone being unpaired (plan D4).
+    forgetConversation(deps);
     const revoked = deps.repo.transaction(() => {
       // Nothing may wait for a phone that is no longer ours. Reminders already
       // handed to the outbox go back in the queue; with no device paired they
@@ -741,6 +854,14 @@ function birthdaySetting(
         : statusText.birthdayListFull;
     }
   }
+}
+
+/** `/forget` and `/pair off`: the agent's history and any lock go (§6.19). */
+function forgetConversation(deps: PipelineDeps): void {
+  const agent = deps.services?.agent;
+  if (!agent) return;
+  agent.history.wipe(deps.principal);
+  agent.lock.wipe(deps.principal);
 }
 
 /** Matches the TTL in `GoogleStore`. */

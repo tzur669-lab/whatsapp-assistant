@@ -31,6 +31,11 @@ import { TestSqlDriver } from '../../integration/sqlite-driver.js';
 import { createFakeLogger } from '../../integration/fake-logger.js';
 import { createFakeNlu, draft, TOMORROW_AT_EIGHT } from '../../integration/fake-nlu.js';
 import type { InboundEvent } from '../../../src/channels/types.js';
+import { ConversationHistory, MAX_EXCHANGES } from '../../../src/agent/history.js';
+import { AgentLock } from '../../../src/agent/lock.js';
+import { TokenBudget } from '../../../src/agent/budget.js';
+import type { AgentProvider } from '../../../src/agent/provider.js';
+import { parseKeyring } from '../../../src/security/crypto.js';
 
 const MIGRATIONS = readdirSync(new URL('../../../migrations/', import.meta.url))
   .filter((file) => file.endsWith('.sql'))
@@ -138,6 +143,41 @@ describe('a whole turn', () => {
     // `/status` reads five counters and now a sixth for undelivered messages.
     const median = await medianMs(200, () => handleInbound(textEvent('/status'), deps));
     expect(median, `${median.toFixed(3)} ms per /status`).toBeLessThan(CATASTROPHE_MS);
+  });
+
+  it('does not blow it on an agent turn with a full, encrypted history (§6.19)', async () => {
+    // The agent adds what the parser never paid for: decrypting the history on
+    // every turn and encrypting the new exchange. The model call is I/O and
+    // does not count; the fake answers at once.
+    const history = new ConversationHistory(
+      driver,
+      () => NOW,
+      () => parseKeyring({ TOKEN_ENC_KEY_V1: btoa(String.fromCharCode(...new Uint8Array(32).fill(1))) }),
+    );
+    for (let i = 0; i < MAX_EXCHANGES; i++) {
+      await history.append(PRINCIPAL, { user: 'מה יש לי מחר ביומן?'.repeat(4), reply: 'פגישת צוות ב-10'.repeat(4), tainted: false });
+    }
+    const provider: AgentProvider = {
+      model: 'fake',
+      async complete() {
+        return {
+          ok: true,
+          text: null,
+          toolCalls: [{ id: 'c1', name: 'reminders__create', arguments: JSON.stringify({ text: 'א', ...TOMORROW_AT_EIGHT }) }],
+          usage: { promptTokens: 1, completionTokens: 1 },
+        };
+      },
+    };
+    const agentDeps: PipelineDeps = {
+      ...deps,
+      services: {
+        ...deps.services!,
+        agent: { providers: [provider], budget: new TokenBudget(() => NOW), history, lock: new AgentLock(driver, () => NOW) },
+      },
+    };
+
+    const median = await medianMs(200, () => handleInbound(textEvent('תזכיר לי מחר ב-8'), agentDeps));
+    expect(median, `${median.toFixed(3)} ms per agent turn`).toBeLessThan(CATASTROPHE_MS);
   });
 });
 

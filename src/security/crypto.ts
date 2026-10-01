@@ -140,8 +140,26 @@ export async function decryptToken(
   }
 }
 
+/**
+ * Imported keys, per raw key object and usage. Conversation history decrypts on
+ * every agent turn, and importing a key each time is CPU the 10 ms budget does
+ * not have (§4.1). Keyed weakly by the raw bytes, so a keyring that is dropped
+ * takes its imported keys with it.
+ */
+const importedKeys = new WeakMap<Uint8Array, Map<'encrypt' | 'decrypt', Promise<CryptoKey>>>();
+
 function importKey(raw: Uint8Array, usage: 'encrypt' | 'decrypt'): Promise<CryptoKey> {
-  return crypto.subtle.importKey('raw', raw, { name: 'AES-GCM' }, false, [usage]);
+  let byUsage = importedKeys.get(raw);
+  if (!byUsage) {
+    byUsage = new Map();
+    importedKeys.set(raw, byUsage);
+  }
+  let key = byUsage.get(usage);
+  if (!key) {
+    key = crypto.subtle.importKey('raw', raw, { name: 'AES-GCM' }, false, [usage]);
+    byUsage.set(usage, key);
+  }
+  return key;
 }
 
 /** Binds the ciphertext to its integration. Any change here breaks decryption. */

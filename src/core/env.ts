@@ -56,4 +56,14 @@ export interface AppEnv {
    * from its first entry.
    */
   CHANNEL?: string;
+  /**
+   * `on` turns on the tool-calling agent (PLAN §6.19); anything else keeps the
+   * single-shot parser. Off until Groq Zero Data Retention is confirmed on,
+   * because the agent sends calendar titles and conversation history.
+   */
+  AGENT?: string;
+}
+
+export function agentEnabled(env: { AGENT?: string | undefined }): boolean {
+  return (env.AGENT ?? '').trim().toLowerCase() === 'on';
 }

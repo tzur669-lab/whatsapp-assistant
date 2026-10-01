@@ -9,6 +9,8 @@ export type Command =
   | { kind: 'pause' }
   | { kind: 'resume' }
   | { kind: 'budget' }
+  /** Wipe the agent's conversation history (PLAN §6.19). */
+  | { kind: 'forget' }
   | { kind: 'connect_google' }
   /** `/pair` issues a code for the phone app; `/pair off` unpairs (PLAN §6.17). */
   | { kind: 'pair'; off: boolean }
@@ -39,6 +41,7 @@ const COMMANDS: ReadonlyArray<readonly [RegExp, Command]> = [
   [/^\/pause$/i, { kind: 'pause' }],
   [/^\/resume$/i, { kind: 'resume' }],
   [/^\/budget$/i, { kind: 'budget' }],
+  [/^\/forget$/i, { kind: 'forget' }],
   [/^\/shabbat$/i, { kind: 'shabbat', set: null }],
   [/^\/shabbat\s+on$/i, { kind: 'shabbat', set: true }],
   [/^\/shabbat\s+off$/i, { kind: 'shabbat', set: false }],
