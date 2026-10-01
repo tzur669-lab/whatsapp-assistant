@@ -82,6 +82,13 @@ export const BANNED_LOG_FIELDS = [
   'label',
   'preview',
   'queries',
+  // Phone reads (§6.21): what the phone read is other people's words, and the
+  // stored turn is the conversation itself.
+  'items',
+  'sender',
+  'name',
+  'ciphertext',
+  'state',
 ] as const;
 
 const BANNED = new Set<string>(BANNED_LOG_FIELDS);

@@ -28,6 +28,8 @@ import { calendarListEvents } from '../tools/calendar-read.js';
 import { CALENDAR_WRITE_TOOLS } from '../tools/calendar-write.js';
 import { callsPlace } from '../tools/calls.js';
 import { PHONE_ACTION_TOOLS } from '../tools/phone-actions.js';
+import { PHONE_READ_TOOLS } from '../tools/phone-reads.js';
+import type { PhoneReadInput } from '../tools/phone-reads.js';
 import { cardReply } from '../render/phone.js';
 import type { CardInput } from '../render/phone.js';
 import type { Clarify, ExecuteResult, ToolContext, ToolDefinition } from '../tools/types.js';
@@ -75,6 +77,11 @@ export type Reply = {
   read?: true;
   /** A phone action for the app to claim and run (§6.20). */
   card?: ActionCard;
+  /**
+   * A phone read policy allowed (§6.21). Nothing ran: the agent suspends its
+   * turn and the phone answers this query. `text` is empty and never sent.
+   */
+  deviceQuery?: PhoneReadInput;
 };
 
 /**
@@ -113,6 +120,7 @@ const IMPLEMENTED: Partial<Record<ToolName, ToolDefinition>> = {
   ...CALENDAR_WRITE_TOOLS,
   'calls.place': callsPlace,
   ...PHONE_ACTION_TOOLS,
+  ...PHONE_READ_TOOLS,
 };
 
 export type RunOptions = {
@@ -215,6 +223,11 @@ export async function runIntent(
       return { text: he.notUnderstood };
 
     case 'ALLOW':
+      // The phone answers this one; the server has nothing to run (§6.21).
+      if (REGISTRY[draft.intent].phoneRead) {
+        audit(turn, draft.intent, decision, 'DEVICE_QUERY', 'issued');
+        return { text: '', deviceQuery: resolved.input as PhoneReadInput };
+      }
       return execute(tool, resolved.input, decision, turn);
   }
 }

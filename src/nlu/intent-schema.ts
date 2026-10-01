@@ -21,6 +21,9 @@ import {
   callsPlaceSlots,
   messageComposeSlots,
   navGoSlots,
+  phoneContactsSlots,
+  phoneNotificationsSlots,
+  phoneSmsSlots,
   remindersCancelSlots,
   remindersCreateSlots,
   remindersListSlots,
@@ -72,6 +75,9 @@ const ignoredSlots = remindersCreateSlots
   .merge(navGoSlots)
   .merge(settingsSetSlots)
   .merge(messageComposeSlots)
+  .merge(phoneContactsSlots)
+  .merge(phoneNotificationsSlots)
+  .merge(phoneSmsSlots)
   .strict();
 
 const common = {
@@ -101,6 +107,10 @@ export const intentDraftSchema = z.discriminatedUnion('intent', [
   z.object({ intent: z.literal('app.open'), slots: appOpenSlots, ...common }).strict(),
   z.object({ intent: z.literal('settings.set'), slots: settingsSetSlots, ...common }).strict(),
   z.object({ intent: z.literal('message.compose'), slots: messageComposeSlots, ...common }).strict(),
+  // Phone reads (§6.21). Agent-only, like the phone actions.
+  z.object({ intent: z.literal('phone.contacts'), slots: phoneContactsSlots, ...common }).strict(),
+  z.object({ intent: z.literal('phone.notifications'), slots: phoneNotificationsSlots, ...common }).strict(),
+  z.object({ intent: z.literal('phone.sms'), slots: phoneSmsSlots, ...common }).strict(),
   // Anything outside the tool list, including prompt-injection attempts.
   z.object({ intent: z.literal('unsupported'), slots: ignoredSlots, ...common }).strict(),
 ]);
@@ -139,6 +149,9 @@ const TOOL_SLOTS: Readonly<Record<string, ReadonlySet<string>>> = {
   'app.open': new Set(Object.keys(appOpenSlots.shape)),
   'settings.set': new Set(Object.keys(settingsSetSlots.shape)),
   'message.compose': new Set(Object.keys(messageComposeSlots.shape)),
+  'phone.contacts': new Set(Object.keys(phoneContactsSlots.shape)),
+  'phone.notifications': new Set(Object.keys(phoneNotificationsSlots.shape)),
+  'phone.sms': new Set(Object.keys(phoneSmsSlots.shape)),
 };
 
 /** Every slot any tool declares — the flat union the wire schema offers the model. */

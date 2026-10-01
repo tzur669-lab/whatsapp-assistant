@@ -9,6 +9,7 @@
  * on bad UTF-8, so a malformed body cannot become a different string.
  */
 import { z } from 'zod';
+import { phoneReadResultSchema } from '../../tools/phone-reads.js';
 
 /** A client message id: a v4-shaped uuid, lowercase. */
 export const MESSAGE_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
@@ -54,7 +55,8 @@ export type PairRequest = z.infer<typeof pairSchema>;
 const pushTokenSchema = z
   .object({
     pushToken: z.string().min(1).max(4_096),
-    caps: z.array(z.enum(['cards'])).max(8).optional(),
+    // `cards`: runs action cards (§6.20). `device_query`: answers phone reads (§6.21).
+    caps: z.array(z.enum(['cards', 'device_query'])).max(8).optional(),
   })
   .strict();
 
@@ -74,6 +76,22 @@ const actionReportSchema = z
     outcome: z.enum(['done', 'failed', 'no_match', 'unsupported']),
   })
   .strict();
+
+/**
+ * The phone's answer to a read (§6.21). The query id names the suspended turn;
+ * the result is capped and strict, and checked against the turn's own query
+ * kind only when the turn is rendered.
+ */
+const deviceResultSchema = z
+  .object({
+    queryId: z.string().regex(/^[0-9a-f]{32}$/),
+    result: phoneReadResultSchema,
+  })
+  .strict();
+
+export function parseDeviceResult(body: Uint8Array): z.infer<typeof deviceResultSchema> | null {
+  return parseWith(deviceResultSchema, body);
+}
 
 export function parseClaim(body: Uint8Array): z.infer<typeof claimSchema> | null {
   return parseWith(claimSchema, body);

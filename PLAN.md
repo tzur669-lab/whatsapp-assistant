@@ -1487,6 +1487,73 @@ message, one status line after; `DeviceActions` validates the parameters again
 and runs them; no card button in any notification. New permissions: `SET_ALARM`,
 `ACCESS_NOTIFICATION_POLICY`, and a `<queries>` for launcher activities.
 
+### 6.21 Phone reads: contacts, notifications, SMS [R]
+
+Phase C (2026-10-01). Three agent-only Tier 0 reads the server cannot answer
+and the paired phone can. Never in the parser's catalog (`PARSER_TOOL_NAMES`).
+
+| Tool | Slots | What the phone sends back |
+|---|---|---|
+| `phone.contacts` | query_variants | contact **names** that match (whole name first, else every word), ≤ 20. No numbers |
+| `phone.notifications` | app_name?, hours? (1–24, default 24) | app, title, text, time — from the phone's own one-day buffer |
+| `phone.sms` | sender?, hours? (1–168, default 24) | sender **name** (contact name, an alphanumeric sender id, or "מספר לא שמור" — never a number), text, time |
+
+**Offered** only on the app channel, to a device that declared
+`caps: ["device_query"]`, on a **typed** message: a suspended turn stores the
+message, and a transcript is never stored (invariant 13). `app_name`, not `app`:
+`nav.go` already owns `app` as an enum.
+
+**The suspended turn.** Policy rules on the read like any Tier 0 read (its rate
+limits; `/pause` holds writes only, so reads still answer); ALLOW returns `Reply.deviceQuery` instead of executing. The
+loop answers `suspend`, and the pipeline writes the turn to `agent_turns`
+(migration 0013): AES-GCM, AAD `agent-turns:<principal>:<queryId>`, three
+minutes. The request answers `{status: 'device_query', queryId, query}`; the
+inbound row is `DEVICE_QUERY`. The lock is released.
+
+- **A retry** of the same message gets the same query back while it waits, and
+  `pending` while it runs.
+- **The result** (`POST /app/device-result`, signed, 32 KB, strict: ≤ 20 items,
+  every field capped) is taken by `begin` — synchronous and atomic, `waiting` →
+  `running` — and `resumeFromPhone` takes the agent lock in its first
+  synchronous line. Same model, same caps (calls and tokens already spent count),
+  same tools; a second phone read in the turn is refused back to the model. The
+  answer is stored under the original message, like any reply.
+- **A second result**, a late one, or one for a superseded turn is answered from
+  what is stored and never run: the stored reply, `pending`, or a code-made
+  "cancelled" / "no answer in time".
+- **A newer agent turn** supersedes a waiting one when it takes the lock. A
+  resume that finds the lock held is cancelled, never interleaved.
+- **Three minutes without a result**: the alarm (armed for the earliest expiry)
+  or the next read marks it expired and writes `he.phoneReadTimedOut` under the
+  message.
+- The ciphertext is cleared the moment a row leaves `waiting`/`running`; settled
+  rows keep only their status for an hour. `/forget` and `/pair off` delete them.
+
+**What the model sees.** Code renders the list (`src/render/phone-reads.ts`),
+first removing control and bidi-override characters and joining each item to
+one line; the model gets that text through `scrubForModel`. `denied` (the
+permission is off) and `unsupported` end the turn with code's own sentence. If
+the model fails after the read, the rendered list is the answer. No fallback to
+the parser once the phone has answered.
+
+**Taint.** Every phone read taints the turn (`TAINTING_TOOLS`): SMS and
+notifications are other people's words, and contact names arrive from synced
+accounts. Writes after it are CONFIRM, cards never run alone, and the reply's
+outbox row is `private`: the app's notification for it says only that there is
+an answer (`notif_private`). The same holds for every tainted reply, so a
+calendar read's answer no longer shows on the lock screen either.
+
+**On the phone** (`apps/call-companion` 0.4.0): `PhoneReads` answers on the Turns
+thread, each read checking its own permission. `NotificationCollector`
+(a `NotificationListenerService`, after the user grants access) keeps one day of
+notifications in a private database excluded from backup — never its own,
+ongoing ones, group summaries, secret-visibility ones, calls/progress/system,
+or apps the user hid; a hidden app's kept rows go at once. One-time codes are
+dropped on the phone (`PhoneReadLogic.looksLikeOtp`) before anything leaves.
+`READ_SMS` is a runtime grant in settings. Android 13+ requires "Allow
+restricted settings" for a sideloaded app's notification access; the settings
+screen says where.
+
 ---
 
 ## 7. Security
@@ -1500,7 +1567,7 @@ and runs them; no card button in any notification. New permissions: `SET_ALARM`,
 | Replay / Meta retries / late delivery | Dedupe on `wamid`. Messages older than 10 min → any write requires confirmation ("received late") |
 | Prompt injection (my text, forwarded text, event titles, future email) | Until 2026-10-01: LLM sees no data. Since the agent (§6.19): the model sees scrubbed read results, but text someone else wrote **taints** the turn and every write it leads to is CONFIRM, rendered by code; taint carries through the open question and history. A write ends the turn, so injected text cannot chain actions. Tier 4 doesn't exist. No permission-changing tool. Forwarded → confirm all writes |
 | Data exfiltration through the agent | No tool sends anything anywhere except through a code-rendered confirmation (Phase B cards, calls on the phone screen). Links in every outbound message are defanged, so a reply cannot carry data out in one tap. The model never sees numbers, addresses or codes: `scrubForModel` replaces them before a result reaches it (§6.19) |
-| Data sent to Groq | Since the agent: calendar titles from reads and the short history. Groq does not train on inputs; **Zero Data Retention must be on before `AGENT=on`** (§2, §13). Tokens, ids, numbers, addresses never |
+| Data sent to Groq | Since the agent: calendar titles from reads and the short history; since Phase C, a phone read the user asked for, scrubbed (§6.21). Groq does not train on inputs; **Zero Data Retention must be on before `AGENT=on`** (§2, §13). Tokens, ids, numbers, addresses never |
 | Conversation history at rest | AES-GCM per row, bound to table and sender; 12 h, 1 h when tainted; last 6 exchanges; never a tool result or a transcript; `/forget` and `/pair off` wipe it; never logged (`history`, `reply`, `args`, `result` are on the ban list) (§6.19) |
 | Two agent turns interleaving while one awaits the model | `agent_lock`, taken synchronously before the first await, released at the end, 60 s expiry. A second message is answered "busy" and must be resent (§6.19) |
 | A fallback running a message twice | The parser runs only when no tool ran in the agent turn (§6.19) |
@@ -1532,6 +1599,9 @@ and runs them; no card button in any notification. New permissions: `SET_ALARM`,
 | A call to a number that was never mine | The device's contact list **is** the allowlist; a number written in a message is refused outright. No text — mine, forwarded, injected or misheard — can name a destination, and the Worker never holds a number to dial (§6.17) |
 | A stale push ringing somebody later | A call dispatch expires after two minutes and the device re-checks expiry before it displays anything, so a phone that was switched off comes back to a dead dispatch rather than to a call |
 | The device token as a second front door | Stored only as a keyed hash, compared in constant time, issued against a single-use pairing code with a 10-minute TTL (§6.6's shape), revoked by `/pair off`. It authorizes fetching a dispatch and reporting an outcome and nothing else — not reminders, not the calendar, not settings |
+| SMS and notifications as an injection channel | Every phone read taints the turn: writes it leads to are CONFIRM, cards never run alone, a message card always waits for the tap. One phone read per turn, and a read ends nothing by itself — the reply is still code-rendered or display-only model text (§6.21) |
+| SMS and notifications leaving the phone | Only when a typed message asks, at most 20 items of 300 characters, names instead of numbers, one-time codes dropped on the phone and scrubbed again on the server. The suspended turn is ciphertext for three minutes at most; its reply's notification is generic. `items`, `sender`, `name`, `state`, `ciphertext` are on the ban list (§6.21) |
+| A phone-read result replayed or sent late | `begin` takes a waiting turn once, atomically; any other result is answered from what is stored. Results are signed requests bound to the device, with the query id as a capability that dies in three minutes (§6.21) |
 | Contact data leaving the phone | The device reports `matched` and an outcome, never a name or a number. FCM carries an opaque dispatch id, so the contact name does not reach Google either. Nothing about a contact is ever stored in the DO (§6.17) |
 | The companion app as new surface on the phone | Two sensitive permissions (`READ_CONTACTS`, `CALL_PHONE`), sideloaded rather than published, no exported components and no listening socket. It accepts work from one paired Worker over outbound HTTPS and from nowhere else |
 | TLS interception on the home network (Netspark) reading app traffic | Every request signed with a non-exportable Keystore key; a nonce per request; the pairing code never sent, only a MAC bound to the phone's key; 100-bit codes so the MAC cannot be brute-forced offline. **Accepted:** response bodies (reminder text, replies, the voice echo, a `/connect google` link) are readable to the interceptor — pair and connect Google over mobile data (§6.18) |
@@ -2233,6 +2303,11 @@ message. Offering the six card tools raised the prompt to ~1,940 tokens per call
 (from ~1,480) — the capacity estimate in §6.19 drops by about a quarter on the app
 channel.
 
+**Phone reads, prompt a3** (`cases.phone.yaml` +6 cases, four injection cases
+through an SMS or a notification): **not yet run** — the day's qwen budget was
+spent. Adding the three read tools raises the prompt again, by roughly 300
+tokens per call on the app channel.
+
 ## 12. Risk register
 
 | Risk | Prevention |
@@ -2269,11 +2344,11 @@ channel.
 - [x] **The app replaces WhatsApp as the channel** (2026-09-29, the user): Android only; voice by hold-to-record, transcribed on the server; WhatsApp frozen, not deleted (§6.18).
 - [x] **Primary model: `qwen3.8-27b`; fallback: `gpt-oss-120b`** (2026-09-27, the user's decision). qwen met every accuracy threshold on v5. gpt-oss-120b reached 20 of 156 cases before the free tier's rolling budget stalled it, with no schema refusals after the 400 repair retry; finishing it would have held every prompt change for about two more days. It is the fallback per §4, and its partial recording is kept. Open: latency — the hotspot measurements (p95 1–10 s) are not the Worker's, and the 8 s timeout will cut qwen off if staging shows it is slow.
 - [x] **A full agent with access to my data, kept secure** (2026-10-01, the user): calendar, reminders, birthdays, contacts, Gmail read-only, notifications and SMS; phone actions alarm/timer, SMS/WhatsApp compose, navigation and opening apps, quick settings. **Model: Groq free tier**, as before (§6.19).
-- [x] **Groq Zero Data Retention is a precondition for `AGENT=on`** (2026-10-01): the agent sends calendar titles and history.
+- [x] **Groq Zero Data Retention is a precondition for `AGENT=on`** (2026-10-01): the agent sends calendar titles and history. **Enabled by the user, 2026-10-01.**
 - [x] **The agent runs on `qwen3.8-27b` only** (2026-10-01, measured, §11.11). gpt-oss-120b invented times and titles in tool calls (93.3% / 66.7% on the two hard gates). When qwen is out of budget the turn falls back to the parser chain, gpt-oss-120b included, under strict structured output.
 - [ ] A full qwen agent run (all 166 + 5) before `AGENT=on`.
 - [x] **`app_outbox` text stays plaintext for its 24 h TTL** (2026-10-01, accepted risk): Durable Object storage is encrypted at rest by Cloudflare, and the rows are deleted on ack.
-- [ ] Phase C: on Android 13+ a sideloaded app needs "Allow restricted settings" before notification access can be granted — verify on the device first. Play policy on `READ_SMS` does not apply to a sideloaded app.
+- [ ] Phase C: on Android 13+ a sideloaded app needs "Allow restricted settings" before notification access can be granted. Built with a note on the settings screen (§6.21); **verify on the device**. Play policy on `READ_SMS` does not apply to a sideloaded app.
 - [ ] Phase D: can an unverified production OAuth app hold `gmail.readonly` for its owner? If not, Testing mode with weekly re-consent.
 - [ ] Voice: should the recognizer's language be pinned to `he`? Auto-detect keeps English usable but is weakest on very short clips, which is exactly what a one-line reminder is. Measure before changing.
 - [ ] Voice: Whisper takes a `prompt` to bias spelling — useful for Hebrew names and times. It is static config, not user data, so it does not breach invariant 2, but it is unmeasured. Worth a try against recorded clips.
@@ -2441,6 +2516,7 @@ channel.
 | 2026-10-01 | **The app** (`apps/call-companion` 0.2.0, §6.18): chat screen, hold-to-record voice, reminder notifications with their buttons as actions, signing with a Keystore key, pairing by MAC. One message at a time, retried with the same id; outbox rows stored under their seq before the ack. Its unit tests pin the canonical string, a server-made signature, the pairing MAC and code normalisation against vectors from `verify.ts` |
 | 2026-10-01 | **The agent, Phase A** (§6.19, §3.1, §7.1, §7.3): the LLM becomes a bounded tool-calling agent with free chat; the parser stays as the fallback. Compact tool catalog after the spike measured the strict schema at ~4,900 tokens on qwen. Only reads return to the model; every other outcome ends the turn as code rendered it. Taint from calendar reads forces CONFIRM and carries through questions and history. Encrypted 12 h history, `/forget`, per-sender lock, per-model token meter, defanged links on every outbound message. `AGENT=off` until Groq ZDR is on. Replaces 2026-09-24 "LLM = parser only" |
 | 2026-10-01 | **Phone actions as cards, Phase B** (§6.20): six agent-only tools (alarm, timer, navigation, open an app, quick settings, compose SMS/WhatsApp). A card is a `channel = 'card'` pending row the app claims once, with its nonce, by a signed request; the parameters leave the server only then. Runs alone only on a clean Tier 1 turn with the chat on screen; messages, DND and the ringer always wait for the tap. Offered only to an app that declared `cards` (`devices.caps`). Parser catalog and wire schema unchanged (`PARSER_TOOL_NAMES`). Agent prompt a2. App 0.3.0 |
+| 2026-10-01 | **Phone reads, Phase C** (§6.21): `phone.contacts`, `phone.notifications`, `phone.sms`, agent-only Tier 0 reads answered by the phone. The agent's turn suspends — encrypted in `agent_turns` for three minutes — and the phone's signed result continues it once; retries get the same query, late and superseded results get a stored answer. Typed messages only (invariant 13). Every phone read taints; its reply is `private`, so its notification is generic. Names, never numbers; one-time codes dropped on the phone. Migration 0013, prompt a3, app 0.4.0 |
 
 ---
 

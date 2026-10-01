@@ -15,6 +15,10 @@
  * and why the model never gets to word what an action did.
  *
  * Bounded by code: calls, tokens, and the one model a turn starts on.
+ *
+ * A phone read (§6.21) is the one outcome that neither returns nor ends: the
+ * turn is handed back as `suspend`, stored, and picked up by `resumeAgentTurn`
+ * when the phone answers — same model, same caps, calls already spent counted.
  */
 import type { Reply, TurnContext } from '../core/orchestrator.js';
 import { runIntent } from '../core/orchestrator.js';
@@ -25,11 +29,14 @@ import { stripIsolates } from '../render/bidi.js';
 import type { Lang } from '../render/format-time.js';
 import { scrubForModel } from '../security/scrub.js';
 import type { Logger } from '../security/redact.js';
+import { REGISTRY } from '../tools/registry.js';
 import type { ToolName } from '../tools/registry.js';
+import type { PhoneReadInput, PhoneReadResult } from '../tools/phone-reads.js';
+import { phoneReadRefused, phoneReadText } from '../render/phone-reads.js';
 import type { TokenBudget } from './budget.js';
 import type { HistoryEntry } from './history.js';
 import { nowLine, SYSTEM_PROMPT } from './prompt.js';
-import type { AgentMessage, AgentProvider, ToolCall } from './provider.js';
+import type { AgentMessage, AgentProvider, ToolCall, WireTool } from './provider.js';
 import { wireToolCall } from './provider.js';
 import { agentToolNames, fromWireName, TAINTING_TOOLS, wireTools } from './tools.js';
 
@@ -61,6 +68,30 @@ export type AgentTurnInput = {
   history: readonly HistoryEntry[];
   /** The paired app runs action cards, so phone actions may be offered (§6.20). */
   cards?: boolean;
+  /** The paired app answers phone reads, and this is a typed message (§6.21). */
+  phoneReads?: boolean;
+};
+
+/**
+ * A turn waiting for the phone (§6.21): everything needed to go on from the
+ * tool call that asked, and nothing that would let it start over. Stored
+ * encrypted for minutes (`turns.ts`); never logged.
+ */
+export type SuspendedState = {
+  model: string;
+  /** Everything after the system prompt, ending with the call that asked. */
+  messages: AgentMessage[];
+  spent: number;
+  calls: number;
+  tainted: boolean;
+  readText?: string;
+  /** The user's typed words, for the weekday check and the history. */
+  text: string;
+  lang: Lang;
+  cards: boolean;
+  toolCallId: string;
+  tool: ToolName;
+  query: PhoneReadInput;
 };
 
 export type AgentResult =
@@ -73,7 +104,9 @@ export type AgentResult =
       /** The code-rendered text of a read that did complete, to answer with instead. */
       readText?: string;
       tainted: boolean;
-    };
+    }
+  /** A phone read was allowed: the turn waits for the phone's answer. */
+  | { kind: 'suspend'; state: SuspendedState };
 
 export type AgentDeps = {
   providers: readonly AgentProvider[];
@@ -81,16 +114,33 @@ export type AgentDeps = {
   log: Logger;
 };
 
+/** One turn in progress. The same whether it started now or resumed after a phone read. */
+type Loop = {
+  provider: AgentProvider;
+  messages: AgentMessage[];
+  spent: number;
+  calls: number;
+  tainted: boolean;
+  toolRan: boolean;
+  readText: string | undefined;
+  /** Set once a phone read has answered: one per turn. */
+  phoneReadDone: boolean;
+  offered: ToolName[];
+  tools: WireTool[];
+  toolChars: number;
+  text: string;
+  lang: Lang;
+  turn: TurnContext;
+  cards: boolean;
+};
+
 export async function runAgentTurn(input: AgentTurnInput, deps: AgentDeps): Promise<AgentResult> {
-  const { log, budget } = deps;
-  const offered: ToolName[] = agentToolNames({ cards: input.cards === true });
+  const { budget } = deps;
+  const cards = input.cards === true;
+  const offered: ToolName[] = agentToolNames({ cards, phoneReads: input.phoneReads === true });
   const tools = wireTools(offered);
   const toolChars = JSON.stringify(tools).length;
-
-  let tainted = input.history.some((entry) => entry.tainted) || input.turn.tainted === true;
-  let toolRan = false;
-  let readText: string | undefined;
-  let spent = 0;
+  const tainted = input.history.some((entry) => entry.tainted) || input.turn.tainted === true;
 
   const messages: AgentMessage[] = [{ role: 'system', content: SYSTEM_PROMPT }];
   for (const entry of input.history) {
@@ -99,14 +149,6 @@ export async function runAgentTurn(input: AgentTurnInput, deps: AgentDeps): Prom
   }
   messages.push({ role: 'user', content: `${nowLine(input.nowMs)}\n\n${input.text}` });
 
-  const failed = (errorCode: string): AgentResult => ({
-    kind: 'failed',
-    errorCode,
-    toolRan,
-    ...(readText === undefined ? {} : { readText }),
-    tainted,
-  });
-
   // One model for the whole turn: the first that can take two calls of this
   // size, else one. Switching mid-turn would spend a second model's budget on a
   // conversation the first already paid for.
@@ -114,14 +156,109 @@ export async function runAgentTurn(input: AgentTurnInput, deps: AgentDeps): Prom
   const models = deps.providers.map((provider) => provider.model);
   const model = budget.pick(models, firstEstimate * 2) ?? budget.pick(models, firstEstimate);
   const provider = deps.providers.find((candidate) => candidate.model === model);
-  if (!provider || model === null) return failed('budget_exhausted');
+  if (!provider || model === null) {
+    return { kind: 'failed', errorCode: 'budget_exhausted', toolRan: false, tainted };
+  }
 
-  for (let call = 0; call < MAX_MODEL_CALLS; call++) {
-    const estimate = estimateTokens(messages, toolChars) + COMPLETION_RESERVE;
-    if (spent + estimate > TURN_TOKEN_CAP) return failed('turn_token_cap');
+  return drive(
+    {
+      provider,
+      messages,
+      spent: 0,
+      calls: 0,
+      tainted,
+      toolRan: false,
+      readText: undefined,
+      phoneReadDone: false,
+      offered,
+      tools,
+      toolChars,
+      text: input.text,
+      lang: input.lang,
+      turn: input.turn,
+      cards,
+    },
+    deps,
+  );
+}
+
+/**
+ * Go on with a suspended turn, now that the phone has answered (§6.21).
+ *
+ * The same model, the same caps — calls and tokens already spent count — and
+ * the same tools, so the conversation the model sees is the one it was having.
+ * The answer is rendered by code, scrubbed, and taints the rest of the turn.
+ * A phone that could not read ends the turn with code's own words.
+ */
+export async function resumeAgentTurn(
+  state: SuspendedState,
+  result: PhoneReadResult,
+  turn: TurnContext,
+  deps: AgentDeps,
+): Promise<AgentResult> {
+  if (result.status !== 'ok') {
+    return {
+      kind: 'reply',
+      reply: { text: phoneReadRefused(state.query.kind, result.status, state.lang) },
+      tainted: state.tainted,
+      byModel: false,
+    };
+  }
+
+  const readText = phoneReadText(state.query, result.items, state.lang);
+  const provider = deps.providers.find((candidate) => candidate.model === state.model);
+  if (!provider) {
+    return { kind: 'failed', errorCode: 'model_unavailable', toolRan: true, readText, tainted: true };
+  }
+
+  const offered = agentToolNames({ cards: state.cards, phoneReads: true });
+  const tools = wireTools(offered);
+  return drive(
+    {
+      provider,
+      messages: [
+        { role: 'system', content: SYSTEM_PROMPT },
+        ...state.messages,
+        { role: 'tool', tool_call_id: state.toolCallId, content: resultForModel(readText) },
+      ],
+      spent: state.spent,
+      calls: state.calls,
+      tainted: true,
+      toolRan: true,
+      readText,
+      phoneReadDone: true,
+      offered,
+      tools,
+      toolChars: JSON.stringify(tools).length,
+      text: state.text,
+      lang: state.lang,
+      turn,
+      cards: state.cards,
+    },
+    deps,
+  );
+}
+
+async function drive(loop: Loop, deps: AgentDeps): Promise<AgentResult> {
+  const { log, budget } = deps;
+  const model = loop.provider.model;
+
+  const failed = (errorCode: string): AgentResult => ({
+    kind: 'failed',
+    errorCode,
+    toolRan: loop.toolRan,
+    ...(loop.readText === undefined ? {} : { readText: loop.readText }),
+    tainted: loop.tainted,
+  });
+
+  while (loop.calls < MAX_MODEL_CALLS) {
+    const call = loop.calls;
+    const estimate = estimateTokens(loop.messages, loop.toolChars) + COMPLETION_RESERVE;
+    if (loop.spent + estimate > TURN_TOKEN_CAP) return failed('turn_token_cap');
     if (call > 0 && !budget.fits(model, estimate)) return failed('budget_exhausted');
+    loop.calls++;
 
-    const response = await provider.complete(messages, tools);
+    const response = await loop.provider.complete(loop.messages, loop.tools);
     if (!response.ok) {
       if (response.error.code === 'rate_limited') {
         budget.rateLimited(model, response.error.retryAfterSeconds);
@@ -132,7 +269,7 @@ export async function runAgentTurn(input: AgentTurnInput, deps: AgentDeps): Prom
 
     const used = response.usage.promptTokens + response.usage.completionTokens;
     budget.record(model, used);
-    spent += used;
+    loop.spent += used;
     log.info('agent_call', {
       model,
       call,
@@ -145,34 +282,58 @@ export async function runAgentTurn(input: AgentTurnInput, deps: AgentDeps): Prom
     if (!toolCall) {
       const text = cleanModelText(response.text ?? '');
       if (text.length === 0) return failed('empty_reply');
-      return { kind: 'reply', reply: { text }, tainted, byModel: true };
+      return { kind: 'reply', reply: { text }, tainted: loop.tainted, byModel: true };
     }
 
     // One tool call per model call. A second one in the same response is not
     // run: the next call can ask for it once it has seen this one's result.
-    const outcome = await runToolCall(toolCall, offered, input, tainted, log);
+    const outcome = await runToolCall(toolCall, loop, log);
     if (outcome.kind === 'retry') {
-      messages.push({ role: 'assistant', content: null, tool_calls: [wireToolCall(toolCall)] });
-      messages.push({ role: 'tool', tool_call_id: toolCall.id, content: outcome.result });
+      loop.messages.push({ role: 'assistant', content: null, tool_calls: [wireToolCall(toolCall)] });
+      loop.messages.push({ role: 'tool', tool_call_id: toolCall.id, content: outcome.result });
       continue;
     }
 
-    toolRan = true;
     const reply = outcome.reply;
+    if (reply.deviceQuery) {
+      // Nothing ran: the phone answers this, and the turn waits for it (§6.21).
+      return {
+        kind: 'suspend',
+        state: {
+          model,
+          messages: [
+            ...loop.messages.slice(1),
+            { role: 'assistant', content: null, tool_calls: [wireToolCall(toolCall)] },
+          ],
+          spent: loop.spent,
+          calls: loop.calls,
+          tainted: loop.tainted,
+          ...(loop.readText === undefined ? {} : { readText: loop.readText }),
+          text: loop.text,
+          lang: loop.lang,
+          cards: loop.cards,
+          toolCallId: toolCall.id,
+          tool: outcome.tool,
+          query: reply.deviceQuery,
+        },
+      };
+    }
+
+    loop.toolRan = true;
     if (!reply.read) {
-      const question = reply.question ? { ...reply.question, tainted } : undefined;
+      const question = reply.question ? { ...reply.question, tainted: loop.tainted } : undefined;
       return {
         kind: 'reply',
         reply: { ...reply, ...(question ? { question } : {}) },
-        tainted,
+        tainted: loop.tainted,
         byModel: false,
       };
     }
 
-    if (TAINTING_TOOLS.has(outcome.tool)) tainted = true;
-    readText = reply.text;
-    messages.push({ role: 'assistant', content: null, tool_calls: [wireToolCall(toolCall)] });
-    messages.push({ role: 'tool', tool_call_id: toolCall.id, content: resultForModel(reply.text) });
+    if (TAINTING_TOOLS.has(outcome.tool)) loop.tainted = true;
+    loop.readText = reply.text;
+    loop.messages.push({ role: 'assistant', content: null, tool_calls: [wireToolCall(toolCall)] });
+    loop.messages.push({ role: 'tool', tool_call_id: toolCall.id, content: resultForModel(reply.text) });
   }
 
   return failed('max_calls');
@@ -183,17 +344,15 @@ type ToolOutcome =
   /** Nothing ran; this goes back to the model as the tool's result. */
   | { kind: 'retry'; result: string };
 
-async function runToolCall(
-  call: ToolCall,
-  offered: readonly ToolName[],
-  input: AgentTurnInput,
-  tainted: boolean,
-  log: Logger,
-): Promise<ToolOutcome> {
-  const tool = fromWireName(call.name, offered);
+async function runToolCall(call: ToolCall, loop: Loop, log: Logger): Promise<ToolOutcome> {
+  const tool = fromWireName(call.name, loop.offered);
   if (!tool) {
     log.warn('agent_unknown_tool', {});
     return { kind: 'retry', result: '{"error":"unknown_tool"}' };
+  }
+  // One phone read per turn: a second would suspend a turn already resumed.
+  if (loop.phoneReadDone && REGISTRY[tool].phoneRead) {
+    return { kind: 'retry', result: '{"error":"one_phone_read_per_turn"}' };
   }
 
   let args: unknown;
@@ -208,7 +367,7 @@ async function runToolCall(
   const validated = validateIntentDraft({
     intent: tool,
     slots: args,
-    language: input.lang,
+    language: loop.lang,
     missing: [],
     ambiguities: [],
   });
@@ -220,14 +379,14 @@ async function runToolCall(
     };
   }
 
-  const checked = checkNamedWeekdays(validated.draft, input.text);
+  const checked = checkNamedWeekdays(validated.draft, loop.text);
   if (checked.mismatched.length > 0) {
     log.info('weekday_mismatch', { intent: tool, slotKeys: checked.mismatched.join(',') });
   }
 
   const reply = await runIntent(
     checked.draft,
-    { ...input.turn, tainted },
+    { ...loop.turn, tainted: loop.tainted },
     { dayInDoubt: checked.mismatched },
   );
   return { kind: 'ran', tool, reply };

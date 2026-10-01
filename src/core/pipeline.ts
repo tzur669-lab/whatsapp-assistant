@@ -60,7 +60,10 @@ import type { AgentProvider } from '../agent/provider.js';
 import type { TokenBudget } from '../agent/budget.js';
 import type { ConversationHistory } from '../agent/history.js';
 import type { AgentLock } from '../agent/lock.js';
-import { runAgentTurn } from '../agent/loop.js';
+import { resumeAgentTurn, runAgentTurn } from '../agent/loop.js';
+import type { AgentResult } from '../agent/loop.js';
+import type { SuspendedTurns } from '../agent/turns.js';
+import type { PhoneReadInput, PhoneReadResult } from '../tools/phone-reads.js';
 
 /** The agent and what it keeps (PLAN §6.19). Absent: the parser answers, as before. */
 export type AgentServices = {
@@ -69,6 +72,8 @@ export type AgentServices = {
   budget: TokenBudget;
   history: ConversationHistory;
   lock: AgentLock;
+  /** Turns waiting for the phone (§6.21). Absent: phone reads are never offered. */
+  turns?: SuspendedTurns;
 };
 
 /** The stateful collaborators the Durable Object owns and hands in. */
@@ -143,7 +148,11 @@ export type PipelineOutcome =
       keepLinks?: true;
       /** A phone action for the app to claim (§6.20). */
       card?: ActionCard;
+      /** Carries text someone else wrote: the app notifies generically (§6.21). */
+      private?: true;
     }
+  /** The agent's turn waits for the phone to read this (§6.21). */
+  | { action: 'device_query'; queryId: string; query: PhoneReadInput }
   | {
       action: 'none';
       reason: 'duplicate' | 'status' | 'not_implemented' | 'reply_deferred';
@@ -490,6 +499,10 @@ async function respondWithAgent(
     return { action: 'reply', text: he.agentBusy };
   }
 
+  // A turn left waiting for the phone is not going to be continued now: this
+  // newer message is what the user is talking about (§6.21).
+  agent.turns?.supersede(principal);
+
   try {
     const lang = languageOf(text);
     const history = await agent.history.recent(principal);
@@ -503,38 +516,131 @@ async function respondWithAgent(
           history,
           // Phone actions only where an app that runs cards will receive them (§6.20).
           cards: deps.channel === 'app' && (deps.deviceCaps ?? []).includes('cards'),
+          // Phone reads only from an app that answers them, and only for typed
+          // words: a suspended turn stores the message (§6.21, invariant 13).
+          phoneReads:
+            agent.turns !== undefined &&
+            source.kind === 'text' &&
+            deps.channel === 'app' &&
+            (deps.deviceCaps ?? []).includes('device_query'),
         },
         { providers: agent.providers, budget: agent.budget, log },
       ),
     );
 
-    if (result.kind === 'failed') {
-      repo.bumpCounter(Repository.dayKey(now), 'fallbacks');
-      repo.setLastErrorCode(`E_AGENT_${result.errorCode.toUpperCase()}`);
-      log.info('agent_failed', { wamid: event.wamid, errorCode: result.errorCode, toolRan: result.toolRan });
-      if (!result.toolRan) return null;
-
-      // A read completed and the model did not get to word it: the code-rendered
-      // read is a complete answer on its own.
-      const fallback = result.readText ?? he.agentIncomplete;
-      repo.markInboundOutcome(event.wamid, { intent: 'agent', decision: 'ALLOW', errorCode: 'E_AGENT_PARTIAL' });
-      return { action: 'reply', text: fallback };
+    if (result.kind === 'suspend' && agent.turns) {
+      const queryId = await agent.turns.suspend(principal, event.wamid, result.state);
+      repo.markInboundOutcome(event.wamid, { intent: 'agent', decision: 'DEVICE_QUERY' });
+      log.info('agent_suspended', { wamid: event.wamid, tool: result.state.tool });
+      return { action: 'device_query', queryId, query: result.state.query };
     }
 
-    repo.markInboundOutcome(event.wamid, { intent: 'agent', decision: 'ALLOW' });
-    const outcome = replyOutcome(result.reply, deps);
-
-    if (outcome.action === 'reply') {
-      await agent.history.append(principal, {
-        // A transcript is never stored (invariant 13); the reply carries the context.
-        user: source.kind === 'voice' ? he.voicePlaceholder : text,
-        reply: outcome.text,
-        tainted: result.tainted,
-      });
-    }
-    return outcome;
+    return await settleAgentResult(result, source.kind === 'voice' ? he.voicePlaceholder : text, event.wamid, deps, now);
   } finally {
     agent.lock.release(principal, turnId);
+  }
+}
+
+/**
+ * The end of an agent turn, started now or resumed after the phone answered:
+ * the fallback rule, the inbound record, the question, and the history.
+ */
+async function settleAgentResult(
+  result: AgentResult,
+  /** What the history keeps for the user's side: the words, or the voice placeholder. */
+  userText: string,
+  wamid: string,
+  deps: PipelineDeps,
+  now: number,
+): Promise<PipelineOutcome | null> {
+  const { repo, log, principal } = deps;
+  const agent = deps.services?.agent;
+
+  if (result.kind === 'suspend') {
+    // Only a turn that may suspend is offered a phone read; reaching here is a bug.
+    repo.markInboundOutcome(wamid, { intent: 'agent', decision: 'ALLOW', errorCode: 'E_AGENT_PARTIAL' });
+    return { action: 'reply', text: he.agentIncomplete };
+  }
+
+  if (result.kind === 'failed') {
+    repo.bumpCounter(Repository.dayKey(now), 'fallbacks');
+    repo.setLastErrorCode(`E_AGENT_${result.errorCode.toUpperCase()}`);
+    log.info('agent_failed', { wamid, errorCode: result.errorCode, toolRan: result.toolRan });
+    if (!result.toolRan) return null;
+
+    // A read completed and the model did not get to word it: the code-rendered
+    // read is a complete answer on its own.
+    const fallback = result.readText ?? he.agentIncomplete;
+    repo.markInboundOutcome(wamid, { intent: 'agent', decision: 'ALLOW', errorCode: 'E_AGENT_PARTIAL' });
+    return { action: 'reply', text: fallback, ...(result.tainted ? { private: true as const } : {}) };
+  }
+
+  repo.markInboundOutcome(wamid, { intent: 'agent', decision: 'ALLOW' });
+  const outcome = replyOutcome(result.reply, deps);
+
+  if (outcome.action === 'reply' && agent) {
+    await agent.history.append(principal, {
+      // A transcript is never stored (invariant 13); the reply carries the context.
+      user: userText,
+      reply: outcome.text,
+      tainted: result.tainted,
+    });
+    if (result.tainted) return { ...outcome, private: true };
+  }
+  return outcome;
+}
+
+/**
+ * The phone answered a read (§6.21): go on with the turn it suspended.
+ *
+ * The caller (the Durable Object) has already taken the row with `begin`, in
+ * the same synchronous step as this function's first line, so the lock is
+ * taken here before anything awaits. A lock held by someone else means a newer
+ * turn started meanwhile; this one is then cancelled, never interleaved.
+ */
+export async function resumeFromPhone(
+  request: {
+    queryId: string;
+    wamid: string;
+    ciphertext: string;
+    result: PhoneReadResult;
+    /** The original message's signed timestamp, for the staleness rule. */
+    sentAtMs: number;
+  },
+  deps: PipelineDeps,
+): Promise<PipelineOutcome> {
+  const { repo, log, principal } = deps;
+  const agent = deps.services?.agent;
+  const turns = agent?.turns;
+  if (!agent || !turns) return { action: 'reply', text: he.agentIncomplete };
+
+  if (!agent.lock.acquire(principal, request.wamid)) {
+    turns.finish(request.queryId, 'superseded');
+    log.info('agent_resume_superseded', { wamid: request.wamid });
+    return { action: 'reply', text: he.phoneReadCancelled };
+  }
+
+  try {
+    const state = await turns.open(request.queryId, principal, request.ciphertext);
+    if (!state) {
+      log.warn('agent_resume_unreadable', { wamid: request.wamid });
+      repo.markInboundOutcome(request.wamid, { intent: 'agent', decision: 'ERROR', errorCode: 'E_AGENT_STATE' });
+      return { action: 'reply', text: he.agentIncomplete };
+    }
+
+    const now = deps.now();
+    const turn = turnOf(deps, { sentAtMs: request.sentAtMs, forwarded: false }, now, { kind: 'text' }, state.lang);
+    const result = await timed(deps, 'agent', () =>
+      resumeAgentTurn(state, request.result, turn, { providers: agent.providers, budget: agent.budget, log }),
+    );
+    log.info('agent_resumed', { wamid: request.wamid, readStatus: request.result.status, itemCount: request.result.items.length });
+
+    const outcome = await settleAgentResult(result, state.text, request.wamid, deps, now);
+    // No fallback here: the parser never sees a turn the phone has answered.
+    return outcome ?? { action: 'reply', text: he.agentIncomplete };
+  } finally {
+    turns.finish(request.queryId);
+    agent.lock.release(principal, request.wamid);
   }
 }
 
@@ -877,6 +983,7 @@ function forgetConversation(deps: PipelineDeps): void {
   if (!agent) return;
   agent.history.wipe(deps.principal);
   agent.lock.wipe(deps.principal);
+  agent.turns?.wipe(deps.principal);
 }
 
 /** Matches the TTL in `GoogleStore`. */
@@ -888,7 +995,7 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 
 function turnOf(
   deps: PipelineDeps,
-  event: Extract<InboundEvent, { kind: 'text' | 'audio' | 'button' }>,
+  event: Pick<Extract<InboundEvent, { kind: 'text' | 'audio' | 'button' }>, 'sentAtMs' | 'forwarded'>,
   now: number,
   source: TextSource,
   lang: Lang,

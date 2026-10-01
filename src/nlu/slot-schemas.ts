@@ -225,6 +225,39 @@ export const messageComposeSlots = z
   })
   .strict();
 
+// -- phone reads (PLAN §6.21) ---------------------------------------------------
+// Agent-only, app-only, typed messages only. The phone reads its own data and
+// sends back a capped, minimized list; nothing here is ever an action.
+
+export const MAX_APP_NAME_CHARS = 40;
+export const MAX_SENDER_CHARS = 40;
+/** The notification buffer on the phone keeps a day. */
+export const MAX_NOTIFICATION_HOURS = 24;
+export const MAX_SMS_HOURS = 7 * 24;
+
+/** "יש לי את המספר של דני?". Names only come back, never a number. */
+export const phoneContactsSlots = z
+  .object({
+    query_variants: queryVariantsSchema.optional(),
+  })
+  .strict();
+
+/** "מה ההתראות האחרונות מוואטסאפ?". `app_name`, not `app`: `nav.go` owns that slot. */
+export const phoneNotificationsSlots = z
+  .object({
+    app_name: z.string().min(1).max(MAX_APP_NAME_CHARS).optional(),
+    hours: z.number().int().min(1).max(MAX_NOTIFICATION_HOURS).optional(),
+  })
+  .strict();
+
+/** "מה כתבו לי ב-SMS היום?". */
+export const phoneSmsSlots = z
+  .object({
+    sender: z.string().min(1).max(MAX_SENDER_CHARS).optional(),
+    hours: z.number().int().min(1).max(MAX_SMS_HOURS).optional(),
+  })
+  .strict();
+
 // -- drift guards -------------------------------------------------------------
 // These are compile-time only. If `src/time/resolve.ts` gains a DateSpec variant
 // that this file does not model, or vice versa, typecheck fails here rather than

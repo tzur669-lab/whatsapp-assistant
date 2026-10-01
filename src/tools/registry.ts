@@ -20,6 +20,9 @@ import {
   callsPlaceSlots,
   messageComposeSlots,
   navGoSlots,
+  phoneContactsSlots,
+  phoneNotificationsSlots,
+  phoneSmsSlots,
   remindersCancelSlots,
   remindersCreateSlots,
   remindersListSlots,
@@ -43,6 +46,10 @@ export const TOOL_NAMES = [
   'app.open',
   'settings.set',
   'message.compose',
+  // Phone reads (PLAN §6.21): agent-only, answered by the phone mid-turn.
+  'phone.contacts',
+  'phone.notifications',
+  'phone.sms',
 ] as const;
 
 export type ToolName = (typeof TOOL_NAMES)[number];
@@ -98,6 +105,11 @@ export type ToolSpec = {
    * phone itself. Only on a clean turn, with the chat in the foreground (§6.20).
    */
   autoRun?: true;
+  /**
+   * A Tier 0 read the paired phone answers (§6.21). Never executed here: the
+   * agent's turn waits for the phone, and the result is text someone else wrote.
+   */
+  phoneRead?: true;
 };
 
 const EVENTS_OWNED: GoogleScope = 'https://www.googleapis.com/auth/calendar.events.owned';
@@ -246,6 +258,36 @@ export const REGISTRY: Readonly<Record<ToolName, ToolSpec>> = {
     rateLimit: { perHour: 10, perDay: 40 },
     implementedIn: 6,
     confirmation: 'card',
+  },
+  'phone.contacts': {
+    name: 'phone.contacts',
+    llmDescription: "Look up names in the phone's contacts (names only, no numbers).",
+    draftSchema: phoneContactsSlots,
+    tier: 0,
+    scopes: [],
+    rateLimit: { perHour: 20, perDay: 100 },
+    implementedIn: 6,
+    phoneRead: true,
+  },
+  'phone.notifications': {
+    name: 'phone.notifications',
+    llmDescription: "Read the phone's recent notifications, optionally from one app.",
+    draftSchema: phoneNotificationsSlots,
+    tier: 0,
+    scopes: [],
+    rateLimit: { perHour: 20, perDay: 100 },
+    implementedIn: 6,
+    phoneRead: true,
+  },
+  'phone.sms': {
+    name: 'phone.sms',
+    llmDescription: 'Read recent SMS messages on the phone, optionally from one sender.',
+    draftSchema: phoneSmsSlots,
+    tier: 0,
+    scopes: [],
+    rateLimit: { perHour: 20, perDay: 100 },
+    implementedIn: 6,
+    phoneRead: true,
   },
 };
 

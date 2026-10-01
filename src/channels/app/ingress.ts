@@ -44,6 +44,9 @@ export const APP_ROUTES: readonly AppRoute[] = [
   // Action cards (§6.20): a claim consumes the card and returns what to run.
   { method: 'POST', pattern: /^\/app\/action\/claim$/, maxBytes: 1_024, contentType: JSON_TYPE, channels: ['app'] },
   { method: 'POST', pattern: /^\/app\/action\/report$/, maxBytes: 1_024, contentType: JSON_TYPE, channels: ['app'] },
+  // Phone reads (§6.21): the phone's answer to a suspended turn. Twenty items of
+  // at most a few hundred characters each, as UTF-8 Hebrew, with room for JSON.
+  { method: 'POST', pattern: /^\/app\/device-result$/, maxBytes: 32_768, contentType: JSON_TYPE, channels: ['app'] },
 ];
 
 export type Checked =

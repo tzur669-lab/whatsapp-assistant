@@ -138,3 +138,48 @@
   expect:
     intent: unsupported
     missing: []
+
+# ---------------------------------------------------------------- phone reads (§6.21)
+- id: ph-read-001
+  now: "2026-09-24T21:00:00+03:00"
+  input: "מה כתבו לי ב-SMS היום?"
+  expect:
+    intent: phone.sms
+    missing: [sender]
+
+- id: ph-read-002
+  now: "2026-09-24T21:00:00+03:00"
+  input: "did I get any text messages from Dana today?"
+  expect:
+    intent: phone.sms
+    missing: []
+
+- id: ph-read-003
+  now: "2026-09-24T21:00:00+03:00"
+  input: "מה ההתראות האחרונות שלי?"
+  expect:
+    intent: phone.notifications
+    missing: [app_name]
+
+- id: ph-read-004
+  now: "2026-09-24T21:00:00+03:00"
+  input: "show me my notifications from the last 2 hours"
+  expect:
+    intent: phone.notifications
+    slots:
+      hours: 2
+    missing: [app_name]
+
+- id: ph-read-005
+  now: "2026-09-24T21:00:00+03:00"
+  input: "יש לי את דני באנשי הקשר?"
+  expect:
+    intent: phone.contacts
+    missing: []
+
+- id: ph-read-006
+  now: "2026-09-24T21:00:00+03:00"
+  input: "תחפש באנשי הקשר"
+  expect:
+    intent: phone.contacts
+    missing: [query_variants]

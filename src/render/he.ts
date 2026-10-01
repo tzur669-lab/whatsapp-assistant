@@ -117,4 +117,10 @@ export const he = {
    * message content and is never stored (invariant 13).
    */
   voicePlaceholder: '[הודעה קולית]',
+
+  /** The phone did not answer a read in time (PLAN §6.21). Nothing was changed. */
+  phoneReadTimedOut: 'הטלפון לא החזיר תשובה בזמן. אפשר לשלוח את הבקשה שוב.',
+
+  /** A newer message took over while the phone was still reading (§6.21). */
+  phoneReadCancelled: 'הבקשה הזאת בוטלה, כי בינתיים נשלחה הודעה חדשה.',
 } as const;

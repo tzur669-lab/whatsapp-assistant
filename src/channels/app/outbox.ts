@@ -44,6 +44,11 @@ export type OutboxRow = {
   createdAt: number;
   /** A phone action to claim (PLAN §6.20). Never its parameters. */
   card?: OutboxCard;
+  /**
+   * Carries text someone else wrote (§6.21). The app's notification for it is
+   * generic, so that text never reaches the lock screen.
+   */
+  private?: true;
 };
 
 /** The card on the wire: enough to show it and claim it, nothing it would run. */
@@ -87,6 +92,7 @@ export class AppOutbox {
     /** Only the one-time connect link stays a link (PLAN §6.19). */
     keepLinks?: boolean;
     card?: OutboxCard;
+    private?: boolean;
   }): Accepted {
     const now = this.now();
     // Every row the app will show passes here, so here is where links are
@@ -96,8 +102,8 @@ export class AppOutbox {
     const firstPush = message.kind === 'reply' ? now + REPLY_PUSH_DELAY_MS : now;
 
     const inserted = this.sql.exec(
-      `INSERT INTO app_outbox (kind, reminder_id, in_reply_to, text, buttons_json, created_at, expires_at, next_push_at, action_json)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `INSERT INTO app_outbox (kind, reminder_id, in_reply_to, text, buttons_json, created_at, expires_at, next_push_at, action_json, private)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(reminder_id) DO NOTHING
        RETURNING seq`,
       message.kind,
@@ -109,6 +115,7 @@ export class AppOutbox {
       now + ttl,
       firstPush,
       message.card ? JSON.stringify({ ...message.card, preview: defangLinks(message.card.preview) }) : null,
+      message.private ? 1 : 0,
     )[0];
 
     if (!inserted) {
@@ -262,7 +269,7 @@ export class AppOutbox {
   }
 }
 
-const COLUMNS = 'seq, kind, in_reply_to, text, buttons_json, created_at, action_json';
+const COLUMNS = 'seq, kind, in_reply_to, text, buttons_json, created_at, action_json, private';
 
 /** Re-checked on read, like the buttons: a row that drifted reads as no card at all. */
 function cardOf(raw: unknown): OutboxCard | null {
@@ -305,5 +312,6 @@ function toRow(row: Record<string, unknown>): OutboxRow {
     buttons,
     createdAt: Number(row['created_at']),
     ...(cardOf(row['action_json']) ? { card: cardOf(row['action_json'])! } : {}),
+    ...(Number(row['private']) === 1 ? { private: true as const } : {}),
   };
 }

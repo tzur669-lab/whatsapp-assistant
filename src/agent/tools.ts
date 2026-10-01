@@ -51,10 +51,20 @@ export function fromWireName(wire: string, offered: readonly ToolName[]): ToolNa
 /**
  * The tools offered on a turn. The server tools always; the phone actions only
  * when the turn came from an app that declared it runs cards (§6.20) — offered
- * anywhere else, a card would wait for a phone that cannot run it.
+ * anywhere else, a card would wait for a phone that cannot run it. The phone
+ * reads only when the app declared it answers them, and only on a typed
+ * message: a suspended turn stores the message, and a transcript is never
+ * stored (§6.21, invariant 13).
  */
-export function agentToolNames(options: { cards: boolean } = { cards: false }): ToolName[] {
-  return TOOL_NAMES.filter((name) => options.cards || REGISTRY[name].confirmation !== 'card');
+export type OfferOptions = { cards: boolean; phoneReads?: boolean };
+
+export function agentToolNames(options: OfferOptions = { cards: false }): ToolName[] {
+  return TOOL_NAMES.filter((name) => {
+    const spec = REGISTRY[name];
+    if (spec.confirmation === 'card') return options.cards;
+    if (spec.phoneRead) return options.phoneReads === true;
+    return true;
+  });
 }
 
 export function wireTools(names: readonly ToolName[]): WireTool[] {
@@ -79,6 +89,13 @@ export function wireTools(names: readonly ToolName[]): WireTool[] {
 
 /**
  * Read tools whose results carry text someone else wrote. A calendar holds
- * invitations and subscribed feeds; reminders are the user's own words.
+ * invitations and subscribed feeds; reminders are the user's own words. Every
+ * phone read does: SMS and notifications are other people's words, and contact
+ * names arrive from synced accounts as often as from the user (§6.21).
  */
-export const TAINTING_TOOLS: ReadonlySet<ToolName> = new Set<ToolName>(['calendar.list_events']);
+export const TAINTING_TOOLS: ReadonlySet<ToolName> = new Set<ToolName>([
+  'calendar.list_events',
+  'phone.contacts',
+  'phone.notifications',
+  'phone.sms',
+]);

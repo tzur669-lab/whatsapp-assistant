@@ -472,4 +472,117 @@ describe('the app channel', () => {
       expect((await outbox(phone)).rows).toEqual([]);
     });
   });
+  describe('phone reads (PLAN §6.21)', () => {
+    /** Scripted Groq chat completions, in front of the fake Google. */
+    let chat: Array<{ tool?: string; args?: Record<string, unknown>; text?: string }>;
+    let chatCalls: number;
+
+    const buildWithAgent = () => {
+      env = { ...baseEnv(), GROQ_API_KEY: 'test-groq-key', AGENT: 'on' };
+      const fetchImpl = (async (input: string | URL | Request, init?: RequestInit) => {
+        const url = String(input instanceof Request ? input.url : input);
+        if (!url.endsWith('/chat/completions')) return google.fetchImpl(input as never, init);
+        const step = chat[chatCalls++] ?? { text: 'אין תשובה' };
+        const message = step.tool
+          ? {
+              content: null,
+              tool_calls: [{ id: `call_${chatCalls}`, type: 'function', function: { name: step.tool, arguments: JSON.stringify(step.args ?? {}) } }],
+            }
+          : { content: step.text };
+        return new Response(JSON.stringify({ choices: [{ message }], usage: { prompt_tokens: 900, completion_tokens: 40 } }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        });
+      }) as unknown as typeof fetch;
+      assistant = new AssistantDO(fake.state as never, env, fetchImpl);
+    };
+
+    const pairReader = async () => {
+      buildWithAgent();
+      const phone = await pair();
+      await send(await phone.toDo('POST', '/app/push-token', { pushToken: 'tok', caps: ['cards', 'device_query'] }));
+      return phone;
+    };
+
+    const result = async (phone: FakePhone, queryId: string, items: Record<string, unknown>[] = []) =>
+      (await send(await phone.toDo('POST', '/app/device-result', { queryId, result: { status: 'ok', items } }))).body as unknown as Reply & {
+        row?: { private?: boolean };
+      };
+
+    const ITEMS = [{ sender: 'אמא', text: 'תתקשר כשאתה מתפנה', at: NOW - 60_000 }];
+
+    beforeEach(() => {
+      chat = [];
+      chatCalls = 0;
+    });
+
+    it('answers a read with a query, gives a retry the same one, and continues once on the result', async () => {
+      const phone = await pairReader();
+      chat = [{ tool: 'phone__sms', args: {} }, { text: 'אמא ביקשה שתתקשר.' }];
+      const id = messageId();
+
+      const asked = (await say(phone, 'מה כתבו לי ב-SMS?', id)) as unknown as { status: string; queryId: string; query: unknown };
+      expect(asked).toEqual({ status: 'device_query', queryId: expect.stringMatching(/^[0-9a-f]{32}$/), query: { kind: 'sms', hours: 24 } });
+      expect((await outbox(phone)).rows).toEqual([]);
+
+      const retried = (await say(phone, 'מה כתבו לי ב-SMS?', id)) as unknown as { status: string; queryId: string };
+      expect(retried).toMatchObject({ status: 'device_query', queryId: asked.queryId });
+
+      const answered = await result(phone, asked.queryId, ITEMS);
+      expect(answered.status).toBe('reply');
+      expect(answered.row).toMatchObject({ inReplyTo: id, text: 'אמא ביקשה שתתקשר.', private: true });
+      expect(chatCalls).toBe(2);
+
+      // The same result again, and the message again: the stored answer, never a second run.
+      expect((await result(phone, asked.queryId, ITEMS)).row?.seq).toBe(answered.row!.seq);
+      expect((await say(phone, 'מה כתבו לי ב-SMS?', id)).row?.seq).toBe(answered.row!.seq);
+      expect(chatCalls).toBe(2);
+
+      const rows = (await outbox(phone)).rows as Array<{ inReplyTo: string | null; private?: boolean }>;
+      expect(rows).toEqual([expect.objectContaining({ inReplyTo: id, private: true })]);
+    });
+
+    it('never offers a phone read to a build that did not say it answers them', async () => {
+      buildWithAgent();
+      const phone = await pair();
+      await send(await phone.toDo('POST', '/app/push-token', { pushToken: 'tok', caps: ['cards'] }));
+      chat = [{ tool: 'phone__sms', args: {} }, { text: 'אין לי גישה ל-SMS.' }];
+      const reply = await say(phone, 'מה כתבו לי ב-SMS?');
+      expect(reply.status).toBe('reply');
+      expect(reply.row?.text).toBe('אין לי גישה ל-SMS.');
+    });
+
+    it('answers "no answer in time" under the message when the phone never sends one', async () => {
+      const phone = await pairReader();
+      chat = [{ tool: 'phone__notifications', args: {} }];
+      const id = messageId();
+      const asked = (await say(phone, 'מה ההתראות שלי?', id)) as unknown as { queryId: string };
+
+      vi.setSystemTime(NOW + 3 * 60_000 + 1_000);
+      await assistant.alarm();
+      const rows = (await outbox(phone)).rows;
+      expect(rows).toEqual([expect.objectContaining({ inReplyTo: id, text: he.phoneReadTimedOut })]);
+
+      // A result that arrives after that gets the same answer, and nothing runs.
+      expect((await result(phone, asked.queryId, ITEMS)).row?.text).toBe(he.phoneReadTimedOut);
+      expect(chatCalls).toBe(1);
+    });
+
+    it('refuses a result for a query it never asked, and a malformed one', async () => {
+      const phone = await pairReader();
+      expect((await send(await phone.toDo('POST', '/app/device-result', { queryId: 'a'.repeat(32), result: { status: 'ok', items: [] } }))).status).toBe(404);
+      expect(
+        (await send(await phone.toDo('POST', '/app/device-result', { queryId: 'a'.repeat(32), result: { status: 'ok', items: [{ number: '0501234567' }] } }))).status,
+      ).toBe(400);
+    });
+
+    it('forgets a waiting turn when the phone is unpaired', async () => {
+      const phone = await pairReader();
+      chat = [{ tool: 'phone__sms', args: {} }];
+      await say(phone, 'מה כתבו לי ב-SMS?');
+      expect(fake.driver.exec('SELECT COUNT(*) AS n FROM agent_turns')[0]?.['n']).toBe(1);
+      await say(phone, '/pair off');
+      expect(fake.driver.exec('SELECT COUNT(*) AS n FROM agent_turns')[0]?.['n']).toBe(0);
+    });
+  });
 });

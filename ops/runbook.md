@@ -46,8 +46,8 @@ SQLite schema, the reminder alarm, and every confirmation gate.
 `/birthday`, `/pause`, `/resume`, `/forget`, `/budget`, `/connect google`, `/pair`,
 `/pair off`, `/ping`. In the app, `/budget` says there is no budget and `/pair`
 says to pair with a code from the script; `/pair off` unpairs this phone.
-`/forget` deletes the agent's encrypted conversation history (PLAN §6.19);
-`/pair off` does too.
+`/forget` deletes the agent's encrypted conversation history (PLAN §6.19) and
+any turn still waiting for the phone to read (§6.21); `/pair off` does too.
 
 ## Deploying to staging
 

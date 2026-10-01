@@ -8,7 +8,7 @@
  * (CLAUDE.md invariant 11).
  */
 import { Repository } from '../core/repo.js';
-import { handleInbound } from '../core/pipeline.js';
+import { handleInbound, resumeFromPhone } from '../core/pipeline.js';
 import type { PipelineOutcome, Services } from '../core/pipeline.js';
 import { snoozeButtons, SNOOZE_TOOL } from '../core/orchestrator.js';
 import { SNOOZE_EXPIRY_MS } from '../confirm/undo.js';
@@ -57,6 +57,7 @@ import {
   MESSAGE_ID,
   parseAck,
   parseActionReport,
+  parseDeviceResult,
   parseClaim,
   parseMessage,
   parsePair,
@@ -76,6 +77,7 @@ import { createGroqAgentProvider } from '../agent/provider.js';
 import { meterParsers, TokenBudget } from '../agent/budget.js';
 import { ConversationHistory } from '../agent/history.js';
 import { AgentLock } from '../agent/lock.js';
+import { SuspendedTurns } from '../agent/turns.js';
 import { defangLinks } from '../security/scrub.js';
 import { DurableObjectSqlDriver } from './sql-repo.js';
 import { MIGRATIONS } from './migrations.js';
@@ -123,6 +125,8 @@ export class AssistantDO implements DurableObject {
   private readonly outbox: AppOutbox;
   private readonly history: ConversationHistory;
   private readonly agentLock: AgentLock;
+  /** Agent turns waiting for the phone to read (§6.21). */
+  private readonly agentTurns: SuspendedTurns;
   /** Memory only: the last minute of Groq spend per model (§6.19). */
   private readonly tokenBudget = new TokenBudget(() => Date.now());
   private readonly log = createLogger({ component: 'assistant_do' });
@@ -172,11 +176,13 @@ export class AssistantDO implements DurableObject {
     // One keyring for the object's life, so the imported AES key is reused
     // across turns instead of re-imported on every one (§4.1).
     let keyring: ReturnType<typeof parseKeyring> | null = null;
-    this.history = new ConversationHistory(this.sql, now, () => {
+    const keyringOnce = () => {
       keyring ??= parseKeyring(this.env as unknown as Record<string, string | undefined>);
       return keyring;
-    });
+    };
+    this.history = new ConversationHistory(this.sql, now, keyringOnce);
     this.agentLock = new AgentLock(this.sql, now);
+    this.agentTurns = new SuspendedTurns(this.sql, now, keyringOnce);
 
     // blockConcurrencyWhile keeps requests queued until the schema is ready.
     void this.ctx.blockConcurrencyWhile(async () => {
@@ -237,6 +243,9 @@ export class AssistantDO implements DurableObject {
     // (plan D4). Cheap, synchronous, and each is a no-op when nothing is due.
     this.pending.purgeOld();
     this.history.purgeExpired();
+    this.agentTurns.purgeOld();
+    // A turn the phone never answered gets its answer now, not on the next read.
+    this.settleExpiredTurns();
 
     // Before any of the holds below: a call that went unanswered is reported
     // now, because it was asked for now. Shabbat does not hold a call (§6.17),
@@ -377,6 +386,7 @@ export class AssistantDO implements DurableObject {
     this.pending.expireStale();
     this.pending.purgeOld();
     this.history.purgeExpired();
+    this.agentTurns.purgeOld();
     this.questions.purgeExpired();
     this.deferred.expireStale();
     this.google.purgeExpired();
@@ -497,7 +507,8 @@ export class AssistantDO implements DurableObject {
 
     // A new or cancelled reminder moves when the next alarm should fire, and so
     // does a call dispatch, which has to be answered for if the phone is silent.
-    if (outcome.rescheduleAlarm || (outcome.action === 'none' && outcome.reason === 'reply_deferred')) {
+    const moved = outcome.action !== 'device_query' && outcome.rescheduleAlarm === true;
+    if (moved || (outcome.action === 'none' && outcome.reason === 'reply_deferred')) {
       await this.armAlarm();
     }
   }
@@ -615,6 +626,7 @@ export class AssistantDO implements DurableObject {
     if (method === 'POST' && path === '/app/push-token') return this.appPushToken(body, device);
     if (app && method === 'POST' && path === '/app/action/claim') return this.appClaim(body, principal);
     if (app && method === 'POST' && path === '/app/action/report') return this.appActionReport(body, principal);
+    if (app && method === 'POST' && path === '/app/device-result') return this.appDeviceResult(body, device, principal);
 
     const dispatch = /^\/device\/dispatch\/([0-9a-f]{32})$/.exec(path);
     if (method === 'GET' && dispatch) {
@@ -740,11 +752,32 @@ export class AssistantDO implements DurableObject {
     }
 
     if (outcome.action === 'none' && outcome.reason === 'duplicate') {
-      return json(this.duplicateAnswer(messageId));
+      return json(await this.duplicateAnswer(messageId));
+    }
+    return this.answerApp(outcome, messageId, deviceId, principal, startedAt);
+  }
+
+  /**
+   * The one answer to an app message: in the response and in the outbox. Shared
+   * by a turn that ran now and one the phone's read result resumed (§6.21).
+   */
+  private async answerApp(
+    result: PipelineOutcome,
+    messageId: string,
+    deviceId: string,
+    principal: string,
+    startedAt: number,
+  ): Promise<Response> {
+    // The turn waits for the phone to read (§6.21). Nothing is stored for the
+    // message yet; a retry of it is told the same query again.
+    if (result.action === 'device_query') {
+      await this.armAlarm();
+      return json({ status: 'device_query', queryId: result.queryId, query: result.query });
     }
 
     // The app's answers leave here rather than through `send`, so they are
     // defanged here, the same way (§6.19).
+    let outcome = result;
     if (outcome.action === 'reply' && !outcome.keepLinks) {
       outcome = {
         ...outcome,
@@ -778,6 +811,7 @@ export class AssistantDO implements DurableObject {
         outcome.buttons ?? [],
         outcome.keepLinks === true,
         outcome.card,
+        outcome.private === true,
       );
     } else if (outcome.reason === 'reply_deferred') {
       // A call: its outcome comes later, as an answer to this same message.
@@ -799,6 +833,7 @@ export class AssistantDO implements DurableObject {
     buttons: readonly OutboundButton[],
     keepLinks = false,
     card?: OutboxCard,
+    isPrivate = false,
   ): OutboxRow {
     const accepted = this.sql.transaction(() =>
       this.outbox.accept({
@@ -809,6 +844,7 @@ export class AssistantDO implements DurableObject {
         principal,
         keepLinks,
         ...(card ? { card } : {}),
+        ...(isPrivate ? { private: true } : {}),
       }),
     );
     const row = this.outbox.get(accepted.seq);
@@ -820,9 +856,19 @@ export class AssistantDO implements DurableObject {
    * one; otherwise whether it is still running, finished without an answer, or
    * lost part-way. Never run a second time.
    */
-  private duplicateAnswer(messageId: string): Record<string, unknown> {
+  private async duplicateAnswer(messageId: string): Promise<Record<string, unknown>> {
+    this.settleExpiredTurns();
     const row = this.outbox.replyTo(messageId);
     if (row) return { status: 'reply', row };
+
+    // Still waiting for the phone to read (§6.21): the same query again. The
+    // phone's result is idempotent, so answering it twice continues it once.
+    const suspended = this.agentTurns.byWamid(`${APP_INBOUND_PREFIX}${messageId}`);
+    if (suspended?.status === 'waiting' && suspended.ciphertext !== null) {
+      const state = await this.agentTurns.open(suspended.queryId, suspended.principal, suspended.ciphertext);
+      if (state) return { status: 'device_query', queryId: suspended.queryId, query: state.query };
+    }
+    if (suspended?.status === 'running') return { status: 'pending' };
 
     const inbound = this.repo.getInbound(`${APP_INBOUND_PREFIX}${messageId}`);
     if (inbound && inbound['decision'] !== null && inbound['decision'] !== undefined) return { status: 'done' };
@@ -903,6 +949,75 @@ export class AssistantDO implements DurableObject {
       externalRef: parsed.actionId,
     });
     return json({ status: 'ok', action: claimed.action.input });
+  }
+
+  /**
+   * The phone's answer to a read (§6.21). `begin` takes the suspended turn once,
+   * atomically; `resumeFromPhone` takes the agent lock in its first synchronous
+   * line, before anything awaits. A second result for the same query, a late
+   * one, or one for a turn a newer message superseded is answered from what is
+   * stored — never run again.
+   */
+  private async appDeviceResult(body: Uint8Array, device: SigningDevice, principal: string): Promise<Response> {
+    const parsed = parseDeviceResult(body);
+    if (!parsed) return appError(400, 'bad_request');
+
+    this.settleExpiredTurns();
+    const begun = this.agentTurns.begin(parsed.queryId, principal);
+    if (begun.kind === 'not_found') return appError(404, 'not_found');
+    const messageId = begun.wamid.slice(APP_INBOUND_PREFIX.length);
+
+    if (begun.kind === 'settled') {
+      const row = this.outbox.replyTo(messageId);
+      if (row) return json({ status: 'reply', row });
+      if (begun.status === 'running') return json({ status: 'pending' });
+      if (begun.status === 'done') return json({ status: 'done' });
+      const text = begun.status === 'expired' ? he.phoneReadTimedOut : he.phoneReadCancelled;
+      const late = this.acceptReply(messageId, principal, text, text, []);
+      await this.armAlarm();
+      return json({ status: 'reply', row: late });
+    }
+
+    const startedAt = Date.now();
+    const sentAtMs = Number(this.repo.getInbound(begun.wamid)?.['sent_at'] ?? startedAt);
+    let outcome: PipelineOutcome;
+    try {
+      outcome = await resumeFromPhone(
+        { queryId: parsed.queryId, wamid: begun.wamid, ciphertext: begun.ciphertext, result: parsed.result, sentAtMs },
+        {
+          repo: this.repo,
+          log: this.log,
+          now: () => Date.now(),
+          principal,
+          channel: 'app',
+          deviceCaps: this.devices.capsOf(device.id),
+          services: this.services(),
+        },
+      );
+    } catch (error) {
+      this.agentTurns.finish(parsed.queryId);
+      this.log.error('app_resume_failed', { errorCode: error instanceof Error ? error.name : 'E_UNKNOWN' });
+      this.repo.markInboundOutcome(begun.wamid, { decision: 'ERROR', errorCode: 'E_TURN_FAILED' });
+      const row = this.acceptReply(messageId, principal, he.unknownOutcome, he.unknownOutcome, []);
+      await this.armAlarm();
+      return json({ status: 'reply', row });
+    }
+    return this.answerApp(outcome, messageId, device.id, principal, startedAt);
+  }
+
+  /**
+   * Suspended turns the phone never answered: each gets a plain "no answer in
+   * time" under its message, so the chat is not left hanging (§6.21).
+   */
+  private settleExpiredTurns(): void {
+    for (const expired of this.agentTurns.expireDue()) {
+      this.repo.markInboundOutcome(expired.wamid, { decision: 'EXPIRED', errorCode: 'E_PHONE_TIMEOUT' });
+      if (!expired.wamid.startsWith(APP_INBOUND_PREFIX)) continue;
+      const messageId = expired.wamid.slice(APP_INBOUND_PREFIX.length);
+      if (!this.outbox.replyTo(messageId)) {
+        this.acceptReply(messageId, expired.principal, he.phoneReadTimedOut, he.phoneReadTimedOut, []);
+      }
+    }
   }
 
   /** What happened on the phone. Recorded, never answered: the card was the one reply. */
@@ -1267,6 +1382,7 @@ export class AssistantDO implements DurableObject {
               budget: this.tokenBudget,
               history: this.history,
               lock: this.agentLock,
+              turns: this.agentTurns,
             },
           }
         : {}),
@@ -1316,7 +1432,13 @@ export class AssistantDO implements DurableObject {
     // the outbox's next push or expiry. With the app off, pushes are not waited
     // for — only the expiry that clears message text (§6.18).
     const outboxAt = this.channel() === 'app' ? this.outbox.nextWakeAt() : this.outbox.nextExpiryAt();
-    const candidates = [this.reminders.nextDueAt(), this.devices.nextExpiryAt(), outboxAt].filter(
+    const candidates = [
+      this.reminders.nextDueAt(),
+      this.devices.nextExpiryAt(),
+      outboxAt,
+      // A turn waiting for the phone is answered when its time runs out (§6.21).
+      this.agentTurns.nextExpiryAt(),
+    ].filter(
       (at): at is number => at !== null,
     );
     const next = candidates.length === 0 ? null : Math.min(...candidates);

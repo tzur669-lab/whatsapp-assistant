@@ -9,7 +9,7 @@ import { isolate, isolateLtr } from './bidi.js';
 import { formatDuration } from './format-time.js';
 import type { Lang } from './format-time.js';
 
-export type PhoneQuestion = 'destination' | 'app' | 'setting' | 'state' | 'recipient' | 'message';
+export type PhoneQuestion = 'destination' | 'app' | 'setting' | 'state' | 'recipient' | 'message' | 'contact';
 
 export type CardInput =
   | { type: 'alarm'; hour: number; minute: number; label?: string | undefined }
@@ -122,5 +122,7 @@ export function phoneQuestion(what: PhoneQuestion, lang: Lang): string {
       return he ? 'למי לשלוח?' : 'Who to?';
     case 'message':
       return he ? 'מה לכתוב בהודעה?' : 'What should the message say?';
+    case 'contact':
+      return he ? 'את מי לחפש באנשי הקשר?' : 'Who should I look for in the contacts?';
   }
 }

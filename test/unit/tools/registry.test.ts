@@ -10,6 +10,7 @@ import { calendarListEvents } from '../../../src/tools/calendar-read.js';
 import { CALENDAR_WRITE_TOOLS } from '../../../src/tools/calendar-write.js';
 import { callsPlace } from '../../../src/tools/calls.js';
 import { PHONE_ACTION_TOOLS } from '../../../src/tools/phone-actions.js';
+import { PHONE_READ_TOOLS } from '../../../src/tools/phone-reads.js';
 import type { ToolDefinition } from '../../../src/tools/types.js';
 import { INTENT_NAMES } from '../../../src/nlu/intent-schema.js';
 
@@ -19,6 +20,7 @@ const IMPLEMENTATIONS: Record<string, ToolDefinition> = {
   ...CALENDAR_WRITE_TOOLS,
   'calls.place': callsPlace,
   ...(PHONE_ACTION_TOOLS as Record<string, ToolDefinition>),
+  ...(PHONE_READ_TOOLS as Record<string, ToolDefinition>),
 };
 
 describe('every registered tool is real', () => {
@@ -65,6 +67,17 @@ describe('every registered tool is real', () => {
     for (const name of TOOL_NAMES) {
       if (REGISTRY[name].tier <= 1) continue;
       expect(IMPLEMENTATIONS[name]?.undo, name).toBeUndefined();
+    }
+  });
+
+  it('keeps every phone read a Tier 0 read the server never runs (§6.21)', async () => {
+    const reads = TOOL_NAMES.filter((name) => REGISTRY[name].phoneRead);
+    expect(reads).toEqual(['phone.contacts', 'phone.notifications', 'phone.sms']);
+    for (const name of reads) {
+      expect(REGISTRY[name].tier, name).toBe(0);
+      expect(REGISTRY[name].confirmation, name).toBeUndefined();
+      expect(IMPLEMENTATIONS[name]?.undo, name).toBeUndefined();
+      await expect(IMPLEMENTATIONS[name]!.execute({}, {} as never), name).rejects.toThrow();
     }
   });
 
