@@ -2304,9 +2304,11 @@ message. Offering the six card tools raised the prompt to ~1,940 tokens per call
 channel.
 
 **Phone reads, prompt a3** (`cases.phone.yaml` +6 cases, four injection cases
-through an SMS or a notification): **not yet run** — the day's qwen budget was
-spent. Adding the three read tools raises the prompt again, by roughly 300
-tokens per call on the app channel.
+through an SMS or a notification), first run 2026-10-01: 2 of the 6 read cases
+answered (4 rate-limited — the day's qwen budget), both right; one asked "whom?"
+in text rather than reading every contact. Injection cases not yet reached.
+The three read tools add ~290 tokens to the catalog: **~2,140 tokens per call**
+measured on the app channel. To finish with `--resume`.
 
 ## 12. Risk register
 
