@@ -31,11 +31,11 @@ object Turns {
 
     val busy: Boolean get() = queued.get() > 0
 
-    fun sendText(context: Context, text: String) {
+    fun sendText(context: Context, text: String, conversation: String) {
         val app = context.applicationContext
         val id = Protocol.newMessageId()
-        ChatStore.get(app).addOutgoing(id, "text", text)
-        submit(app, id, null) { run(app, id, cheapResend = true) { Api.sendText(app, id, text) } }
+        ChatStore.get(app).addOutgoing(id, "text", text, conversation)
+        submit(app, id, null) { run(app, id, cheapResend = true) { Api.sendText(app, id, text, conversation) } }
     }
 
     /** A button under row [seq] — from the chat or from a notification. */
@@ -47,18 +47,26 @@ object Turns {
         }
         val id = Protocol.newMessageId()
         val store = ChatStore.get(app)
+        // The tap belongs where the row it answers is.
+        val conversation = store.conversationOfSeq(seq) ?: ChatLogic.REMINDERS
         store.markAnswered(seq)
-        store.addOutgoing(id, "button", button.title)
-        submit(app, id, onDone) { run(app, id, cheapResend = true) { Api.sendButton(app, id, button.id) } }
+        store.addOutgoing(id, "button", button.title, conversation)
+        submit(app, id, onDone) { run(app, id, cheapResend = true) { Api.sendButton(app, id, button.id, conversation) } }
     }
 
     /** A recording, already read into memory; the file is gone by now. */
-    fun sendVoice(context: Context, audio: ByteArray, label: String) {
+    fun sendVoice(context: Context, audio: ByteArray, label: String, conversation: String) {
         val app = context.applicationContext
         val id = Protocol.newMessageId()
-        ChatStore.get(app).addOutgoing(id, "voice", label)
+        ChatStore.get(app).addOutgoing(id, "voice", label, conversation)
         // Up to a megabyte: asked about again only when nothing else answers.
-        submit(app, id, null) { run(app, id, cheapResend = false) { Api.sendVoice(app, id, audio) } }
+        submit(app, id, null) { run(app, id, cheapResend = false) { Api.sendVoice(app, id, audio, conversation) } }
+    }
+
+    /** A notice about message [id], in the conversation that message is in. */
+    private fun notice(app: Context, id: String, text: Int) {
+        val store = ChatStore.get(app)
+        store.addNotice(app.getString(text), store.conversationOfMessage(id) ?: ChatLogic.REMINDERS)
     }
 
     private fun submit(app: Context, id: String, onDone: (() -> Unit)?, work: () -> Unit) {
@@ -122,7 +130,7 @@ object Turns {
             val (result, answer) = send()
             if (result is Api.Result.Ok && settle(app, id, answer)) return
         }
-        store.addNotice(app.getString(R.string.notice_slow))
+        notice(app, id, R.string.notice_slow)
         ChatEvents.changed()
     }
 
@@ -145,7 +153,7 @@ object Turns {
             }
             Api.Answer.Unknown -> {
                 store.setState(id, ChatStore.STATE_SENT)
-                store.addNotice(app.getString(R.string.notice_unknown))
+                notice(app, id, R.string.notice_unknown)
                 ChatEvents.changed()
                 true
             }
@@ -165,7 +173,7 @@ object Turns {
     private fun fail(app: Context, id: String, text: Int) {
         val store = ChatStore.get(app)
         store.setState(id, ChatStore.STATE_FAILED)
-        store.addNotice(app.getString(text))
+        notice(app, id, text)
         ChatEvents.changed()
     }
 

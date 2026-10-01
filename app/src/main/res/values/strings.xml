@@ -20,6 +20,23 @@
     <string name="chat_meta_sending">%1$s · בשליחה…</string>
     <string name="chat_meta_failed">%1$s · לא נשלחה</string>
     <string name="chat_meta_late">%1$s · הגיעה באיחור</string>
+    <string name="chat_menu">☰</string>
+    <string name="chat_menu_description">שיחות</string>
+    <string name="chat_new">＋</string>
+    <string name="chat_new_description">שיחה חדשה</string>
+    <string name="chat_new_title">שיחה חדשה</string>
+    <string name="chat_new_empty">שיחה חדשה. אפשר לכתוב או להקליט. הקלדת / מציגה את רשימת הפקודות.</string>
+    <string name="chat_reminders">🔔 תזכורות</string>
+    <string name="chat_reminders_empty">כאן יופיעו תזכורות, התקציר היומי וימי הולדת.</string>
+    <string name="chat_reminders_readonly">כאן מופיעות רק הודעות מהעוזר. לכתיבה יש לפתוח שיחה מהתפריט ☰.</string>
+    <string name="chat_conversations">שיחות</string>
+    <string name="chat_no_conversations">עוד אין שיחות.</string>
+    <string name="chat_delete_title">למחוק את השיחה?</string>
+    <string name="chat_delete_text">השיחה תימחק מהטלפון. אי אפשר לשחזר אותה.</string>
+    <string name="chat_delete">מחיקה</string>
+    <string name="chat_keep">ביטול</string>
+    <string name="chat_copied">ההודעה הועתקה</string>
+    <string name="guide_open">📖 מדריך ופקודות</string>
     <string name="chat_notifications_off">ההתראות כבויות, ולכן תזכורות לא יופיעו. יש להקיש כאן כדי להפעיל אותן.</string>
 
     <!-- Lines the app adds to the chat itself -->

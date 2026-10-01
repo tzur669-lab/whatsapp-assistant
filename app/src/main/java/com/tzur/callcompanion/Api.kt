@@ -103,20 +103,27 @@ object Api {
 
     // -- the conversation -----------------------------------------------------
 
-    fun sendText(context: Context, messageId: String, text: String): Pair<Result, Answer?> {
+    // Each carries the conversation it was written in, when it is a real one
+    // (ChatLogic.wireConversation): the server keeps its memory per conversation.
+
+    fun sendText(context: Context, messageId: String, text: String, conversation: String?): Pair<Result, Answer?> {
         val body = JSONObject().put("id", messageId).put("kind", "text").put("text", text)
+        ChatLogic.wireConversation(conversation)?.let { body.put("conversationId", it) }
         return answerOf(signed(context, "POST", "/app/message", JSON_TYPE, utf8(body), TEXT_TIMEOUT_MS))
     }
 
-    fun sendButton(context: Context, messageId: String, buttonId: String): Pair<Result, Answer?> {
+    fun sendButton(context: Context, messageId: String, buttonId: String, conversation: String?): Pair<Result, Answer?> {
         require(Protocol.BUTTON_ID.matches(buttonId))
         val body = JSONObject().put("id", messageId).put("kind", "button").put("buttonId", buttonId)
+        ChatLogic.wireConversation(conversation)?.let { body.put("conversationId", it) }
         return answerOf(signed(context, "POST", "/app/message", JSON_TYPE, utf8(body), TEXT_TIMEOUT_MS))
     }
 
-    fun sendVoice(context: Context, messageId: String, audio: ByteArray): Pair<Result, Answer?> {
+    fun sendVoice(context: Context, messageId: String, audio: ByteArray, conversation: String?): Pair<Result, Answer?> {
         require(Protocol.MESSAGE_ID.matches(messageId))
-        return answerOf(signed(context, "POST", "/app/voice/$messageId", AUDIO_TYPE, audio, VOICE_TIMEOUT_MS))
+        // The body is the recording itself, so the conversation goes in the (signed) path.
+        val path = ChatLogic.wireConversation(conversation)?.let { "/app/voice/$messageId/$it" } ?: "/app/voice/$messageId"
+        return answerOf(signed(context, "POST", path, AUDIO_TYPE, audio, VOICE_TIMEOUT_MS))
     }
 
     /** One page of what the phone has not acked yet. */

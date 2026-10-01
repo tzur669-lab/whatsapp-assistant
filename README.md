@@ -28,6 +28,25 @@ app deletes it on first start.
 4. One message at a time (`Turns`). Sending stays locked until the answer
    arrives.
 
+## Conversations (0.5)
+
+Like an LLM client: ☰ opens the list of conversations, ＋ starts a new one,
+and a long press on a conversation deletes it from the phone. Each message
+carries its conversation's id (`conversationId` in the body, or a second path
+segment for a voice note), and the server keeps the assistant's short memory
+per conversation, under the same limits as before: six exchanges, twelve hours.
+An answer goes to the conversation of the message it answers; what the server
+sends on its own (reminders, the digest, birthdays) goes to the fixed
+**🔔 תזכורות** conversation, which is read-only. A notification opens the
+conversation its row is in.
+
+A long press on any message copies it. Typing `/` in the field offers the
+commands (`ChatLogic.COMMANDS`), and the guide (settings → 📖, or the menu)
+explains the app and lists every command.
+
+Needs the server from 2026-10-01 (migration 0014) or later: an older one
+refuses the new field.
+
 ## How a reminder arrives
 
 The server writes the reminder to its outbox and sends an FCM push with
@@ -154,6 +173,8 @@ recorder all come from the platform.
 
 `gradlew testDebugUnitTest` runs on the JVM.
 
+- **The chat's rules** (`ChatLogicTest`): what `/` offers, conversation
+  titles, where a row goes, and that only a real conversation id is sent.
 - **Matching rules**, for calls (`ContactMatcherTest`), cards (`CardLogicTest`)
   and phone reads (`PhoneReadLogicTest`: the query's shape, one-time codes,
   names never numbers, the caps).

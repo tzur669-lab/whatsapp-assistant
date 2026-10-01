@@ -7,6 +7,7 @@ import android.database.sqlite.SQLiteDatabase
 import android.database.sqlite.SQLiteOpenHelper
 import org.json.JSONArray
 import org.json.JSONObject
+import java.util.UUID
 
 /**
  * The chat history. It lives only on this phone, in the app's private
@@ -17,9 +18,15 @@ import org.json.JSONObject
  * wins and a second fetch of the same row is ignored, so a push, a poll and
  * the response to a message can all deliver it without a duplicate. The order
  * on screen is arrival order; each row keeps the time the server wrote it.
+ *
+ * Messages belong to conversations, like an LLM client's (0.5). An answer
+ * goes to the conversation of the message it answers; what the assistant
+ * sends on its own goes to [ChatLogic.REMINDERS].
  */
 class ChatStore private constructor(context: Context) :
-    SQLiteOpenHelper(context.applicationContext, "chat.db", null, 2) {
+    SQLiteOpenHelper(context.applicationContext, "chat.db", null, 3) {
+
+    class Conversation(val id: String, val title: String, val updatedAt: Long)
 
     class Message(
         val localId: Long,
@@ -37,6 +44,7 @@ class ChatStore private constructor(context: Context) :
         /** A phone action under this message (PLAN §6.20), and how far it got. */
         val card: Row.Card?,
         val cardState: Int,
+        val conversation: String,
     )
 
     override fun onCreate(db: SQLiteDatabase) {
@@ -55,11 +63,27 @@ class ChatStore private constructor(context: Context) :
               created_at INTEGER NOT NULL,
               arrived_at INTEGER NOT NULL,
               card       TEXT,
-              card_state INTEGER NOT NULL DEFAULT 0
+              card_state INTEGER NOT NULL DEFAULT 0,
+              conversation TEXT NOT NULL DEFAULT '${ChatLogic.REMINDERS}'
             )
             """.trimIndent(),
         )
         db.execSQL("CREATE INDEX messages_message_id ON messages (message_id)")
+        createConversations(db)
+    }
+
+    private fun createConversations(db: SQLiteDatabase) {
+        db.execSQL(
+            """
+            CREATE TABLE conversations (
+              id         TEXT PRIMARY KEY,
+              title      TEXT NOT NULL,
+              created_at INTEGER NOT NULL,
+              updated_at INTEGER NOT NULL
+            )
+            """.trimIndent(),
+        )
+        db.execSQL("CREATE INDEX messages_conversation ON messages (conversation, local_id)")
     }
 
     override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
@@ -68,20 +92,105 @@ class ChatStore private constructor(context: Context) :
             db.execSQL("ALTER TABLE messages ADD COLUMN card TEXT")
             db.execSQL("ALTER TABLE messages ADD COLUMN card_state INTEGER NOT NULL DEFAULT 0")
         }
+        // 0.5: conversations. The one thread of before becomes a conversation of
+        // its own; what answered nothing (reminders, digests) moves to theirs.
+        if (oldVersion < 3) {
+            db.execSQL("ALTER TABLE messages ADD COLUMN conversation TEXT NOT NULL DEFAULT '${ChatLogic.REMINDERS}'")
+            createConversations(db)
+            val earlier = UUID.randomUUID().toString()
+            val now = System.currentTimeMillis()
+            db.execSQL(
+                "UPDATE messages SET conversation = ? WHERE outgoing = 1 OR message_id IS NOT NULL OR kind = 'notice'",
+                arrayOf(earlier),
+            )
+            val any = db.rawQuery("SELECT 1 FROM messages WHERE conversation = ? LIMIT 1", arrayOf(earlier)).use { it.moveToFirst() }
+            if (any) {
+                db.insert("conversations", null, ContentValues().apply {
+                    put("id", earlier)
+                    put("title", "שיחה קודמת")
+                    put("created_at", now)
+                    put("updated_at", now)
+                })
+            }
+        }
     }
 
-    /** What the user typed, said or tapped, before it is sent. */
-    fun addOutgoing(messageId: String, kind: String, text: String) {
+    // -- conversations --------------------------------------------------------
+
+    /** Every conversation, the most recently used first. [ChatLogic.REMINDERS] is not one of them. */
+    fun conversations(): List<Conversation> =
+        readableDatabase.rawQuery("SELECT id, title, updated_at FROM conversations ORDER BY updated_at DESC", null).use { c ->
+            val out = ArrayList<Conversation>(c.count)
+            while (c.moveToNext()) out += Conversation(c.getString(0), c.getString(1), c.getLong(2))
+            out
+        }
+
+    fun titleOf(conversation: String): String? =
+        readableDatabase.rawQuery("SELECT title FROM conversations WHERE id = ?", arrayOf(conversation))
+            .use { if (it.moveToFirst()) it.getString(0) else null }
+
+    /** The conversation a sent message was written in, or null if it is no longer here. */
+    fun conversationOfMessage(messageId: String): String? =
+        readableDatabase.rawQuery(
+            "SELECT conversation FROM messages WHERE outgoing = 1 AND message_id = ? LIMIT 1",
+            arrayOf(messageId),
+        ).use { if (it.moveToFirst()) it.getString(0) else null }
+
+    /** The conversation a row from the server was put in. */
+    fun conversationOfSeq(seq: Long): String? =
+        readableDatabase.rawQuery("SELECT conversation FROM messages WHERE seq = ? LIMIT 1", arrayOf(seq.toString()))
+            .use { if (it.moveToFirst()) it.getString(0) else null }
+
+    /** Deletes the conversation and its messages from this phone. The server's memory of it expires on its own. */
+    fun deleteConversation(conversation: String) {
+        val db = writableDatabase
+        db.beginTransaction()
+        try {
+            db.delete("messages", "conversation = ?", arrayOf(conversation))
+            db.delete("conversations", "id = ?", arrayOf(conversation))
+            db.setTransactionSuccessful()
+        } finally {
+            db.endTransaction()
+        }
+    }
+
+    private fun touch(db: SQLiteDatabase, conversation: String, now: Long) {
+        if (conversation == ChatLogic.REMINDERS) return
+        db.update("conversations", ContentValues().apply { put("updated_at", now) }, "id = ?", arrayOf(conversation))
+    }
+
+    /**
+     * What the user typed, said or tapped, before it is sent. The first message
+     * of a conversation creates it, and names it.
+     */
+    fun addOutgoing(messageId: String, kind: String, text: String, conversation: String) {
         val now = System.currentTimeMillis()
-        writableDatabase.insert("messages", null, ContentValues().apply {
-            put("outgoing", 1)
-            put("message_id", messageId)
-            put("kind", kind)
-            put("text", text)
-            put("state", STATE_SENDING)
-            put("created_at", now)
-            put("arrived_at", now)
-        })
+        val db = writableDatabase
+        db.beginTransaction()
+        try {
+            if (conversation != ChatLogic.REMINDERS) {
+                db.insertWithOnConflict("conversations", null, ContentValues().apply {
+                    put("id", conversation)
+                    put("title", ChatLogic.titleFor(kind, text))
+                    put("created_at", now)
+                    put("updated_at", now)
+                }, SQLiteDatabase.CONFLICT_IGNORE)
+            }
+            db.insert("messages", null, ContentValues().apply {
+                put("outgoing", 1)
+                put("message_id", messageId)
+                put("kind", kind)
+                put("text", text)
+                put("state", STATE_SENDING)
+                put("created_at", now)
+                put("arrived_at", now)
+                put("conversation", conversation)
+            })
+            touch(db, conversation, now)
+            db.setTransactionSuccessful()
+        } finally {
+            db.endTransaction()
+        }
         trim()
     }
 
@@ -99,13 +208,15 @@ class ChatStore private constructor(context: Context) :
      * were new — the ones to announce. Every row with a seq is stored once this
      * returns, new or not, so all of them may be acked.
      */
-    fun saveRows(rows: List<Row>): List<Row> {
+    fun saveRows(rows: List<Row>, into: String? = null): List<Row> {
         val fresh = mutableListOf<Row>()
         val db = writableDatabase
         db.beginTransaction()
         try {
             val now = System.currentTimeMillis()
             for (row in rows) {
+                val conversation = into
+                    ?: ChatLogic.conversationForRow(row.inReplyTo?.let { conversationOfMessage(it) })
                 val values = ContentValues().apply {
                     if (row.seq > 0) put("seq", row.seq) else putNull("seq")
                     put("outgoing", 0)
@@ -116,9 +227,13 @@ class ChatStore private constructor(context: Context) :
                     if (row.card != null) put("card", row.card.toJson().toString()) else putNull("card")
                     put("created_at", row.createdAt)
                     put("arrived_at", now)
+                    put("conversation", conversation)
                 }
                 val id = db.insertWithOnConflict("messages", null, values, SQLiteDatabase.CONFLICT_IGNORE)
-                if (id != -1L) fresh += row
+                if (id != -1L) {
+                    fresh += row
+                    touch(db, conversation, now)
+                }
                 // An answer is proof the message arrived, whatever the request said.
                 if (row.inReplyTo != null) {
                     db.update(
@@ -138,11 +253,12 @@ class ChatStore private constructor(context: Context) :
     }
 
     /**
-     * A line from the app itself — "no connection" and the like. Never sent
-     * anywhere, and answers nothing: it must not mark a message as arrived.
+     * A line from the app itself — "no connection" and the like — in the
+     * conversation it is about. Never sent anywhere, and answers nothing: it
+     * must not mark a message as arrived.
      */
-    fun addNotice(text: String) {
-        saveRows(listOf(Row(0, "notice", null, text, emptyList(), System.currentTimeMillis())))
+    fun addNotice(text: String, conversation: String) {
+        saveRows(listOf(Row(0, "notice", null, text, emptyList(), System.currentTimeMillis())), into = conversation)
     }
 
     fun hasReplyTo(messageId: String): Boolean =
@@ -180,17 +296,23 @@ class ChatStore private constructor(context: Context) :
         )
     }
 
-    fun all(): List<Message> =
-        readableDatabase.rawQuery("SELECT * FROM messages ORDER BY local_id", null).use { cursor ->
+    fun all(conversation: String): List<Message> =
+        readableDatabase.rawQuery(
+            "SELECT * FROM messages WHERE conversation = ? ORDER BY local_id",
+            arrayOf(conversation),
+        ).use { cursor ->
             val out = ArrayList<Message>(cursor.count)
             while (cursor.moveToNext()) out += message(cursor)
             out
         }
 
+    /** The oldest messages go first; a conversation left with none goes with them. */
     private fun trim() {
-        writableDatabase.execSQL(
+        val db = writableDatabase
+        db.execSQL(
             "DELETE FROM messages WHERE local_id NOT IN (SELECT local_id FROM messages ORDER BY local_id DESC LIMIT $KEEP)",
         )
+        db.execSQL("DELETE FROM conversations WHERE id NOT IN (SELECT DISTINCT conversation FROM messages)")
     }
 
     private fun message(c: Cursor): Message = Message(
@@ -213,6 +335,7 @@ class ChatStore private constructor(context: Context) :
             }
         },
         cardState = c.getInt(c.getColumnIndexOrThrow("card_state")),
+        conversation = c.getString(c.getColumnIndexOrThrow("conversation")),
     )
 
     private fun buttonsJson(buttons: List<Row.Button>): String? {
@@ -248,7 +371,8 @@ class ChatStore private constructor(context: Context) :
         const val CARD_FAILED = 4
         const val CARD_EXPIRED = 5
 
-        private const val KEEP = 500
+        /** Across every conversation. */
+        private const val KEEP = 3_000
 
         @Volatile private var instance: ChatStore? = null
 

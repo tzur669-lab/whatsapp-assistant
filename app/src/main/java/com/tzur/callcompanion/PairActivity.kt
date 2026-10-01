@@ -67,6 +67,11 @@ class PairActivity : Activity() {
             setOnClickListener { openChat() }
         }
         column.addView(chatButton)
+        column.addView(Button(this).apply {
+            text = getString(R.string.guide_open)
+            isAllCaps = false
+            setOnClickListener { startActivity(Intent(this@PairActivity, GuideActivity::class.java)) }
+        })
 
         column.addView(TextView(this).apply {
             text = getString(R.string.pair_instructions)

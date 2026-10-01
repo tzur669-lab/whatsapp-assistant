@@ -62,6 +62,11 @@
             </intent-filter>
         </activity>
 
+        <!-- The guide and the list of commands. Opened by the app only. -->
+        <activity
+            android:name=".GuideActivity"
+            android:exported="false" />
+
         <!-- Opened by the app only. -->
         <activity
             android:name=".PairActivity"

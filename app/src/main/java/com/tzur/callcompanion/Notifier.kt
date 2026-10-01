@@ -111,7 +111,7 @@ object Notifier {
                     .setContentTitle(publicTitle)
                     .build(),
             )
-            .setContentIntent(openChat(context))
+            .setContentIntent(openChat(context, row.seq))
             .setAutoCancel(true)
         if (row.isReminder) builder.setCategory(Notification.CATEGORY_REMINDER)
 
@@ -134,10 +134,14 @@ object Notifier {
         return builder.build()
     }
 
-    private fun openChat(context: Context): PendingIntent = PendingIntent.getActivity(
+    /** Opens the chat — at the conversation the row is in, when there is one. */
+    private fun openChat(context: Context, seq: Long = 0): PendingIntent = PendingIntent.getActivity(
         context,
-        0,
-        Intent(context, ChatActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP),
+        // One request code per row, so each keeps its own extra.
+        if (seq > 0) idOf(seq) else 0,
+        Intent(context, ChatActivity::class.java)
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+            .apply { if (seq > 0) putExtra(ChatActivity.EXTRA_SEQ, seq) },
         PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
     )
 

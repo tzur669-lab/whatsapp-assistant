@@ -3,6 +3,10 @@ package com.tzur.callcompanion
 import android.Manifest
 import android.annotation.SuppressLint
 import android.app.Activity
+import android.app.AlertDialog
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Color
@@ -11,19 +15,23 @@ import android.graphics.drawable.ColorDrawable
 import android.graphics.drawable.GradientDrawable
 import android.os.Bundle
 import android.provider.Settings
+import android.text.Editable
 import android.text.InputFilter
 import android.text.InputType
+import android.text.TextWatcher
 import android.text.method.LinkMovementMethod
 import android.text.util.Linkify
 import android.view.Gravity
 import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
+import android.widget.ArrayAdapter
 import android.widget.BaseAdapter
 import android.widget.Button
 import android.widget.EditText
 import android.widget.FrameLayout
 import android.widget.LinearLayout
+import android.widget.ListPopupWindow
 import android.widget.ListView
 import android.widget.TextView
 import android.widget.Toast
@@ -36,6 +44,10 @@ import java.util.Locale
  * The assistant, as a chat (PLAN §6.18). Typed text, a held microphone, and
  * the buttons under the assistant's messages all become one message each,
  * sent by [Turns] one at a time. While one is out, sending is locked.
+ *
+ * Several conversations, like an LLM client (0.5): ☰ opens the list, ＋ starts
+ * a new one, and what the assistant sends on its own is in 🔔 תזכורות. A long
+ * press copies a message; `/` in the field offers the commands.
  */
 class ChatActivity : Activity(), ChatEvents.Listener {
     private lateinit var store: ChatStore
@@ -49,6 +61,20 @@ class ChatActivity : Activity(), ChatEvents.Listener {
     private lateinit var micButton: Button
     private val adapter = MessagesAdapter()
     private var messages: List<ChatStore.Message> = emptyList()
+
+    /** The conversation on screen: a uuid, or [ChatLogic.REMINDERS]. */
+    private var current: String = ChatLogic.REMINDERS
+    private lateinit var titleView: TextView
+    private lateinit var inputRow: LinearLayout
+    private lateinit var readonlyNote: TextView
+    private lateinit var drawer: LinearLayout
+    private lateinit var scrim: View
+    private val conversationsAdapter = ConversationsAdapter()
+    private var conversations: List<ChatStore.Conversation> = emptyList()
+    private lateinit var slashPopup: ListPopupWindow
+    private var slashItems: List<ChatLogic.Command> = emptyList()
+    /** The text a chosen command put in the field: not offered again for itself. */
+    private var slashChosen: String? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -65,8 +91,38 @@ class ChatActivity : Activity(), ChatEvents.Listener {
         Notifier.ensureChannels(this)
         CallNotifier.ensureChannel(this)
 
+        current = prefs().getString(PREF_CONVERSATION, null)
+            ?: store.conversations().firstOrNull()?.id
+            ?: Protocol.newMessageId()
+        openFromNotification(intent)
+
         window.decorView.layoutDirection = View.LAYOUT_DIRECTION_RTL
         setContentView(buildLayout())
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        if (::store.isInitialized) {
+            openFromNotification(intent)
+            refresh()
+        }
+    }
+
+    /** A tapped notification opens the conversation its row is in. */
+    private fun openFromNotification(intent: Intent?) {
+        val seq = intent?.getLongExtra(EXTRA_SEQ, 0L) ?: 0L
+        if (seq <= 0) return
+        store.conversationOfSeq(seq)?.let { switchTo(it, refreshNow = false) }
+    }
+
+    private fun prefs() = getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+
+    @Deprecated("Deprecated in Java")
+    override fun onBackPressed() {
+        if (::drawer.isInitialized && drawer.visibility == View.VISIBLE) return closeDrawer()
+        @Suppress("DEPRECATION")
+        super.onBackPressed()
     }
 
     override fun onResume() {
@@ -106,18 +162,24 @@ class ChatActivity : Activity(), ChatEvents.Listener {
             setBackgroundColor(BACKGROUND)
         }
 
+        // In RTL the first child sits on the right: the menu, the title, then new and settings.
         val header = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            setPadding(dp(16), dp(8), dp(8), dp(8))
+            setPadding(dp(4), dp(8), dp(8), dp(8))
             setBackgroundColor(HEADER)
         }
-        header.addView(TextView(this).apply {
-            text = getString(R.string.chat_title)
-            textSize = 20f
+        header.addView(headerButton(R.string.chat_menu, R.string.chat_menu_description) { openDrawer() })
+        titleView = TextView(this).apply {
+            textSize = 18f
             setTextColor(Color.WHITE)
             setTypeface(typeface, Typeface.BOLD)
-        }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+            maxLines = 1
+            ellipsize = android.text.TextUtils.TruncateAt.END
+            setPadding(dp(8), 0, dp(8), 0)
+        }
+        header.addView(titleView, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        header.addView(headerButton(R.string.chat_new, R.string.chat_new_description) { startNew() })
         header.addView(Button(this).apply {
             text = getString(R.string.chat_settings)
             isAllCaps = false
@@ -163,8 +225,18 @@ class ChatActivity : Activity(), ChatEvents.Listener {
         }
         root.addView(status)
 
+        readonlyNote = TextView(this).apply {
+            text = getString(R.string.chat_reminders_readonly)
+            textSize = 13f
+            setTextColor(META)
+            setPadding(dp(16), dp(10), dp(16), dp(12))
+            visibility = View.GONE
+            setOnClickListener { openDrawer() }
+        }
+        root.addView(readonlyNote)
+
         // In RTL the first child sits on the right: the field, then send, then the microphone.
-        val inputRow = LinearLayout(this).apply {
+        inputRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.BOTTOM
             setPadding(dp(8), dp(4), dp(8), dp(8))
@@ -175,6 +247,11 @@ class ChatActivity : Activity(), ChatEvents.Listener {
             maxLines = 5
             textDirection = View.TEXT_DIRECTION_FIRST_STRONG_RTL
             filters = arrayOf(InputFilter.LengthFilter(Protocol.MAX_TEXT_CHARS))
+            addTextChangedListener(object : TextWatcher {
+                override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) = Unit
+                override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) = Unit
+                override fun afterTextChanged(s: Editable?) = updateSlash(s?.toString().orEmpty())
+            })
         }
         inputRow.addView(input, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
         sendButton = Button(this).apply {
@@ -191,16 +268,201 @@ class ChatActivity : Activity(), ChatEvents.Listener {
         inputRow.addView(micButton)
         root.addView(inputRow)
 
-        Ui.fitSystemBars(root)
-        return root
+        slashPopup = ListPopupWindow(this).apply {
+            anchorView = input
+            isModal = false
+            setOnItemClickListener { _, _, position, _ ->
+                val command = slashItems.getOrNull(position) ?: return@setOnItemClickListener
+                slashChosen = command.insert
+                input.setText(command.insert)
+                input.setSelection(input.text.length)
+                dismiss()
+            }
+        }
+
+        // The chat, and over it the menu of conversations with a dimmed backdrop.
+        val shell = FrameLayout(this)
+        shell.addView(root)
+        scrim = View(this).apply {
+            setBackgroundColor(Color.argb(0x66, 0, 0, 0))
+            visibility = View.GONE
+            setOnClickListener { closeDrawer() }
+        }
+        shell.addView(scrim)
+        drawer = buildDrawer()
+        val width = minOf(dp(320), (resources.displayMetrics.widthPixels * 0.85).toInt())
+        shell.addView(drawer, FrameLayout.LayoutParams(width, ViewGroup.LayoutParams.MATCH_PARENT, Gravity.START))
+
+        Ui.fitSystemBars(shell)
+        return shell
+    }
+
+    private fun headerButton(label: Int, description: Int, onClick: () -> Unit) = Button(this).apply {
+        text = getString(label)
+        contentDescription = getString(description)
+        textSize = 20f
+        setTextColor(Color.WHITE)
+        background = null
+        minWidth = dp(48)
+        setOnClickListener { onClick() }
+    }
+
+    // -- conversations ----------------------------------------------------------
+
+    private fun buildDrawer(): LinearLayout {
+        val panel = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setBackgroundColor(Color.WHITE)
+            elevation = dp(8).toFloat()
+            isClickable = true
+            visibility = View.GONE
+            setPadding(dp(8), dp(12), dp(8), dp(8))
+        }
+        panel.addView(Button(this).apply {
+            text = "${getString(R.string.chat_new)}  ${getString(R.string.chat_new_title)}"
+            isAllCaps = false
+            setOnClickListener { startNew() }
+        })
+        panel.addView(drawerItem(getString(R.string.chat_reminders), bold = true) { switchTo(ChatLogic.REMINDERS) })
+        panel.addView(TextView(this).apply {
+            text = getString(R.string.chat_conversations)
+            textSize = 13f
+            setTextColor(META)
+            setPadding(dp(12), dp(16), dp(12), dp(4))
+        })
+        val list = ListView(this).apply {
+            adapter = conversationsAdapter
+            setOnItemClickListener { _, _, position, _ ->
+                conversations.getOrNull(position)?.let { switchTo(it.id) }
+            }
+            setOnItemLongClickListener { _, _, position, _ ->
+                conversations.getOrNull(position)?.let { confirmDelete(it) }
+                true
+            }
+        }
+        panel.addView(list, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
+        panel.addView(Button(this).apply {
+            text = getString(R.string.guide_open)
+            isAllCaps = false
+            setOnClickListener {
+                closeDrawer()
+                startActivity(Intent(this@ChatActivity, GuideActivity::class.java))
+            }
+        })
+        return panel
+    }
+
+    private fun drawerItem(label: String, bold: Boolean, onClick: () -> Unit) = TextView(this).apply {
+        text = label
+        textSize = 16f
+        setTextColor(TEXT)
+        if (bold) setTypeface(typeface, Typeface.BOLD)
+        setPadding(dp(12), dp(12), dp(12), dp(12))
+        setOnClickListener { onClick() }
+    }
+
+    private fun openDrawer() {
+        conversations = store.conversations()
+        conversationsAdapter.notifyDataSetChanged()
+        scrim.visibility = View.VISIBLE
+        drawer.visibility = View.VISIBLE
+        if (::slashPopup.isInitialized) slashPopup.dismiss()
+    }
+
+    private fun closeDrawer() {
+        drawer.visibility = View.GONE
+        scrim.visibility = View.GONE
+    }
+
+    private fun switchTo(conversation: String, refreshNow: Boolean = true) {
+        current = conversation
+        prefs().edit().putString(PREF_CONVERSATION, conversation).apply()
+        if (::drawer.isInitialized) closeDrawer()
+        if (refreshNow) refresh()
+    }
+
+    /** A new conversation exists once its first message is sent; until then it is only an id. */
+    private fun startNew() = switchTo(Protocol.newMessageId())
+
+    private fun confirmDelete(conversation: ChatStore.Conversation) {
+        AlertDialog.Builder(this)
+            .setTitle(R.string.chat_delete_title)
+            .setMessage(conversation.title + "\n\n" + getString(R.string.chat_delete_text))
+            .setPositiveButton(R.string.chat_delete) { _, _ ->
+                store.deleteConversation(conversation.id)
+                conversations = store.conversations()
+                conversationsAdapter.notifyDataSetChanged()
+                if (conversation.id == current) startNew()
+            }
+            .setNegativeButton(R.string.chat_keep, null)
+            .show()
+    }
+
+    private inner class ConversationsAdapter : BaseAdapter() {
+        override fun getCount(): Int = conversations.size
+        override fun getItem(position: Int): Any = conversations[position]
+        override fun getItemId(position: Int): Long = position.toLong()
+
+        override fun getView(position: Int, convertView: View?, parent: ViewGroup): View {
+            val conversation = conversations[position]
+            return LinearLayout(this@ChatActivity).apply {
+                orientation = LinearLayout.VERTICAL
+                setPadding(dp(12), dp(10), dp(12), dp(10))
+                if (conversation.id == current) setBackgroundColor(SELECTED)
+                addView(TextView(this@ChatActivity).apply {
+                    text = conversation.title
+                    textSize = 15f
+                    setTextColor(TEXT)
+                    maxLines = 1
+                    ellipsize = android.text.TextUtils.TruncateAt.END
+                    textDirection = View.TEXT_DIRECTION_ANY_RTL
+                })
+                addView(TextView(this@ChatActivity).apply {
+                    text = Ui.isolate(formatTime(conversation.updatedAt))
+                    textSize = 11f
+                    setTextColor(META)
+                })
+            }
+        }
+    }
+
+    // -- commands -----------------------------------------------------------------
+
+    /** `/` at the start of the field offers the commands that match what is typed. */
+    private fun updateSlash(text: String) {
+        if (!::slashPopup.isInitialized) return
+        if (text == slashChosen) {
+            slashPopup.dismiss()
+            return
+        }
+        slashChosen = null
+        slashItems = ChatLogic.commandsFor(text)
+        if (slashItems.isEmpty() || !input.hasFocus()) {
+            slashPopup.dismiss()
+            return
+        }
+        slashPopup.setAdapter(
+            ArrayAdapter(this, android.R.layout.simple_list_item_1, slashItems.map { "${Ui.isolate(it.usage)}   ${it.description}" }),
+        )
+        slashPopup.height = if (slashItems.size > 5) dp(300) else ViewGroup.LayoutParams.WRAP_CONTENT
+        slashPopup.show()
+    }
+
+    // -- copying ------------------------------------------------------------------
+
+    /** A long press copies a message as plain text: links whole, no direction marks. */
+    private fun copy(text: String) {
+        val plain = Ui.cleanLinks(text).replace(DIRECTION_MARKS, "")
+        getSystemService(ClipboardManager::class.java).setPrimaryClip(ClipData.newPlainText("message", plain))
+        Toast.makeText(this, R.string.chat_copied, Toast.LENGTH_SHORT).show()
     }
 
     // -- sending ----------------------------------------------------------------
 
     private fun sendTyped() {
         val text = input.text.toString().trim()
-        if (text.isEmpty() || Turns.busy) return
-        Turns.sendText(this, text)
+        if (text.isEmpty() || Turns.busy || current == ChatLogic.REMINDERS) return
+        Turns.sendText(this, text, current)
         input.text.clear()
         refresh()
     }
@@ -241,7 +503,7 @@ class ChatActivity : Activity(), ChatEvents.Listener {
         } else {
             val seconds = recording.durationMs / 1000
             val length = Ui.isolate("%d:%02d".format(Locale.ROOT, seconds / 60, seconds % 60))
-            Turns.sendVoice(this, recording.audio, getString(R.string.chat_voice_label, length))
+            Turns.sendVoice(this, recording.audio, getString(R.string.chat_voice_label, length), current)
         }
         refresh()
     }
@@ -257,9 +519,31 @@ class ChatActivity : Activity(), ChatEvents.Listener {
 
     private fun refresh() {
         if (!::store.isInitialized) return
-        messages = store.all()
+        messages = store.all(current)
         adapter.notifyDataSetChanged()
         empty.visibility = if (messages.isEmpty()) View.VISIBLE else View.GONE
+
+        val reminders = current == ChatLogic.REMINDERS
+        val title = if (reminders) null else store.titleOf(current)
+        titleView.text = when {
+            reminders -> getString(R.string.chat_reminders)
+            title != null -> title
+            else -> getString(R.string.chat_new_title)
+        }
+        empty.text = getString(
+            when {
+                reminders -> R.string.chat_reminders_empty
+                title == null -> R.string.chat_new_empty
+                else -> R.string.chat_empty
+            },
+        )
+        // Nothing is written to the reminders: it holds what the assistant sends on its own.
+        inputRow.visibility = if (reminders) View.GONE else View.VISIBLE
+        readonlyNote.visibility = if (reminders) View.VISIBLE else View.GONE
+        if (drawer.visibility == View.VISIBLE) {
+            conversations = store.conversations()
+            conversationsAdapter.notifyDataSetChanged()
+        }
 
         val busy = Turns.busy
         sendButton.isEnabled = !busy
@@ -331,7 +615,16 @@ class ChatActivity : Activity(), ChatEvents.Listener {
             setTextColor(TEXT)
             maxWidth = (resources.displayMetrics.widthPixels * 0.8).toInt()
             textDirection = View.TEXT_DIRECTION_ANY_RTL
+            // A long press copies — on the text too, which otherwise takes the touch for its links.
+            setOnLongClickListener {
+                copy(message.text)
+                true
+            }
         })
+        box.setOnLongClickListener {
+            copy(message.text)
+            true
+        }
         box.addView(TextView(this).apply {
             text = meta(message)
             textSize = 11f
@@ -414,19 +707,27 @@ class ChatActivity : Activity(), ChatEvents.Listener {
         return SimpleDateFormat(pattern, Locale.ROOT).format(Date(at))
     }
 
-    private companion object {
-        const val REQUEST_MIC = 10
-        /** Arrived more than ten minutes after it was written: say so, next to the original time. */
-        const val LATE_MS = 10 * 60 * 1000L
+    companion object {
+        /** On a notification's intent: the row it shows, to open its conversation. */
+        const val EXTRA_SEQ = "seq"
 
-        val BACKGROUND = Color.rgb(0xEC, 0xE5, 0xDD)
-        val HEADER = Color.rgb(0x07, 0x5E, 0x54)
-        val BANNER = Color.rgb(0xFF, 0xF3, 0xCD)
-        val OUTGOING = Color.rgb(0xDC, 0xF8, 0xC6)
-        val INCOMING = Color.WHITE
-        val REMINDER = Color.rgb(0xFF, 0xF8, 0xE1)
-        val NOTICE = Color.rgb(0xE1, 0xF0, 0xFA)
-        val TEXT = Color.rgb(0x11, 0x1B, 0x21)
-        val META = Color.rgb(0x66, 0x77, 0x81)
+        private const val PREFS = "chat"
+        private const val PREF_CONVERSATION = "conversation"
+        private val DIRECTION_MARKS = Regex("[\\u200E\\u200F\\u2066-\\u2069]")
+        private val SELECTED = Color.rgb(0xE8, 0xF5, 0xE9)
+
+        private const val REQUEST_MIC = 10
+        /** Arrived more than ten minutes after it was written: say so, next to the original time. */
+        private const val LATE_MS = 10 * 60 * 1000L
+
+        private val BACKGROUND = Color.rgb(0xEC, 0xE5, 0xDD)
+        private val HEADER = Color.rgb(0x07, 0x5E, 0x54)
+        private val BANNER = Color.rgb(0xFF, 0xF3, 0xCD)
+        private val OUTGOING = Color.rgb(0xDC, 0xF8, 0xC6)
+        private val INCOMING = Color.WHITE
+        private val REMINDER = Color.rgb(0xFF, 0xF8, 0xE1)
+        private val NOTICE = Color.rgb(0xE1, 0xF0, 0xFA)
+        private val TEXT = Color.rgb(0x11, 0x1B, 0x21)
+        private val META = Color.rgb(0x66, 0x77, 0x81)
     }
 }
