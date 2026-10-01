@@ -129,8 +129,8 @@ describe('Gmail', () => {
     it('takes Gmail operators out of what was said', () => {
       expect(queryWords('from:(all) -label:x OR "y"')).toBe('from all label x y');
     });
-    it('defaults to three days of the inbox that matters', () => {
-      expect(buildQuery({})).toBe('newer_than:3d in:inbox -category:promotions -category:social');
+    it('defaults to a month of the inbox that matters', () => {
+      expect(buildQuery({})).toBe('newer_than:30d in:inbox -category:promotions -category:social');
       expect(buildQuery({ from: 'דני', unread: true, days: 7 })).toBe('newer_than:7d is:unread from:(דני)');
     });
   });
@@ -162,6 +162,31 @@ describe('Gmail', () => {
       expect(out.tainting).toBe(true);
     });
 
+    it('takes a month and six mails by default, and the count and days asked for', () => {
+      const plain = mailSearch.resolve({}, ctx);
+      if (plain.kind !== 'ready') throw new Error('expected ready');
+      expect(plain.input).toMatchObject({ max: 6 });
+      expect((plain.input as { query: string }).query.startsWith('newer_than:30d ')).toBe(true);
+
+      const last = mailSearch.resolve({ count: 1, days: 120 }, ctx);
+      if (last.kind !== 'ready') throw new Error('expected ready');
+      expect(last.input).toMatchObject({ max: 1 });
+      expect((last.input as { query: string }).query.startsWith('newer_than:120d ')).toBe(true);
+    });
+
+    it('takes a number past its range as the range end, keeping the other slots', () => {
+      const far = mailSearch.resolve({ from: 'דני', days: 1000, count: 50 }, ctx);
+      if (far.kind !== 'ready') throw new Error('expected ready');
+      expect(far.input).toEqual({ query: 'newer_than:365d from:(דני)', max: 10, full: false });
+    });
+
+    it('gives only the newest mail for "my last mail"', async () => {
+      const resolved = mailSearch.resolve({ count: 1 }, ctx);
+      if (resolved.kind !== 'ready') throw new Error('expected ready');
+      const text = stripIsolates((await mailSearch.execute(resolved.input, ctx)).text);
+      expect(text.match(/^• /gm)).toHaveLength(1);
+    });
+
     it('reads the newest match in full when asked', async () => {
       const resolved = mailSearch.resolve({ from: 'דני', full: true }, ctx);
       if (resolved.kind !== 'ready') throw new Error('expected ready');
@@ -172,7 +197,7 @@ describe('Gmail', () => {
     it('says to connect Gmail when it is not', async () => {
       const without = { ...ctx };
       delete without.gmail;
-      expect(stripIsolates((await mailSearch.execute({ query: 'x', full: false }, without)).text)).toBe(
+      expect(stripIsolates((await mailSearch.execute({ query: 'x', max: 6, full: false }, without)).text)).toBe(
         'Gmail לא מחובר. יש לשלוח /connect gmail.',
       );
     });

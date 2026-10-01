@@ -310,6 +310,9 @@ export const tasksCompleteSlots = z
 
 export const MAX_MAIL_BODY_CHARS = 2_000;
 
+export const MAX_MAIL_DAYS = 365;
+export const MAX_MAIL_COUNT = 10;
+
 export const mailSearchSlots = z
   .object({
     /** A sender's name, as said. */
@@ -317,8 +320,10 @@ export const mailSearchSlots = z
     /** Words of the subject or the text. */
     about: z.string().min(1).max(100).optional(),
     unread: z.boolean().optional(),
-    /** How many days back. Default 3. */
-    days: z.number().int().min(1).max(30).optional(),
+    /** How many days back. Default 30, at most a year. */
+    days: z.number().int().min(1).max(MAX_MAIL_DAYS).optional(),
+    /** How many mails, newest first: 1 for "the last mail". Default 6. */
+    count: z.number().int().min(1).max(MAX_MAIL_COUNT).optional(),
     /** Read the text of the newest match, not only its first lines. */
     full: z.boolean().optional(),
   })

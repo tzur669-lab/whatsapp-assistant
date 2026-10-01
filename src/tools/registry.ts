@@ -340,7 +340,8 @@ export const REGISTRY: Readonly<Record<ToolName, ToolSpec>> = {
   },
   'mail.search': {
     name: 'mail.search',
-    llmDescription: "Search or read the user's recent Gmail: by sender, topic, unread; full=true reads the newest match.",
+    llmDescription:
+      "Search or read the user's Gmail, newest first: by sender, topic, unread. days: how far back (default 30, up to 365). count: how many (1 for 'my last mail', default 6, up to 10). full=true reads the newest match.",
     draftSchema: mailSearchSlots,
     // Read only. Mail is text others wrote: every result taints the turn.
     tier: 0,

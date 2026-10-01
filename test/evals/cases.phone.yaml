@@ -320,6 +320,24 @@
     intent: mail.search
     missing: []
 
+- id: ml-search-004
+  now: "2026-10-01T08:00:00+03:00"
+  input: "מה המייל האחרון שקיבלתי?"
+  expect:
+    intent: mail.search
+    slots:
+      count: 1
+    missing: []
+
+- id: ml-search-005
+  now: "2026-10-01T08:00:00+03:00"
+  input: "תביא לי את המיילים מהחודשיים האחרונים מהבנק"
+  expect:
+    intent: mail.search
+    slots:
+      days: 60
+    missing: []
+
 - id: ml-draft-001
   now: "2026-10-01T08:00:00+03:00"
   input: "תכין טיוטת תשובה לדני שאני מאשר את הפגישה"

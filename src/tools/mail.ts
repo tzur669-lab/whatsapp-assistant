@@ -8,16 +8,17 @@
  * here sends: the grant has no send scope.
  */
 import { z } from 'zod';
-import { MAX_MAIL_BODY_CHARS, mailDraftSlots, mailSearchSlots } from '../nlu/slot-schemas.js';
+import { MAX_MAIL_BODY_CHARS, MAX_MAIL_COUNT, MAX_MAIL_DAYS, mailDraftSlots, mailSearchSlots } from '../nlu/slot-schemas.js';
 import { mailText } from '../render/mail.js';
 import { eventText } from '../render/events.js';
 import type { GoogleFailure } from '../google/api.js';
 import { parseInput } from './types.js';
 import type { ExecuteResult, ResolveOutcome, ToolContext, ToolDefinition } from './types.js';
 
-const MAX_RESULTS = 6;
+const DEFAULT_RESULTS = 6;
 const MAX_CHOICES = 5;
-const DEFAULT_DAYS = 3;
+// A month by default: "my last mail" is often older than a few days.
+const DEFAULT_DAYS = 30;
 const REPLY_SEARCH_DAYS = 30;
 
 /** Words only: Gmail's operators and grouping characters are taken out. */
@@ -57,17 +58,34 @@ const failure = (error: GoogleFailure, ctx: ToolContext): ExecuteResult => {
 
 // -- mail.search ----------------------------------------------------------------
 
-const searchInputSchema = z.object({ query: z.string().min(1).max(300), full: z.boolean() }).strict();
+const searchInputSchema = z
+  .object({ query: z.string().min(1).max(300), max: z.number().int().min(1).max(MAX_MAIL_COUNT), full: z.boolean() })
+  .strict();
 type SearchInput = z.infer<typeof searchInputSchema>;
+
+/**
+ * A number past its range is taken as the range's end, not as a reason to
+ * drop every slot: "the last three months" asked as 90 days is still a year at
+ * most, not the default.
+ */
+function clampSlot(raw: unknown, key: 'days' | 'count', max: number): unknown {
+  if (typeof raw !== 'object' || raw === null) return raw;
+  const value = (raw as Record<string, unknown>)[key];
+  if (typeof value !== 'number' || !Number.isFinite(value)) return raw;
+  return { ...raw, [key]: Math.min(max, Math.max(1, Math.round(value))) };
+}
 
 export const mailSearch: ToolDefinition = {
   name: 'mail.search',
   inputSchema: searchInputSchema,
 
   resolve(rawSlots): ResolveOutcome {
-    const slots = mailSearchSlots.safeParse(rawSlots);
+    const slots = mailSearchSlots.safeParse(clampSlot(clampSlot(rawSlots, 'days', MAX_MAIL_DAYS), 'count', MAX_MAIL_COUNT));
     const data = slots.success ? slots.data : {};
-    return { kind: 'ready', input: { query: buildQuery(data), full: data.full === true } satisfies SearchInput };
+    return {
+      kind: 'ready',
+      input: { query: buildQuery(data), max: data.count ?? DEFAULT_RESULTS, full: data.full === true } satisfies SearchInput,
+    };
   },
 
   preview: () => 'חיפוש במייל',
@@ -76,7 +94,7 @@ export const mailSearch: ToolDefinition = {
     const input = parseInput<SearchInput>(searchInputSchema, rawInput, 'mail.search');
     if (!ctx.gmail) return { text: eventText.grantNotConnected('gmail', ctx.lang) };
 
-    const found = await ctx.gmail.search(input.query, MAX_RESULTS);
+    const found = await ctx.gmail.search(input.query, input.max);
     if (!found.ok) return failure(found.error, ctx);
 
     let body: string | null = null;
