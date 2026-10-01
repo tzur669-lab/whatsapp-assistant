@@ -13,6 +13,7 @@ import { PHONE_ACTION_TOOLS } from '../../../src/tools/phone-actions.js';
 import { PHONE_READ_TOOLS } from '../../../src/tools/phone-reads.js';
 import { infoLookup } from '../../../src/tools/lookup.js';
 import { TASK_TOOLS } from '../../../src/tools/tasks.js';
+import { MAIL_TOOLS } from '../../../src/tools/mail.js';
 import type { ToolDefinition } from '../../../src/tools/types.js';
 import { INTENT_NAMES } from '../../../src/nlu/intent-schema.js';
 
@@ -25,6 +26,7 @@ const IMPLEMENTATIONS: Record<string, ToolDefinition> = {
   ...(PHONE_READ_TOOLS as Record<string, ToolDefinition>),
   'info.lookup': infoLookup,
   ...TASK_TOOLS,
+  ...MAIL_TOOLS,
 };
 
 describe('every registered tool is real', () => {

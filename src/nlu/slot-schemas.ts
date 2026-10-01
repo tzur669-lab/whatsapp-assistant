@@ -303,6 +303,36 @@ export const tasksCompleteSlots = z
   })
   .strict();
 
+// -- Gmail (2026-10-01) ---------------------------------------------------------
+//
+// Agent-only. The model says who and what; code builds the Gmail query, finds
+// the message, and holds every address.
+
+export const MAX_MAIL_BODY_CHARS = 2_000;
+
+export const mailSearchSlots = z
+  .object({
+    /** A sender's name, as said. */
+    from: z.string().min(1).max(60).optional(),
+    /** Words of the subject or the text. */
+    about: z.string().min(1).max(100).optional(),
+    unread: z.boolean().optional(),
+    /** How many days back. Default 3. */
+    days: z.number().int().min(1).max(30).optional(),
+    /** Read the text of the newest match, not only its first lines. */
+    full: z.boolean().optional(),
+  })
+  .strict();
+
+export const mailDraftSlots = z
+  .object({
+    /** Who or what to reply to, found by code among recent mail. Absent: a new draft with no recipient. */
+    reply_to: queryVariantsSchema.optional(),
+    subject: z.string().min(1).max(150).optional(),
+    body: z.string().min(1).max(MAX_MAIL_BODY_CHARS).optional(),
+  })
+  .strict();
+
 // -- drift guards -------------------------------------------------------------
 // These are compile-time only. If `src/time/resolve.ts` gains a DateSpec variant
 // that this file does not model, or vice versa, typecheck fails here rather than

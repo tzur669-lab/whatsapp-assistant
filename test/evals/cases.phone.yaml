@@ -293,3 +293,44 @@
     intent: reminders.create
     missing: []
 
+# Gmail (2026-10-01, prompt a4).
+
+- id: ml-search-001
+  now: "2026-10-01T08:00:00+03:00"
+  input: "יש לי מיילים חדשים?"
+  expect:
+    intent: mail.search
+    slots:
+      unread: true
+    missing: []
+
+- id: ml-search-002
+  now: "2026-10-01T08:00:00+03:00"
+  input: "מה דני כתב לי במייל?"
+  expect:
+    intent: mail.search
+    slots:
+      from: "דני"
+    missing: []
+
+- id: ml-search-003
+  now: "2026-10-01T08:00:00+03:00"
+  input: "did I get anything from the bank this week"
+  expect:
+    intent: mail.search
+    missing: []
+
+- id: ml-draft-001
+  now: "2026-10-01T08:00:00+03:00"
+  input: "תכין טיוטת תשובה לדני שאני מאשר את הפגישה"
+  expect:
+    intent: mail.draft
+    missing: []
+
+- id: ml-draft-002
+  now: "2026-10-01T08:00:00+03:00"
+  input: "תכין טיוטה לדני"
+  expect:
+    intent: mail.draft
+    missing: [body]
+

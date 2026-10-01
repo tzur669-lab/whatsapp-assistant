@@ -26,6 +26,8 @@ import {
   phoneSmsSlots,
   infoLookupSlots,
   tasksAddSlots,
+  mailDraftSlots,
+  mailSearchSlots,
   tasksCompleteSlots,
   tasksListSlots,
   remindersCancelSlots,
@@ -87,6 +89,8 @@ const ignoredSlots = remindersCreateSlots
   .merge(tasksListSlots)
   .merge(tasksAddSlots)
   .merge(tasksCompleteSlots)
+  .merge(mailSearchSlots)
+  .merge(mailDraftSlots)
   .strict();
 
 const common = {
@@ -126,6 +130,9 @@ export const intentDraftSchema = z.discriminatedUnion('intent', [
   z.object({ intent: z.literal('tasks.list'), slots: tasksListSlots, ...common }).strict(),
   z.object({ intent: z.literal('tasks.add'), slots: tasksAddSlots, ...common }).strict(),
   z.object({ intent: z.literal('tasks.complete'), slots: tasksCompleteSlots, ...common }).strict(),
+  // Gmail (2026-10-01). Agent-only.
+  z.object({ intent: z.literal('mail.search'), slots: mailSearchSlots, ...common }).strict(),
+  z.object({ intent: z.literal('mail.draft'), slots: mailDraftSlots, ...common }).strict(),
   // Anything outside the tool list, including prompt-injection attempts.
   z.object({ intent: z.literal('unsupported'), slots: ignoredSlots, ...common }).strict(),
 ]);
@@ -171,6 +178,8 @@ const TOOL_SLOTS: Readonly<Record<string, ReadonlySet<string>>> = {
   'tasks.list': new Set(Object.keys(tasksListSlots.shape)),
   'tasks.add': new Set(Object.keys(tasksAddSlots.shape)),
   'tasks.complete': new Set(Object.keys(tasksCompleteSlots.shape)),
+  'mail.search': new Set(Object.keys(mailSearchSlots.shape)),
+  'mail.draft': new Set(Object.keys(mailDraftSlots.shape)),
 };
 
 /** Every slot any tool declares — the flat union the wire schema offers the model. */

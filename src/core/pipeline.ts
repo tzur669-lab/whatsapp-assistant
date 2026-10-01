@@ -16,6 +16,7 @@
  * Plain TypeScript throughout — no platform imports (invariant 11). The Durable
  * Object supplies the services and the clock.
  */
+import type { GmailClient } from '../google/gmail.js';
 import type { TasksClient } from '../google/tasks.js';
 import type { GrantName } from '../google/grants.js';
 import { DEFAULT_PLACE, findPlace, HOME_CITY_KEY } from '../lookup/place.js';
@@ -94,6 +95,8 @@ export type Services = {
   grants?: Partial<Record<GrantName, GoogleStore>>;
   /** Google Tasks, once its grant is connected. */
   tasks?: TasksClient;
+  /** Gmail, once its grant is connected. */
+  gmail?: GmailClient;
   /** Present once a grant exists; calendar tools answer "not connected" without it. */
   calendar?: CalendarClient;
   /** Where the one-time connect link points. */
@@ -514,6 +517,8 @@ async function respondWithAgent(
           cards: deps.channel === 'app' && (deps.deviceCaps ?? []).includes('cards'),
           // Phone reads only from an app that answers them, and only for typed
           // words: a suspended turn stores the message (§6.21, invariant 13).
+          // Only the tools of the Google grants that are connected (2026-10-01).
+          grants: { gmail: deps.services?.gmail !== undefined, tasks: deps.services?.tasks !== undefined },
           phoneReads:
             agent.turns !== undefined &&
             source.kind === 'text' &&
@@ -1052,6 +1057,7 @@ function turnOf(
       ...(services.calls ? { calls: services.calls } : {}),
       ...(services.fetchImpl ? { fetchImpl: services.fetchImpl } : {}),
       ...(services.tasks ? { tasks: services.tasks } : {}),
+      ...(services.gmail ? { gmail: services.gmail } : {}),
     },
     pending: services.pending,
     deferred: services.deferred,

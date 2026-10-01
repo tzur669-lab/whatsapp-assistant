@@ -70,6 +70,8 @@ export type AgentTurnInput = {
   cards?: boolean;
   /** The paired app answers phone reads, and this is a typed message (§6.21). */
   phoneReads?: boolean;
+  /** Which Google grants are connected, so only their tools are offered (2026-10-01). */
+  grants?: { gmail?: boolean; tasks?: boolean };
 };
 
 /**
@@ -81,6 +83,8 @@ export type SuspendedState = {
   model: string;
   /** The app's conversation the turn belongs to, for its history (2026-10-01). */
   conversation?: string;
+  /** The grants whose tools the turn was offered, so it resumes with the same ones. */
+  grants?: { gmail?: boolean; tasks?: boolean };
   /** Everything after the system prompt, ending with the call that asked. */
   messages: AgentMessage[];
   spent: number;
@@ -134,12 +138,17 @@ type Loop = {
   lang: Lang;
   turn: TurnContext;
   cards: boolean;
+  grants?: { gmail?: boolean; tasks?: boolean };
 };
 
 export async function runAgentTurn(input: AgentTurnInput, deps: AgentDeps): Promise<AgentResult> {
   const { budget } = deps;
   const cards = input.cards === true;
-  const offered: ToolName[] = agentToolNames({ cards, phoneReads: input.phoneReads === true });
+  const offered: ToolName[] = agentToolNames({
+    cards,
+    phoneReads: input.phoneReads === true,
+    ...(input.grants ? { grants: input.grants } : {}),
+  });
   const tools = wireTools(offered);
   const toolChars = JSON.stringify(tools).length;
   const tainted = input.history.some((entry) => entry.tainted) || input.turn.tainted === true;
@@ -179,6 +188,7 @@ export async function runAgentTurn(input: AgentTurnInput, deps: AgentDeps): Prom
       lang: input.lang,
       turn: input.turn,
       cards,
+      ...(input.grants ? { grants: input.grants } : {}),
     },
     deps,
   );
@@ -213,7 +223,7 @@ export async function resumeAgentTurn(
     return { kind: 'failed', errorCode: 'model_unavailable', toolRan: true, readText, tainted: true };
   }
 
-  const offered = agentToolNames({ cards: state.cards, phoneReads: true });
+  const offered = agentToolNames({ cards: state.cards, phoneReads: true, ...(state.grants ? { grants: state.grants } : {}) });
   const tools = wireTools(offered);
   return drive(
     {
@@ -236,6 +246,7 @@ export async function resumeAgentTurn(
       lang: state.lang,
       turn,
       cards: state.cards,
+      ...(state.grants ? { grants: state.grants } : {}),
     },
     deps,
   );
@@ -314,6 +325,7 @@ async function drive(loop: Loop, deps: AgentDeps): Promise<AgentResult> {
           text: loop.text,
           lang: loop.lang,
           cards: loop.cards,
+          ...(loop.grants ? { grants: loop.grants } : {}),
           toolCallId: toolCall.id,
           tool: outcome.tool,
           query: reply.deviceQuery,

@@ -25,6 +25,8 @@ import {
   phoneSmsSlots,
   infoLookupSlots,
   tasksAddSlots,
+  mailDraftSlots,
+  mailSearchSlots,
   tasksCompleteSlots,
   tasksListSlots,
   remindersCancelSlots,
@@ -60,6 +62,9 @@ export const TOOL_NAMES = [
   'tasks.list',
   'tasks.add',
   'tasks.complete',
+  // Gmail (2026-10-01): read, and drafts the user sends.
+  'mail.search',
+  'mail.draft',
 ] as const;
 
 export type ToolName = (typeof TOOL_NAMES)[number];
@@ -328,6 +333,27 @@ export const REGISTRY: Readonly<Record<ToolName, ToolSpec>> = {
     tier: 1,
     scopes: [],
     rateLimit: { perHour: 30, perDay: 150 },
+    implementedIn: 6,
+  },
+  'mail.search': {
+    name: 'mail.search',
+    llmDescription: "Search or read the user's recent Gmail: by sender, topic, unread; full=true reads the newest match.",
+    draftSchema: mailSearchSlots,
+    // Read only. Mail is text others wrote: every result taints the turn.
+    tier: 0,
+    scopes: [],
+    rateLimit: { perHour: 30, perDay: 200 },
+    implementedIn: 6,
+  },
+  'mail.draft': {
+    name: 'mail.draft',
+    llmDescription: 'Write a Gmail draft (a reply to a recent mail, or new without a recipient). Never sent; the user sends it.',
+    draftSchema: mailDraftSlots,
+    // Nothing leaves: a draft waits in Gmail. Still confirmed, with the whole
+    // text shown, because its words are the model's.
+    tier: 2,
+    scopes: [],
+    rateLimit: { perHour: 10, perDay: 30 },
     implementedIn: 6,
   },
   'tasks.complete': {

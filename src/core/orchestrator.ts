@@ -27,6 +27,7 @@ import { REMINDER_TOOLS } from '../tools/reminders.js';
 import { calendarListEvents } from '../tools/calendar-read.js';
 import { infoLookup } from '../tools/lookup.js';
 import { TASK_TOOLS } from '../tools/tasks.js';
+import { MAIL_TOOLS } from '../tools/mail.js';
 import { CALENDAR_WRITE_TOOLS } from '../tools/calendar-write.js';
 import { callsPlace } from '../tools/calls.js';
 import { PHONE_ACTION_TOOLS } from '../tools/phone-actions.js';
@@ -127,6 +128,7 @@ const IMPLEMENTED: Partial<Record<ToolName, ToolDefinition>> = {
   ...PHONE_READ_TOOLS,
   'info.lookup': infoLookup,
   ...TASK_TOOLS,
+  ...MAIL_TOOLS,
 };
 
 export type RunOptions = {

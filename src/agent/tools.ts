@@ -33,6 +33,8 @@ function compactSlot(field: ZodTypeAny): Record<string, unknown> {
       return { type: 'array', items: { type: 'string' } };
     case 'ZodNumber':
       return { type: 'integer' };
+    case 'ZodBoolean':
+      return { type: 'boolean' };
     default:
       return { type: 'string' };
   }
@@ -56,11 +58,22 @@ export function fromWireName(wire: string, offered: readonly ToolName[]): ToolNa
  * message: a suspended turn stores the message, and a transcript is never
  * stored (§6.21, invariant 13).
  */
-export type OfferOptions = { cards: boolean; phoneReads?: boolean };
+export type OfferOptions = {
+  cards: boolean;
+  phoneReads?: boolean;
+  /**
+   * The Google grants that are connected (2026-10-01). A tool for a grant that
+   * is not is left out: every offered tool is prompt tokens on every call, and
+   * a grant not connected is the common case.
+   */
+  grants?: { gmail?: boolean; tasks?: boolean };
+};
 
 export function agentToolNames(options: OfferOptions = { cards: false }): ToolName[] {
   return TOOL_NAMES.filter((name) => {
     const spec = REGISTRY[name];
+    if (name.startsWith('mail.')) return options.grants?.gmail === true;
+    if (name.startsWith('tasks.')) return options.grants?.tasks === true;
     if (spec.confirmation === 'card') return options.cards;
     if (spec.phoneRead) return options.phoneReads === true;
     return true;
@@ -100,4 +113,6 @@ export const TAINTING_TOOLS: ReadonlySet<ToolName> = new Set<ToolName>([
   'phone.sms',
   // A task made from a Gmail message carries its subject: someone else's words.
   'tasks.list',
+  // Mail is the plainest case of text someone else wrote.
+  'mail.search',
 ]);

@@ -74,6 +74,7 @@ const stateSchema = z
   .object({
     model: z.string().min(1).max(100),
     conversation: z.string().max(36).optional(),
+    grants: z.object({ gmail: z.boolean().optional(), tasks: z.boolean().optional() }).strict().optional(),
     messages: z.array(messageSchema).min(1).max(MAX_STORED_MESSAGES),
     spent: z.number().int().nonnegative(),
     calls: z.number().int().nonnegative(),

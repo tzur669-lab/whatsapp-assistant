@@ -372,11 +372,27 @@ describe('an agent turn', () => {
       expect(user.content).toContain('2026-09-24T12:00+03:00 (Thursday');
     });
 
+    it('is offered the Gmail and Tasks tools only once those grants are connected (2026-10-01)', async () => {
+      await handleInbound(text('היי'), deps([{ text: 'שלום' }]));
+      const without = agent.tools[0]!.map((tool) => tool.function.name);
+      expect(without.some((name) => /^(mail|tasks)__/.test(name))).toBe(false);
+      expect(without).toContain('info__lookup');
+
+      const base = deps([{ text: 'שלום' }]);
+      const connected: PipelineDeps = {
+        ...base,
+        services: { ...base.services!, gmail: {} as never, tasks: {} as never },
+      };
+      await handleInbound(text('היי שוב'), connected);
+      const withGrants = agent.tools[0]!.map((tool) => tool.function.name);
+      expect(withGrants).toEqual(expect.arrayContaining(['mail__search', 'mail__draft', 'tasks__list', 'tasks__add', 'tasks__complete']));
+    });
+
     it('is offered only registry tools', async () => {
       await handleInbound(text('היי'), deps([{ text: 'שלום' }]));
       const names = agent.tools[0]!.map((tool) => tool.function.name);
       expect(names).toContain('reminders__create');
-      expect(names.every((name) => /^(reminders|calendar|calls|info|tasks)__/.test(name))).toBe(true);
+      expect(names.every((name) => /^(reminders|calendar|calls|info|tasks|mail)__/.test(name))).toBe(true);
     });
   });
 
