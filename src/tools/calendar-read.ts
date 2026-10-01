@@ -91,7 +91,8 @@ export const calendarListEvents: ToolDefinition = {
         : { text: eventText.notConnected(ctx.lang) };
     }
 
-    const result = await calendar.listEvents({
+    // Every calendar shown in Google Calendar, not only the main one (2026-10-01).
+    const result = await calendar.listAllEvents({
       startUtc: input.startUtc,
       endUtc: input.endUtc,
       limit: MAX_EVENTS,

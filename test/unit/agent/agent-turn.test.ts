@@ -43,6 +43,9 @@ const plain = (text: string) => stripIsolates(text);
 
 function fakeCalendar(events: CalendarEvent[]): CalendarClient {
   return {
+    listAllEvents(...args: unknown[]) {
+      return (this as unknown as { listEvents: (...a: unknown[]) => unknown }).listEvents(...args);
+    },
     async listEvents() {
       return { ok: true as const, value: events };
     },

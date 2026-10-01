@@ -106,7 +106,8 @@ async function todaysEvents(ctx: DigestContext, endOfDay: number): Promise<Calen
 
   if (!ctx.calendar) return subscribed;
 
-  const result = await ctx.calendar.listEvents({
+  // Every calendar shown in Google Calendar, not only the main one (2026-10-01).
+  const result = await ctx.calendar.listAllEvents({
     startUtc: ctx.nowMs,
     endUtc: endOfDay,
     limit: MAX_EVENTS,

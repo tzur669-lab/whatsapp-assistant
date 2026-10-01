@@ -172,6 +172,11 @@ export const eventText = {
   },
 } as const;
 
+/** ` (עבודה)` for an event on a calendar other than the main one. */
+function onCalendar(event: CalendarEvent): string {
+  return event.calendarName ? ` (${isolate(event.calendarName)})` : '';
+}
+
 function describe(event: CalendarEvent, lang: Lang): string {
   const start = localPartsOf(event.startUtc, ZONE);
 
@@ -179,11 +184,11 @@ function describe(event: CalendarEvent, lang: Lang): string {
     const names = lang === 'he' ? HE_WEEKDAYS : EN_WEEKDAYS;
     const date = lang === 'he' ? `${start.day}.${start.month}` : `${start.day}/${start.month}`;
     const allDay = lang === 'he' ? 'כל היום' : 'all day';
-    return `${names[start.weekday] ?? ''} ${isolateLtr(date)} · ${allDay} — ${isolate(event.title)}`;
+    return `${names[start.weekday] ?? ''} ${isolateLtr(date)} · ${allDay} — ${isolate(event.title)}${onCalendar(event)}`;
   }
 
   const end = localPartsOf(event.endUtc, ZONE);
   const when =
     event.endUtc > event.startUtc ? formatRange(start, end, lang) : formatWhen(start, lang);
-  return `${when} — ${isolate(event.title)}`;
+  return `${when} — ${isolate(event.title)}${onCalendar(event)}`;
 }

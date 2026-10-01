@@ -35,6 +35,9 @@ const plain = (text: string | null) => (text === null ? null : stripIsolates(tex
 /** A calendar that answers with whatever the test hands it. No network. */
 function fakeCalendar(events: CalendarEvent[] | { error: 'unavailable' }): CalendarClient {
   return {
+    listAllEvents(...args: unknown[]) {
+      return (this as unknown as { listEvents: (...a: unknown[]) => unknown }).listEvents(...args);
+    },
     async listEvents() {
       return Array.isArray(events)
         ? { ok: true as const, value: events }
@@ -117,6 +120,9 @@ describe('buildDigest', () => {
   it('asks the calendar only about the rest of today', async () => {
     const asked: { startUtc: number; endUtc: number }[] = [];
     const spy = {
+      listAllEvents(...args: unknown[]) {
+        return (this as unknown as { listEvents: (...a: unknown[]) => unknown }).listEvents(...args);
+      },
       async listEvents(params: { startUtc: number; endUtc: number }) {
         asked.push(params);
         return { ok: true as const, value: [] };

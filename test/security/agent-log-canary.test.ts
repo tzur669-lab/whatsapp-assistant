@@ -48,6 +48,9 @@ describe('agent log canary', () => {
     const repo = new Repository(driver);
     repo.migrate(MIGRATIONS);
     const calendar = {
+      listAllEvents(...args: unknown[]) {
+        return (this as unknown as { listEvents: (...a: unknown[]) => unknown }).listEvents(...args);
+      },
       async listEvents() {
         return {
           ok: true as const,

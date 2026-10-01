@@ -126,6 +126,72 @@ describe('CalendarClient', () => {
     expect(sent['description']).toContain('דנה');
   });
 
+  describe('every calendar (2026-10-01)', () => {
+    const ALL_CALENDARS = 'https://www.googleapis.com/auth/calendar.readonly';
+
+    const routed = (byCalendar: Record<string, unknown[]>, list: unknown[]) => {
+      const calls: string[] = [];
+      const fetchImpl = (async (input: string | URL | Request) => {
+        const url = String(input);
+        calls.push(url);
+        if (url.includes('oauth2.googleapis.com/token')) return new Response(JSON.stringify({ access_token: 'at', expires_in: 3599 }));
+        if (url.includes('/users/me/calendarList')) return new Response(JSON.stringify({ items: list }));
+        const id = decodeURIComponent(/\/calendars\/([^/]+)\/events/.exec(url)?.[1] ?? '');
+        if (id in byCalendar) return new Response(JSON.stringify({ items: byCalendar[id] }));
+        return new Response('{}', { status: 500 });
+      }) as unknown as typeof fetch;
+      return { fetchImpl, calls };
+    };
+
+    const at = (iso: string, id: string, summary: string) => ({
+      id,
+      summary,
+      start: { dateTime: iso },
+      end: { dateTime: iso.replace('T14', 'T15').replace('T09', 'T10') },
+    });
+
+    it('merges every shown calendar in time order, naming the ones that are not the main one', async () => {
+      await store.connect({ refreshToken: 'rt', scopes: [ALL_CALENDARS] });
+      const { fetchImpl, calls } = routed(
+        {
+          primary: [at('2026-09-24T14:00:00+03:00', 'a', 'פגישה בבית')],
+          'work@group.calendar.google.com': [at('2026-09-24T09:00:00+03:00', 'b', 'פגישת צוות')],
+        },
+        [
+          { id: 'me@example.test', primary: true, summary: 'me@example.test', selected: true },
+          { id: 'work@group.calendar.google.com', summaryOverride: 'עבודה', summary: 'Work', selected: true },
+          { id: 'hidden@group.calendar.google.com', summary: 'Hidden', selected: false },
+        ],
+      );
+      const result = await client(fetchImpl).listAllEvents({ startUtc: NOW, endUtc: NOW + 86_400_000 });
+      if (!result.ok) throw new Error('expected ok');
+      expect(result.value.map((e) => [e.title, e.calendarName ?? null])).toEqual([
+        ['פגישת צוות', 'עבודה'],
+        ['פגישה בבית', null],
+      ]);
+      // A calendar hidden in Google Calendar is not read.
+      expect(calls.some((c) => c.includes('hidden'))).toBe(false);
+    });
+
+    it('reads only the main calendar until the grant includes reading all of them', async () => {
+      await store.connect({ refreshToken: 'rt', scopes: [] });
+      const { fetchImpl, calls } = routed({ primary: [at('2026-09-24T14:00:00+03:00', 'a', 'x')] }, []);
+      const result = await client(fetchImpl).listAllEvents({ startUtc: NOW, endUtc: NOW + 86_400_000 });
+      expect(result.ok && result.value.length).toBe(1);
+      expect(calls.some((c) => c.includes('calendarList'))).toBe(false);
+    });
+
+    it('still answers when one of the other calendars fails', async () => {
+      await store.connect({ refreshToken: 'rt', scopes: [ALL_CALENDARS] });
+      const { fetchImpl } = routed(
+        { primary: [at('2026-09-24T14:00:00+03:00', 'a', 'x')] },
+        [{ id: 'broken@group.calendar.google.com', summary: 'Broken', selected: true }],
+      );
+      const result = await client(fetchImpl).listAllEvents({ startUtc: NOW, endUtc: NOW + 86_400_000 });
+      expect(result.ok && result.value.map((e) => e.title)).toEqual(['x']);
+    });
+  });
+
   it('lists events in the window', async () => {
     const { fetchImpl, calls } = fakeGoogle([{ body: { items: [EVENT] } }]);
     const result = await client(fetchImpl).listEvents({ startUtc: NOW, endUtc: NOW + 86_400_000 });

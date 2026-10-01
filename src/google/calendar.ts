@@ -27,9 +27,17 @@ export const REMINDERS_CALENDAR_NAME = 'Assistant Reminders';
 
 export const PRIMARY_CALENDAR = 'primary';
 
+const READ_ALL_SCOPE = 'https://www.googleapis.com/auth/calendar.readonly';
+/** Enough for a family, a team and a few subscriptions; each is one more call. */
+const MAX_OTHER_CALENDARS = 8;
+
+const eventKey = (event: CalendarEvent) => `${event.startUtc}|${event.title}`;
+
 export type CalendarEvent = {
   id: string;
   title: string;
+  /** The calendar it is on, when that is not the main one (2026-10-01). */
+  calendarName?: string;
   startUtc: number;
   endUtc: number;
   /** True for a date-only event, which has no meaningful time of day. */
@@ -102,6 +110,44 @@ export class CalendarClient {
     if (!Array.isArray(items)) return { ok: false, error: { code: 'invalid_response' } };
 
     return { ok: true, value: items.map(toEvent).filter((event): event is CalendarEvent => event !== null) };
+  }
+
+  /**
+   * Events from every calendar shown in Google Calendar, merged in time order
+   * (2026-10-01): the main one, then each other visible calendar, named. Needs
+   * `calendar.readonly`; until the grant has it, the main calendar alone. One
+   * failing calendar is left out rather than failing the whole read.
+   */
+  async listAllEvents(params: { startUtc: number; endUtc: number; limit?: number }): Promise<CalendarResult<CalendarEvent[]>> {
+    const primary = await this.listEvents(params);
+    if (!primary.ok) return primary;
+    if (!(this.config.store.get()?.scopes ?? []).includes(READ_ALL_SCOPE)) return primary;
+
+    const list = await this.call('/users/me/calendarList?minAccessRole=reader&maxResults=50', { method: 'GET' });
+    if (!list.ok) return primary;
+    const items = (list.value as { items?: unknown }).items;
+    if (!Array.isArray(items)) return primary;
+
+    const others = items
+      .map((item) => item as Record<string, unknown>)
+      .filter((item) => typeof item['id'] === 'string' && item['primary'] !== true && item['selected'] !== false && item['deleted'] !== true)
+      .slice(0, MAX_OTHER_CALENDARS);
+
+    const merged = [...primary.value];
+    const seen = new Set(merged.map(eventKey));
+    for (const item of others) {
+      const name = String(item['summaryOverride'] ?? item['summary'] ?? '').slice(0, 60) || undefined;
+      const result = await this.listEvents({ ...params, calendarId: String(item['id']) });
+      if (!result.ok) continue;
+      for (const event of result.value) {
+        // An invitation shows on both calendars; list it once.
+        if (seen.has(eventKey(event))) continue;
+        seen.add(eventKey(event));
+        merged.push(name ? { ...event, calendarName: name } : event);
+      }
+    }
+    merged.sort((a, b) => a.startUtc - b.startUtc);
+    return { ok: true, value: merged.slice(0, params.limit ?? 20) };
   }
 
   /**
