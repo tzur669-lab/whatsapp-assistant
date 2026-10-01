@@ -14,6 +14,7 @@ import { TOOL_NAMES } from '../tools/registry.js';
 import {
   alarmSetSlots,
   appOpenSlots,
+  mediaPlaySlots,
   calendarCreateEventSlots,
   calendarDeleteEventSlots,
   calendarListEventsSlots,
@@ -120,6 +121,7 @@ export const intentDraftSchema = z.discriminatedUnion('intent', [
   z.object({ intent: z.literal('timer.set'), slots: timerSetSlots, ...common }).strict(),
   z.object({ intent: z.literal('nav.go'), slots: navGoSlots, ...common }).strict(),
   z.object({ intent: z.literal('app.open'), slots: appOpenSlots, ...common }).strict(),
+  z.object({ intent: z.literal('media.play'), slots: mediaPlaySlots, ...common }).strict(),
   z.object({ intent: z.literal('settings.set'), slots: settingsSetSlots, ...common }).strict(),
   z.object({ intent: z.literal('message.compose'), slots: messageComposeSlots, ...common }).strict(),
   // Phone reads (§6.21). Agent-only, like the phone actions.
@@ -173,6 +175,7 @@ const TOOL_SLOTS: Readonly<Record<string, ReadonlySet<string>>> = {
   'timer.set': new Set(Object.keys(timerSetSlots.shape)),
   'nav.go': new Set(Object.keys(navGoSlots.shape)),
   'app.open': new Set(Object.keys(appOpenSlots.shape)),
+  'media.play': new Set(Object.keys(mediaPlaySlots.shape)),
   'settings.set': new Set(Object.keys(settingsSetSlots.shape)),
   'message.compose': new Set(Object.keys(messageComposeSlots.shape)),
   'phone.contacts': new Set(Object.keys(phoneContactsSlots.shape)),

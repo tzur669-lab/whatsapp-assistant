@@ -204,6 +204,19 @@ export const appOpenSlots = z
   })
   .strict();
 
+/**
+ * "תפעיל את עומר אדם ביוטיוב מיוזיק" (2026-10-01). What to play, in words the
+ * app searches for; whether in the background or full screen is the user's to
+ * say, and asked when they did not.
+ */
+export const mediaPlaySlots = z
+  .object({
+    app: z.enum(['youtube', 'youtube_music']).optional(),
+    query: z.string().min(1).max(MAX_QUERY_CHARS).optional(),
+    mode: z.enum(['background', 'fullscreen']).optional(),
+  })
+  .strict();
+
 /** "תדליק פנס", "שים על שקט". Android lets an app toggle only some of these. */
 export const settingsSetSlots = z
   .object({

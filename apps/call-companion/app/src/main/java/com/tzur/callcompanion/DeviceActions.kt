@@ -4,6 +4,7 @@ import android.Manifest
 import android.app.Activity
 import android.app.AlertDialog
 import android.app.NotificationManager
+import android.app.SearchManager
 import android.content.ActivityNotFoundException
 import android.content.Intent
 import android.content.pm.PackageManager
@@ -12,7 +13,10 @@ import android.hardware.camera2.CameraManager
 import android.media.AudioManager
 import android.net.Uri
 import android.os.Build
+import android.os.Handler
+import android.os.Looper
 import android.provider.AlarmClock
+import android.provider.MediaStore
 import android.provider.Settings
 import android.widget.Toast
 import org.json.JSONObject
@@ -23,7 +27,8 @@ import org.json.JSONObject
  * What arrives is the server's validated input, and it is validated again here:
  * a closed list of types, every field bounded. Nothing in it can name a number,
  * a package or a URL — a contact and an app are words matched against this
- * phone's own lists, and the only links built are to Waze, Maps and WhatsApp.
+ * phone's own lists, and the only links built are to Waze, Maps, WhatsApp and
+ * YouTube's own search.
  *
  * Main thread. [done] gets the outcome to report: done | failed | no_match |
  * unsupported. Never what was matched.
@@ -38,6 +43,7 @@ object DeviceActions {
                 "app" -> openApp(activity, action, done)
                 "settings" -> settings(activity, action, done)
                 "message" -> message(activity, action, done)
+                "media" -> media(activity, action, done)
                 else -> done("unsupported")
             }
         } catch (_: ActivityNotFoundException) {
@@ -234,6 +240,60 @@ object DeviceActions {
         }
     }
 
+    /**
+     * A video or a song (0.8.1): YouTube or YouTube Music plays its best match
+     * for the words, the way Google Assistant asks it to. Where the app does not
+     * take that, its search opens with the words, and the choice is a tap there.
+     *
+     * Background: the player starts, and this app comes back in front of it a
+     * moment later. Android keeps it playing only for YouTube Premium; without
+     * it, the app pauses — which the toast says.
+     */
+    private fun media(activity: Activity, a: JSONObject, done: (String) -> Unit) {
+        val app = a.getString("app").also { require(it == "youtube" || it == "youtube_music") }
+        val mode = a.getString("mode").also { require(it == "background" || it == "fullscreen") }
+        val query = a.getString("query").also { require(it.isNotBlank() && it.length <= 100) }
+        val music = app == "youtube_music"
+        val pkg = if (music) YOUTUBE_MUSIC else YOUTUBE
+
+        val play = Intent(MediaStore.INTENT_ACTION_MEDIA_PLAY_FROM_SEARCH)
+            .setPackage(pkg)
+            .putExtra(SearchManager.QUERY, query)
+            .putExtra(MediaStore.EXTRA_MEDIA_FOCUS, "vnd.android.cursor.item/*")
+        val search = Intent(Intent.ACTION_SEARCH).setPackage(pkg).putExtra(SearchManager.QUERY, query)
+        val web = Intent(
+            Intent.ACTION_VIEW,
+            Uri.parse(
+                if (music) "https://music.youtube.com/search?q=${Uri.encode(query)}"
+                else "https://www.youtube.com/results?search_query=${Uri.encode(query)}",
+            ),
+        )
+        val started = listOf(play, search, web).any { intent ->
+            try {
+                activity.startActivity(intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                true
+            } catch (_: ActivityNotFoundException) {
+                false
+            }
+        }
+        if (!started) {
+            toast(activity, R.string.card_no_app)
+            return done("no_match")
+        }
+
+        if (mode == "background") {
+            toast(activity, R.string.card_media_background)
+            val context = activity.applicationContext
+            val back = Intent(context, activity.javaClass)
+                .addFlags(Intent.FLAG_ACTIVITY_REORDER_TO_FRONT or Intent.FLAG_ACTIVITY_NEW_TASK)
+            Handler(Looper.getMainLooper()).postDelayed({
+                // Within Android's grace for an app that was just in front; past it, the player stays up.
+                runCatching { context.startActivity(back) }
+            }, BACKGROUND_RETURN_MS)
+        }
+        done("done")
+    }
+
     // -- helpers ----------------------------------------------------------------
 
     private fun askForPolicyAccess(activity: Activity, done: (String) -> Unit) {
@@ -265,4 +325,8 @@ object DeviceActions {
     private fun toast(activity: Activity, text: Int) = Toast.makeText(activity, text, Toast.LENGTH_LONG).show()
 
     private const val MAX_CHOICES = 10
+    private const val YOUTUBE = "com.google.android.youtube"
+    private const val YOUTUBE_MUSIC = "com.google.android.apps.youtube.music"
+    /** Long enough for the player to start, well inside Android's ten-second grace. */
+    private const val BACKGROUND_RETURN_MS = 3_000L
 }

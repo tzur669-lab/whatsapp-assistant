@@ -18,6 +18,7 @@ import { ToolInputError } from './types.js';
 import {
   alarmSetSlots,
   appOpenSlots,
+  mediaPlaySlots,
   MAX_DESTINATION_CHARS,
   MAX_LABEL_CHARS,
   MAX_MESSAGE_CHARS,
@@ -64,6 +65,14 @@ export const cardInputSchema = z.discriminatedUnion('type', [
       text: z.string().min(1).max(MAX_MESSAGE_CHARS),
     })
     .strict(),
+  z
+    .object({
+      type: z.literal('media'),
+      app: z.enum(['youtube', 'youtube_music']),
+      query: z.string().min(1).max(MAX_QUERY_CHARS),
+      mode: z.enum(['background', 'fullscreen']),
+    })
+    .strict(),
 ])
   // A navigation names a place or a saved favorite, exactly one of the two.
   .refine((value) => value.type !== 'nav' || (value.destination === undefined) !== (value.favorite === undefined));
@@ -74,7 +83,9 @@ function ready(input: CardInput): ResolveOutcome {
   return { kind: 'ready', input: parsed.data };
 }
 
-function missing(what: 'destination' | 'app' | 'setting' | 'state' | 'recipient' | 'message'): ResolveOutcome {
+function missing(
+  what: 'destination' | 'app' | 'setting' | 'state' | 'recipient' | 'message' | 'media' | 'play_mode',
+): ResolveOutcome {
   return { kind: 'clarify', clarify: { code: 'phone_missing', what } };
 }
 
@@ -149,6 +160,19 @@ export const appOpen = cardTool('app.open', (raw) => {
   return ready({ type: 'app', queries: slots.query_variants });
 });
 
+/**
+ * A video or a song by search words (2026-10-01). Background or full screen is
+ * the user's choice and is asked, never assumed: the one wrong guess plays
+ * sound out loud, or covers the screen.
+ */
+export const mediaPlay = cardTool('media.play', (raw) => {
+  const slots = mediaPlaySlots.parse(raw);
+  const query = slots.query?.trim();
+  if (!query) return missing('media');
+  if (!slots.mode) return missing('play_mode');
+  return ready({ type: 'media', app: slots.app ?? 'youtube', query, mode: slots.mode });
+});
+
 const TOGGLES = new Set(['on', 'off']);
 const RINGER = new Set(['silent', 'vibrate', 'normal']);
 
@@ -200,4 +224,5 @@ export const PHONE_ACTION_TOOLS: Readonly<Partial<Record<ToolName, ToolDefinitio
   'app.open': appOpen,
   'settings.set': settingsSet,
   'message.compose': messageCompose,
+  'media.play': mediaPlay,
 };

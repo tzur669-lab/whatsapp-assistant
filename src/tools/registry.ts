@@ -18,6 +18,7 @@ import {
   calendarListEventsSlots,
   calendarMoveEventSlots,
   callsPlaceSlots,
+  mediaPlaySlots,
   messageComposeSlots,
   navGoSlots,
   phoneContactsSlots,
@@ -53,6 +54,8 @@ export const TOOL_NAMES = [
   'app.open',
   'settings.set',
   'message.compose',
+  // YouTube and YouTube Music (2026-10-01): play by search, in the background or full screen.
+  'media.play',
   // Phone reads (PLAN §6.21): agent-only, answered by the phone mid-turn.
   'phone.contacts',
   'phone.notifications',
@@ -245,6 +248,19 @@ export const REGISTRY: Readonly<Record<ToolName, ToolSpec>> = {
     name: 'app.open',
     llmDescription: 'Open an app installed on the phone.',
     draftSchema: appOpenSlots,
+    tier: 1,
+    scopes: [],
+    rateLimit: { perHour: 30, perDay: 100 },
+    implementedIn: 6,
+    confirmation: 'card',
+    autoRun: true,
+  },
+  'media.play': {
+    name: 'media.play',
+    llmDescription:
+      'Play a video or song on YouTube or YouTube Music (a song: youtube_music). mode: background or fullscreen — ask the user if they did not say.',
+    draftSchema: mediaPlaySlots,
+    // Opens a player on the phone with words to search for; nothing leaves it.
     tier: 1,
     scopes: [],
     rateLimit: { perHour: 30, perDay: 100 },

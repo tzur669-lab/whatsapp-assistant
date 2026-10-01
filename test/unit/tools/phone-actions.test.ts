@@ -6,6 +6,7 @@ import {
   alarmSet,
   appOpen,
   cardInputSchema,
+  mediaPlay,
   messageCompose,
   navGo,
   settingsSet,
@@ -13,6 +14,7 @@ import {
 } from '../../../src/tools/phone-actions.js';
 import type { ToolContext } from '../../../src/tools/types.js';
 import { stripIsolates } from '../../../src/render/bidi.js';
+import { cardPreview } from '../../../src/render/phone.js';
 
 const ctx = {} as ToolContext;
 const ready = (outcome: ReturnType<typeof alarmSet.resolve>) => {
@@ -125,9 +127,42 @@ describe('message.compose', () => {
   });
 });
 
+describe('media.play', () => {
+  it('plays what was named, in the app and the way chosen', () => {
+    expect(ready(mediaPlay.resolve({ app: 'youtube_music', query: 'עומר אדם', mode: 'background' }, ctx))).toEqual({
+      type: 'media',
+      app: 'youtube_music',
+      query: 'עומר אדם',
+      mode: 'background',
+    });
+    // YouTube when no app is named.
+    expect(ready(mediaPlay.resolve({ query: 'מתכון לשקשוקה', mode: 'fullscreen' }, ctx))).toMatchObject({ app: 'youtube' });
+  });
+
+  it('asks what to play, then whether in the background or full screen — never guesses', () => {
+    expect(mediaPlay.resolve({ mode: 'background' }, ctx)).toEqual({ kind: 'clarify', clarify: { code: 'phone_missing', what: 'media' } });
+    expect(mediaPlay.resolve({ query: 'עומר אדם' }, ctx)).toEqual({
+      kind: 'clarify',
+      clarify: { code: 'phone_missing', what: 'play_mode' },
+    });
+    expect(mediaPlay.resolve({ query: '   ', mode: 'fullscreen' }, ctx)).toEqual({
+      kind: 'clarify',
+      clarify: { code: 'phone_missing', what: 'media' },
+    });
+  });
+
+  it('shows the app, what plays and how, in the preview', () => {
+    const text = stripIsolates(cardPreview({ type: 'media', app: 'youtube_music', query: 'עומר אדם', mode: 'background' }, 'he'));
+    expect(text).toBe('🎵 YouTube Music: עומר אדם · ברקע');
+    expect(stripIsolates(cardPreview({ type: 'media', app: 'youtube', query: 'x', mode: 'fullscreen' }, 'he'))).toBe(
+      '▶️ YouTube: x · במסך מלא',
+    );
+  });
+});
+
 describe('every card', () => {
   it('refuses to execute on the server — a card runs only on the phone, after the claim', async () => {
-    for (const tool of [alarmSet, timerSet, navGo, appOpen, settingsSet, messageCompose]) {
+    for (const tool of [alarmSet, timerSet, navGo, appOpen, settingsSet, messageCompose, mediaPlay]) {
       await expect(tool.execute({}, ctx)).rejects.toThrow();
     }
   });
@@ -137,5 +172,8 @@ describe('every card', () => {
     expect(cardInputSchema.safeParse({ type: 'alarm', hour: 7, minute: 0, extra: 1 }).success).toBe(false);
     expect(cardInputSchema.safeParse({ type: 'nav', app: 'waze', destination: 'x', favorite: 'home' }).success).toBe(false);
     expect(cardInputSchema.safeParse({ type: 'message', channel: 'sms', queries: ['a'], text: 'x'.repeat(501) }).success).toBe(false);
+    expect(cardInputSchema.safeParse({ type: 'media', app: 'spotify', query: 'x', mode: 'background' }).success).toBe(false);
+    expect(cardInputSchema.safeParse({ type: 'media', app: 'youtube', query: 'x', mode: 'pip' }).success).toBe(false);
+    expect(cardInputSchema.safeParse({ type: 'media', app: 'youtube', query: 'x'.repeat(101), mode: 'background' }).success).toBe(false);
   });
 });

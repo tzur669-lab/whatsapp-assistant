@@ -9,7 +9,16 @@ import { isolate, isolateLtr } from './bidi.js';
 import { formatDuration } from './format-time.js';
 import type { Lang } from './format-time.js';
 
-export type PhoneQuestion = 'destination' | 'app' | 'setting' | 'state' | 'recipient' | 'message' | 'contact';
+export type PhoneQuestion =
+  | 'destination'
+  | 'app'
+  | 'setting'
+  | 'state'
+  | 'recipient'
+  | 'message'
+  | 'contact'
+  | 'media'
+  | 'play_mode';
 
 export type CardInput =
   | { type: 'alarm'; hour: number; minute: number; label?: string | undefined }
@@ -21,7 +30,8 @@ export type CardInput =
       setting: 'flashlight' | 'dnd' | 'ringer' | 'wifi' | 'bluetooth';
       state?: 'on' | 'off' | 'silent' | 'vibrate' | 'normal' | undefined;
     }
-  | { type: 'message'; channel: 'sms' | 'whatsapp'; queries: string[]; text: string };
+  | { type: 'message'; channel: 'sms' | 'whatsapp'; queries: string[]; text: string }
+  | { type: 'media'; app: 'youtube' | 'youtube_music'; query: string; mode: 'background' | 'fullscreen' };
 
 const pad = (n: number) => String(n).padStart(2, '0');
 
@@ -54,6 +64,15 @@ export function cardPreview(input: CardInput, lang: Lang): string {
 
     case 'settings':
       return settingText(input.setting, input.state, lang);
+
+    case 'media': {
+      const music = input.app === 'youtube_music';
+      const app = isolate(music ? 'YouTube Music' : 'YouTube');
+      const how = he
+        ? input.mode === 'background' ? 'ברקע' : 'במסך מלא'
+        : input.mode === 'background' ? 'in the background' : 'full screen';
+      return `${music ? '🎵' : '▶️'} ${app}: ${input.query} · ${how}`;
+    }
 
     case 'message': {
       const via = isolate(input.channel === 'whatsapp' ? 'WhatsApp' : 'SMS');
@@ -124,5 +143,9 @@ export function phoneQuestion(what: PhoneQuestion, lang: Lang): string {
       return he ? 'מה לכתוב בהודעה?' : 'What should the message say?';
     case 'contact':
       return he ? 'את מי לחפש באנשי הקשר?' : 'Who should I look for in the contacts?';
+    case 'media':
+      return he ? 'מה להפעיל? שם של שיר, אמן או סרטון.' : 'Play what? A song, an artist or a video.';
+    case 'play_mode':
+      return he ? 'להפעיל ברקע או במסך מלא?' : 'In the background, or full screen?';
   }
 }

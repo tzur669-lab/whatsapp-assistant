@@ -71,6 +71,35 @@
       app: maps
     missing: []
 
+# YouTube and YouTube Music (2026-10-01).
+
+- id: ph-media-001
+  now: "2026-10-01T08:00:00+03:00"
+  input: "תפעיל לי את עומר אדם ביוטיוב מיוזיק ברקע"
+  expect:
+    intent: media.play
+    slots:
+      app: youtube_music
+      mode: background
+    missing: []
+
+- id: ph-media-002
+  now: "2026-10-01T08:00:00+03:00"
+  input: "תשים לי ביוטיוב סרטון של מתכון לשקשוקה במסך מלא"
+  expect:
+    intent: media.play
+    slots:
+      app: youtube
+      mode: fullscreen
+    missing: []
+
+- id: ph-media-003
+  now: "2026-10-01T08:00:00+03:00"
+  input: "play bohemian rhapsody"
+  expect:
+    intent: media.play
+    missing: []
+
 - id: ph-app-001
   now: "2026-09-24T21:00:00+03:00"
   input: "תפתח את ספוטיפיי"

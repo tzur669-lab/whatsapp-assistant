@@ -434,6 +434,24 @@ describe('an agent turn', () => {
       expect(row).toEqual({ channel: 'card', status: 'pending' });
     });
 
+    it('asks background or full screen before playing, then plays as answered (2026-10-01)', async () => {
+      const asked = await handleInbound(
+        text('תפעיל את עומר אדם ביוטיוב מיוזיק'),
+        withCards([{ tool: 'media.play', args: { app: 'youtube_music', query: 'עומר אדם' } }]),
+      );
+      if (asked.action !== 'reply') throw new Error('expected a reply');
+      expect(asked.card).toBeUndefined();
+      expect(plain(asked.text)).toContain('להפעיל ברקע או במסך מלא?');
+
+      const played = await handleInbound(
+        text('ברקע'),
+        withCards([{ tool: 'media.play', args: { app: 'youtube_music', query: 'עומר אדם', mode: 'background' } }]),
+      );
+      if (played.action !== 'reply') throw new Error('expected a reply');
+      expect(played.card).toMatchObject({ type: 'media', autoRun: true });
+      expect(plain(played.card!.preview)).toBe('🎵 YouTube Music: עומר אדם · ברקע');
+    });
+
     it('never offers a phone action to an app that did not say it runs cards', async () => {
       await handleInbound(text('תעיר אותי'), withCards([{ text: 'עדיין לא אפשרי.' }], []));
       const names = agent.tools[0]!.map((tool) => tool.function.name);
