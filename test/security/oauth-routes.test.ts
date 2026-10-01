@@ -66,6 +66,15 @@ describe('/oauth/google/start', () => {
     expect(response.headers.get('location')).toContain('accounts.google.com');
   });
 
+  it('accepts a link the chat app copied with the Hebrew text isolate attached', async () => {
+    // The reply wraps the URL in FSI ... PDI; link detection on a phone can take the closing one along.
+    for (const tail of ['⁩', '⁨⁩']) {
+      const response = await get(`/oauth/google/start?id=${HEX64}${encodeURIComponent(tail)}`);
+      expect(response.status).toBe(302);
+    }
+    expect(calls.every((call) => (call.body as { linkId: string }).linkId === HEX64)).toBe(true);
+  });
+
   it('rejects a malformed id without troubling the Durable Object', async () => {
     for (const id of ['', 'short', `${HEX64}g`, '../etc', 'A'.repeat(64)]) {
       const response = await get(`/oauth/google/start?id=${encodeURIComponent(id)}`);

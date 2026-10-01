@@ -126,7 +126,10 @@ app.post('/wa/webhook', async (c) => {
  */
 app.get('/oauth/google/start', async (c) => {
   if (channelOf(c.env) === 'off') return c.text('not found', 404);
-  const id = c.req.query('id') ?? '';
+  // The reply shows the URL inside Hebrew text, wrapped in direction isolates
+  // (FSI ... PDI). A phone's link detection can take the closing one along; it
+  // is not part of the id, and what is left must still be exactly 64 hex digits.
+  const id = (c.req.query('id') ?? '').replace(/[⁦-⁩]/g, '');
   if (!/^[0-9a-f]{64}$/.test(id)) {
     log.warn('oauth_start_rejected', { errorCode: 'malformed_id' });
     return c.text('invalid or expired link', 400);
