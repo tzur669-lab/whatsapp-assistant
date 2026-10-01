@@ -316,7 +316,7 @@ class ChatActivity : Activity(), ChatEvents.Listener {
             // `/connect google` answers with a link; it has to open. Set before the text.
             autoLinkMask = Linkify.WEB_URLS
             movementMethod = LinkMovementMethod.getInstance()
-            text = message.text
+            text = Ui.cleanLinks(message.text)
             textSize = 16f
             setTextColor(TEXT)
             maxWidth = (resources.displayMetrics.widthPixels * 0.8).toInt()

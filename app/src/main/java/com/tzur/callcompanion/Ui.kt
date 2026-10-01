@@ -23,6 +23,15 @@ object Ui {
     /** Latin, digits and times inside Hebrew keep their own order (FSI … PDI). */
     fun isolate(text: String): String = "$FSI$text$PDI"
 
+    /**
+     * The server wraps a URL inside Hebrew in isolates. Link detection takes the
+     * closing one into the URL, and a tapped link then carries an invisible
+     * character the server rejects. Strip them from around each URL.
+     */
+    fun cleanLinks(text: String): String = text.replace(URL_IN_ISOLATES) { it.groupValues[1] }
+
+    private val URL_IN_ISOLATES = Regex("[\u2066-\u2068](https?://[^\\s\u2066-\u2069]+)\u2069")
+
     // Code points, not literals: see CallNotifier.ltr.
     private val FSI = Char(0x2068)
     private val PDI = Char(0x2069)
