@@ -1431,6 +1431,62 @@ filtering by device capabilities come with the phase that needs them. The token
 meter is memory only — an evicted object forgets one minute, which costs at
 most one 429.
 
+### 6.20 Phone actions as action cards [R]
+
+Phase B (2026-10-01). Six agent-only tools, never in the parser's catalog or
+wire schema (`PARSER_TOOL_NAMES`), so the parser and its eval are unchanged:
+
+| Tool | Tier | Runs alone? | What the phone does |
+|---|---|---|---|
+| `alarm.set` {time, label?} | 1 | yes | `AlarmClock.ACTION_SET_ALARM`, skip UI. A bare hour stays as said ("ב-6" is 06:00) |
+| `timer.set` {duration_minutes, label?} | 1 | yes | `ACTION_SET_TIMER` |
+| `nav.go` {destination, app?} | 1 | yes | Waze (`favorite=home/work` for "הביתה"/"לעבודה"), else Google Maps; the other one if the first is missing |
+| `app.open` {query_variants} | 1 | yes | launcher apps matched by label **on the phone** (`CardLogic.matchApps`) |
+| `settings.set` {setting, state} | 1 | flashlight only | torch; DND and ringer need notification-policy access; Wi-Fi/Bluetooth open the panel (Android lets no app flip them) |
+| `message.compose` {channel?, query_variants, text} | 3 | never | contact matched on the phone; SMS app or WhatsApp opens **prefilled**, the user presses send there |
+
+**The card.** Policy answers every card tool with CONFIRM and `confirmOnCard`
+(reason `card_confirmation` when nothing else escalated). The orchestrator
+writes a `pending_actions` row with **`channel = 'card'`** and replies with the
+code-rendered preview plus `{actionId, nonce, type, preview, autoRun}`; the
+outbox carries it in `action_json` (preview defanged). The parameters are not on
+the card.
+
+**The claim** (`POST /app/action/claim`, signed, 1 KB). The only way a card row is
+consumed: every gate of `pending.ts` on the card channel, atomically — so a card
+fetched twice, tapped twice, or auto-run and then tapped runs once. Only then are
+the parameters returned. A card row is invisible to "כן", to a typed code and to a
+chat button, and a chat row is invisible to the claim; a mismatch reads as "not
+found". Refusals the app sees: `expired`, `used`, `not_found` (wrong sender, bad
+nonce and a changed input all read as the last). `verb: no` refuses the card.
+`POST /app/action/report` records `done | failed | no_match | unsupported` in the
+audit log and answers nothing — the card was the one reply.
+
+**Running alone** (`autoRunAllowed`): only when the tool allows it, Tier 1, and
+**no escalation** on the turn — not tainted, stale, forwarded or misheard — and,
+on the phone, only while the chat is on screen and the card is under two
+minutes old. Do-not-disturb and the ringer never run alone: they could silence
+the assistant's own reminders. The phone takes a card in its own database with
+a compare-and-set before claiming, and a claim that could not reach the server
+puts it back to open.
+
+**Who gets cards.** The app declares `caps: ["cards"]` with its signed
+push-token update (re-sent at once when the build's capabilities change); the
+server stores it on the device (`devices.caps`) and the agent offers the card
+tools only on the app channel, to a device that declared them. An older build
+is never sent a card it cannot run. Voice turns get them the same way.
+
+**Questions.** A missing time (alarm) or duration (timer) is code's own
+question, recorded and answered deterministically ("6" → the card). The rest
+(`phone_missing`: destination, app, setting, state, recipient, message) go back
+to the agent, which has the turn in history.
+
+**On the phone** (`apps/call-companion` 0.3.0): `Row.Card` with a closed type
+list; `ChatStore` v2 keeps the card and its state; Run / Cancel under the
+message, one status line after; `DeviceActions` validates the parameters again
+and runs them; no card button in any notification. New permissions: `SET_ALARM`,
+`ACCESS_NOTIFICATION_POLICY`, and a `<queries>` for launcher activities.
+
 ---
 
 ## 7. Security
@@ -1448,6 +1504,8 @@ most one 429.
 | Conversation history at rest | AES-GCM per row, bound to table and sender; 12 h, 1 h when tainted; last 6 exchanges; never a tool result or a transcript; `/forget` and `/pair off` wipe it; never logged (`history`, `reply`, `args`, `result` are on the ban list) (§6.19) |
 | Two agent turns interleaving while one awaits the model | `agent_lock`, taken synchronously before the first await, released at the end, 60 s expiry. A second message is answered "busy" and must be resent (§6.19) |
 | A fallback running a message twice | The parser runs only when no tool ran in the agent turn (§6.19) |
+| A phone action run twice, or run without the user | A card is a `channel = 'card'` pending row, consumed only by a signed claim with its nonce, once; the parameters leave the server only then. "כן", typed codes and chat buttons cannot reach it. It runs alone only on a clean Tier 1 turn with the chat on screen; messages, DND and the ringer always wait for the tap (§6.20) |
+| A message sent in the user's name | `message.compose` is Tier 3, never runs alone, shows the whole text on the card, resolves the contact on the phone, and only opens the SMS app or WhatsApp prefilled — sending is the user's own tap there (§6.20) |
 | LLM output errors | Strict Zod, closed enums, `.strict()`, length caps. Code re-derives times. LLM never supplies IDs |
 | Excessive damage | Tiers, confirmations, per-tool rate limits, daily write caps, Undo, `/pause` handled before NLU |
 | Secret leakage | Secrets only in Wrangler secrets. Never in repo, prompts, or logs. Refresh token encrypted. gitleaks in pre-commit + CI |
@@ -2168,6 +2226,13 @@ failure this system exists to prevent. **It is not an agent model** (§13); it
 stays the parser's fallback, where strict structured output constrains it.
 **Before `AGENT=on`:** a full qwen run (`--resume` until all 166 + 5 answer).
 
+**Phone actions, prompt a2, qwen, 2026-10-01** (`cases.phone.yaml`, 16 cases, card
+tools offered): 12 answered (4 network or rate-limit), every gate 100%, schema
+rejections 0. Three asked in text instead of guessing a missing time, duration or
+message. Offering the six card tools raised the prompt to ~1,940 tokens per call
+(from ~1,480) — the capacity estimate in §6.19 drops by about a quarter on the app
+channel.
+
 ## 12. Risk register
 
 | Risk | Prevention |
@@ -2375,6 +2440,7 @@ stays the parser's fallback, where strict structured output constrains it.
 | 2026-09-29 | **A Durable Object request has 30 s of CPU, not 10 ms** (§4.1). The cold-start guard's bound goes from 50 ms to 100 ms after migration 10's seven ALTERs |
 | 2026-10-01 | **The app** (`apps/call-companion` 0.2.0, §6.18): chat screen, hold-to-record voice, reminder notifications with their buttons as actions, signing with a Keystore key, pairing by MAC. One message at a time, retried with the same id; outbox rows stored under their seq before the ack. Its unit tests pin the canonical string, a server-made signature, the pairing MAC and code normalisation against vectors from `verify.ts` |
 | 2026-10-01 | **The agent, Phase A** (§6.19, §3.1, §7.1, §7.3): the LLM becomes a bounded tool-calling agent with free chat; the parser stays as the fallback. Compact tool catalog after the spike measured the strict schema at ~4,900 tokens on qwen. Only reads return to the model; every other outcome ends the turn as code rendered it. Taint from calendar reads forces CONFIRM and carries through questions and history. Encrypted 12 h history, `/forget`, per-sender lock, per-model token meter, defanged links on every outbound message. `AGENT=off` until Groq ZDR is on. Replaces 2026-09-24 "LLM = parser only" |
+| 2026-10-01 | **Phone actions as cards, Phase B** (§6.20): six agent-only tools (alarm, timer, navigation, open an app, quick settings, compose SMS/WhatsApp). A card is a `channel = 'card'` pending row the app claims once, with its nonce, by a signed request; the parameters leave the server only then. Runs alone only on a clean Tier 1 turn with the chat on screen; messages, DND and the ringer always wait for the tap. Offered only to an app that declared `cards` (`devices.caps`). Parser catalog and wire schema unchanged (`PARSER_TOOL_NAMES`). Agent prompt a2. App 0.3.0 |
 
 ---
 

@@ -6,7 +6,7 @@ import { describe, expect, it } from 'vitest';
 import { parseWithFallback } from '../../../src/nlu/provider.js';
 import type { NluProvider, NluResponse } from '../../../src/nlu/provider.js';
 import { buildPrompt, estimatePromptTokens, PROMPT_VERSION } from '../../../src/nlu/prompt.js';
-import { toolCatalog, TOOL_NAMES, REGISTRY } from '../../../src/tools/registry.js';
+import { PARSER_TOOL_NAMES, toolCatalog, TOOL_NAMES, REGISTRY } from '../../../src/tools/registry.js';
 import { createFakeLogger } from '../../integration/fake-logger.js';
 
 const INPUT = {
@@ -153,9 +153,15 @@ describe('buildPrompt — the privacy boundary', () => {
   });
 
   it('lists every enabled tool, generated from the registry', () => {
-    for (const name of TOOL_NAMES) {
+    for (const name of PARSER_TOOL_NAMES) {
       expect(system).toContain(name);
     }
+  });
+
+  it('never offers the parser an agent-only phone action (§6.20)', () => {
+    const agentOnly = TOOL_NAMES.filter((name) => !(PARSER_TOOL_NAMES as readonly string[]).includes(name));
+    expect(agentOnly.length).toBeGreaterThan(0);
+    for (const name of agentOnly) expect(system).not.toContain(name);
   });
 
   it('carries no tier, scope or rate-limit information', () => {

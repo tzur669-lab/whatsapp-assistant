@@ -76,6 +76,12 @@ export const BANNED_LOG_FIELDS = [
   'snippet',
   'notification',
   'sms',
+  // Phone actions (§6.20): a place, a label, a card's preview and the words a
+  // contact or an app is matched by are all the user's content.
+  'destination',
+  'label',
+  'preview',
+  'queries',
 ] as const;
 
 const BANNED = new Set<string>(BANNED_LOG_FIELDS);

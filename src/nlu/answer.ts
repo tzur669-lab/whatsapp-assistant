@@ -190,6 +190,10 @@ const SLOT_NAMES: Record<string, Partial<Record<keyof AnswerPatch, string>>> = {
   'calendar.move_event': { target: 'query_variants', date: 'to_date', time: 'to_time' },
   'calendar.delete_event': { target: 'query_variants', date: 'date', time: 'time' },
   'calls.place': { target: 'query_variants' },
+  // Phone actions (§6.20): the two questions code asks itself. The rest are
+  // answered through the agent, which has the turn in history.
+  'alarm.set': { time: 'time' },
+  'timer.set': { durationMinutes: 'duration_minutes' },
 };
 
 /**

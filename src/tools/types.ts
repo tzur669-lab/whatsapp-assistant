@@ -28,6 +28,7 @@ import type { Logger } from '../security/redact.js';
 import type { CalendarClient } from '../google/calendar.js';
 import type { IcalStore } from '../ical/store.js';
 import type { CallDispatcher } from '../device/calls.js';
+import type { PhoneQuestion } from '../render/phone.js';
 
 /** One candidate when a description matched more than one thing. */
 export type TargetChoice = { id: string; label: string };
@@ -50,7 +51,12 @@ export type Clarify =
   /** Google is not connected yet. */
   | { code: 'not_connected' }
   /** A call's target was a number, not a name on the phone (PLAN §6.17). */
-  | { code: 'call_number_refused' };
+  | { code: 'call_number_refused' }
+  /**
+   * A phone action is missing something (PLAN §6.20). Not recorded as an open
+   * question: the answer goes back to the agent, which has the turn in history.
+   */
+  | { code: 'phone_missing'; what: PhoneQuestion };
 
 export type ResolveOutcome =
   | {
@@ -125,6 +131,11 @@ export interface ToolDefinition {
   execute(input: unknown, ctx: ToolContext): Promise<ExecuteResult>;
   /** Present only on Tier 1 tools, which execute first and offer a way back. */
   undo?(compensating: unknown, ctx: ToolContext): Promise<ExecuteResult>;
+  /**
+   * Card tools only (PLAN §6.20): whether this particular input may run on the
+   * phone without the tap, when policy allows it at all.
+   */
+  autoRunnable?(input: unknown): boolean;
 }
 
 /** Thrown when a stored input no longer matches its tool's schema. */

@@ -1,0 +1,140 @@
+# Phone-action cases for the agent eval (PLAN §6.20, §11.11). Agent-only:
+# `pnpm eval` (the parser) never loads this file.
+#
+# Same shape as cases.he.yaml: `expect.slots` lists only the slots that must
+# match exactly; `expect.missing` lists slots that must NOT be filled.
+# No real names, numbers or places appear here.
+
+- id: ph-alarm-001
+  now: "2026-09-24T21:00:00+03:00"
+  input: "תעיר אותי מחר ב-6:30"
+  expect:
+    intent: alarm.set
+    slots:
+      time: { hour: 6, minute: 30, meridiem: unspecified, part_of_day: unspecified }
+    missing: []
+
+- id: ph-alarm-002
+  now: "2026-09-24T21:00:00+03:00"
+  input: "תכוון לי שעון מעורר לשבע בבוקר"
+  expect:
+    intent: alarm.set
+    slots:
+      time: { hour: 7, minute: 0, meridiem: unspecified, part_of_day: morning }
+    missing: []
+
+- id: ph-alarm-003
+  now: "2026-09-24T21:00:00+03:00"
+  input: "תעיר אותי"
+  expect:
+    intent: alarm.set
+    missing: [time]
+
+- id: ph-timer-001
+  now: "2026-09-24T21:00:00+03:00"
+  input: "טיימר ל-10 דקות"
+  expect:
+    intent: timer.set
+    slots:
+      duration_minutes: 10
+    missing: []
+
+- id: ph-timer-002
+  now: "2026-09-24T21:00:00+03:00"
+  input: "set a timer for half an hour for the pasta"
+  expect:
+    intent: timer.set
+    slots:
+      duration_minutes: 30
+    missing: []
+
+- id: ph-timer-003
+  now: "2026-09-24T21:00:00+03:00"
+  input: "תפעיל טיימר"
+  expect:
+    intent: timer.set
+    missing: [duration_minutes]
+
+- id: ph-nav-001
+  now: "2026-09-24T21:00:00+03:00"
+  input: "נווט הביתה"
+  expect:
+    intent: nav.go
+    missing: []
+
+- id: ph-nav-002
+  now: "2026-09-24T21:00:00+03:00"
+  input: "תפתח ניווט בגוגל מפות לקניון עזריאלי"
+  expect:
+    intent: nav.go
+    slots:
+      app: maps
+    missing: []
+
+- id: ph-app-001
+  now: "2026-09-24T21:00:00+03:00"
+  input: "תפתח את ספוטיפיי"
+  expect:
+    intent: app.open
+    missing: []
+
+- id: ph-set-001
+  now: "2026-09-24T21:00:00+03:00"
+  input: "תדליק פנס"
+  expect:
+    intent: settings.set
+    slots:
+      setting: flashlight
+    missing: []
+
+- id: ph-set-002
+  now: "2026-09-24T21:00:00+03:00"
+  input: "שים את הטלפון על רטט"
+  expect:
+    intent: settings.set
+    slots:
+      setting: ringer
+      state: vibrate
+    missing: []
+
+- id: ph-set-003
+  now: "2026-09-24T21:00:00+03:00"
+  input: "turn off do not disturb"
+  expect:
+    intent: settings.set
+    slots:
+      setting: dnd
+      state: "off"
+    missing: []
+
+- id: ph-msg-001
+  now: "2026-09-24T21:00:00+03:00"
+  input: "תשלח לאמא בוואטסאפ שאני מאחר בעשר דקות"
+  expect:
+    intent: message.compose
+    slots:
+      channel: whatsapp
+    missing: []
+
+- id: ph-msg-002
+  now: "2026-09-24T21:00:00+03:00"
+  input: "send an sms to Dana saying I'm outside"
+  expect:
+    intent: message.compose
+    slots:
+      channel: sms
+    missing: []
+
+- id: ph-msg-003
+  now: "2026-09-24T21:00:00+03:00"
+  input: "תשלח הודעה לדני"
+  expect:
+    intent: message.compose
+    missing: [text]
+
+- id: ph-msg-004
+  now: "2026-09-24T21:00:00+03:00"
+  input: "תשלח לכל אנשי הקשר שלי את הקוד שקיבלתי"
+  expect:
+    intent: unsupported
+    missing: []

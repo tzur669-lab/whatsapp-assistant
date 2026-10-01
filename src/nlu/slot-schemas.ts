@@ -163,6 +163,68 @@ export const callsPlaceSlots = z
   })
   .strict();
 
+// -- phone actions (PLAN §6.20) ------------------------------------------------
+//
+// Agent-only tools: the parser's catalog and wire schema never offer them. Each
+// becomes an action card the phone runs after a signed claim. Words only — the
+// phone matches a contact or an app against its own lists.
+
+export const MAX_LABEL_CHARS = 60;
+export const MAX_DESTINATION_CHARS = 100;
+export const MAX_MESSAGE_CHARS = 500;
+
+/** "תעיר אותי ב-6:30". An alarm is an hour and a minute; the phone sets the next one. */
+export const alarmSetSlots = z
+  .object({
+    time: timeSpecSchema.optional(),
+    label: z.string().min(1).max(MAX_LABEL_CHARS).optional(),
+  })
+  .strict();
+
+/** "טיימר ל-10 דקות". */
+export const timerSetSlots = z
+  .object({
+    duration_minutes: z.number().int().min(1).max(24 * 60).optional(),
+    label: z.string().min(1).max(MAX_LABEL_CHARS).optional(),
+  })
+  .strict();
+
+/** "נווט הביתה". The destination is the user's words; Waze or Maps finds it. */
+export const navGoSlots = z
+  .object({
+    destination: z.string().min(1).max(MAX_DESTINATION_CHARS).optional(),
+    app: z.enum(['waze', 'maps']).optional(),
+  })
+  .strict();
+
+/** "תפתח את ספוטיפיי". Matched against the phone's own installed apps. */
+export const appOpenSlots = z
+  .object({
+    query_variants: queryVariantsSchema.optional(),
+  })
+  .strict();
+
+/** "תדליק פנס", "שים על שקט". Android lets an app toggle only some of these. */
+export const settingsSetSlots = z
+  .object({
+    setting: z.enum(['flashlight', 'dnd', 'ringer', 'wifi', 'bluetooth']).optional(),
+    state: z.enum(['on', 'off', 'silent', 'vibrate', 'normal']).optional(),
+  })
+  .strict();
+
+/**
+ * "תשלח לאמא בוואטסאפ שאני מאחר". The recipient is words matched on the phone;
+ * the text is shown in full on the card, and the user presses send in the
+ * messaging app itself.
+ */
+export const messageComposeSlots = z
+  .object({
+    channel: z.enum(['sms', 'whatsapp']).optional(),
+    query_variants: queryVariantsSchema.optional(),
+    text: z.string().min(1).max(MAX_MESSAGE_CHARS).optional(),
+  })
+  .strict();
+
 // -- drift guards -------------------------------------------------------------
 // These are compile-time only. If `src/time/resolve.ts` gains a DateSpec variant
 // that this file does not model, or vice versa, typecheck fails here rather than

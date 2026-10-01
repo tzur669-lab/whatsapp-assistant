@@ -49,11 +49,12 @@ export function fromWireName(wire: string, offered: readonly ToolName[]): ToolNa
 }
 
 /**
- * The tools offered on a channel. Phase A offers the registry's server tools on
- * both; phone tools join in Phases B and C, gated by what the device declared.
+ * The tools offered on a turn. The server tools always; the phone actions only
+ * when the turn came from an app that declared it runs cards (§6.20) — offered
+ * anywhere else, a card would wait for a phone that cannot run it.
  */
-export function agentToolNames(): ToolName[] {
-  return [...TOOL_NAMES];
+export function agentToolNames(options: { cards: boolean } = { cards: false }): ToolName[] {
+  return TOOL_NAMES.filter((name) => options.cards || REGISTRY[name].confirmation !== 'card');
 }
 
 export function wireTools(names: readonly ToolName[]): WireTool[] {

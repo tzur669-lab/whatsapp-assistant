@@ -24,6 +24,7 @@ export type PolicyReason =
   | 'voice_uncertain'
   | 'tainted'
   | 'tier_requires_confirmation'
+  | 'card_confirmation'
   | 'allowed';
 
 export type RateLimit = { perHour: number; perDay: number };
@@ -79,6 +80,16 @@ export type PolicyResult = {
    * let its screen ask (PLAN §6.17). Never set on anything but CONFIRM.
    */
   confirmOnDevice: boolean;
+  /**
+   * The action is a card the app runs after a signed claim (PLAN §6.20). Never
+   * set on anything but CONFIRM.
+   */
+  confirmOnCard: boolean;
+  /**
+   * The app may run this card without the tap: a low-risk tool, Tier 1, and not
+   * one escalation on the turn — not tainted, stale, forwarded or misheard.
+   */
+  autoRunAllowed: boolean;
 };
 
 export const DEFAULT_LIMITS: Readonly<Record<ToolName, RateLimit>> = Object.fromEntries(
@@ -118,6 +129,17 @@ export function decide(tool: ToolName, ctx: PolicyContext, extras: PolicyExtras 
   if (isWrite && ctx.tainted) reasons.push('tainted');
   if (tier >= 2) reasons.push('tier_requires_confirmation');
 
+  // A card is always a confirmation: the claim that consumes it is the tap, or,
+  // on a clean Tier 1 turn, the app running it on its own (§6.20). Tier 3 asks
+  // for no typed code — the tap on the card is that factor, as the phone's
+  // screen is for a call.
+  if (spec.confirmation === 'card') {
+    return result('CONFIRM', tier, reasons[0] ?? 'card_confirmation', reasons.length > 0 ? reasons : ['card_confirmation'], {
+      confirmOnCard: true,
+      autoRunAllowed: spec.autoRun === true && tier === 1 && reasons.length === 0,
+    });
+  }
+
   if (reasons.length > 0) {
     // The phone's screen is a confirmation that shows the resolved number, out
     // of band from the channel an injection would arrive on. It answers every
@@ -153,7 +175,13 @@ function result(
   tier: Tier | null,
   reason: PolicyReason,
   allReasons: PolicyReason[],
-  flags: { undoable?: boolean; requiresTypedCode?: boolean; confirmOnDevice?: boolean } = {},
+  flags: {
+    undoable?: boolean;
+    requiresTypedCode?: boolean;
+    confirmOnDevice?: boolean;
+    confirmOnCard?: boolean;
+    autoRunAllowed?: boolean;
+  } = {},
 ): PolicyResult {
   return {
     decision,
@@ -163,5 +191,7 @@ function result(
     undoable: flags.undoable ?? false,
     requiresTypedCode: flags.requiresTypedCode ?? false,
     confirmOnDevice: flags.confirmOnDevice ?? false,
+    confirmOnCard: flags.confirmOnCard ?? false,
+    autoRunAllowed: flags.autoRunAllowed ?? false,
   };
 }

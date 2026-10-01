@@ -15,7 +15,7 @@ import {
 } from '../../../src/nlu/json-schema.js';
 import { dateSpecSchema, timeSpecSchema, rangeSchema } from '../../../src/nlu/slot-schemas.js';
 import { validateIntentDraft } from '../../../src/nlu/intent-schema.js';
-import { TOOL_NAMES } from '../../../src/tools/registry.js';
+import { PARSER_TOOL_NAMES } from '../../../src/tools/registry.js';
 
 describe('toJsonSchema', () => {
   it('converts a capped string', () => {
@@ -100,8 +100,10 @@ describe('buildResponseSchema', () => {
     expect(schema['anyOf']).toBeUndefined();
   });
 
-  it('closes the intent enum over the registry plus unsupported', () => {
-    expect(props['intent']?.['enum']).toEqual([...TOOL_NAMES, 'unsupported']);
+  it('closes the intent enum over the parser\'s tools plus unsupported', () => {
+    // The phone actions are agent-only (§6.20): the parser's wire schema is
+    // byte-for-byte what its eval measured.
+    expect(props['intent']?.['enum']).toEqual([...PARSER_TOOL_NAMES, 'unsupported']);
   });
 
   it('closes the slots object so an invented slot name cannot be generated', () => {

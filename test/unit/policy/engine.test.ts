@@ -270,3 +270,26 @@ describe('tainted turns (agent, plan invariant 4)', () => {
     expect(decide('reminders.create', ctx({ tainted: false }))).toMatchObject({ decision: 'ALLOW' });
   });
 });
+
+describe('action cards (PLAN §6.20)', () => {
+  it('always asks through a card, even at Tier 1', () => {
+    const res = decide('alarm.set', ctx());
+    expect(res).toMatchObject({ decision: 'CONFIRM', confirmOnCard: true, autoRunAllowed: true, undoable: false });
+  });
+
+  it('never lets a card run on its own after an escalation', () => {
+    for (const extra of [{ tainted: true }, { forwarded: true }, { messageSentAtMs: NOW - 11 * 60_000 }, { source: 'voice' as const, voiceConfidence: 'uncertain' as const }]) {
+      const res = decide('alarm.set', ctx(extra));
+      expect(res).toMatchObject({ decision: 'CONFIRM', confirmOnCard: true, autoRunAllowed: false });
+    }
+  });
+
+  it('never lets a Tier 3 card run on its own, and asks for no typed code — the tap is the factor', () => {
+    const res = decide('message.compose', ctx());
+    expect(res).toMatchObject({ decision: 'CONFIRM', tier: 3, confirmOnCard: true, autoRunAllowed: false, requiresTypedCode: false });
+  });
+
+  it('is denied while paused, like every other write', () => {
+    expect(decide('timer.set', ctx({ paused: true }))).toMatchObject({ decision: 'DENY', reason: 'paused' });
+  });
+});

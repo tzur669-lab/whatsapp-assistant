@@ -42,6 +42,17 @@ export type OutboxRow = {
   text: string;
   buttons: OutboundButton[];
   createdAt: number;
+  /** A phone action to claim (PLAN §6.20). Never its parameters. */
+  card?: OutboxCard;
+};
+
+/** The card on the wire: enough to show it and claim it, nothing it would run. */
+export type OutboxCard = {
+  actionId: string;
+  nonce: string;
+  type: string;
+  preview: string;
+  autoRun: boolean;
 };
 
 export type Accepted = { seq: number; wamid: string; adopted: boolean };
@@ -75,6 +86,7 @@ export class AppOutbox {
     principal?: string;
     /** Only the one-time connect link stays a link (PLAN §6.19). */
     keepLinks?: boolean;
+    card?: OutboxCard;
   }): Accepted {
     const now = this.now();
     // Every row the app will show passes here, so here is where links are
@@ -84,8 +96,8 @@ export class AppOutbox {
     const firstPush = message.kind === 'reply' ? now + REPLY_PUSH_DELAY_MS : now;
 
     const inserted = this.sql.exec(
-      `INSERT INTO app_outbox (kind, reminder_id, in_reply_to, text, buttons_json, created_at, expires_at, next_push_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      `INSERT INTO app_outbox (kind, reminder_id, in_reply_to, text, buttons_json, created_at, expires_at, next_push_at, action_json)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(reminder_id) DO NOTHING
        RETURNING seq`,
       message.kind,
@@ -96,6 +108,7 @@ export class AppOutbox {
       now,
       now + ttl,
       firstPush,
+      message.card ? JSON.stringify({ ...message.card, preview: defangLinks(message.card.preview) }) : null,
     )[0];
 
     if (!inserted) {
@@ -249,7 +262,25 @@ export class AppOutbox {
   }
 }
 
-const COLUMNS = 'seq, kind, in_reply_to, text, buttons_json, created_at';
+const COLUMNS = 'seq, kind, in_reply_to, text, buttons_json, created_at, action_json';
+
+/** Re-checked on read, like the buttons: a row that drifted reads as no card at all. */
+function cardOf(raw: unknown): OutboxCard | null {
+  if (typeof raw !== 'string') return null;
+  try {
+    const card = JSON.parse(raw) as Partial<OutboxCard>;
+    if (
+      typeof card.actionId === 'string' && /^[0-9a-f]+$/.test(card.actionId) &&
+      typeof card.nonce === 'string' && /^[0-9a-f]+$/.test(card.nonce) &&
+      typeof card.type === 'string' && typeof card.preview === 'string' && typeof card.autoRun === 'boolean'
+    ) {
+      return { actionId: card.actionId, nonce: card.nonce, type: card.type, preview: card.preview, autoRun: card.autoRun };
+    }
+  } catch {
+    // fall through
+  }
+  return null;
+}
 
 function toRow(row: Record<string, unknown>): OutboxRow {
   let buttons: OutboundButton[] = [];
@@ -273,5 +304,6 @@ function toRow(row: Record<string, unknown>): OutboxRow {
     text: String(row['text']),
     buttons,
     createdAt: Number(row['created_at']),
+    ...(cardOf(row['action_json']) ? { card: cardOf(row['action_json'])! } : {}),
   };
 }

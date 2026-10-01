@@ -27,6 +27,9 @@ import { REMINDER_TOOLS } from '../tools/reminders.js';
 import { calendarListEvents } from '../tools/calendar-read.js';
 import { CALENDAR_WRITE_TOOLS } from '../tools/calendar-write.js';
 import { callsPlace } from '../tools/calls.js';
+import { PHONE_ACTION_TOOLS } from '../tools/phone-actions.js';
+import { cardReply } from '../render/phone.js';
+import type { CardInput } from '../render/phone.js';
 import type { Clarify, ExecuteResult, ToolContext, ToolDefinition } from '../tools/types.js';
 import { ToolInputError } from '../tools/types.js';
 import { buttonId, parseButtonId } from '../confirm/pending.js';
@@ -70,6 +73,22 @@ export type Reply = {
    * tool result; every other outcome ends the agent's turn as it is (§6.19).
    */
   read?: true;
+  /** A phone action for the app to claim and run (§6.20). */
+  card?: ActionCard;
+};
+
+/**
+ * What rides on the reply: enough to claim the card, and nothing it would run.
+ * The parameters reach the phone only from the claim, which consumes the row.
+ */
+export type ActionCard = {
+  actionId: string;
+  nonce: string;
+  type: CardInput['type'];
+  /** Code-rendered, from the validated input. What the user approves. */
+  preview: string;
+  /** Policy and the tool both allow the app to run it without the tap. */
+  autoRun: boolean;
 };
 
 export type TurnContext = {
@@ -93,6 +112,7 @@ const IMPLEMENTED: Partial<Record<ToolName, ToolDefinition>> = {
   'calendar.list_events': calendarListEvents,
   ...CALENDAR_WRITE_TOOLS,
   'calls.place': callsPlace,
+  ...PHONE_ACTION_TOOLS,
 };
 
 export type RunOptions = {
@@ -187,6 +207,8 @@ export async function runIntent(
       // Confirmed on the paired phone's screen, not in chat (§6.17): no button,
       // no typed code. Dispatching is what asks.
       if (decision.confirmOnDevice) return execute(tool, resolved.input, decision, turn);
+      // A phone action becomes a card the app claims (§6.20).
+      if (decision.confirmOnCard) return offerCard(tool, resolved.input, decision, turn);
       return askToConfirm(tool, resolved.input, decision, turn);
 
     case 'CLARIFY':
@@ -299,6 +321,40 @@ function askToConfirm(
       { id: buttonId('pa', action.id, action.nonce, 'ok'), title: buttonLabels.confirm(ctx.lang) },
       { id: buttonId('pa', action.id, action.nonce, 'no'), title: buttonLabels.cancel(ctx.lang) },
     ],
+  };
+}
+
+/**
+ * Write the card down and send it (§6.20).
+ *
+ * The row is `channel = 'card'`, so no chat path can confirm it: not a button,
+ * not "כן", not a typed code. The app claims it with the nonce, once.
+ */
+function offerCard(
+  tool: ToolDefinition,
+  input: unknown,
+  decision: PolicyResult,
+  turn: TurnContext,
+): Reply {
+  const ctx = turn.tool;
+  const preview = tool.preview(input, ctx.lang);
+  const type = (input as { type: CardInput['type'] }).type;
+
+  const action = turn.pending.create({
+    tool: tool.name,
+    input,
+    summary: preview,
+    tier: decision.tier ?? 0,
+    principal: ctx.principal,
+    channel: 'card',
+  });
+
+  const autoRun = decision.autoRunAllowed && (tool.autoRunnable?.(input) ?? false);
+  audit(turn, tool.name, decision, 'CARD', autoRun ? 'card_issued_auto' : 'card_issued', action.id);
+
+  return {
+    text: cardReply(preview, autoRun, type, ctx.lang),
+    card: { actionId: action.id, nonce: action.nonce, type, preview, autoRun },
   };
 }
 

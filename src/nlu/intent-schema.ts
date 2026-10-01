@@ -12,14 +12,20 @@
 import { z } from 'zod';
 import { TOOL_NAMES } from '../tools/registry.js';
 import {
+  alarmSetSlots,
+  appOpenSlots,
   calendarCreateEventSlots,
   calendarDeleteEventSlots,
   calendarListEventsSlots,
   calendarMoveEventSlots,
   callsPlaceSlots,
+  messageComposeSlots,
+  navGoSlots,
   remindersCancelSlots,
   remindersCreateSlots,
   remindersListSlots,
+  settingsSetSlots,
+  timerSetSlots,
 } from './slot-schemas.js';
 
 export const MAX_MISSING_SLOTS = 8;
@@ -61,6 +67,11 @@ const ignoredSlots = remindersCreateSlots
   .merge(calendarCreateEventSlots)
   .merge(calendarMoveEventSlots)
   .merge(calendarDeleteEventSlots)
+  .merge(alarmSetSlots)
+  .merge(timerSetSlots)
+  .merge(navGoSlots)
+  .merge(settingsSetSlots)
+  .merge(messageComposeSlots)
   .strict();
 
 const common = {
@@ -83,6 +94,13 @@ export const intentDraftSchema = z.discriminatedUnion('intent', [
   z.object({ intent: z.literal('calendar.move_event'), slots: calendarMoveEventSlots, ...common }).strict(),
   z.object({ intent: z.literal('calendar.delete_event'), slots: calendarDeleteEventSlots, ...common }).strict(),
   z.object({ intent: z.literal('calls.place'), slots: callsPlaceSlots, ...common }).strict(),
+  // Phone actions (§6.20). Agent-only; the parser's wire schema never offers them.
+  z.object({ intent: z.literal('alarm.set'), slots: alarmSetSlots, ...common }).strict(),
+  z.object({ intent: z.literal('timer.set'), slots: timerSetSlots, ...common }).strict(),
+  z.object({ intent: z.literal('nav.go'), slots: navGoSlots, ...common }).strict(),
+  z.object({ intent: z.literal('app.open'), slots: appOpenSlots, ...common }).strict(),
+  z.object({ intent: z.literal('settings.set'), slots: settingsSetSlots, ...common }).strict(),
+  z.object({ intent: z.literal('message.compose'), slots: messageComposeSlots, ...common }).strict(),
   // Anything outside the tool list, including prompt-injection attempts.
   z.object({ intent: z.literal('unsupported'), slots: ignoredSlots, ...common }).strict(),
 ]);
@@ -115,6 +133,12 @@ const TOOL_SLOTS: Readonly<Record<string, ReadonlySet<string>>> = {
   'calendar.move_event': new Set(Object.keys(calendarMoveEventSlots.shape)),
   'calendar.delete_event': new Set(Object.keys(calendarDeleteEventSlots.shape)),
   'calls.place': new Set(Object.keys(callsPlaceSlots.shape)),
+  'alarm.set': new Set(Object.keys(alarmSetSlots.shape)),
+  'timer.set': new Set(Object.keys(timerSetSlots.shape)),
+  'nav.go': new Set(Object.keys(navGoSlots.shape)),
+  'app.open': new Set(Object.keys(appOpenSlots.shape)),
+  'settings.set': new Set(Object.keys(settingsSetSlots.shape)),
+  'message.compose': new Set(Object.keys(messageComposeSlots.shape)),
 };
 
 /** Every slot any tool declares — the flat union the wire schema offers the model. */

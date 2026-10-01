@@ -120,7 +120,7 @@ async function main(): Promise<void> {
 
 async function ask(provider: AgentProvider, id: string, messages: AgentMessage[]): Promise<Recorded> {
   const started = Date.now();
-  const response = await provider.complete(messages, wireTools(agentToolNames()));
+  const response = await provider.complete(messages, wireTools(agentToolNames({ cards: true })));
   const latencyMs = Date.now() - started;
 
   if (!response.ok) {
@@ -134,7 +134,7 @@ async function ask(provider: AgentProvider, id: string, messages: AgentMessage[]
   const call = response.toolCalls[0];
   if (!call) return { id, draft: null, text: true, latencyMs, tokens };
 
-  const tool = fromWireName(call.name, agentToolNames());
+  const tool = fromWireName(call.name, agentToolNames({ cards: true }));
   let slots: unknown = {};
   try {
     slots = stripNulls(JSON.parse(call.arguments));
@@ -273,7 +273,8 @@ function intentOf(draft: unknown): string {
 function loadCases(filter: string | null): EvalCase[] {
   const dir = fileURLToPath(new URL('.', import.meta.url));
   const cases: EvalCase[] = [];
-  for (const file of ['cases.he.yaml', 'cases.en.yaml']) {
+  // The phone actions are scored as an app that runs cards would see them (§6.20).
+  for (const file of ['cases.he.yaml', 'cases.en.yaml', 'cases.phone.yaml']) {
     const parsed = parseYaml(readFileSync(`${dir}${file}`, 'utf8')) as EvalCase[] | null;
     if (Array.isArray(parsed)) cases.push(...parsed);
   }

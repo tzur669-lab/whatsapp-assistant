@@ -25,6 +25,14 @@ const NONCE_BYTES = 16;
 
 export type PendingStatus = 'pending' | 'executed' | 'cancelled' | 'expired';
 
+/**
+ * Where a pending action is confirmed (PLAN §6.20). `chat`: a chat button, a
+ * plain "כן", or a typed code. `card`: only a signed claim from the paired app.
+ * The two never cross — a card cannot be confirmed from the chat, and a chat
+ * action cannot be claimed as a card — and a mismatch reads as "not found".
+ */
+export type PendingChannel = 'chat' | 'card';
+
 export type PendingAction = {
   id: string;
   tool: string;
@@ -85,6 +93,7 @@ export class PendingActions {
     summary: string;
     tier: number;
     principal: string;
+    channel?: PendingChannel;
   }): PendingAction {
     const id = randomHex(ID_BYTES);
     const nonce = randomHex(NONCE_BYTES);
@@ -93,8 +102,8 @@ export class PendingActions {
 
     this.sql.exec(
       `INSERT INTO pending_actions
-         (id, tool, input_json, input_hash, summary, tier, principal, nonce_hash, status, created_at, expires_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)`,
+         (id, tool, input_json, input_hash, summary, tier, principal, nonce_hash, status, created_at, expires_at, channel)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?)`,
       id,
       params.tool,
       inputJson,
@@ -105,6 +114,7 @@ export class PendingActions {
       digest(nonce),
       createdAt,
       createdAt + EXPIRY_MS,
+      params.channel ?? 'chat',
     );
 
     return {
@@ -139,7 +149,7 @@ export class PendingActions {
 
     const rows = this.sql.exec(
       `SELECT id, nonce_hash FROM pending_actions
-       WHERE principal = ? AND status = 'pending' AND expires_at > ? AND tier >= 3`,
+       WHERE principal = ? AND status = 'pending' AND expires_at > ? AND tier >= 3 AND channel = 'chat'`,
       principal,
       this.now(),
     );
@@ -154,8 +164,8 @@ export class PendingActions {
   }
 
   /** Validate and mark executed. Returns the stored input to run. */
-  confirm(id: string, nonce: string, principal: string): ConfirmResult {
-    const checked = this.check(id, nonce, principal);
+  confirm(id: string, nonce: string, principal: string, channel: PendingChannel = 'chat'): ConfirmResult {
+    const checked = this.check(id, nonce, principal, channel);
     if (!checked.ok) return checked;
 
     this.sql.exec(
@@ -181,7 +191,7 @@ export class PendingActions {
    * runs.
    */
   confirmResolved(id: string, principal: string): ConfirmResult {
-    const checked = this.check(id, null, principal);
+    const checked = this.check(id, null, principal, 'chat');
     if (!checked.ok) return checked;
 
     this.sql.exec(
@@ -193,8 +203,13 @@ export class PendingActions {
   }
 
   /** Validate and mark cancelled. Same checks: a cancel is also an instruction. */
-  cancel(id: string, nonce: string, principal: string): { ok: true } | { ok: false; reason: ConfirmFailure } {
-    const checked = this.check(id, nonce, principal);
+  cancel(
+    id: string,
+    nonce: string,
+    principal: string,
+    channel: PendingChannel = 'chat',
+  ): { ok: true } | { ok: false; reason: ConfirmFailure } {
+    const checked = this.check(id, nonce, principal, channel);
     if (!checked.ok) return checked;
 
     this.sql.exec(
@@ -267,9 +282,9 @@ export class PendingActions {
     const rows = this.sql.exec(
       minTier === undefined
         ? `SELECT id FROM pending_actions
-           WHERE principal = ? AND status = 'pending' AND expires_at > ? AND tier < 3`
+           WHERE principal = ? AND status = 'pending' AND expires_at > ? AND tier < 3 AND channel = 'chat'`
         : `SELECT id FROM pending_actions
-           WHERE principal = ? AND status = 'pending' AND expires_at > ? AND tier >= 3`,
+           WHERE principal = ? AND status = 'pending' AND expires_at > ? AND tier >= 3 AND channel = 'chat'`,
       principal,
       this.now(),
     );
@@ -283,9 +298,11 @@ export class PendingActions {
    * it off a message; see `confirmResolved` for why that is the only case where
    * the nonce gate may be skipped.
    */
-  private check(id: string, nonce: string | null, principal: string): ConfirmResult {
+  private check(id: string, nonce: string | null, principal: string, channel: PendingChannel): ConfirmResult {
     const row = this.sql.exec('SELECT * FROM pending_actions WHERE id = ?', id)[0];
     if (!row) return { ok: false, reason: 'not_found' };
+    // A row from the other path does not exist on this one (§6.20).
+    if ((row['channel'] ?? 'chat') !== channel) return { ok: false, reason: 'not_found' };
 
     if (row['status'] !== 'pending') return { ok: false, reason: 'not_pending' };
     if (Number(row['expires_at']) <= this.now()) return { ok: false, reason: 'expired' };

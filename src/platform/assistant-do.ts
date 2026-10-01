@@ -42,7 +42,7 @@ import type { InboundEvent, OutboundButton, OutboundMessage } from '../channels/
 import type { AppEnv, ChannelMode } from '../core/env.js';
 import { channelOf } from '../core/env.js';
 import { AppOutbox } from '../channels/app/outbox.js';
-import type { OutboxKind, OutboxRow } from '../channels/app/outbox.js';
+import type { OutboxCard, OutboxKind, OutboxRow } from '../channels/app/outbox.js';
 import {
   canonicalRequest,
   importDeviceKey,
@@ -53,7 +53,16 @@ import {
   withinClockSkew,
 } from '../channels/app/verify.js';
 import type { SignedHeaders } from '../channels/app/verify.js';
-import { MESSAGE_ID, parseAck, parseMessage, parsePair, parsePushToken, parseReport } from '../channels/app/parse.js';
+import {
+  MESSAGE_ID,
+  parseAck,
+  parseActionReport,
+  parseClaim,
+  parseMessage,
+  parsePair,
+  parsePushToken,
+  parseReport,
+} from '../channels/app/parse.js';
 import { he } from '../render/he.js';
 import { DeviceStore } from '../device/store.js';
 import type { SigningDevice } from '../device/store.js';
@@ -604,6 +613,8 @@ export class AssistantDO implements DurableObject {
     if (app && method === 'GET' && path === '/app/outbox') return json(this.outbox.list());
     if (app && method === 'POST' && path === '/app/outbox/ack') return this.appAck(body);
     if (method === 'POST' && path === '/app/push-token') return this.appPushToken(body, device);
+    if (app && method === 'POST' && path === '/app/action/claim') return this.appClaim(body, principal);
+    if (app && method === 'POST' && path === '/app/action/report') return this.appActionReport(body, principal);
 
     const dispatch = /^\/device\/dispatch\/([0-9a-f]{32})$/.exec(path);
     if (method === 'GET' && dispatch) {
@@ -714,6 +725,7 @@ export class AssistantDO implements DurableObject {
         now: () => Date.now(),
         principal,
         channel: 'app',
+        deviceCaps: this.devices.capsOf(deviceId),
         services: this.services(),
         ...(this.env.GROQ_API_KEY ? { transcribe: this.voiceTranscriber() } : {}),
       });
@@ -758,7 +770,15 @@ export class AssistantDO implements DurableObject {
       // The stored copy never carries the transcript (§6.10).
       const stored =
         outcome.withoutEcho === undefined ? outcome.text : `${outcome.withoutEcho}\n\n${he.heardNotKept}`;
-      row = this.acceptReply(messageId, principal, outcome.text, stored, outcome.buttons ?? [], outcome.keepLinks === true);
+      row = this.acceptReply(
+        messageId,
+        principal,
+        outcome.text,
+        stored,
+        outcome.buttons ?? [],
+        outcome.keepLinks === true,
+        outcome.card,
+      );
     } else if (outcome.reason === 'reply_deferred') {
       // A call: its outcome comes later, as an answer to this same message.
       this.devices.linkLatestDispatch(messageId, startedAt);
@@ -778,9 +798,18 @@ export class AssistantDO implements DurableObject {
     storedText: string,
     buttons: readonly OutboundButton[],
     keepLinks = false,
+    card?: OutboxCard,
   ): OutboxRow {
     const accepted = this.sql.transaction(() =>
-      this.outbox.accept({ kind: 'reply', text: storedText, buttons, inReplyTo: messageId, principal, keepLinks }),
+      this.outbox.accept({
+        kind: 'reply',
+        text: storedText,
+        buttons,
+        inReplyTo: messageId,
+        principal,
+        keepLinks,
+        ...(card ? { card } : {}),
+      }),
     );
     const row = this.outbox.get(accepted.seq);
     return { ...(row ?? { seq: accepted.seq, kind: 'reply', inReplyTo: messageId, buttons: [...buttons], createdAt: Date.now() }), text: httpText };
@@ -828,7 +857,68 @@ export class AssistantDO implements DurableObject {
     const parsed = parsePushToken(body);
     if (!parsed) return appError(400, 'bad_request');
     await this.devices.setPushToken(device.id, parsed.pushToken);
+    // An app that predates cards sends no list, and so is never offered one.
+    this.devices.setCaps(device.id, parsed.caps ?? []);
     await this.armAlarm();
+    return json({ ok: true });
+  }
+
+  /**
+   * A card claimed or refused (§6.20). The one way a card row is consumed: the
+   * gates of `pending.ts` — exists, pending, not expired, same sender, nonce,
+   * input unchanged — on the card channel only, atomically. The parameters go
+   * back only now, so a card fetched twice from the outbox still runs once.
+   */
+  private appClaim(body: Uint8Array, principal: string): Response {
+    const parsed = parseClaim(body);
+    if (!parsed) return appError(400, 'bad_request');
+
+    if (parsed.verb === 'no') {
+      const cancelled = this.pending.cancel(parsed.actionId, parsed.nonce, principal, 'card');
+      this.repo.audit({
+        ts: Date.now(),
+        principal,
+        tool: 'card',
+        tier: null,
+        decision: 'CARD_REFUSED',
+        outcome: cancelled.ok ? 'cancelled' : cancelled.reason,
+        externalRef: parsed.actionId,
+      });
+      return json({ status: cancelled.ok ? 'cancelled' : 'refused' });
+    }
+
+    const claimed = this.pending.confirm(parsed.actionId, parsed.nonce, principal, 'card');
+    if (!claimed.ok) {
+      this.log.info('card_claim_refused', { reason: claimed.reason });
+      return json({ status: 'refused', reason: claimRefusal(claimed.reason) });
+    }
+
+    this.repo.audit({
+      ts: Date.now(),
+      principal,
+      tool: claimed.action.tool,
+      tier: claimed.action.tier,
+      decision: 'CARD_CLAIMED',
+      outcome: 'ok',
+      externalRef: parsed.actionId,
+    });
+    return json({ status: 'ok', action: claimed.action.input });
+  }
+
+  /** What happened on the phone. Recorded, never answered: the card was the one reply. */
+  private appActionReport(body: Uint8Array, principal: string): Response {
+    const parsed = parseActionReport(body);
+    if (!parsed) return appError(400, 'bad_request');
+    this.repo.audit({
+      ts: Date.now(),
+      principal,
+      tool: 'card',
+      tier: null,
+      decision: 'CARD_RAN',
+      outcome: parsed.outcome,
+      externalRef: parsed.actionId,
+    });
+    this.log.info('card_ran', { outcome: parsed.outcome });
     return json({ ok: true });
   }
 
@@ -1260,6 +1350,17 @@ export class AssistantDO implements DurableObject {
 
 function outboxKindOf(kind: string): OutboxKind {
   return kind === 'reminder' || kind === 'digest' || kind === 'call' ? kind : 'notice';
+}
+
+/**
+ * Why a claim did not go through, in the three words the app acts on. The other
+ * failures — wrong sender, bad nonce, changed input — read as "not found": saying
+ * which would tell a forger how close it came.
+ */
+function claimRefusal(reason: string): 'expired' | 'used' | 'not_found' {
+  if (reason === 'expired') return 'expired';
+  if (reason === 'not_pending') return 'used';
+  return 'not_found';
 }
 
 function appError(status: number, code: string): Response {

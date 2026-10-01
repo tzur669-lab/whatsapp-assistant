@@ -29,7 +29,8 @@
  * one throws rather than silently emitting a schema that permits more than Zod.
  */
 import type { ZodTypeAny } from 'zod';
-import { REGISTRY, TOOL_NAMES } from '../tools/registry.js';
+import { PARSER_TOOL_NAMES, REGISTRY } from '../tools/registry.js';
+import type { ToolName } from '../tools/registry.js';
 import { MAX_AMBIGUITIES, MAX_MISSING_SLOTS, MAX_NOTE_CHARS } from './intent-schema.js';
 
 export type JsonSchema = Record<string, unknown>;
@@ -165,11 +166,11 @@ function isOptional(schema: ZodTypeAny): boolean {
  * and enum values; deciding that `query_variants` has no business on a
  * `reminders.create` draft stays with Zod.
  */
-export function buildResponseSchema(enabled: readonly string[] = TOOL_NAMES): JsonSchema {
+export function buildResponseSchema(enabled: readonly string[] = PARSER_TOOL_NAMES): JsonSchema {
   const slotProperties: JsonSchema = {};
 
   for (const name of enabled) {
-    const spec = REGISTRY[name as (typeof TOOL_NAMES)[number]];
+    const spec = REGISTRY[name as ToolName];
     if (!spec) continue;
     const shape = defOf(spec.draftSchema).shape?.() ?? {};
     for (const [slot, field] of Object.entries(shape)) {

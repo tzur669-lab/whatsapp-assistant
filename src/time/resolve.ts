@@ -249,7 +249,7 @@ function resolveDuration(
  * Israeli convention is the 24-hour clock, so a bare number is taken literally.
  * `meridiem` and `part_of_day` only ever shift a 1–12 hour into the afternoon.
  */
-function applyMeridiem(time: TimeSpec): { hour: number; minute: number } | null {
+export function applyMeridiem(time: TimeSpec): { hour: number; minute: number } | null {
   if (!Number.isInteger(time.hour) || !Number.isInteger(time.minute)) return null;
   if (time.hour < 0 || time.hour > 23) return null;
   if (time.minute < 0 || time.minute > 59) return null;

@@ -207,3 +207,59 @@ describe('plain-text confirmation', () => {
     expect(pending.resolvePlainText('כן', OTHER)).toEqual({ ok: false, reason: 'nothing_pending' });
   });
 });
+
+describe('action cards (PLAN §6.20)', () => {
+  let driver: TestSqlDriver;
+  let pending: PendingActions;
+
+  beforeEach(() => {
+    driver = new TestSqlDriver();
+    new Repository(driver).migrate(MIGRATIONS);
+    pending = new PendingActions(driver, () => NOW);
+  });
+  afterEach(() => driver.close());
+
+  const card = (tier = 1) =>
+    pending.create({ tool: 'alarm.set', input: { hour: 7, minute: 0 }, summary: 'alarm', tier, principal: SENDER, channel: 'card' });
+
+  it('is never confirmed by a plain "כן"', () => {
+    card();
+    expect(pending.resolvePlainText('כן', SENDER)).toEqual({ ok: false, reason: 'nothing_pending' });
+  });
+
+  it('is never confirmed by a typed code, even at Tier 3', () => {
+    const action = card(3);
+    expect(pending.resolveTypedCode(`אשר ${action.typedCode}`, SENDER).ok).toBe(false);
+  });
+
+  it('does not make a chat confirmation ambiguous', () => {
+    card();
+    const chat = pending.create({ tool: 'reminders.cancel', input: INPUT, summary: 's', tier: 2, principal: SENDER });
+    expect(pending.resolvePlainText('כן', SENDER)).toEqual({ ok: true, id: chat.id });
+  });
+
+  it('is not confirmed through the chat button path', () => {
+    const action = card();
+    expect(pending.confirm(action.id, action.nonce, SENDER)).toEqual({ ok: false, reason: 'not_found' });
+    expect(pending.cancel(action.id, action.nonce, SENDER)).toEqual({ ok: false, reason: 'not_found' });
+  });
+
+  it('is claimed once, through the card path, with its nonce', () => {
+    const action = card();
+    expect(pending.confirm(action.id, 'f'.repeat(32), SENDER, 'card')).toEqual({ ok: false, reason: 'bad_nonce' });
+    const claimed = pending.confirm(action.id, action.nonce, SENDER, 'card');
+    expect(claimed.ok && claimed.action.input).toEqual({ hour: 7, minute: 0 });
+    expect(pending.confirm(action.id, action.nonce, SENDER, 'card')).toEqual({ ok: false, reason: 'not_pending' });
+  });
+
+  it('can be refused once, through the card path', () => {
+    const action = card();
+    expect(pending.cancel(action.id, action.nonce, SENDER, 'card')).toEqual({ ok: true });
+    expect(pending.confirm(action.id, action.nonce, SENDER, 'card')).toEqual({ ok: false, reason: 'not_pending' });
+  });
+
+  it('keeps a chat action out of the card path', () => {
+    const chat = pending.create({ tool: 'reminders.cancel', input: INPUT, summary: 's', tier: 2, principal: SENDER });
+    expect(pending.confirm(chat.id, chat.nonce, SENDER, 'card')).toEqual({ ok: false, reason: 'not_found' });
+  });
+});

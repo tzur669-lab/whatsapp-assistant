@@ -240,6 +240,21 @@ export class DeviceStore {
     );
   }
 
+  /** What this build of the app can do (§6.20). Replaced whole on every update. */
+  setCaps(deviceId: string, caps: readonly string[]): void {
+    this.sql.exec(
+      'UPDATE devices SET caps = ? WHERE id = ? AND revoked_at IS NULL',
+      caps.length > 0 ? [...new Set(caps)].sort().join(',') : null,
+      deviceId,
+    );
+  }
+
+  capsOf(deviceId: string): string[] {
+    const row = this.sql.exec('SELECT caps FROM devices WHERE id = ? AND revoked_at IS NULL', deviceId)[0];
+    const caps = row?.['caps'];
+    return typeof caps === 'string' && caps.length > 0 ? caps.split(',') : [];
+  }
+
   /** FCM said this address is gone. The device stays paired; pushes stop until it sends a new one. */
   forgetPushToken(deviceId: string): void {
     this.sql.exec('UPDATE devices SET push_token_enc = NULL WHERE id = ?', deviceId);

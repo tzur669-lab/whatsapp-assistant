@@ -41,6 +41,9 @@ export const APP_ROUTES: readonly AppRoute[] = [
   },
   { method: 'GET', pattern: /^\/app\/outbox$/, maxBytes: 0, channels: ['app'] },
   { method: 'POST', pattern: /^\/app\/outbox\/ack$/, maxBytes: 4_096, contentType: JSON_TYPE, channels: ['app'] },
+  // Action cards (§6.20): a claim consumes the card and returns what to run.
+  { method: 'POST', pattern: /^\/app\/action\/claim$/, maxBytes: 1_024, contentType: JSON_TYPE, channels: ['app'] },
+  { method: 'POST', pattern: /^\/app\/action\/report$/, maxBytes: 1_024, contentType: JSON_TYPE, channels: ['app'] },
 ];
 
 export type Checked =

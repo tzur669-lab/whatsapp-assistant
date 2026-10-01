@@ -14,6 +14,9 @@ import type { FakeDoState } from '../../integration/fake-do-state.js';
 import { FakePhone, createFakeGoogle, createServiceAccount, messageId } from '../../integration/fake-phone.js';
 import type { FakeGoogle } from '../../integration/fake-phone.js';
 import { ReminderStore } from '../../../src/tools/reminder-store.js';
+import { PendingActions } from '../../../src/confirm/pending.js';
+import { DeviceStore } from '../../../src/device/store.js';
+import { parseKeyring } from '../../../src/security/crypto.js';
 import { Repository } from '../../../src/core/repo.js';
 import { he } from '../../../src/render/he.js';
 import { stripIsolates } from '../../../src/render/bidi.js';
@@ -395,6 +398,78 @@ describe('the app channel', () => {
       const reply = (await record(phone)).body as unknown as Reply;
       expect(reply.row?.text).toBe(he.voiceTooMany);
       expect(google.requests.some((url) => url.includes('/audio/transcriptions'))).toBe(false);
+    });
+  });
+
+  describe('action cards (PLAN §6.20)', () => {
+    const card = (tier = 1, channel: 'card' | 'chat' = 'card') =>
+      new PendingActions(fake.driver, () => Date.now()).create({
+        tool: 'alarm.set',
+        input: { type: 'alarm', hour: 6, minute: 30 },
+        summary: 'alarm',
+        tier,
+        principal,
+        channel,
+      });
+    const claim = async (phone: FakePhone, body: Record<string, unknown>) =>
+      send(await phone.toDo('POST', '/app/action/claim', body));
+
+    it('records what the app says it can do, and forgets it when an older build says nothing', async () => {
+      const phone = await pair();
+      const devices = new DeviceStore(fake.driver, () => Date.now(), () => 'x', () => parseKeyring({ TOKEN_ENC_KEY_V1: KEY }));
+      expect((await send(await phone.toDo('POST', '/app/push-token', { pushToken: 'tok', caps: ['cards'] }))).status).toBe(200);
+      expect(devices.capsOf(phone.deviceId!)).toEqual(['cards']);
+      await send(await phone.toDo('POST', '/app/push-token', { pushToken: 'tok' }));
+      expect(devices.capsOf(phone.deviceId!)).toEqual([]);
+    });
+
+    it('refuses a capability it does not know', async () => {
+      const phone = await pair();
+      expect((await send(await phone.toDo('POST', '/app/push-token', { pushToken: 'tok', caps: ['root'] }))).status).toBe(400);
+    });
+
+    it('hands the parameters over once, to a signed claim with the nonce', async () => {
+      const phone = await pair();
+      const action = card();
+      const first = await claim(phone, { actionId: action.id, nonce: action.nonce, verb: 'ok' });
+      expect(first.body).toEqual({ status: 'ok', action: { type: 'alarm', hour: 6, minute: 30 } });
+      const again = await claim(phone, { actionId: action.id, nonce: action.nonce, verb: 'ok' });
+      expect(again.body).toEqual({ status: 'refused', reason: 'used' });
+    });
+
+    it('refuses a wrong nonce without saying how close it came', async () => {
+      const phone = await pair();
+      const action = card();
+      const forged = await claim(phone, { actionId: action.id, nonce: 'f'.repeat(32), verb: 'ok' });
+      expect(forged.body).toEqual({ status: 'refused', reason: 'not_found' });
+    });
+
+    it('never claims a chat confirmation as a card', async () => {
+      const phone = await pair();
+      const chat = card(2, 'chat');
+      expect((await claim(phone, { actionId: chat.id, nonce: chat.nonce, verb: 'ok' })).body).toEqual({ status: 'refused', reason: 'not_found' });
+    });
+
+    it('refuses an expired card', async () => {
+      const phone = await pair();
+      const action = card();
+      vi.setSystemTime(NOW + 6 * 60_000);
+      expect((await claim(phone, { actionId: action.id, nonce: action.nonce, verb: 'ok' })).body).toEqual({ status: 'refused', reason: 'expired' });
+    });
+
+    it('lets the user refuse a card, which then cannot run', async () => {
+      const phone = await pair();
+      const action = card();
+      expect((await claim(phone, { actionId: action.id, nonce: action.nonce, verb: 'no' })).body).toEqual({ status: 'cancelled' });
+      expect((await claim(phone, { actionId: action.id, nonce: action.nonce, verb: 'ok' })).body).toEqual({ status: 'refused', reason: 'used' });
+    });
+
+    it('records what happened on the phone, and sends nothing back', async () => {
+      const phone = await pair();
+      const action = card();
+      const reported = await send(await phone.toDo('POST', '/app/action/report', { actionId: action.id, outcome: 'done' }));
+      expect(reported.body).toEqual({ ok: true });
+      expect((await outbox(phone)).rows).toEqual([]);
     });
   });
 });

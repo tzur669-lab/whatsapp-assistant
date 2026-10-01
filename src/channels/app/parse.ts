@@ -47,7 +47,41 @@ const pairSchema = z
 
 export type PairRequest = z.infer<typeof pairSchema>;
 
-const pushTokenSchema = z.object({ pushToken: z.string().min(1).max(4_096) }).strict();
+/**
+ * The push address, and what this build of the app can do (PLAN §6.20). An
+ * unknown capability is a refusal, like any unknown field: the list is closed.
+ */
+const pushTokenSchema = z
+  .object({
+    pushToken: z.string().min(1).max(4_096),
+    caps: z.array(z.enum(['cards'])).max(8).optional(),
+  })
+  .strict();
+
+/** A tap on a card, or the app running one on its own: claim it, or refuse it. */
+const claimSchema = z
+  .object({
+    actionId: z.string().regex(/^[0-9a-f]{24}$/),
+    nonce: z.string().regex(/^[0-9a-f]{32}$/),
+    verb: z.enum(['ok', 'no']),
+  })
+  .strict();
+
+/** What happened on the phone. An outcome, never what was matched. */
+const actionReportSchema = z
+  .object({
+    actionId: z.string().regex(/^[0-9a-f]{24}$/),
+    outcome: z.enum(['done', 'failed', 'no_match', 'unsupported']),
+  })
+  .strict();
+
+export function parseClaim(body: Uint8Array): z.infer<typeof claimSchema> | null {
+  return parseWith(claimSchema, body);
+}
+
+export function parseActionReport(body: Uint8Array): z.infer<typeof actionReportSchema> | null {
+  return parseWith(actionReportSchema, body);
+}
 
 const reportSchema = z
   .object({
@@ -69,7 +103,7 @@ export function parsePair(body: Uint8Array): PairRequest | null {
   return parseWith(pairSchema, body);
 }
 
-export function parsePushToken(body: Uint8Array): { pushToken: string } | null {
+export function parsePushToken(body: Uint8Array): z.infer<typeof pushTokenSchema> | null {
   return parseWith(pushTokenSchema, body);
 }
 

@@ -11,14 +11,20 @@
  */
 import type { ZodTypeAny } from 'zod';
 import {
+  alarmSetSlots,
+  appOpenSlots,
   calendarCreateEventSlots,
   calendarDeleteEventSlots,
   calendarListEventsSlots,
   calendarMoveEventSlots,
   callsPlaceSlots,
+  messageComposeSlots,
+  navGoSlots,
   remindersCancelSlots,
   remindersCreateSlots,
   remindersListSlots,
+  settingsSetSlots,
+  timerSetSlots,
 } from '../nlu/slot-schemas.js';
 
 export const TOOL_NAMES = [
@@ -30,9 +36,32 @@ export const TOOL_NAMES = [
   'calendar.move_event',
   'calendar.delete_event',
   'calls.place',
+  // Phone actions (PLAN §6.20): agent-only, each one an action card.
+  'alarm.set',
+  'timer.set',
+  'nav.go',
+  'app.open',
+  'settings.set',
+  'message.compose',
 ] as const;
 
 export type ToolName = (typeof TOOL_NAMES)[number];
+
+/**
+ * The tools the single-shot parser knows (§6.2). The phone actions are agent-
+ * only: adding them here would change the parser's prompt and wire schema,
+ * which its eval measured as they are.
+ */
+export const PARSER_TOOL_NAMES = [
+  'reminders.create',
+  'reminders.list',
+  'reminders.cancel',
+  'calendar.list_events',
+  'calendar.create_event',
+  'calendar.move_event',
+  'calendar.delete_event',
+  'calls.place',
+] as const satisfies readonly ToolName[];
 
 /** Tier 4 has no code path and never appears here (CLAUDE.md invariant 6). */
 export type Tier = 0 | 1 | 2 | 3;
@@ -59,9 +88,16 @@ export type ToolSpec = {
   /**
    * Where a confirmation happens. Absent means in chat: a button, or a typed
    * code at Tier 3. `device` means on the paired phone's own screen, which
-   * replaces both and is strictly stronger (PLAN §6.17).
+   * replaces both and is strictly stronger (PLAN §6.17). `card` means an action
+   * card in the app, claimed once by a signed request before the phone runs it
+   * (§6.20).
    */
-  confirmation?: 'device';
+  confirmation?: 'device' | 'card';
+  /**
+   * A card the app may run without the tap: low-risk, local, reversible on the
+   * phone itself. Only on a clean turn, with the chat in the foreground (§6.20).
+   */
+  autoRun?: true;
 };
 
 const EVENTS_OWNED: GoogleScope = 'https://www.googleapis.com/auth/calendar.events.owned';
@@ -142,6 +178,75 @@ export const REGISTRY: Readonly<Record<ToolName, ToolSpec>> = {
     implementedIn: 6,
     confirmation: 'device',
   },
+  'alarm.set': {
+    name: 'alarm.set',
+    llmDescription: 'Set an alarm on the phone at a stated time.',
+    draftSchema: alarmSetSlots,
+    tier: 1,
+    scopes: [],
+    rateLimit: { perHour: 20, perDay: 60 },
+    implementedIn: 6,
+    confirmation: 'card',
+    autoRun: true,
+  },
+  'timer.set': {
+    name: 'timer.set',
+    llmDescription: 'Start a countdown timer on the phone.',
+    draftSchema: timerSetSlots,
+    tier: 1,
+    scopes: [],
+    rateLimit: { perHour: 20, perDay: 60 },
+    implementedIn: 6,
+    confirmation: 'card',
+    autoRun: true,
+  },
+  'nav.go': {
+    name: 'nav.go',
+    llmDescription: 'Navigate to a place with Waze or Google Maps.',
+    draftSchema: navGoSlots,
+    tier: 1,
+    scopes: [],
+    rateLimit: { perHour: 20, perDay: 60 },
+    implementedIn: 6,
+    confirmation: 'card',
+    autoRun: true,
+  },
+  'app.open': {
+    name: 'app.open',
+    llmDescription: 'Open an app installed on the phone.',
+    draftSchema: appOpenSlots,
+    tier: 1,
+    scopes: [],
+    rateLimit: { perHour: 30, perDay: 100 },
+    implementedIn: 6,
+    confirmation: 'card',
+    autoRun: true,
+  },
+  'settings.set': {
+    name: 'settings.set',
+    llmDescription: 'Flashlight, do-not-disturb, ringer mode, or open Wi-Fi/Bluetooth settings.',
+    draftSchema: settingsSetSlots,
+    tier: 1,
+    scopes: [],
+    rateLimit: { perHour: 20, perDay: 60 },
+    implementedIn: 6,
+    confirmation: 'card',
+    // Only the flashlight runs on its own: DND and the ringer could silence the
+    // assistant's own reminders, so they always wait for the tap (§6.20).
+    autoRun: true,
+  },
+  'message.compose': {
+    name: 'message.compose',
+    llmDescription: 'Write an SMS or WhatsApp message to a contact; the user sends it.',
+    draftSchema: messageComposeSlots,
+    // External-facing. The card shows the whole text; the phone resolves the
+    // contact; the user presses send in the messaging app itself (§6.20).
+    tier: 3,
+    scopes: [],
+    rateLimit: { perHour: 10, perDay: 40 },
+    implementedIn: 6,
+    confirmation: 'card',
+  },
 };
 
 /** What the LLM is told about a tool. Deliberately narrower than `ToolSpec`. */
@@ -159,7 +264,7 @@ export type ToolCatalogEntry = {
  * anything else policy-bearing stay out: the model has no business knowing what
  * is cheap to run or what needs confirming.
  */
-export function toolCatalog(enabled: readonly ToolName[] = TOOL_NAMES): ToolCatalogEntry[] {
+export function toolCatalog(enabled: readonly ToolName[] = PARSER_TOOL_NAMES): ToolCatalogEntry[] {
   return enabled.map((name) => {
     const spec = REGISTRY[name];
     return {

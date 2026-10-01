@@ -59,6 +59,8 @@ export type AgentTurnInput = {
   nowMs: number;
   turn: TurnContext;
   history: readonly HistoryEntry[];
+  /** The paired app runs action cards, so phone actions may be offered (§6.20). */
+  cards?: boolean;
 };
 
 export type AgentResult =
@@ -81,7 +83,7 @@ export type AgentDeps = {
 
 export async function runAgentTurn(input: AgentTurnInput, deps: AgentDeps): Promise<AgentResult> {
   const { log, budget } = deps;
-  const offered: ToolName[] = agentToolNames();
+  const offered: ToolName[] = agentToolNames({ cards: input.cards === true });
   const tools = wireTools(offered);
   const toolChars = JSON.stringify(tools).length;
 

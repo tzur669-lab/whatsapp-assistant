@@ -37,7 +37,7 @@ import type { Lang } from '../render/format-time.js';
 import { matchCommand } from './router.js';
 import type { Command } from './router.js';
 import { runButton, runIntent, runPlainConfirmation } from './orchestrator.js';
-import type { Reply, TurnContext } from './orchestrator.js';
+import type { ActionCard, Reply, TurnContext } from './orchestrator.js';
 import { parseWithFallback } from '../nlu/provider.js';
 import { applyAnswer, parseAnswer } from '../nlu/answer.js';
 import { validateIntentDraft } from '../nlu/intent-schema.js';
@@ -116,6 +116,11 @@ export type PipelineDeps = {
   watch?: Stopwatch;
   /** The channel this turn arrived on. WhatsApp when absent (§6.18). */
   channel?: 'whatsapp' | 'app';
+  /**
+   * What the paired app said it can do, from its signed push-token update.
+   * `cards` lets the agent offer phone actions (§6.20).
+   */
+  deviceCaps?: readonly string[];
 };
 
 export type PipelineOutcome =
@@ -136,6 +141,8 @@ export type PipelineOutcome =
        * connect link. Every other reply is defanged where it leaves (§6.19).
        */
       keepLinks?: true;
+      /** A phone action for the app to claim (§6.20). */
+      card?: ActionCard;
     }
   | {
       action: 'none';
@@ -488,7 +495,15 @@ async function respondWithAgent(
     const history = await agent.history.recent(principal);
     const result = await timed(deps, 'agent', () =>
       runAgentTurn(
-        { text, lang, nowMs: now, turn: turnOf(deps, event, now, source, lang), history },
+        {
+          text,
+          lang,
+          nowMs: now,
+          turn: turnOf(deps, event, now, source, lang),
+          history,
+          // Phone actions only where an app that runs cards will receive them (§6.20).
+          cards: deps.channel === 'app' && (deps.deviceCaps ?? []).includes('cards'),
+        },
         { providers: agent.providers, budget: agent.budget, log },
       ),
     );
@@ -913,6 +928,7 @@ function asOutcome(reply: Reply): PipelineOutcome {
     text: reply.text,
     ...(reply.buttons ? { buttons: reply.buttons } : {}),
     ...(reply.rescheduleAlarm ? { rescheduleAlarm: true } : {}),
+    ...(reply.card ? { card: reply.card } : {}),
   };
 }
 

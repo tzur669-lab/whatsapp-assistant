@@ -9,6 +9,7 @@ import { REMINDER_TOOLS } from '../../../src/tools/reminders.js';
 import { calendarListEvents } from '../../../src/tools/calendar-read.js';
 import { CALENDAR_WRITE_TOOLS } from '../../../src/tools/calendar-write.js';
 import { callsPlace } from '../../../src/tools/calls.js';
+import { PHONE_ACTION_TOOLS } from '../../../src/tools/phone-actions.js';
 import type { ToolDefinition } from '../../../src/tools/types.js';
 import { INTENT_NAMES } from '../../../src/nlu/intent-schema.js';
 
@@ -17,6 +18,7 @@ const IMPLEMENTATIONS: Record<string, ToolDefinition> = {
   'calendar.list_events': calendarListEvents,
   ...CALENDAR_WRITE_TOOLS,
   'calls.place': callsPlace,
+  ...(PHONE_ACTION_TOOLS as Record<string, ToolDefinition>),
 };
 
 describe('every registered tool is real', () => {
@@ -44,8 +46,18 @@ describe('every registered tool is real', () => {
     // Tier 1 means "create, reversible". A Tier 1 tool with no undo is a
     // contradiction, and the policy engine would offer a button that does nothing.
     for (const name of TOOL_NAMES) {
-      if (REGISTRY[name].tier !== 1) continue;
+      // A card's way back is on the phone itself, and policy never offers a
+      // server Undo for one (§6.20).
+      if (REGISTRY[name].tier !== 1 || REGISTRY[name].confirmation === 'card') continue;
       expect(IMPLEMENTATIONS[name]?.undo, name).toBeTypeOf('function');
+    }
+  });
+
+  it('gives no card a server undo, and every card an autoRun decision of its own', () => {
+    for (const name of TOOL_NAMES) {
+      if (REGISTRY[name].confirmation !== 'card') continue;
+      expect(IMPLEMENTATIONS[name]?.undo, name).toBeUndefined();
+      expect(IMPLEMENTATIONS[name]?.autoRunnable, name).toBeTypeOf('function');
     }
   });
 
