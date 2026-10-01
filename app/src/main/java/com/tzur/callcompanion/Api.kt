@@ -106,9 +106,19 @@ object Api {
     // Each carries the conversation it was written in, when it is a real one
     // (ChatLogic.wireConversation): the server keeps its memory per conversation.
 
-    fun sendText(context: Context, messageId: String, text: String, conversation: String?): Pair<Result, Answer?> {
+    // A typed or spoken message may carry where the phone is (0.8): coarse,
+    // for the weather, read once before the first attempt and reused on retries.
+
+    fun sendText(
+        context: Context,
+        messageId: String,
+        text: String,
+        conversation: String?,
+        location: LocationLogic.Coarse? = null,
+    ): Pair<Result, Answer?> {
         val body = JSONObject().put("id", messageId).put("kind", "text").put("text", text)
         ChatLogic.wireConversation(conversation)?.let { body.put("conversationId", it) }
+        location?.let { body.put("location", JSONObject().put("latitude", it.latitude).put("longitude", it.longitude)) }
         return answerOf(signed(context, "POST", "/app/message", JSON_TYPE, utf8(body), TEXT_TIMEOUT_MS))
     }
 
@@ -119,10 +129,17 @@ object Api {
         return answerOf(signed(context, "POST", "/app/message", JSON_TYPE, utf8(body), TEXT_TIMEOUT_MS))
     }
 
-    fun sendVoice(context: Context, messageId: String, audio: ByteArray, conversation: String?): Pair<Result, Answer?> {
+    fun sendVoice(
+        context: Context,
+        messageId: String,
+        audio: ByteArray,
+        conversation: String?,
+        location: LocationLogic.Coarse? = null,
+    ): Pair<Result, Answer?> {
         require(Protocol.MESSAGE_ID.matches(messageId))
-        // The body is the recording itself, so the conversation goes in the (signed) path.
-        val path = ChatLogic.wireConversation(conversation)?.let { "/app/voice/$messageId/$it" } ?: "/app/voice/$messageId"
+        // The body is the recording itself, so the conversation and the place go in the (signed) path.
+        val base = ChatLogic.wireConversation(conversation)?.let { "/app/voice/$messageId/$it" } ?: "/app/voice/$messageId"
+        val path = location?.let { "$base/${LocationLogic.pathSegment(it)}" } ?: base
         return answerOf(signed(context, "POST", path, AUDIO_TYPE, audio, VOICE_TIMEOUT_MS))
     }
 

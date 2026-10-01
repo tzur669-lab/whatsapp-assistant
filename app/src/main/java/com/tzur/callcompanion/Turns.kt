@@ -35,7 +35,10 @@ object Turns {
         val app = context.applicationContext
         val id = Protocol.newMessageId()
         ChatStore.get(app).addOutgoing(id, "text", text, conversation)
-        submit(app, id, null) { run(app, id, cheapResend = true) { Api.sendText(app, id, text, conversation) } }
+        submit(app, id, null) {
+            val here = PhoneLocation.now(app)
+            run(app, id, cheapResend = true) { Api.sendText(app, id, text, conversation, here) }
+        }
     }
 
     /** A button under row [seq] — from the chat or from a notification. */
@@ -60,7 +63,10 @@ object Turns {
         val id = Protocol.newMessageId()
         ChatStore.get(app).addOutgoing(id, "voice", label, conversation)
         // Up to a megabyte: asked about again only when nothing else answers.
-        submit(app, id, null) { run(app, id, cheapResend = false) { Api.sendVoice(app, id, audio, conversation) } }
+        submit(app, id, null) {
+            val here = PhoneLocation.now(app)
+            run(app, id, cheapResend = false) { Api.sendVoice(app, id, audio, conversation, here) }
+        }
     }
 
     /** A notice about message [id], in the conversation that message is in. */

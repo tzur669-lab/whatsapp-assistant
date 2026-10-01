@@ -68,6 +68,7 @@ class ChatActivity : Activity(), ChatEvents.Listener {
     private lateinit var inputRow: LinearLayout
     private lateinit var readonlyNote: TextView
     private lateinit var drawer: LinearLayout
+    private var locationButton: Button? = null
     private lateinit var scrim: View
     private val conversationsAdapter = ConversationsAdapter()
     private var conversations: List<ChatStore.Conversation> = emptyList()
@@ -98,6 +99,11 @@ class ChatActivity : Activity(), ChatEvents.Listener {
 
         window.decorView.layoutDirection = View.LAYOUT_DIRECTION_RTL
         setContentView(buildLayout())
+
+        // Once, the first time: the weather where the phone is (0.8). A no keeps /city.
+        if (PhoneLocation.shouldAsk(this)) {
+            requestPermissions(arrayOf(Manifest.permission.ACCESS_COARSE_LOCATION), REQUEST_LOCATION)
+        }
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -341,6 +347,12 @@ class ChatActivity : Activity(), ChatEvents.Listener {
             }
         }
         panel.addView(list, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
+        locationButton = Button(this).apply {
+            text = locationLabel()
+            isAllCaps = false
+            setOnClickListener { toggleLocation(this) }
+        }
+        panel.addView(locationButton)
         panel.addView(Button(this).apply {
             text = getString(R.string.quota_open)
             isAllCaps = false
@@ -360,6 +372,24 @@ class ChatActivity : Activity(), ChatEvents.Listener {
         return panel
     }
 
+    private fun locationLabel(): String = getString(
+        if (PhoneLocation.isOn(this) && PhoneLocation.granted(this)) R.string.location_on else R.string.location_off,
+    )
+
+    /** On asks for the permission when it is missing; off stops sending, whatever the permission. */
+    private fun toggleLocation(button: Button) {
+        val usable = PhoneLocation.isOn(this) && PhoneLocation.granted(this)
+        if (usable) {
+            PhoneLocation.setOn(this, false)
+        } else {
+            PhoneLocation.setOn(this, true)
+            if (!PhoneLocation.granted(this)) {
+                requestPermissions(arrayOf(Manifest.permission.ACCESS_COARSE_LOCATION), REQUEST_LOCATION)
+            }
+        }
+        button.text = locationLabel()
+    }
+
     private fun drawerItem(label: String, bold: Boolean, onClick: () -> Unit) = TextView(this).apply {
         text = label
         textSize = 16f
@@ -370,6 +400,8 @@ class ChatActivity : Activity(), ChatEvents.Listener {
     }
 
     private fun openDrawer() {
+        // The permission may have been changed in the system settings meanwhile.
+        locationButton?.text = locationLabel()
         conversations = store.conversations()
         conversationsAdapter.notifyDataSetChanged()
         scrim.visibility = View.VISIBLE
@@ -518,6 +550,12 @@ class ChatActivity : Activity(), ChatEvents.Listener {
 
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode == REQUEST_LOCATION) {
+            val granted = grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED
+            Toast.makeText(this, if (granted) R.string.location_ready else R.string.location_denied, Toast.LENGTH_LONG).show()
+            locationButton?.text = locationLabel()
+            return
+        }
         if (requestCode != REQUEST_MIC) return
         val granted = grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED
         Toast.makeText(this, if (granted) R.string.chat_mic_ready else R.string.chat_mic_permission, Toast.LENGTH_LONG).show()
@@ -725,6 +763,7 @@ class ChatActivity : Activity(), ChatEvents.Listener {
         private val SELECTED = Color.rgb(0xE8, 0xF5, 0xE9)
 
         private const val REQUEST_MIC = 10
+        private const val REQUEST_LOCATION = 11
         /** Arrived more than ten minutes after it was written: say so, next to the original time. */
         private const val LATE_MS = 10 * 60 * 1000L
 

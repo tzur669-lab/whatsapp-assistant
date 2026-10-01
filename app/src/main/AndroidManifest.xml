@@ -21,6 +21,12 @@
       assistant asks, minimized here — no numbers, no one-time codes.
     -->
     <uses-permission android:name="android.permission.READ_SMS" />
+    <!--
+      The weather and the Shabbat times where the phone is (0.8): approximate
+      location only, read when a message is sent, rounded to about a kilometre.
+      Asked for once; off in the menu at any time.
+    -->
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
 
     <!--
       Which installed apps an "open the app" card can match, by their launcher
@@ -36,6 +42,7 @@
     <!-- Both are used when present; neither is required to install. -->
     <uses-feature android:name="android.hardware.telephony" android:required="false" />
     <uses-feature android:name="android.hardware.microphone" android:required="false" />
+    <uses-feature android:name="android.hardware.location" android:required="false" />
 
     <!--
       Nothing here is backed up or transferred: the chat history, the device id

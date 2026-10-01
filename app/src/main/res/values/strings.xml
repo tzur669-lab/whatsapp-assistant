@@ -38,6 +38,10 @@
     <string name="chat_copied">ההודעה הועתקה</string>
     <string name="guide_open">📖 מדריך ופקודות</string>
     <string name="quota_open">📊 מכסות</string>
+    <string name="location_on">📍 מיקום למזג אוויר: פועל</string>
+    <string name="location_off">📍 מיקום למזג אוויר: כבוי</string>
+    <string name="location_ready">מזג האוויר וזמני השבת יהיו לפי המיקום שלך.</string>
+    <string name="location_denied">בלי הרשאת מיקום, מזג האוויר יהיה לפי העיר שהוגדרה ב-/city.</string>
     <string name="chat_notifications_off">ההתראות כבויות, ולכן תזכורות לא יופיעו. יש להקיש כאן כדי להפעיל אותן.</string>
 
     <!-- Lines the app adds to the chat itself -->
