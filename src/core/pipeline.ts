@@ -279,7 +279,7 @@ function recordDeliveryStatus(
   });
 
   if (event.status === 'failed') {
-    repo.setLastErrorCode(failure.errorCode);
+    repo.setLastErrorCode(failure.errorCode, now);
 
     const reminderId = applied.failedReminderId;
     if (reminderId && deps.services) {
@@ -438,9 +438,11 @@ async function respondToText(
 
   // 3. The agent (§6.19). It falls back to the parser below only when nothing
   //    ran — a fallback after a tool had run would run the message twice.
+  let agentFailure: string | null = null;
   if (deps.services.agent) {
     const answered = await respondWithAgent(deps.services.agent, text, source, event, deps, now);
-    if (answered) return answered;
+    if ('fellBack' in answered) agentFailure = answered.fellBack;
+    else return answered;
   }
 
   // 3b. The LLM as a parser: the path before the agent, and its fallback.
@@ -451,8 +453,15 @@ async function respondToText(
   if (!parsed.ok) {
     repo.bumpCounter(Repository.dayKey(now), 'fallbacks');
     repo.markInboundOutcome(event.wamid, { decision: 'CLARIFY', errorCode: parsed.errorCode });
-    repo.setLastErrorCode(`E_NLU_${parsed.errorCode.toUpperCase()}`);
-    return { action: 'reply', text: he.notUnderstood };
+    repo.setLastErrorCode(`E_NLU_${parsed.errorCode.toUpperCase()}`, now);
+    return { action: 'reply', text: agentFailure === null ? he.notUnderstood : he.agentFailed(agentFailure) };
+  }
+
+  // The agent answers what no tool covers; the parser cannot. After the agent
+  // failed, "unsupported" is the failure speaking, not the wording.
+  if (agentFailure !== null && parsed.draft.intent === 'unsupported') {
+    repo.markInboundOutcome(event.wamid, { decision: 'CLARIFY', errorCode: `E_AGENT_${agentFailure.toUpperCase()}` });
+    return { action: 'reply', text: he.agentFailed(agentFailure) };
   }
 
   // 3a. Code reads the day the words name, and holds the model to it (§6.2).
@@ -475,8 +484,9 @@ async function respondToText(
 }
 
 /**
- * One agent turn (PLAN §6.19). Returns null to hand the message to the parser —
- * only ever when no tool ran, so the fallback cannot act twice (plan D1).
+ * One agent turn (PLAN §6.19). Returns `fellBack`, with why, to hand the
+ * message to the parser — only ever when no tool ran, so the fallback cannot
+ * act twice (plan D1).
  *
  * The lock is taken here, synchronously, before the first await: while the
  * model is thinking, a second message from the same sender must not start a
@@ -489,7 +499,7 @@ async function respondWithAgent(
   event: Extract<InboundEvent, { kind: 'text' | 'audio' }>,
   deps: PipelineDeps,
   now: number,
-): Promise<PipelineOutcome | null> {
+): Promise<PipelineOutcome | { fellBack: string }> {
   const { repo, log, principal } = deps;
   const turnId = event.wamid;
 
@@ -546,7 +556,7 @@ async function respondWithAgent(
       return { action: 'device_query', queryId, query: result.state.query };
     }
 
-    return await settleAgentResult(
+    const settled = await settleAgentResult(
       result,
       source.kind === 'voice' ? he.voicePlaceholder : text,
       event.wamid,
@@ -554,6 +564,8 @@ async function respondWithAgent(
       now,
       conversation,
     );
+    if (settled) return settled;
+    return { fellBack: result.kind === 'failed' ? result.errorCode : 'unknown' };
   } finally {
     agent.lock.release(principal, turnId);
   }
@@ -584,7 +596,7 @@ async function settleAgentResult(
 
   if (result.kind === 'failed') {
     repo.bumpCounter(Repository.dayKey(now), 'fallbacks');
-    repo.setLastErrorCode(`E_AGENT_${result.errorCode.toUpperCase()}`);
+    repo.setLastErrorCode(`E_AGENT_${result.errorCode.toUpperCase()}`, now);
     log.info('agent_failed', { wamid, errorCode: result.errorCode, toolRan: result.toolRan });
     if (!result.toolRan) return null;
 

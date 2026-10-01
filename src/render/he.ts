@@ -93,6 +93,24 @@ export const he = {
   /** NLU could not produce a usable intent. Never guess — ask again. */
   notUnderstood: `לא הבנתי את הבקשה. אפשר לנסח מחדש, או לשלוח ${isolate('/help')} לרשימת הפקודות.`,
 
+  /**
+   * The agent could not answer and the parser could not either (2026-10-01).
+   * Saying "לא הבנתי" here blamed the wording for a limit or an outage; this
+   * names which, so the user knows whether to wait or rephrase.
+   */
+  agentFailed(errorCode: string): string {
+    switch (errorCode) {
+      case 'budget_exhausted':
+      case 'rate_limited':
+        return 'מכסת מודל השפה לדקה הזו נוצלה, ולכן לא יכולתי לענות עכשיו. אפשר לנסות שוב בעוד כדקה. אם זה חוזר — כדאי לבדוק במסך המכסות אם נגמרה המכסה היומית.';
+      case 'turn_token_cap':
+      case 'max_calls':
+        return 'הבקשה דרשה יותר עיבוד ממה שמותר בתור אחד. אפשר לנסח אותה קצר יותר, או לפתוח שיחה חדשה — שיחה ארוכה נשלחת כולה למודל בכל פעם.';
+      default:
+        return 'מודל השפה לא ענה הפעם (תקלה זמנית אצל Groq). אפשר לנסות שוב בעוד רגע.';
+    }
+  },
+
   /** Generic failure. Carries no error details — those go to the log only. */
   internalError: 'קרתה תקלה זמנית והפעולה לא בוצעה. כדאי לנסות שוב בעוד רגע.',
 

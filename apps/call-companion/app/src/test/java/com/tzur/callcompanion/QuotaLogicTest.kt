@@ -17,6 +17,13 @@ class QuotaLogicTest {
         assertEquals(1f, QuotaLogic.fraction(2_000, 1_000))
     }
 
+    @Test fun `the server's failure codes are said in words`() {
+        assertEquals("מכסת הדקה של השרת למודל הייתה מלאה", QuotaLogic.failureLabel("E_AGENT_BUDGET_EXHAUSTED"))
+        assertEquals("Groq סירב: מכסה (429)", QuotaLogic.failureLabel("E_AGENT_RATE_LIMITED"))
+        assertEquals("גם המנתח הגיבוי נכשל", QuotaLogic.failureLabel("E_NLU_TIMEOUT"))
+        assertEquals("תקלה אחרת", QuotaLogic.failureLabel("E_SOMETHING"))
+    }
+
     @Test fun `durations read the Hebrew way`() {
         assertEquals("פחות מדקה", QuotaLogic.duration(59_000))
         assertEquals("דקה", QuotaLogic.duration(60_000))

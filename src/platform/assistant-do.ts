@@ -82,9 +82,10 @@ import { agentEnabled } from '../core/env.js';
 import { PRIMARY_MODEL, SECONDARY_MODEL } from '../nlu/index.js';
 import { createGroqAgentProvider } from '../agent/provider.js';
 import { meterParsers, TokenBudget } from '../agent/budget.js';
+import { TURN_TOKEN_CAP } from '../agent/loop.js';
 import { ConversationHistory } from '../agent/history.js';
 import { QuotaStore, meterGroqFetch } from '../core/quota.js';
-import type { ModelSpec } from '../core/quota.js';
+import type { ModelSpec, ServerLimits } from '../core/quota.js';
 import { AgentLock } from '../agent/lock.js';
 import { SuspendedTurns } from '../agent/turns.js';
 import { defangLinks } from '../security/scrub.js';
@@ -198,7 +199,15 @@ export class AssistantDO implements DurableObject {
 
     this.outbox = new AppOutbox(this.sql, this.repo, now);
     this.quota = new QuotaStore(this.sql, now);
-    this.groqFetch = meterGroqFetch(this.fetchImpl, (model, limits) => this.quota.recordLimits(model, limits), now);
+    this.groqFetch = meterGroqFetch(
+      this.fetchImpl,
+      (model, limits) => {
+        this.quota.recordLimits(model, limits);
+        // Groq's own minute limit, when lower than the one assumed (2026-10-01).
+        if (limits.minuteTokens) this.tokenBudget.learnMinuteLimit(model, limits.minuteTokens.limit);
+      },
+      now,
+    );
     // One keyring for the object's life, so the imported AES key is reused
     // across turns instead of re-imported on every one (§4.1).
     let keyring: ReturnType<typeof parseKeyring> | null = null;
@@ -724,7 +733,13 @@ export class AssistantDO implements DurableObject {
       { model: WHISPER_MODEL, role: 'voice', dayTokens: false },
     ];
     const voice = { used: this.repo.inboundCountSince('audio', Date.now() - HOUR_MS), limit: VOICE_PER_HOUR };
-    return this.quota.report(models, voice);
+    const server: ServerLimits = {
+      minute: this.tokenBudget.snapshot([PRIMARY_MODEL, SECONDARY_MODEL]),
+      turnTokenCap: TURN_TOKEN_CAP,
+      lastFailure: this.repo.lastError(),
+      fallbacksToday: this.repo.counters(Repository.dayKey(Date.now())).fallbacks,
+    };
+    return { ...this.quota.report(models, voice), server };
   }
 
   /** Pairing: the phone proves it knows a live code without sending it (§6.18). */

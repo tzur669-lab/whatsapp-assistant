@@ -175,6 +175,27 @@ object Api {
                 voice = counted(json.getJSONObject("voice"))!!,
                 workerRequests = QuotaLogic.Counted(worker.getLong("limit"), worker.getLong("used")),
                 workerResetAt = worker.getLong("resetAt"),
+                server = json.optJSONObject("server")?.let { server ->
+                    fun longOrNull(o: JSONObject, key: String): Long? = if (o.isNull(key)) null else o.getLong(key)
+                    val minute = server.getJSONArray("minute")
+                    val failure = server.optJSONObject("lastFailure")
+                    QuotaLogic.Server(
+                        minute = List(minute.length()) { i ->
+                            val m = minute.getJSONObject(i)
+                            QuotaLogic.ServerMinute(
+                                model = m.getString("model"),
+                                used = m.getLong("used"),
+                                limit = m.getLong("limit"),
+                                freesAt = longOrNull(m, "freesAt"),
+                                blockedUntil = longOrNull(m, "blockedUntil"),
+                            )
+                        },
+                        turnTokenCap = server.getLong("turnTokenCap"),
+                        lastFailureCode = failure?.getString("code"),
+                        lastFailureAt = failure?.let { longOrNull(it, "at") },
+                        fallbacksToday = server.getLong("fallbacksToday"),
+                    )
+                },
             )
         } catch (_: Exception) {
             null

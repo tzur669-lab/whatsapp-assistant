@@ -123,6 +123,22 @@ export type QuotaReport = {
   voice: { used: number; limit: number };
   /** Counted here, per UTC day. */
   workerRequests: { limit: number; used: number; resetAt: number };
+  /** This server's own limits; absent only where nothing set them. */
+  server?: ServerLimits;
+};
+
+/**
+ * This server's own limits (2026-10-01), which no Groq header shows: a turn is
+ * not started on a model whose last minute here is too full, a turn has a token
+ * cap of its own, and a model is set aside for the day after a 429 that says
+ * so. Any of them sends a message to the parser fallback, so the screen shows
+ * them, with the last failure and how many fell back today.
+ */
+export type ServerLimits = {
+  minute: Array<{ model: string; used: number; limit: number; freesAt: number | null; blockedUntil: number | null }>;
+  turnTokenCap: number;
+  lastFailure: { code: string; at: number | null } | null;
+  fallbacksToday: number;
 };
 
 export class QuotaStore {

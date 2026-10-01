@@ -350,8 +350,17 @@ export class Repository {
     return this.getSetting('last_error_code');
   }
 
-  setLastErrorCode(code: string): void {
+  setLastErrorCode(code: string, atMs?: number): void {
     this.setSetting('last_error_code', code.slice(0, 64));
+    if (atMs !== undefined) this.setSetting('last_error_at', String(Math.round(atMs)));
+  }
+
+  /** The most recent error code and when, for the quota screen (2026-10-01). */
+  lastError(): { code: string; at: number | null } | null {
+    const code = this.lastErrorCode();
+    if (code === null) return null;
+    const at = Number(this.getSetting('last_error_at'));
+    return { code, at: Number.isFinite(at) && at > 0 ? at : null };
   }
 
   /** Add to a counter for the given period, creating the row if needed. */

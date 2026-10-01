@@ -22,13 +22,44 @@ object QuotaLogic {
         val dayTokens: Counted?,
     )
 
+    /** One model's last minute as the server counts it, against its own limit (0.8.1). */
+    class ServerMinute(val model: String, val used: Long, val limit: Long, val freesAt: Long?, val blockedUntil: Long?)
+
+    /**
+     * The server's own limits, which no Groq header shows (0.8.1). Any of them
+     * sends a message to the fallback parser, which cannot answer a question.
+     */
+    class Server(
+        val minute: List<ServerMinute>,
+        val turnTokenCap: Long,
+        val lastFailureCode: String?,
+        val lastFailureAt: Long?,
+        val fallbacksToday: Long,
+    )
+
     class Report(
         val at: Long,
         val models: List<Model>,
         val voice: Counted,
         val workerRequests: Counted,
         val workerResetAt: Long,
+        /** Null from a server older than 0.8.1. */
+        val server: Server? = null,
     )
+
+    /** What the server's last error code means, in words. The code itself is shown beside it. */
+    fun failureLabel(code: String): String = when {
+        code == "E_AGENT_BUDGET_EXHAUSTED" -> "מכסת הדקה של השרת למודל הייתה מלאה"
+        code == "E_AGENT_RATE_LIMITED" -> "Groq סירב: מכסה (429)"
+        code == "E_AGENT_TURN_TOKEN_CAP" -> "התור עבר את תקרת הטוקנים לתור"
+        code == "E_AGENT_MAX_CALLS" -> "התור עבר את מספר הקריאות למודל"
+        code == "E_AGENT_TIMEOUT" -> "Groq לא ענה בזמן"
+        code == "E_AGENT_NETWORK_ERROR" -> "אין חיבור ל־Groq"
+        code == "E_AGENT_PROVIDER_ERROR" -> "שגיאה מצד Groq"
+        code == "E_AGENT_INVALID_JSON" || code == "E_AGENT_EMPTY_REPLY" -> "המודל החזיר תשובה ריקה או פגומה"
+        code.startsWith("E_NLU_") -> "גם המנתח הגיבוי נכשל"
+        else -> "תקלה אחרת"
+    }
 
     const val OK = 0
     const val WARN = 1

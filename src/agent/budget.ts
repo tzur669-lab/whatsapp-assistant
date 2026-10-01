@@ -20,11 +20,27 @@ const WINDOW_MS = 60_000;
 /** A `retry-after` longer than this is the daily budget, not the minute one. */
 const DAILY_SIGNAL_SECONDS = 60;
 
+/** Kept under Groq's own minute limit when that is the lower one. */
+const LEARNED_LIMIT_MARGIN = 500;
+
 type Spend = { at: number; tokens: number };
+
+/** One model's state as this server sees it, for the quota screen. */
+export type BudgetSnapshot = {
+  model: string;
+  /** Tokens spent in the last minute, as this server counts them. */
+  used: number;
+  limit: number;
+  /** When the oldest spend in the window leaves it; null when nothing is in it. */
+  freesAt: number | null;
+  /** Set aside after a 429 that named the day: until when. */
+  blockedUntil: number | null;
+};
 
 export class TokenBudget {
   private readonly spends = new Map<string, Spend[]>();
   private readonly exhaustedUntil = new Map<string, number>();
+  private readonly learnedLimits = new Map<string, number>();
 
   constructor(
     private readonly now: () => number,
@@ -50,9 +66,38 @@ export class TokenBudget {
     return true;
   }
 
+  /**
+   * Groq's minute limit for a model, from its own headers (2026-10-01). Models
+   * differ, and one below the assumed 8K made every busy minute a 429.
+   */
+  learnMinuteLimit(model: string, limit: number): void {
+    if (Number.isInteger(limit) && limit > 0) this.learnedLimits.set(model, limit);
+  }
+
+  /** The minute bucket this server spends against: the assumption, or Groq's own when lower. */
+  limitFor(model: string): number {
+    const learned = this.learnedLimits.get(model);
+    if (learned === undefined) return MINUTE_TOKEN_LIMIT;
+    return Math.max(0, Math.min(MINUTE_TOKEN_LIMIT, learned - LEARNED_LIMIT_MARGIN));
+  }
+
   /** Would a call estimated at `tokens` fit this model's minute bucket now? */
   fits(model: string, tokens: number): boolean {
-    return !this.isExhausted(model) && this.usedInWindow(model) + tokens <= MINUTE_TOKEN_LIMIT;
+    return !this.isExhausted(model) && this.usedInWindow(model) + tokens <= this.limitFor(model);
+  }
+
+  snapshot(models: readonly string[]): BudgetSnapshot[] {
+    return models.map((model) => {
+      const used = this.usedInWindow(model);
+      const oldest = this.spends.get(model)?.[0];
+      return {
+        model,
+        used,
+        limit: this.limitFor(model),
+        freesAt: oldest ? oldest.at + WINDOW_MS : null,
+        blockedUntil: this.isExhausted(model) ? (this.exhaustedUntil.get(model) ?? null) : null,
+      };
+    });
   }
 
   /** The first model, in order, that can take a turn of this size. */
@@ -84,7 +129,7 @@ export class TokenBudget {
     }
     // Fill the window so the next turn waits out the minute instead of retrying
     // into it. Not a spend: nothing was billed.
-    this.fill(model, MINUTE_TOKEN_LIMIT);
+    this.fill(model, this.limitFor(model));
   }
 }
 

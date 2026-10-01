@@ -335,6 +335,28 @@ describe('an agent turn', () => {
       expect(reminders.listUpcoming(PRINCIPAL)).toHaveLength(1);
     });
 
+    it('says why, rather than "not understood", when the agent failed and the parser could not answer', async () => {
+      const down = await handleInbound(text('מה בירת צרפת?'), deps([{ error: 'timeout' }], [draft('unsupported', {})]));
+      expect(down).toMatchObject({ action: 'reply', text: he.agentFailed('timeout') });
+
+      const limited = await handleInbound(
+        text('מה בירת צרפת?'),
+        deps([{ error: 'rate_limited', retryAfterSeconds: 5 }], [draft('unsupported', {})]),
+      );
+      expect(limited).toMatchObject({ action: 'reply', text: he.agentFailed('rate_limited') });
+      expect(plain((limited as { text: string }).text)).toContain('מכסת מודל השפה לדקה');
+
+      // The 429 filled the minute: the next message is not even tried on the model.
+      const waiting = await handleInbound(text('מה בירת צרפת?'), deps([{ text: 'פריז' }], [draft('unsupported', {})]));
+      expect(waiting).toMatchObject({ action: 'reply', text: he.agentFailed('budget_exhausted') });
+    });
+
+    it('names an empty model reply as a failure too', async () => {
+      const out = await handleInbound(text('בלה בלה'), deps([{ text: '' }], [draft('unsupported', {})]));
+      if (out.action !== 'reply') throw new Error('expected a reply');
+      expect(out.text).toBe(he.agentFailed('empty_reply'));
+    });
+
     it('never runs a message twice: after a write, no fallback', async () => {
       await handleInbound(
         text('תזכיר לי מחר ב-8 בערב'),

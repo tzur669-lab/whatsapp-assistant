@@ -117,6 +117,34 @@ class QuotaActivity : Activity() {
             content.addView(card)
         }
 
+        report.server?.let { server ->
+            val limits = card("מגבלות השרת", "לא מופיעות ב־Groq; כל אחת מהן שולחת את ההודעה לגיבוי, שלא עונה על שאלות")
+            for (minute in server.minute) {
+                val blocked = minute.blockedUntil
+                val note = when {
+                    blocked != null -> "המודל מושבת עד שתתאפס המכסה היומית: ${QuotaLogic.resetsIn(blocked, at)}"
+                    minute.freesAt != null -> "${QuotaLogic.resetsIn(minute.freesAt, at)} · מקורב: ספירה של השרת"
+                    else -> "ריק · מקורב: ספירה של השרת"
+                }
+                bar(limits, "טוקנים בדקה, ${Ui.isolate(minute.model)}", minute.used, minute.limit, note)
+            }
+            limits.addView(
+                text("תקרת טוקנים לתור אחד: ${Ui.isolate(QuotaLogic.number(server.turnTokenCap))}", 15f)
+                    .apply { setPadding(0, dp(10), 0, 0) },
+            )
+            limits.addView(text("כולל ההיסטוריה של השיחה; שיחה חדשה מתחילה נקייה", 12f, color = META))
+            limits.addView(
+                text("נפלו לגיבוי היום: ${Ui.isolate(QuotaLogic.number(server.fallbacksToday))}", 15f)
+                    .apply { setPadding(0, dp(10), 0, 0) },
+            )
+            server.lastFailureCode?.let { code ->
+                val whenText = server.lastFailureAt?.let { " · לפני ${QuotaLogic.duration(at - it)}" } ?: ""
+                limits.addView(text("תקלה אחרונה: ${QuotaLogic.failureLabel(code)}$whenText", 15f).apply { setPadding(0, dp(10), 0, 0) })
+                limits.addView(text(Ui.isolate(code), 12f, color = META))
+            }
+            content.addView(limits)
+        }
+
         val voice = card("הקלטות", null)
         bar(voice, "בשעה האחרונה", report.voice.used, report.voice.limit, "מדויק: התקרה של השרת")
         content.addView(voice)

@@ -600,6 +600,12 @@ describe('the app channel', () => {
       }>;
       voice: { used: number; limit: number };
       workerRequests: { limit: number; used: number };
+      server: {
+        minute: Array<{ model: string; used: number; limit: number; freesAt: number | null; blockedUntil: number | null }>;
+        turnTokenCap: number;
+        lastFailure: { code: string; at: number | null } | null;
+        fallbacksToday: number;
+      };
     };
 
     const buildWithGroq = () => {
@@ -647,6 +653,23 @@ describe('the app channel', () => {
       // Pairing, the message and this request itself.
       expect(report.workerRequests.used).toBeGreaterThanOrEqual(3);
       expect(report.workerRequests.limit).toBe(100_000);
+
+      // This server's own limits, which no Groq header shows.
+      expect(report.server.turnTokenCap).toBe(7_000);
+      expect(report.server.minute[0]).toMatchObject({ used: 940, limit: 7_500, blockedUntil: null });
+      expect(report.server.lastFailure).toBeNull();
+      expect(report.server.fallbacksToday).toBe(0);
+    });
+
+    it("learns a model's minute limit from Groq, and shows the last failure", async () => {
+      buildWithGroq();
+      const phone = await pair();
+      await say(phone, 'מה נשמע?');
+      fake.driver.exec("INSERT OR REPLACE INTO settings (key, value) VALUES ('last_error_code', 'E_AGENT_BUDGET_EXHAUSTED')");
+      const report = await quota(phone);
+      // Groq said 8,000; a margin under it, and never over the 7,500 assumed.
+      expect(report.server.minute[0]!.limit).toBe(7_500);
+      expect(report.server.lastFailure).toEqual({ code: 'E_AGENT_BUDGET_EXHAUSTED', at: null });
     });
 
     it('is only for a paired phone', async () => {

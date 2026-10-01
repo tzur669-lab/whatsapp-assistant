@@ -21,6 +21,28 @@ describe('TokenBudget', () => {
     expect(budget.fits('m', MINUTE_TOKEN_LIMIT - 5_000)).toBe(true);
   });
 
+  it("takes Groq's own minute limit when it is lower, keeping a margin under it", () => {
+    const budget = new TokenBudget(clock().now);
+    expect(budget.limitFor('m')).toBe(MINUTE_TOKEN_LIMIT);
+    budget.learnMinuteLimit('m', 6_000);
+    expect(budget.limitFor('m')).toBe(5_500);
+    expect(budget.fits('m', 5_600)).toBe(false);
+    // A higher limit than assumed is not trusted beyond the assumption.
+    budget.learnMinuteLimit('m', 30_000);
+    expect(budget.limitFor('m')).toBe(MINUTE_TOKEN_LIMIT);
+  });
+
+  it('reports, per model, the minute used, its limit, and how long a model is set aside', () => {
+    const c = clock();
+    const budget = new TokenBudget(c.now);
+    budget.record('a', 2_000);
+    budget.rateLimited('b', 3_600);
+    expect(budget.snapshot(['a', 'b'])).toEqual([
+      { model: 'a', used: 2_000, limit: MINUTE_TOKEN_LIMIT, freesAt: c.now() + 60_000, blockedUntil: null },
+      { model: 'b', used: 0, limit: MINUTE_TOKEN_LIMIT, freesAt: null, blockedUntil: c.now() + 3_600_000 },
+    ]);
+  });
+
   it('forgets spend older than a minute', () => {
     const c = clock();
     const budget = new TokenBudget(c.now);
