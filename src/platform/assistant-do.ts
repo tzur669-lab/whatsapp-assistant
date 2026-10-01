@@ -616,9 +616,9 @@ export class AssistantDO implements DurableObject {
 
     if (app && method === 'POST' && path === '/app/message') return this.appMessage(body, signed, device, principal);
 
-    const voice = /^\/app\/voice\/([0-9a-f-]{36})$/.exec(path);
+    const voice = /^\/app\/voice\/([0-9a-f-]{36})(?:\/([0-9a-f-]{36}))?$/.exec(path);
     if (app && method === 'POST' && voice) {
-      return this.appVoice(voice[1]!, body, request.contentType, signed, device, principal);
+      return this.appVoice(voice[1]!, voice[2] ?? null, body, request.contentType, signed, device, principal);
     }
 
     if (app && method === 'GET' && path === '/app/outbox') return json(this.outbox.list());
@@ -674,6 +674,7 @@ export class AssistantDO implements DurableObject {
       // The signed timestamp, already within five minutes of ours: one clock.
       sentAtMs: signed.timestamp,
       forwarded: false,
+      ...(message.conversationId ? { conversationId: message.conversationId } : {}),
     };
     const event: InboundEvent =
       message.kind === 'text'
@@ -684,6 +685,7 @@ export class AssistantDO implements DurableObject {
 
   private appVoice(
     messageId: string,
+    conversationId: string | null,
     body: Uint8Array,
     contentType: string,
     signed: SignedHeaders,
@@ -691,6 +693,7 @@ export class AssistantDO implements DurableObject {
     principal: string,
   ): Response | Promise<Response> {
     if (!MESSAGE_ID.test(messageId)) return appError(400, 'bad_request');
+    if (conversationId !== null && !MESSAGE_ID.test(conversationId)) return appError(400, 'bad_request');
     const mimeType = contentType.split(';')[0]!.trim().toLowerCase();
     if (!AUDIO_TYPES.has(mimeType)) return appError(415, 'unsupported_type');
     if (body.length === 0) return appError(400, 'bad_request');
@@ -714,6 +717,7 @@ export class AssistantDO implements DurableObject {
       bytes: body,
       voiceNote: true,
       forwarded: false,
+      ...(conversationId ? { conversationId } : {}),
     };
     return this.runAppTurn(event, messageId, device.id, principal);
   }

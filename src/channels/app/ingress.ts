@@ -34,7 +34,9 @@ export const APP_ROUTES: readonly AppRoute[] = [
   { method: 'POST', pattern: /^\/app\/message$/, maxBytes: 8_192, contentType: JSON_TYPE, channels: ['app'] },
   {
     method: 'POST',
-    pattern: /^\/app\/voice\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/,
+    // The message id, then optionally the conversation it was recorded in.
+    pattern:
+      /^\/app\/voice\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}(?:\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})?$/,
     maxBytes: MAX_VOICE_BYTES,
     contentType: ['audio/mp4', 'audio/aac', 'audio/ogg', 'audio/webm'],
     channels: ['app'],

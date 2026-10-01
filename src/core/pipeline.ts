@@ -492,7 +492,9 @@ async function respondWithAgent(
 
   try {
     const lang = languageOf(text);
-    const history = await agent.history.recent(principal);
+    // Each of the app's conversations keeps its own memory (2026-10-01).
+    const conversation = event.conversationId ?? '';
+    const history = await agent.history.recent(principal, conversation);
     const result = await timed(deps, 'agent', () =>
       runAgentTurn(
         {
@@ -516,13 +518,23 @@ async function respondWithAgent(
     );
 
     if (result.kind === 'suspend' && agent.turns) {
-      const queryId = await agent.turns.suspend(principal, event.wamid, result.state);
+      const queryId = await agent.turns.suspend(principal, event.wamid, {
+        ...result.state,
+        ...(conversation === '' ? {} : { conversation }),
+      });
       repo.markInboundOutcome(event.wamid, { intent: 'agent', decision: 'DEVICE_QUERY' });
       log.info('agent_suspended', { wamid: event.wamid, tool: result.state.tool });
       return { action: 'device_query', queryId, query: result.state.query };
     }
 
-    return await settleAgentResult(result, source.kind === 'voice' ? he.voicePlaceholder : text, event.wamid, deps, now);
+    return await settleAgentResult(
+      result,
+      source.kind === 'voice' ? he.voicePlaceholder : text,
+      event.wamid,
+      deps,
+      now,
+      conversation,
+    );
   } finally {
     agent.lock.release(principal, turnId);
   }
@@ -539,6 +551,8 @@ async function settleAgentResult(
   wamid: string,
   deps: PipelineDeps,
   now: number,
+  /** The app's conversation, '' for the shared thread. */
+  conversation: string,
 ): Promise<PipelineOutcome | null> {
   const { repo, log, principal } = deps;
   const agent = deps.services?.agent;
@@ -566,12 +580,16 @@ async function settleAgentResult(
   const outcome = replyOutcome(result.reply, deps);
 
   if (outcome.action === 'reply' && agent) {
-    await agent.history.append(principal, {
-      // A transcript is never stored (invariant 13); the reply carries the context.
-      user: userText,
-      reply: outcome.text,
-      tainted: result.tainted,
-    });
+    await agent.history.append(
+      principal,
+      {
+        // A transcript is never stored (invariant 13); the reply carries the context.
+        user: userText,
+        reply: outcome.text,
+        tainted: result.tainted,
+      },
+      conversation,
+    );
     if (result.tainted) return { ...outcome, private: true };
   }
   return outcome;
@@ -622,7 +640,7 @@ export async function resumeFromPhone(
     );
     log.info('agent_resumed', { wamid: request.wamid, readStatus: request.result.status, itemCount: request.result.items.length });
 
-    const outcome = await settleAgentResult(result, state.text, request.wamid, deps, now);
+    const outcome = await settleAgentResult(result, state.text, request.wamid, deps, now, state.conversation ?? '');
     // No fallback here: the parser never sees a turn the phone has answered.
     return outcome ?? { action: 'reply', text: he.agentIncomplete };
   } finally {

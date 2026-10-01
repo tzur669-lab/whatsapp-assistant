@@ -79,6 +79,8 @@ export type AgentTurnInput = {
  */
 export type SuspendedState = {
   model: string;
+  /** The app's conversation the turn belongs to, for its history (2026-10-01). */
+  conversation?: string;
   /** Everything after the system prompt, ending with the call that asked. */
   messages: AgentMessage[];
   spent: number;

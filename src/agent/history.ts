@@ -26,6 +26,16 @@ const AAD_PROVIDER = 'agent-history';
 
 export type HistoryEntry = { user: string; reply: string; tainted: boolean };
 
+/**
+ * A conversation in the app (§6.18): its id, or '' for the one shared thread
+ * (WhatsApp, and an app that sends none). Each keeps its own memory, under the
+ * same limits. The id is part of the associated data, so a row only decrypts
+ * in the conversation it was written in.
+ */
+function accountOf(principal: string, conversation: string): string {
+  return conversation === '' ? principal : `${principal}/${conversation}`;
+}
+
 export class ConversationHistory {
   constructor(
     private readonly sql: SqlDriver,
@@ -33,40 +43,44 @@ export class ConversationHistory {
     private readonly keyring: () => Keyring,
   ) {}
 
-  async append(principal: string, entry: HistoryEntry): Promise<void> {
+  async append(principal: string, entry: HistoryEntry, conversation = ''): Promise<void> {
     const ciphertext = await encryptToken(
       JSON.stringify({ u: entry.user, r: entry.reply }),
       this.keyring(),
-      { provider: AAD_PROVIDER, account: principal },
+      { provider: AAD_PROVIDER, account: accountOf(principal, conversation) },
     );
     const now = this.now();
     this.sql.exec(
-      `INSERT INTO conversation_turns (principal, ciphertext, tainted, created_at, expires_at)
-       VALUES (?, ?, ?, ?, ?)`,
+      `INSERT INTO conversation_turns (principal, conversation, ciphertext, tainted, created_at, expires_at)
+       VALUES (?, ?, ?, ?, ?, ?)`,
       principal,
+      conversation,
       ciphertext,
       entry.tainted ? 1 : 0,
       now,
       now + (entry.tainted ? TAINTED_HISTORY_TTL_MS : HISTORY_TTL_MS),
     );
-    // Only the newest exchanges are ever read, so older rows are not kept.
+    // Only the newest exchanges of a conversation are ever read, so older rows are not kept.
     this.sql.exec(
-      `DELETE FROM conversation_turns WHERE principal = ? AND id NOT IN (
-         SELECT id FROM conversation_turns WHERE principal = ? ORDER BY id DESC LIMIT ?
+      `DELETE FROM conversation_turns WHERE principal = ? AND conversation = ? AND id NOT IN (
+         SELECT id FROM conversation_turns WHERE principal = ? AND conversation = ? ORDER BY id DESC LIMIT ?
        )`,
       principal,
+      conversation,
       principal,
+      conversation,
       MAX_EXCHANGES,
     );
   }
 
   /** The live exchanges, oldest first, cut to the character budget. */
-  async recent(principal: string): Promise<HistoryEntry[]> {
+  async recent(principal: string, conversation = ''): Promise<HistoryEntry[]> {
     const rows = this.sql.exec(
       `SELECT id, ciphertext, tainted FROM conversation_turns
-       WHERE principal = ? AND expires_at > ?
+       WHERE principal = ? AND conversation = ? AND expires_at > ?
        ORDER BY id DESC LIMIT ?`,
       principal,
+      conversation,
       this.now(),
       MAX_EXCHANGES,
     );
@@ -80,7 +94,7 @@ export class ConversationHistory {
       try {
         const plain = await decryptToken(String(row['ciphertext']), keyring, {
           provider: AAD_PROVIDER,
-          account: principal,
+          account: accountOf(principal, conversation),
         });
         const parsed = JSON.parse(plain) as { u?: unknown; r?: unknown };
         if (typeof parsed.u !== 'string' || typeof parsed.r !== 'string') throw new Error('shape');

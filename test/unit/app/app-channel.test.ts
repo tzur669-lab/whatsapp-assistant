@@ -401,6 +401,71 @@ describe('the app channel', () => {
     });
   });
 
+  describe('conversations (2026-10-01)', () => {
+    const A = '11111111-1111-4111-8111-111111111111';
+    const B = '22222222-2222-4222-8222-222222222222';
+    /** What the model was sent on each call: the user messages only. */
+    let seen: string[][];
+
+    const buildWithAgent = () => {
+      env = { ...baseEnv(), GROQ_API_KEY: 'test-groq-key', AGENT: 'on' };
+      const fetchImpl = (async (input: string | URL | Request, init?: RequestInit) => {
+        const url = String(input instanceof Request ? input.url : input);
+        if (!url.endsWith('/chat/completions')) return google.fetchImpl(input as never, init);
+        const body = JSON.parse(String(init?.body)) as { messages: { role: string; content: string | null }[] };
+        seen.push(body.messages.filter((m) => m.role === 'user').map((m) => String(m.content)));
+        return new Response(
+          JSON.stringify({ choices: [{ message: { content: `תשובה ${seen.length}` } }], usage: { prompt_tokens: 900, completion_tokens: 40 } }),
+          { status: 200, headers: { 'content-type': 'application/json' } },
+        );
+      }) as unknown as typeof fetch;
+      assistant = new AssistantDO(fake.state as never, env, fetchImpl);
+    };
+
+    const sayIn = async (phone: FakePhone, conversationId: string, text: string) =>
+      (await send(await phone.toDo('POST', '/app/message', { id: messageId(), kind: 'text', text, conversationId })))
+        .body as unknown as Reply;
+
+    beforeEach(() => {
+      seen = [];
+    });
+
+    it('remembers each conversation on its own', async () => {
+      buildWithAgent();
+      const phone = await pair();
+
+      await sayIn(phone, A, 'אני בשיחה א');
+      await sayIn(phone, B, 'אני בשיחה ב');
+      await sayIn(phone, A, 'ומה אמרתי?');
+
+      // The third call, in A, sees A's earlier words and not B's.
+      const third = seen[2]!.join('\n');
+      expect(third).toContain('אני בשיחה א');
+      expect(third).not.toContain('אני בשיחה ב');
+      // The second, in B, saw nothing of A.
+      expect(seen[1]!.join('\n')).not.toContain('אני בשיחה א');
+    });
+
+    it('refuses a conversation id that is not a uuid', async () => {
+      const phone = await pair();
+      const response = await send(
+        await phone.toDo('POST', '/app/message', { id: messageId(), kind: 'text', text: 'x', conversationId: 'not-a-uuid' }),
+      );
+      expect(response.status).toBe(400);
+    });
+
+    it('takes a voice note with its conversation in the path', async () => {
+      build({ GROQ_API_KEY: 'test-key-not-real' });
+      google.transcript = 'עזרה';
+      const phone = await pair();
+      const response = await send(
+        await phone.toDo('POST', `/app/voice/${messageId()}/${A}`, new Uint8Array([1, 2, 3, 4]), { contentType: 'audio/mp4' }),
+      );
+      expect(response.status).toBe(200);
+      expect(stripIsolates((response.body as unknown as Reply).row!.text).startsWith('שמעתי: עזרה')).toBe(true);
+    });
+  });
+
   describe('action cards (PLAN §6.20)', () => {
     const card = (tier = 1, channel: 'card' | 'chat' = 'card') =>
       new PendingActions(fake.driver, () => Date.now()).create({

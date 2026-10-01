@@ -26,9 +26,18 @@ const messageId = z
 /** The alphabet `buttonId` in `confirm/pending.ts` produces, and nothing else. */
 const buttonIdSchema = z.string().min(1).max(256).regex(/^[a-z0-9:]+$/);
 
+/**
+ * The conversation in the app a message was written in (2026-10-01): the
+ * agent's memory is kept per conversation. A uuid, like a message id; absent
+ * means the one shared thread.
+ */
+const conversationId = messageId.optional();
+
 const messageSchema = z.discriminatedUnion('kind', [
-  z.object({ id: messageId, kind: z.literal('text'), text: z.string().min(1).max(MAX_TEXT_CHARS) }).strict(),
-  z.object({ id: messageId, kind: z.literal('button'), buttonId: buttonIdSchema }).strict(),
+  z
+    .object({ id: messageId, kind: z.literal('text'), text: z.string().min(1).max(MAX_TEXT_CHARS), conversationId })
+    .strict(),
+  z.object({ id: messageId, kind: z.literal('button'), buttonId: buttonIdSchema, conversationId }).strict(),
 ]);
 
 export type AppMessage = z.infer<typeof messageSchema>;

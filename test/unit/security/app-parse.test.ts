@@ -29,6 +29,17 @@ describe('parseMessage', () => {
     expect(parseMessage(bytes({ id: ID, kind: 'button', buttonId }))).toEqual({ id: ID, kind: 'button', buttonId });
   });
 
+  it('carries the conversation a message was written in, when the app sends one', () => {
+    const conversationId = '22222222-2222-4222-8222-222222222222';
+    expect(parseMessage(bytes({ id: ID, kind: 'text', text: 'x', conversationId }))).toEqual({
+      id: ID,
+      kind: 'text',
+      text: 'x',
+      conversationId,
+    });
+    expect(parseMessage(bytes({ id: ID, kind: 'text', text: 'x', conversationId: 'nope' }))).toBeNull();
+  });
+
   it('lower-cases the id, so a retry cannot dodge dedupe by case', () => {
     expect(parseMessage(bytes({ id: ID.toUpperCase(), kind: 'text', text: 'x' }))?.id).toBe(ID);
   });

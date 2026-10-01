@@ -40,6 +40,46 @@ describe('ConversationHistory', () => {
     expect(recent.map((entry) => entry.user)).toEqual(['שלום', 'ומחר?']);
   });
 
+  describe('per conversation (the app, §6.18)', () => {
+    const A = '11111111-1111-4111-8111-111111111111';
+    const B = '22222222-2222-4222-8222-222222222222';
+
+    it('keeps each conversation to itself', async () => {
+      await history.append(P, { user: 'in A', reply: 'r', tainted: false }, A);
+      await history.append(P, { user: 'in B', reply: 'r', tainted: false }, B);
+      await history.append(P, { user: 'no conversation', reply: 'r', tainted: false });
+
+      expect((await history.recent(P, A)).map((e) => e.user)).toEqual(['in A']);
+      expect((await history.recent(P, B)).map((e) => e.user)).toEqual(['in B']);
+      expect((await history.recent(P)).map((e) => e.user)).toEqual(['no conversation']);
+    });
+
+    it(`keeps the last ${MAX_EXCHANGES} exchanges of each conversation, not of all of them`, async () => {
+      for (let i = 0; i < MAX_EXCHANGES + 2; i++) {
+        await history.append(P, { user: `a${i}`, reply: 'r', tainted: false }, A);
+      }
+      await history.append(P, { user: 'b0', reply: 'r', tainted: false }, B);
+
+      expect(await history.recent(P, A)).toHaveLength(MAX_EXCHANGES);
+      expect((await history.recent(P, A))[0]?.user).toBe('a2');
+      expect((await history.recent(P, B)).map((e) => e.user)).toEqual(['b0']);
+    });
+
+    it('binds a row to its conversation: moved to another, it does not decrypt', async () => {
+      await history.append(P, { user: 'secret', reply: 'r', tainted: false }, A);
+      driver.exec('UPDATE conversation_turns SET conversation = ?', B);
+      expect(await history.recent(P, B)).toEqual([]);
+    });
+
+    it('/forget wipes every conversation', async () => {
+      await history.append(P, { user: 'x', reply: 'r', tainted: false }, A);
+      await history.append(P, { user: 'y', reply: 'r', tainted: false }, B);
+      history.wipe(P);
+      expect(await history.recent(P, A)).toEqual([]);
+      expect(await history.recent(P, B)).toEqual([]);
+    });
+  });
+
   it('stores only ciphertext', async () => {
     await history.append(P, { user: 'SECRET-WORDS', reply: 'SECRET-REPLY', tainted: false });
     const dump = JSON.stringify(driver.exec('SELECT * FROM conversation_turns'));

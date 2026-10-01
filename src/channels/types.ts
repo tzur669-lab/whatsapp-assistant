@@ -10,6 +10,8 @@ export type InboundText = {
   sentAtMs: number;
   text: string;
   forwarded: boolean;
+  /** The app's conversation this was written in (§6.18). Absent: the one shared thread. */
+  conversationId?: string;
 };
 
 /**
@@ -33,6 +35,7 @@ export type InboundAudio = {
   /** True for a pressed-and-held voice note, false for an attached audio file. */
   voiceNote: boolean;
   forwarded: boolean;
+  conversationId?: string;
 };
 
 export type InboundButton = {
@@ -42,6 +45,7 @@ export type InboundButton = {
   sentAtMs: number;
   buttonId: string;
   forwarded: boolean;
+  conversationId?: string;
 };
 
 export type InboundUnsupported = {
