@@ -534,6 +534,64 @@ describe('the app channel', () => {
     });
   });
 
+  describe('separate Google grants (2026-10-01)', () => {
+    const buildWithTokens = () => {
+      const fetchImpl = (async (input: string | URL | Request, init?: RequestInit) => {
+        const url = String(input instanceof Request ? input.url : input);
+        if (url === 'https://oauth2.googleapis.com/token' && String(init?.body).includes('grant_type=authorization_code')) {
+          return new Response(
+            JSON.stringify({
+              access_token: 'at',
+              expires_in: 3600,
+              refresh_token: 'rt-gmail-not-real',
+              scope: 'https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/gmail.compose',
+            }),
+            { status: 200, headers: { 'content-type': 'application/json' } },
+          );
+        }
+        return google.fetchImpl(input as never, init);
+      }) as unknown as typeof fetch;
+      assistant = new AssistantDO(fake.state as never, env, fetchImpl);
+    };
+
+    const post = async (path: string, body: unknown) =>
+      (await assistant.fetch(new Request(`https://do${path}`, { method: 'POST', body: JSON.stringify(body) }))).json() as Promise<
+        Record<string, string>
+      >;
+
+    it('connects Gmail under its own grant and scopes, and leaves the calendar alone', async () => {
+      buildWithTokens();
+      const phone = await pair();
+
+      const reply = await say(phone, '/connect gmail');
+      expect(stripIsolates(reply.row!.text)).toContain('לחיבור Gmail:');
+      const linkId = /id=([0-9a-f]{64})/.exec(stripIsolates(reply.row!.text))![1]!;
+
+      const started = await post('/do/oauth/start', { linkId });
+      const redirect = new URL(started['redirectUrl']!);
+      expect(redirect.searchParams.get('scope')).toBe(
+        'https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/gmail.compose',
+      );
+
+      const finished = await post('/do/oauth/callback', { code: 'fake-code', state: redirect.searchParams.get('state') });
+      expect(finished).toEqual({ ok: true });
+
+      const rows = fake.driver.exec('SELECT account, status, scopes FROM integrations ORDER BY account');
+      expect(rows).toEqual([
+        { account: 'gmail', status: 'connected', scopes: 'https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/gmail.compose' },
+      ]);
+      expect(stripIsolates((await say(phone, '/status')).row!.text)).toContain('• Gmail: מחובר');
+    });
+
+    it('still connects the calendar with /connect google, now able to read every calendar', async () => {
+      const phone = await pair();
+      const reply = await say(phone, '/connect google');
+      const linkId = /id=([0-9a-f]{64})/.exec(stripIsolates(reply.row!.text))![1]!;
+      const started = await post('/do/oauth/start', { linkId });
+      expect(new URL(started['redirectUrl']!).searchParams.get('scope')).toContain('calendar.readonly');
+    });
+  });
+
   describe('action cards (PLAN §6.20)', () => {
     const card = (tier = 1, channel: 'card' | 'chat' = 'card') =>
       new PendingActions(fake.driver, () => Date.now()).create({

@@ -19,11 +19,14 @@
 import type { SqlDriver } from '../core/sql.js';
 import { decryptToken, encryptToken } from '../security/crypto.js';
 import type { Keyring } from '../security/crypto.js';
+import { isGrantName } from './grants.js';
+import type { GrantName } from './grants.js';
 
 const LINK_TTL_MS = 10 * 60 * 1000;
 const STATE_TTL_MS = 10 * 60 * 1000;
 
 export const PROVIDER = 'google';
+/** The calendar's grant, which predates the others (`grants.ts`). */
 export const ACCOUNT = 'primary';
 
 export type IntegrationStatus = 'connected' | 'disconnected';
@@ -45,73 +48,82 @@ export class GoogleStore {
     private readonly sql: SqlDriver,
     private readonly now: () => number,
     private readonly keyring: () => Keyring,
+    /**
+     * Which grant this store's standing integration is (`GRANTS[...].account`).
+     * Links and authorization attempts are shared, and say their grant.
+     */
+    private readonly account: string = ACCOUNT,
   ) {}
 
   // -- the one-time link ------------------------------------------------------
 
   /** Returns the id to put in the link. 256 random bits, single use. */
-  createLink(principal: string): { id: string; expiresAt: number } {
+  createLink(principal: string, grant: GrantName = 'calendar'): { id: string; expiresAt: number } {
     const id = randomHex(32);
     const createdAt = this.now();
     const expiresAt = createdAt + LINK_TTL_MS;
 
     this.sql.exec(
-      'INSERT INTO oauth_links (id, principal, created_at, expires_at) VALUES (?, ?, ?, ?)',
+      'INSERT INTO oauth_links (id, principal, created_at, expires_at, grant_name) VALUES (?, ?, ?, ?, ?)',
       id,
       principal,
       createdAt,
       expiresAt,
+      grant,
     );
     return { id, expiresAt };
   }
 
   /** Consume a link. One statement, so a double-click cannot pass twice. */
-  useLink(id: string): Consumed<{ principal: string }> {
+  useLink(id: string): Consumed<{ principal: string; grant: GrantName }> {
     const rows = this.sql.exec(
       `UPDATE oauth_links SET used_at = ?
        WHERE id = ? AND used_at IS NULL AND expires_at > ?
-       RETURNING principal`,
+       RETURNING principal, grant_name`,
       this.now(),
       id,
       this.now(),
     );
     const principal = rows[0]?.['principal'];
-    if (typeof principal === 'string') return { ok: true, value: { principal } };
+    const grant = rows[0]?.['grant_name'];
+    if (typeof principal === 'string' && isGrantName(grant)) return { ok: true, value: { principal, grant } };
     return { ok: false, reason: this.whyLinkFailed(id) };
   }
 
   // -- one authorization attempt ---------------------------------------------
 
-  createState(principal: string, codeVerifier: string): { state: string } {
+  createState(principal: string, codeVerifier: string, grant: GrantName = 'calendar'): { state: string } {
     const state = randomHex(32);
     const createdAt = this.now();
 
     this.sql.exec(
-      `INSERT INTO oauth_states (state, principal, code_verifier, created_at, expires_at)
-       VALUES (?, ?, ?, ?, ?)`,
+      `INSERT INTO oauth_states (state, principal, code_verifier, created_at, expires_at, grant_name)
+       VALUES (?, ?, ?, ?, ?, ?)`,
       state,
       principal,
       codeVerifier,
       createdAt,
       createdAt + STATE_TTL_MS,
+      grant,
     );
     return { state };
   }
 
-  useState(state: string): Consumed<{ principal: string; codeVerifier: string }> {
+  useState(state: string): Consumed<{ principal: string; codeVerifier: string; grant: GrantName }> {
     const rows = this.sql.exec(
       `UPDATE oauth_states SET used_at = ?
        WHERE state = ? AND used_at IS NULL AND expires_at > ?
-       RETURNING principal, code_verifier`,
+       RETURNING principal, code_verifier, grant_name`,
       this.now(),
       state,
       this.now(),
     );
     const row = rows[0];
-    if (row) {
+    const grant = row?.['grant_name'];
+    if (row && isGrantName(grant)) {
       return {
         ok: true,
-        value: { principal: String(row['principal']), codeVerifier: String(row['code_verifier']) },
+        value: { principal: String(row['principal']), codeVerifier: String(row['code_verifier']), grant },
       };
     }
     return { ok: false, reason: this.whyStateFailed(state) };
@@ -122,7 +134,7 @@ export class GoogleStore {
   async connect(params: { refreshToken: string; scopes: string[] }): Promise<void> {
     const ciphertext = await encryptToken(params.refreshToken, this.keyring(), {
       provider: PROVIDER,
-      account: ACCOUNT,
+      account: this.account,
     });
     const at = this.now();
 
@@ -138,7 +150,7 @@ export class GoogleStore {
          updated_at = excluded.updated_at,
          last_error = NULL`,
       PROVIDER,
-      ACCOUNT,
+      this.account,
       ciphertext,
       params.scopes.join(' '),
       at,
@@ -175,7 +187,7 @@ export class GoogleStore {
     try {
       return await decryptToken(ciphertext, this.keyring(), {
         provider: PROVIDER,
-        account: ACCOUNT,
+        account: this.account,
       });
     } catch {
       // A token that will not decrypt is a key problem, not a Google problem.
@@ -199,7 +211,7 @@ export class GoogleStore {
       errorCode.slice(0, 64),
       this.now(),
       PROVIDER,
-      ACCOUNT,
+      this.account,
     );
   }
 
@@ -210,7 +222,7 @@ export class GoogleStore {
       calendarId,
       this.now(),
       PROVIDER,
-      ACCOUNT,
+      this.account,
     );
   }
 
@@ -227,7 +239,7 @@ export class GoogleStore {
     return this.sql.exec(
       'SELECT * FROM integrations WHERE provider = ? AND account = ?',
       PROVIDER,
-      ACCOUNT,
+      this.account,
     )[0];
   }
 

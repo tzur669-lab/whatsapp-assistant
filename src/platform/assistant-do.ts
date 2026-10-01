@@ -29,7 +29,9 @@ import { refreshFeed } from '../ical/refresh.js';
 import { UndoActions } from '../confirm/undo.js';
 import { GoogleStore } from '../google/store.js';
 import { CalendarClient } from '../google/calendar.js';
-import { buildAuthUrl, createPkce, exchangeCode, GOOGLE_SCOPES } from '../google/oauth.js';
+import { buildAuthUrl, createPkce, exchangeCode } from '../google/oauth.js';
+import { GRANTS } from '../google/grants.js';
+import type { GrantName } from '../google/grants.js';
 import { parseKeyring } from '../security/crypto.js';
 import { eventText } from '../render/events.js';
 import { budgetState, isWindowOpen, RECHECK_BEFORE_MS } from '../policy/window.js';
@@ -142,6 +144,11 @@ export class AssistantDO implements DurableObject {
   /** The fetch every Groq provider gets: it notes the rate-limit headers on the way back. */
   private readonly groqFetch: typeof fetch;
   private readonly log = createLogger({ component: 'assistant_do' });
+
+  /** The Google grants other than the calendar's (2026-10-01), built on first use. */
+  private readonly grantStores = new Map<GrantName, GoogleStore>();
+  /** API clients per grant, holding an access token in memory between calls. */
+  private readonly googleApis = new Map<GrantName, unknown>();
 
   /** Imported device keys, by device id. Public keys, so nothing secret is cached. */
   private readonly deviceKeys = new Map<string, CryptoKey>();
@@ -340,7 +347,8 @@ export class AssistantDO implements DurableObject {
     }
 
     const pkce = await createPkce();
-    const { state } = this.google.createState(link.value.principal, pkce.verifier);
+    const { grant } = link.value;
+    const { state } = this.google.createState(link.value.principal, pkce.verifier, grant);
 
     return {
       redirectUrl: buildAuthUrl({
@@ -348,7 +356,8 @@ export class AssistantDO implements DurableObject {
         redirectUri: this.redirectUri(),
         state,
         challenge: pkce.challenge,
-        scopes: GOOGLE_SCOPES,
+        // Only this grant's scopes: each is its own consent and token (§6.6).
+        scopes: GRANTS[grant].scopes,
       }),
     };
   }
@@ -383,15 +392,34 @@ export class AssistantDO implements DurableObject {
       return { error: 'no_refresh_token' };
     }
 
-    await this.google.connect({
+    const grant = attempt.value.grant;
+    await this.grantStore(grant).connect({
       refreshToken: result.grant.refreshToken,
       scopes: result.grant.scopes,
     });
-    this.calendar = null;
+    // Clients hold an access token for their grant; the next use builds afresh.
+    if (grant === 'calendar') this.calendar = null;
+    this.googleApis.delete(grant);
 
-    this.log.info('google_connected', { scopes: result.grant.scopes.length });
-    await this.send({ to: this.selfWaId(), text: eventText.connected('he') });
+    this.log.info('google_connected', { grant, scopes: result.grant.scopes.length });
+    await this.send({ to: this.selfWaId(), text: eventText.connected('he', grant) });
     return { ok: true };
+  }
+
+  /** The store of one Google grant. The calendar's is the one that predates the others. */
+  private grantStore(grant: GrantName): GoogleStore {
+    if (grant === 'calendar') return this.google;
+    let store = this.grantStores.get(grant);
+    if (!store) {
+      store = new GoogleStore(
+        this.sql,
+        () => Date.now(),
+        () => parseKeyring(this.env as unknown as Record<string, string | undefined>),
+        GRANTS[grant].account,
+      );
+      this.grantStores.set(grant, store);
+    }
+    return store;
   }
 
   private redirectUri(): string {
@@ -1425,6 +1453,7 @@ export class AssistantDO implements DurableObject {
           }
         : {}),
       google: this.google,
+      grants: { gmail: this.grantStore('gmail'), tasks: this.grantStore('tasks'), drive: this.grantStore('drive') },
       publicBaseUrl: this.env.PUBLIC_BASE_URL,
       ...(this.calendarClient() ? { calendar: this.calendarClient()! } : {}),
       ...(this.callDispatcher() ? { calls: this.callDispatcher()! } : {}),

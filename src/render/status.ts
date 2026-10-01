@@ -8,6 +8,8 @@
  * Numbers, times and Latin runs are bidi-isolated: without that, `800/1,000`
  * renders reversed inside a Hebrew sentence (PLAN §6.3).
  */
+import type { GrantName } from '../google/grants.js';
+import { GRANT_LABELS } from './events.js';
 import { isolate, isolateLtr } from './bidi.js';
 import { formatWhen } from './format-time.js';
 import type { LocalParts } from '../time/tz.js';
@@ -29,6 +31,8 @@ export type StatusReport = {
   ical: { events: number; lastError: string | null } | null;
   lastErrorCode: string | null;
   paused: boolean;
+  /** The other Google grants that are connected (2026-10-01). */
+  grants?: readonly GrantName[];
 };
 
 export const statusText = {
@@ -38,6 +42,7 @@ export const statusText = {
       'מצב המערכת:',
       '',
       `• יומן Google: ${report.connected ? 'מחובר' : `לא מחובר — יש לשלוח ${isolate('/connect google')}`}`,
+      ...(report.grants ?? []).map((grant) => `• ${GRANT_LABELS[grant]}: מחובר`),
       `• תזכורות ממתינות: ${isolateLtr(String(report.pendingReminders))}`,
       ...(report.budget
         ? [`• הודעות החודש: ${isolateLtr(`${report.budget.sent}/${report.budget.remaining + report.budget.sent}`)}`]

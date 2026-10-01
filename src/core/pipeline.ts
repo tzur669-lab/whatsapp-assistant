@@ -16,6 +16,7 @@
  * Plain TypeScript throughout — no platform imports (invariant 11). The Durable
  * Object supplies the services and the clock.
  */
+import type { GrantName } from '../google/grants.js';
 import { DEFAULT_PLACE, findPlace, HOME_CITY_KEY } from '../lookup/place.js';
 import type { InboundEvent, OutboundButton } from '../channels/types.js';
 import { Repository } from './repo.js';
@@ -88,6 +89,8 @@ export type Services = {
   nlu: NluProvider[];
   /** Google's integration state. Absent only in tests that predate Phase 5. */
   google?: GoogleStore;
+  /** The other Google grants — gmail, tasks, drive — each its own store (2026-10-01). */
+  grants?: Partial<Record<GrantName, GoogleStore>>;
   /** Present once a grant exists; calendar tools answer "not connected" without it. */
   calendar?: CalendarClient;
   /** Where the one-time connect link points. */
@@ -771,7 +774,7 @@ async function renderCommand(command: Command, deps: PipelineDeps, now: number):
       return statusText.budget(budgetState(monthlySentOf(repo, now)));
 
     case 'connect_google':
-      return connectLinkFor(deps);
+      return connectLinkFor(deps, command.grant);
 
     case 'forget':
       forgetConversation(deps);
@@ -802,6 +805,7 @@ async function renderCommand(command: Command, deps: PipelineDeps, now: number):
     case 'status':
       return statusText.status({
         connected: deps.services?.google?.isConnected() ?? false,
+        grants: (['gmail', 'tasks', 'drive'] as const).filter((grant) => deps.services?.grants?.[grant]?.isConnected()),
         pendingReminders: deps.services?.reminders.listUpcoming(deps.principal).length ?? 0,
         ...(deps.channel === 'app' ? {} : { budget: budgetState(monthlySentOf(repo, now)) }),
         llmFallbacksToday: repo.counters(Repository.dayKey(now)).fallbacks,
@@ -864,14 +868,15 @@ async function pairSetting(off: boolean, deps: PipelineDeps): Promise<string> {
  * this assistant. So it is 256 random bits, single use, and dies in ten
  * minutes — and it is only ever sent to an allowlisted number.
  */
-function connectLinkFor(deps: PipelineDeps): string {
+function connectLinkFor(deps: PipelineDeps, grant: GrantName): string {
   const google = deps.services?.google;
   const base = deps.services?.publicBaseUrl;
   if (!google || !base) return statusText.notAvailableYet;
 
-  const link = google.createLink(deps.principal);
+  // The link says which grant it is for; the callback stores the token there (§6.6).
+  const link = google.createLink(deps.principal, grant);
   const url = `${base.replace(/\/$/, '')}/oauth/google/start?id=${link.id}`;
-  return eventText.connectLink(url, CONNECT_LINK_MINUTES, 'he');
+  return eventText.connectLink(url, CONNECT_LINK_MINUTES, 'he', grant);
 }
 
 /**

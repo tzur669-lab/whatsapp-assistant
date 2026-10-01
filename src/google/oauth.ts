@@ -13,6 +13,8 @@
  * without the verifier, which never leaves our storage.
  */
 
+import { GRANTS } from './grants.js';
+
 export const AUTH_ENDPOINT = 'https://accounts.google.com/o/oauth2/v2/auth';
 export const TOKEN_ENDPOINT = 'https://oauth2.googleapis.com/token';
 export const REVOKE_ENDPOINT = 'https://oauth2.googleapis.com/revoke';
@@ -21,10 +23,7 @@ export const REVOKE_ENDPOINT = 'https://oauth2.googleapis.com/revoke';
  * The only scopes this assistant asks for (PLAN §14). Anything beyond these is
  * a security decision recorded in §14 first, and a separate grant (§6.6).
  */
-export const GOOGLE_SCOPES = [
-  'https://www.googleapis.com/auth/calendar.events.owned',
-  'https://www.googleapis.com/auth/calendar.app.created',
-] as const;
+export const GOOGLE_SCOPES = GRANTS.calendar.scopes;
 
 const TOKEN_TIMEOUT_MS = 10_000;
 

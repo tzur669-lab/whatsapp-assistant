@@ -10,6 +10,8 @@
  * number the user has to decide to ignore, and the whole point of the echo is
  * that it can be scanned without thinking.
  */
+import { GRANTS } from '../google/grants.js';
+import type { GrantName } from '../google/grants.js';
 import { isolate, isolateLtr } from './bidi.js';
 import { formatRange, formatWhen } from './format-time.js';
 import type { Lang } from './format-time.js';
@@ -19,6 +21,21 @@ import { localPartsOf, ZONE } from '../time/tz.js';
 
 const HE_WEEKDAYS = ['יום א׳', 'יום ב׳', 'יום ג׳', 'יום ד׳', 'יום ה׳', 'יום ו׳', 'שבת'] as const;
 const EN_WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'] as const;
+
+/** What each Google grant is called in a reply (2026-10-01). */
+export const GRANT_LABELS: Readonly<Record<GrantName, string>> = {
+  calendar: 'יומן Google',
+  gmail: 'Gmail',
+  tasks: 'Google Tasks',
+  drive: 'Google Drive',
+};
+
+const GRANT_LABELS_EN: Readonly<Record<GrantName, string>> = {
+  calendar: 'Google Calendar',
+  gmail: 'Gmail',
+  tasks: 'Google Tasks',
+  drive: 'Google Drive',
+};
 
 export const eventText = {
   list(events: readonly CalendarEvent[], lang: Lang): string {
@@ -56,24 +73,32 @@ export const eventText = {
   },
 
   /** The message carrying the one-time connect link. */
-  connectLink(url: string, minutes: number, lang: Lang): string {
+  connectLink(url: string, minutes: number, lang: Lang, grant: GrantName = 'calendar'): string {
     return lang === 'he'
       ? [
-          'לחיבור יומן Google:',
+          `לחיבור ${GRANT_LABELS[grant]}:`,
           isolate(url),
           '',
           `הקישור תקף ${isolateLtr(String(minutes))} דקות ולשימוש חד-פעמי.`,
         ].join('\n')
       : [
-          'Connect Google Calendar:',
+          `Connect ${GRANT_LABELS_EN[grant]}:`,
           isolate(url),
           '',
           `The link is single-use and valid for ${isolateLtr(String(minutes))} minutes.`,
         ].join('\n');
   },
 
-  connected(lang: Lang): string {
-    return lang === 'he' ? 'יומן Google מחובר. ✅' : 'Google Calendar connected. ✅';
+  connected(lang: Lang, grant: GrantName = 'calendar'): string {
+    return lang === 'he' ? `${GRANT_LABELS[grant]} מחובר. ✅` : `${GRANT_LABELS_EN[grant]} connected. ✅`;
+  },
+
+  /** A grant other than the calendar's is not connected, or has lapsed (2026-10-01). */
+  grantNotConnected(grant: GrantName, lang: Lang): string {
+    const command = isolate(`/connect ${GRANTS[grant].command}`);
+    return lang === 'he'
+      ? `${GRANT_LABELS[grant]} לא מחובר. יש לשלוח ${command}.`
+      : `${GRANT_LABELS_EN[grant]} is not connected. Send ${command}.`;
   },
 
   // -- writing ---------------------------------------------------------------

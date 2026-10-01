@@ -14,16 +14,13 @@
  * attendees are rendered by code and matched by code (CLAUDE.md invariants 2
  * and 5).
  */
-import { refreshAccessToken } from './oauth.js';
+import { GoogleApi } from './api.js';
+import type { GoogleFailure } from './api.js';
 import type { GoogleStore } from './store.js';
 import type { Logger } from '../security/redact.js';
 import { ZONE } from '../time/tz.js';
 
 const API_BASE = 'https://www.googleapis.com/calendar/v3';
-const TIMEOUT_MS = 10_000;
-
-/** Refresh this far before expiry, so a call never races the deadline. */
-const REFRESH_MARGIN_MS = 60_000;
 
 /** The calendar reminder fallbacks are written to (PLAN §6.7). */
 export const REMINDERS_CALENDAR_NAME = 'Assistant Reminders';
@@ -42,16 +39,8 @@ export type CalendarEvent = {
   etag: string | null;
 };
 
-export type CalendarFailure =
-  | { code: 'not_connected' }
-  | { code: 'disconnected' }
-  /** The event changed between being previewed and being written (etag mismatch). */
-  | { code: 'changed' }
-  /** Already gone — deleted in the Google UI, or on another device. */
-  | { code: 'not_found' }
-  | { code: 'provider_error'; status: number }
-  | { code: 'network_error' }
-  | { code: 'invalid_response' };
+/** `changed`: the event changed since it was previewed. `not_found`: deleted elsewhere. */
+export type CalendarFailure = GoogleFailure;
 
 /** What this assistant writes when it creates an event (PLAN §6.6). */
 export type EventDraft = {
@@ -82,15 +71,10 @@ export type CalendarConfig = {
 };
 
 export class CalendarClient {
-  private accessToken: string | null = null;
-  private expiresAt = 0;
-  private readonly fetchImpl: typeof fetch;
+  private readonly api: GoogleApi;
 
   constructor(private readonly config: CalendarConfig) {
-    // Through a closure: Workers' `fetch` called as a method of this object
-    // throws "Illegal invocation" (every call failed in staging, 2026-10-01).
-    const doFetch = config.fetchImpl ?? fetch;
-    this.fetchImpl = (input, init) => doFetch(input, init);
+    this.api = new GoogleApi({ ...config, label: 'calendar' });
   }
 
   /** Events overlapping a window, in time order. */
@@ -220,100 +204,9 @@ export class CalendarClient {
 
   // -- transport --------------------------------------------------------------
 
-  /**
-   * One API call, with a single 401 retry.
-   *
-   * The retry is not defensive padding: a cached access token can be revoked
-   * between the expiry check and the request, and that is indistinguishable
-   * from a valid token until the 401 comes back.
-   */
-  private async call(path: string, init: RequestInit): Promise<CalendarResult<unknown>> {
-    for (let attempt = 0; attempt < 2; attempt++) {
-      const token = await this.token(attempt > 0);
-      if (!token.ok) return token;
-
-      let response: Response;
-      try {
-        response = await this.fetchImpl(`${API_BASE}${path}`, {
-          ...init,
-          headers: {
-            authorization: `Bearer ${token.value}`,
-            'content-type': 'application/json',
-            ...(init.headers as Record<string, string> | undefined),
-          },
-          signal: AbortSignal.timeout(TIMEOUT_MS),
-        });
-      } catch {
-        return { ok: false, error: { code: 'network_error' } };
-      }
-
-      if (response.status === 401 && attempt === 0) {
-        this.accessToken = null;
-        continue;
-      }
-
-      if (!response.ok) {
-        // The body can carry event titles, so it is never read or logged.
-        this.config.log.warn('calendar_call_failed', { status: response.status });
-
-        // 412 is the `If-Match` failing: the event changed since it was read.
-        if (response.status === 412) return { ok: false, error: { code: 'changed' } };
-        if (response.status === 404 || response.status === 410) {
-          return { ok: false, error: { code: 'not_found' } };
-        }
-        return { ok: false, error: { code: 'provider_error', status: response.status } };
-      }
-
-      // A DELETE answers 204 with no body. That is a success, not a parse failure.
-      if (response.status === 204) return { ok: true, value: {} };
-
-      try {
-        return { ok: true, value: await response.json() };
-      } catch {
-        return { ok: false, error: { code: 'invalid_response' } };
-      }
-    }
-
-    return { ok: false, error: { code: 'provider_error', status: 401 } };
-  }
-
-  private async token(force: boolean): Promise<CalendarResult<string>> {
-    if (!force && this.accessToken && this.config.now() < this.expiresAt - REFRESH_MARGIN_MS) {
-      return { ok: true, value: this.accessToken };
-    }
-
-    const refreshToken = await this.config.store.refreshToken();
-    if (!refreshToken) return { ok: false, error: { code: 'not_connected' } };
-
-    const result = await refreshAccessToken(
-      {
-        refreshToken,
-        clientId: this.config.clientId,
-        clientSecret: this.config.clientSecret,
-      },
-      this.fetchImpl,
-    );
-
-    if (!result.ok) {
-      if (result.error.code === 'invalid_grant') {
-        // Revoked or lapsed. Nothing to retry; the user has to reconnect.
-        this.config.store.disconnect('E_GOOGLE_INVALID_GRANT');
-        this.config.log.warn('google_disconnected', { errorCode: 'invalid_grant' });
-        return { ok: false, error: { code: 'disconnected' } };
-      }
-      this.config.log.warn('google_refresh_failed', { errorCode: result.error.code });
-      return {
-        ok: false,
-        error:
-          result.error.code === 'network_error'
-            ? { code: 'network_error' }
-            : { code: 'provider_error', status: 'status' in result.error ? result.error.status : 0 },
-      };
-    }
-
-    this.accessToken = result.grant.accessToken;
-    this.expiresAt = this.config.now() + result.grant.expiresInSeconds * 1000;
-    return { ok: true, value: this.accessToken };
+  /** One API call, through the grant's shared client (`api.ts`). */
+  private call(path: string, init: RequestInit): Promise<CalendarResult<unknown>> {
+    return this.api.call(`${API_BASE}${path}`, init);
   }
 }
 

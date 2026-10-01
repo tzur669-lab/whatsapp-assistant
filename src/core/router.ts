@@ -2,6 +2,9 @@
  * Deterministic command routing. Anything matched here never reaches the LLM
  * (PLAN §6.4). Unmatched text falls through to NLU in a later phase.
  */
+import { grantByCommand } from '../google/grants.js';
+import type { GrantName } from '../google/grants.js';
+
 export type Command =
   | { kind: 'help' }
   | { kind: 'ping' }
@@ -11,7 +14,8 @@ export type Command =
   | { kind: 'budget' }
   /** Wipe the agent's conversation history (PLAN §6.19). */
   | { kind: 'forget' }
-  | { kind: 'connect_google' }
+  /** `/connect google|gmail|tasks|drive`: one grant each (§6.6, 2026-10-01). */
+  | { kind: 'connect_google'; grant: GrantName }
   /** `/pair` issues a code for the phone app; `/pair off` unpairs (PLAN §6.17). */
   | { kind: 'pair'; off: boolean }
   /**
@@ -47,7 +51,6 @@ const COMMANDS: ReadonlyArray<readonly [RegExp, Command]> = [
   [/^\/shabbat$/i, { kind: 'shabbat', set: null }],
   [/^\/shabbat\s+on$/i, { kind: 'shabbat', set: true }],
   [/^\/shabbat\s+off$/i, { kind: 'shabbat', set: false }],
-  [/^\/connect\s+google$/i, { kind: 'connect_google' }],
   [/^\/pair$/i, { kind: 'pair', off: false }],
   [/^\/pair\s+off$/i, { kind: 'pair', off: true }],
 ];
@@ -56,6 +59,8 @@ const DIGEST = /^\/digest(?:\s+(off|\d{1,2}))?$/i;
 
 /** The argument is a URL, so it is captured loosely here and validated in `ical/url.ts`. */
 const ICAL = /^\/ical(?:\s+(\S{1,2100}))?$/i;
+
+const CONNECT = /^\/connect\s+(google|gmail|tasks|drive)$/i;
 
 const CITY = /^\/(?:city|עיר)(?:\s+(.{1,60}))?$/i;
 
@@ -98,6 +103,12 @@ export function matchCommand(text: string): Command | null {
 
   const birthday = birthdayCommand(trimmed);
   if (birthday) return birthday;
+
+  const connect = CONNECT.exec(trimmed);
+  if (connect?.[1]) {
+    const grant = grantByCommand(connect[1]);
+    return grant ? { kind: 'connect_google', grant } : null;
+  }
 
   const city = CITY.exec(trimmed);
   if (city) {

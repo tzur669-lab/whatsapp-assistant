@@ -5,8 +5,9 @@
  * someone to Google is spent, a `state` that has been exchanged is spent, and
  * a refresh token exists on disk only as ciphertext.
  */
+import { GRANTS } from '../../../src/google/grants.js';
 import { describe, expect, it, beforeEach, afterEach } from 'vitest';
-import { readFileSync } from 'node:fs';
+import { readdirSync, readFileSync } from 'node:fs';
 import {
   buildAuthUrl,
   createPkce,
@@ -19,12 +20,13 @@ import { parseKeyring } from '../../../src/security/crypto.js';
 import { Repository } from '../../../src/core/repo.js';
 import { TestSqlDriver } from '../../integration/sqlite-driver.js';
 
-const MIGRATIONS = ['0001_init.sql', '0002_confirm.sql', '0003_reminders.sql', '0004_google.sql'].map(
-  (file, i) => ({
+const MIGRATIONS = readdirSync(new URL('../../../migrations/', import.meta.url))
+  .filter((file) => file.endsWith('.sql'))
+  .sort()
+  .map((file, i) => ({
     id: i + 1,
     sql: readFileSync(new URL(`../../../migrations/${file}`, import.meta.url), 'utf8'),
-  }),
-);
+  }));
 
 const KEY = Buffer.alloc(32, 7).toString('base64');
 const NOW = Date.parse('2026-09-24T09:00:00Z');
@@ -75,7 +77,7 @@ describe('the authorization URL', () => {
     expect(url().searchParams.get('code_challenge')).toBe('xyz');
   });
 
-  it('asks for exactly the two calendar scopes and no others', () => {
+  it('asks for exactly the calendar grant\'s scopes and no others', () => {
     expect(url().searchParams.get('scope')).toBe(GOOGLE_SCOPES.join(' '));
     expect(url().searchParams.get('include_granted_scopes')).toBe('false');
   });
@@ -209,7 +211,7 @@ describe('GoogleStore', () => {
 
     it('works once', () => {
       const { id } = store.createLink(PRINCIPAL);
-      expect(store.useLink(id)).toEqual({ ok: true, value: { principal: PRINCIPAL } });
+      expect(store.useLink(id)).toEqual({ ok: true, value: { principal: PRINCIPAL, grant: 'calendar' } });
       expect(store.useLink(id)).toEqual({ ok: false, reason: 'already_used' });
     });
 
@@ -229,7 +231,7 @@ describe('GoogleStore', () => {
       const { state } = store.createState(PRINCIPAL, 'the-verifier');
       expect(store.useState(state)).toEqual({
         ok: true,
-        value: { principal: PRINCIPAL, codeVerifier: 'the-verifier' },
+        value: { principal: PRINCIPAL, codeVerifier: 'the-verifier', grant: 'calendar' },
       });
       // A replayed callback must not pass a second time.
       expect(store.useState(state)).toEqual({ ok: false, reason: 'already_used' });
@@ -239,6 +241,52 @@ describe('GoogleStore', () => {
       const { state } = store.createState(PRINCIPAL, 'v');
       now = NOW + 11 * 60_000;
       expect(store.useState(state)).toEqual({ ok: false, reason: 'expired' });
+    });
+  });
+
+  describe('separate grants (2026-10-01)', () => {
+    it('carries the grant from the link to the state', () => {
+      const { id } = store.createLink(PRINCIPAL, 'gmail');
+      expect(store.useLink(id)).toEqual({ ok: true, value: { principal: PRINCIPAL, grant: 'gmail' } });
+      const { state } = store.createState(PRINCIPAL, 'v', 'gmail');
+      expect(store.useState(state)).toEqual({ ok: true, value: { principal: PRINCIPAL, codeVerifier: 'v', grant: 'gmail' } });
+    });
+
+    it('keeps each grant to itself', async () => {
+      const keyring = () => parseKeyring({ TOKEN_ENC_KEY_V1: KEY });
+      const gmail = new GoogleStore(driver, () => now, keyring, 'gmail');
+      await gmail.connect({ refreshToken: 'gmail-token', scopes: GRANTS.gmail.scopes.slice() });
+      expect(gmail.isConnected()).toBe(true);
+      expect(store.isConnected()).toBe(false);
+      expect(await gmail.refreshToken()).toBe('gmail-token');
+
+      gmail.disconnect('E_TEST');
+      await store.connect({ refreshToken: 'calendar-token', scopes: [] });
+      expect(gmail.isConnected()).toBe(false);
+      expect(await store.refreshToken()).toBe('calendar-token');
+    });
+
+    it("binds a token to its grant: moved to another, it does not decrypt", async () => {
+      const keyring = () => parseKeyring({ TOKEN_ENC_KEY_V1: KEY });
+      const gmail = new GoogleStore(driver, () => now, keyring, 'gmail');
+      await gmail.connect({ refreshToken: 'gmail-token', scopes: [] });
+      await store.connect({ refreshToken: 'calendar-token', scopes: [] });
+      const stolen = driver.exec("SELECT refresh_token_enc FROM integrations WHERE account = 'gmail'")[0]!['refresh_token_enc'];
+      driver.exec("UPDATE integrations SET refresh_token_enc = ? WHERE account = 'primary'", stolen);
+      expect(await store.refreshToken()).toBeNull();
+    });
+
+    it('asks each grant only for its own scopes', () => {
+      expect(GRANTS.gmail.scopes).toEqual([
+        'https://www.googleapis.com/auth/gmail.readonly',
+        'https://www.googleapis.com/auth/gmail.compose',
+      ]);
+      expect(GRANTS.tasks.scopes).toEqual(['https://www.googleapis.com/auth/tasks']);
+      expect(GRANTS.drive.scopes).toEqual(['https://www.googleapis.com/auth/drive.metadata.readonly']);
+      expect(GRANTS.calendar.scopes).toContain('https://www.googleapis.com/auth/calendar.readonly');
+      // Nothing that sends mail, and nothing with write access to Drive.
+      const all = Object.values(GRANTS).flatMap((grant) => grant.scopes);
+      expect(all.some((scope) => /gmail\.send|gmail\.modify|mail\.google\.com|auth\/drive$|drive\.file/.test(scope))).toBe(false);
     });
   });
 
