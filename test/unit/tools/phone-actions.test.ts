@@ -135,13 +135,25 @@ describe('media.play', () => {
       query: 'עומר אדם',
       mode: 'background',
     });
-    // YouTube when no app is named.
-    expect(ready(mediaPlay.resolve({ query: 'מתכון לשקשוקה', mode: 'fullscreen' }, ctx))).toMatchObject({ app: 'youtube' });
+    expect(ready(mediaPlay.resolve({ app: 'youtube', query: 'מתכון לשקשוקה', mode: 'fullscreen' }, ctx))).toMatchObject({
+      app: 'youtube',
+    });
+  });
+
+  it('asks which app when neither a song nor a video was said, and both questions at once when both are open', () => {
+    expect(mediaPlay.resolve({ query: 'עומר אדם', mode: 'background' }, ctx)).toEqual({
+      kind: 'clarify',
+      clarify: { code: 'phone_missing', what: 'media_app' },
+    });
+    expect(mediaPlay.resolve({ query: 'עומר אדם' }, ctx)).toEqual({
+      kind: 'clarify',
+      clarify: { code: 'phone_missing', what: 'media_app_mode' },
+    });
   });
 
   it('asks what to play, then whether in the background or full screen — never guesses', () => {
     expect(mediaPlay.resolve({ mode: 'background' }, ctx)).toEqual({ kind: 'clarify', clarify: { code: 'phone_missing', what: 'media' } });
-    expect(mediaPlay.resolve({ query: 'עומר אדם' }, ctx)).toEqual({
+    expect(mediaPlay.resolve({ app: 'youtube_music', query: 'עומר אדם' }, ctx)).toEqual({
       kind: 'clarify',
       clarify: { code: 'phone_missing', what: 'play_mode' },
     });

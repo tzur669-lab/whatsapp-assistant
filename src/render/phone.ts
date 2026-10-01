@@ -18,6 +18,8 @@ export type PhoneQuestion =
   | 'message'
   | 'contact'
   | 'media'
+  | 'media_app'
+  | 'media_app_mode'
   | 'play_mode';
 
 export type CardInput =
@@ -145,6 +147,14 @@ export function phoneQuestion(what: PhoneQuestion, lang: Lang): string {
       return he ? 'את מי לחפש באנשי הקשר?' : 'Who should I look for in the contacts?';
     case 'media':
       return he ? 'מה להפעיל? שם של שיר, אמן או סרטון.' : 'Play what? A song, an artist or a video.';
+    case 'media_app':
+      return he
+        ? `ב־${isolate('YouTube')} (סרטון) או ב־${isolate('YouTube Music')} (שיר)?`
+        : 'On YouTube (a video) or YouTube Music (a song)?';
+    case 'media_app_mode':
+      return he
+        ? `ב־${isolate('YouTube')} (סרטון) או ב־${isolate('YouTube Music')} (שיר)? ולהפעיל ברקע או במסך מלא?`
+        : 'On YouTube (a video) or YouTube Music (a song)? And in the background, or full screen?';
     case 'play_mode':
       return he ? 'להפעיל ברקע או במסך מלא?' : 'In the background, or full screen?';
   }

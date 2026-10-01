@@ -84,7 +84,17 @@ function ready(input: CardInput): ResolveOutcome {
 }
 
 function missing(
-  what: 'destination' | 'app' | 'setting' | 'state' | 'recipient' | 'message' | 'media' | 'play_mode',
+  what:
+    | 'destination'
+    | 'app'
+    | 'setting'
+    | 'state'
+    | 'recipient'
+    | 'message'
+    | 'media'
+    | 'media_app'
+    | 'media_app_mode'
+    | 'play_mode',
 ): ResolveOutcome {
   return { kind: 'clarify', clarify: { code: 'phone_missing', what } };
 }
@@ -161,16 +171,20 @@ export const appOpen = cardTool('app.open', (raw) => {
 });
 
 /**
- * A video or a song by search words (2026-10-01). Background or full screen is
- * the user's choice and is asked, never assumed: the one wrong guess plays
- * sound out loud, or covers the screen.
+ * A video or a song by search words (2026-10-01). A song plays on YouTube
+ * Music and a video on YouTube; which one the words are is the model's to
+ * say, and when it does not, the user is asked. Background or full screen is
+ * the user's choice and is asked too, never assumed: the one wrong guess plays
+ * sound out loud, or covers the screen. Both missing: one question for both.
  */
 export const mediaPlay = cardTool('media.play', (raw) => {
   const slots = mediaPlaySlots.parse(raw);
   const query = slots.query?.trim();
   if (!query) return missing('media');
+  if (!slots.app && !slots.mode) return missing('media_app_mode');
+  if (!slots.app) return missing('media_app');
   if (!slots.mode) return missing('play_mode');
-  return ready({ type: 'media', app: slots.app ?? 'youtube', query, mode: slots.mode });
+  return ready({ type: 'media', app: slots.app, query, mode: slots.mode });
 });
 
 const TOGGLES = new Set(['on', 'off']);

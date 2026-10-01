@@ -258,7 +258,7 @@ export const REGISTRY: Readonly<Record<ToolName, ToolSpec>> = {
   'media.play': {
     name: 'media.play',
     llmDescription:
-      'Play a video or song on YouTube or YouTube Music (a song: youtube_music). mode: background or fullscreen — ask the user if they did not say.',
+      'Play on the phone. app: youtube_music for a song or music, youtube for a video; leave it out when unclear. mode: background or fullscreen, only if the user said.',
     draftSchema: mediaPlaySlots,
     // Opens a player on the phone with words to search for; nothing leaves it.
     tier: 1,

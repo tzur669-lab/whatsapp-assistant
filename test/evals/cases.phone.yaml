@@ -95,7 +95,16 @@
 
 - id: ph-media-003
   now: "2026-10-01T08:00:00+03:00"
-  input: "play bohemian rhapsody"
+  input: "play the song bohemian rhapsody"
+  expect:
+    intent: media.play
+    slots:
+      app: youtube_music
+    missing: []
+
+- id: ph-media-004
+  now: "2026-10-01T08:00:00+03:00"
+  input: "תפעיל את עומר אדם ברקע"
   expect:
     intent: media.play
     missing: []

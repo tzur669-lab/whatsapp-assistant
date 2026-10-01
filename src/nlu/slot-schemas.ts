@@ -206,8 +206,8 @@ export const appOpenSlots = z
 
 /**
  * "תפעיל את עומר אדם ביוטיוב מיוזיק" (2026-10-01). What to play, in words the
- * app searches for; whether in the background or full screen is the user's to
- * say, and asked when they did not.
+ * app searches for; a song is YouTube Music, a video YouTube. Which app, and
+ * background or full screen, are asked when not said.
  */
 export const mediaPlaySlots = z
   .object({
