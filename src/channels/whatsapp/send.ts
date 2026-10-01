@@ -21,7 +21,10 @@ export class WhatsAppSender implements ChannelAdapter {
   private readonly fetchImpl: typeof fetch;
 
   constructor(private readonly config: WhatsAppSenderConfig) {
-    this.fetchImpl = config.fetchImpl ?? fetch;
+    // Through a closure: Workers' `fetch` called as a method of this object
+    // throws "Illegal invocation" (every call failed in staging, 2026-10-01).
+    const doFetch = config.fetchImpl ?? fetch;
+    this.fetchImpl = (input, init) => doFetch(input, init);
   }
 
   async send(message: OutboundMessage): Promise<{ wamid: string }> {

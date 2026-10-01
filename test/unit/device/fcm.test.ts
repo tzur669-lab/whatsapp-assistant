@@ -7,6 +7,7 @@
  */
 import { describe, expect, it, beforeAll } from 'vitest';
 import { FcmClient } from '../../../src/device/fcm.js';
+import { workersFetch } from '../../integration/workers-fetch.js';
 
 const TOKEN_URL = 'https://oauth2.googleapis.com/token';
 const SEND_URL = 'https://fcm.googleapis.com/v1/projects/test-project/messages:send';
@@ -69,6 +70,17 @@ const decode = (part: string) =>
   >;
 
 describe('FcmClient', () => {
+  it('calls fetch the way the Workers runtime allows (no `this`)', async () => {
+    const google = fakeGoogle();
+    const client = new FcmClient({
+      serviceAccountJson: serviceAccount,
+      fetchImpl: workersFetch(google.fetchImpl),
+      now: () => NOW,
+    });
+
+    expect(await client.send('fake-registration-token', 'abc123')).toEqual({ ok: true });
+  });
+
   it('pushes the dispatch id and nothing else', async () => {
     const google = fakeGoogle();
     const client = new FcmClient({ serviceAccountJson: serviceAccount, fetchImpl: google.fetchImpl, now: () => NOW });

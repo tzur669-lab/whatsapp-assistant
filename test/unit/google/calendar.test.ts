@@ -16,6 +16,7 @@ import { Repository } from '../../../src/core/repo.js';
 import { ReminderStore } from '../../../src/tools/reminder-store.js';
 import { TestSqlDriver } from '../../integration/sqlite-driver.js';
 import { createFakeLogger } from '../../integration/fake-logger.js';
+import { workersFetch } from '../../integration/workers-fetch.js';
 import { stripIsolates } from '../../../src/render/bidi.js';
 import type { ToolContext } from '../../../src/tools/types.js';
 
@@ -93,6 +94,13 @@ describe('CalendarClient', () => {
     await store.connect({ refreshToken: 'rt', scopes: [] });
   });
   afterEach(() => driver.close());
+
+  it('calls fetch the way the Workers runtime allows (no `this`)', async () => {
+    const { fetchImpl } = fakeGoogle([{ body: { items: [EVENT] } }]);
+    const result = await client(workersFetch(fetchImpl)).listEvents({ startUtc: NOW, endUtc: NOW + 86_400_000 });
+
+    expect(result).toMatchObject({ ok: true });
+  });
 
   it('lists events in the window', async () => {
     const { fetchImpl, calls } = fakeGoogle([{ body: { items: [EVENT] } }]);
