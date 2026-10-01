@@ -1563,14 +1563,14 @@ Each phase ends with its exit criteria met and tests green.
 - [ ] [O] Export backup, [O] uptime check — still optional, still not built.
 - [ ] *Exit:* met in code. The live checks (Meta handshake, Google consent) need staging.
 
-**Phase 9 — The app channel (§6.18)** — *server code complete 2026-09-29; the app next*
+**Phase 9 — The app channel (§6.18)** — *code complete 2026-10-01 (server 2026-09-29, app 0.2.0); the staging exit next*
 
 - [x] Signed requests, pairing by MAC, the bootstrap code, nonces, `CHANNEL` (`app` / `whatsapp` / `off`).
 - [x] The outbox: acceptance in one transaction, ack by explicit seqs, re-push, seven-day retirement, held reminders without a device, `/pair off`.
 - [x] Retries answered, never re-run: `pending` / `done` / `unknown`; `waitUntil` in the Worker.
 - [x] Voice in the request, 1 MB cap, 60 an hour; the stored answer without the echo.
 - [x] Transactions (`SqlDriver.transaction`), every migration inside one.
-- [ ] The app: chat, pairing, signing, notifications, recording (`apps/call-companion`).
+- [x] The app: chat, pairing, signing, notifications, recording (`apps/call-companion` 0.2.0).
 - [ ] *Exit:* on staging, over mobile data — pair, text, a Tier 2 confirmation, a reminder with the screen off and snoozed from the notification, airplane mode through a reminder, a calendar query, a call, a voice note, `/pair off`, and pairing again with a new code.
 
 **Phase 8 — Production**
@@ -2229,10 +2229,11 @@ gates in §11.2 apply unchanged: an invented number is an invented slot.
 | 2026-09-27 | **A weekday the message names is held against the draft** (§6.2): a draft naming another weekday has that date removed and the user is asked which day, before anything resolves. Approved by the user after `he-cal-012` (יום שני read as Tuesday). Fires on that case alone across 312 recorded answers |
 | 2026-09-27 | **Primary model `qwen3.8-27b`, fallback `gpt-oss-120b`** (§4, §13; the user's decision). Replaces `gpt-oss-120b` / `gpt-oss-20b` from 2026-09-24. The gpt-oss v5 run was stopped at 20 of 156 |
 | 2026-09-27 | **B15 Worker side built** (§6.17): pairing (`/pair`, `/pair off`), device tokens as keyed hashes, dispatches that expire in two minutes, FCM v1 with no SDK, and `calls.place` at Tier 3 confirmed on the phone's screen. One reply per call, sent when the phone reports or the dispatch expires. FCM approved; `/pause` denies calls. Prompt v6 adds the tool to the catalog |
+| 2026-09-28 | **qwen on prompt v6**: every call case right; no invented slots 100%, intent 99.4%, slots 98.2%, off-topic 97.1%. Recall 99.4% on one injection case Groq refused twice (safe outcome: "not understood"); re-asked three times live, it answered `unsupported` all three. p95 latency 10.6 s from the hotspot — staging decides (§11.9) |
 | 2026-09-29 | **The app channel** (§6.18). WhatsApp replaced by the Android app, chosen by `CHANNEL`; WhatsApp frozen. Every request ECDSA-signed with a Keystore key; pairing by MAC, the code never sent; a bootstrap code for the first phone. One outbox for everything outbound: acceptance in one transaction with `markSent`, delivered on ack by explicit seqs, re-push 15 min / 1 h / 4 h, retired after 7 days, reminders held while no phone is paired. Retries answered, never re-run. The prompt and catalog unchanged, so no eval; the catalog is now pinned by a test |
 | 2026-09-29 | **Transactions**: `SqlDriver.transaction` (`transactionSync` on the Durable Object); every migration runs inside one |
 | 2026-09-29 | **A Durable Object request has 30 s of CPU, not 10 ms** (§4.1). The cold-start guard's bound goes from 50 ms to 100 ms after migration 10's seven ALTERs |
-| 2026-09-28 | **qwen on prompt v6**: every call case right; no invented slots 100%, intent 99.4%, slots 98.2%, off-topic 97.1%. Recall 99.4% on one injection case Groq refused twice (safe outcome: "not understood"); re-asked three times live, it answered `unsupported` all three. p95 latency 10.6 s from the hotspot — staging decides (§11.9) |
+| 2026-10-01 | **The app** (`apps/call-companion` 0.2.0, §6.18): chat screen, hold-to-record voice, reminder notifications with their buttons as actions, signing with a Keystore key, pairing by MAC. One message at a time, retried with the same id; outbox rows stored under their seq before the ack. Its unit tests pin the canonical string, a server-made signature, the pairing MAC and code normalisation against vectors from `verify.ts` |
 
 ---
 
