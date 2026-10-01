@@ -113,16 +113,6 @@ export const statusText = {
     return `${summary}\n\nלאשר?`;
   },
 
-  /**
-   * Tier 3: a button is not enough. The action reaches someone outside this
-   * system, so confirming it has to be an act of typing (PLAN §6.5).
-   */
-  confirmTypedPrompt(summary: string, code: string): string {
-    return `${summary}
-
-זו פעולה שיוצאת החוצה. לאישור יש לשלוח: ${isolate(`אשר ${code}`)}`;
-  },
-
   confirmed: 'בוצע.',
 
   cancelled: 'בוטל.',
@@ -255,7 +245,6 @@ export const statusText = {
   confirmTapButton: 'יש ללחוץ על אחד הכפתורים.',
 
   /** A Tier 3 action cannot be confirmed by a tap, only by typing the code. */
-  confirmTypedRequired: 'לפעולה הזאת צריך לשלוח את קוד האישור שמופיע בהודעה.',
 
   /** A reminder that arrived late, and by how much. */
   lateBy(minutes: number): string {

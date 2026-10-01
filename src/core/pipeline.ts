@@ -397,16 +397,7 @@ async function respondToText(
     return { action: 'reply', text: he.notUnderstood };
   }
 
-  // 2a. A typed Tier 3 code. Checked before the bare "כן" below, which is
-  //     never enough for an action that reaches outside this system.
-  const typed = deps.services.pending.resolveTypedCode(text, principal);
-  if (typed.ok) {
-    const reply = await runPlainConfirmation(typed.id, turnOf(deps, event, now, source, 'he'));
-    repo.markInboundOutcome(event.wamid, { decision: 'CONFIRMED' });
-    return asOutcome(reply);
-  }
-
-  // 2b. A plain "כן" answering a pending question. Also never the LLM: a
+  // 2a. A plain "כן" or "אישור" answering a pending question. Also never the LLM: a
   //    confirmation that could be re-parsed is not a confirmation (§6.5).
   const plain = deps.services.pending.resolvePlainText(text, principal);
   if (plain.ok) {
@@ -418,12 +409,8 @@ async function respondToText(
     repo.markInboundOutcome(event.wamid, { decision: 'CLARIFY' });
     return { action: 'reply', text: statusText.confirmAmbiguous };
   }
-  if (!plain.ok && plain.reason === 'typed_code_required') {
-    repo.markInboundOutcome(event.wamid, { decision: 'CLARIFY' });
-    return { action: 'reply', text: statusText.confirmTypedRequired };
-  }
 
-  // 2c. An answer to the one open question (PLAN §6.11). Before the parser,
+  // 2b. An answer to the one open question (PLAN §6.11). Before the parser,
   //     because "8" means nothing to a parser and everything to a question —
   //     and because answering costs no tokens at all.
   const open = deps.services.questions.peek(principal);

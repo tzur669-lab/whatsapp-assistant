@@ -51,9 +51,9 @@ describe('tiers', () => {
 });
 
 describe('tier 3 — external-facing', () => {
-  it('escalates event creation with attendees to a typed code', () => {
+  it('escalates event creation with attendees to a Tier 3 confirmation', () => {
     const res = decide('calendar.create_event', ctx(), { hasAttendees: true });
-    expect(res).toMatchObject({ decision: 'CONFIRM', tier: 3, requiresTypedCode: true });
+    expect(res).toMatchObject({ decision: 'CONFIRM', tier: 3 });
   });
 
   it('leaves event creation without attendees at tier 1', () => {
@@ -284,9 +284,9 @@ describe('action cards (PLAN §6.20)', () => {
     }
   });
 
-  it('never lets a Tier 3 card run on its own, and asks for no typed code — the tap is the factor', () => {
+  it('never lets a Tier 3 card run on its own, — the tap is the confirmation', () => {
     const res = decide('message.compose', ctx());
-    expect(res).toMatchObject({ decision: 'CONFIRM', tier: 3, confirmOnCard: true, autoRunAllowed: false, requiresTypedCode: false });
+    expect(res).toMatchObject({ decision: 'CONFIRM', tier: 3, confirmOnCard: true, autoRunAllowed: false });
   });
 
   it('is denied while paused, like every other write', () => {

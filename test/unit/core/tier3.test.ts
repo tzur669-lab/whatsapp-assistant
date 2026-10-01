@@ -1,12 +1,13 @@
 /**
  * Tier 3, end to end (PLAN §6.4, §6.5, §11.3).
  *
- * Tier 3 is the boundary where an action stops being reversible. An invitation
- * reaches someone outside this system, and deleting the event afterwards does
- * not unsend it — so a tap is not enough, and the code has to be typed back.
+ * Attendees raise an event to Tier 3. Since 2026-10-01 Tier 3 in chat is
+ * confirmed like Tier 2 — a confirm button, or the word typed back — and no
+ * longer by a typed four-digit code (the user's decision, PLAN §14).
  *
- * What is being pinned: attendees raise the tier, no confirm button is offered,
- * a forged button id is refused anyway, and a wrong code executes nothing.
+ * What is being pinned: attendees still stop the turn for a confirmation,
+ * nothing is written before it, a confirm button, "אישור" and "כן" all run the
+ * stored action, a forged button id runs nothing, and cancel cancels.
  */
 import { describe, expect, it, beforeEach, afterEach } from 'vitest';
 import { readdirSync, readFileSync } from 'node:fs';
@@ -141,13 +142,6 @@ describe('an action that leaves the system', () => {
   });
   afterEach(() => driver.close());
 
-  /** The code the user was shown, read back from the stored row. */
-  const codeFor = async (): Promise<string> => {
-    const { typedCodeFor } = await import('../../../src/confirm/pending.js');
-    const row = driver.exec("SELECT nonce_hash FROM pending_actions WHERE status = 'pending'")[0];
-    return typedCodeFor(String(row?.['nonce_hash']));
-  };
-
   const withAttendees = [draft('calendar.create_event', { ...MEETING, attendees: ['יוסי'] })];
   const withoutAttendees = [draft('calendar.create_event', MEETING)];
 
@@ -160,84 +154,57 @@ describe('an action that leaves the system', () => {
     expect(writes).toHaveLength(1);
   });
 
-  it('stops and asks for a typed code once someone is invited', async () => {
+  it('stops and asks for a confirmation once someone is named', async () => {
     const out = await handleInbound(text('תקבע פגישה עם יוסי'), deps(withAttendees));
     if (out.action !== 'reply') throw new Error('expected reply');
 
-    expect(plain(out.text)).toContain('אשר ');
     expect(plain(out.text)).toContain('משתתפים: יוסי');
     // Nothing was written.
     expect(writes).toHaveLength(0);
   });
 
-  it('offers no confirm button at all, only a cancel', async () => {
-    // A confirm button would be a path around the code.
+  it('offers a confirm and a cancel button, like Tier 2', async () => {
     const out = await handleInbound(text('תקבע פגישה עם יוסי'), deps(withAttendees));
     if (out.action !== 'reply') throw new Error('expected reply');
 
-    expect(out.buttons).toHaveLength(1);
-    expect(parseButtonId(out.buttons![0]!.id)?.verb).toBe('no');
+    expect(out.buttons?.map((b) => parseButtonId(b.id)?.verb)).toEqual(['ok', 'no']);
   });
 
-  it('refuses a forged confirm button for a Tier 3 action', async () => {
-    await handleInbound(text('תקבע פגישה עם יוסי'), deps(withAttendees));
-    const row = driver.exec("SELECT id FROM pending_actions WHERE status = 'pending'")[0];
+  it('executes when the confirm button is tapped', async () => {
+    const asked = await handleInbound(text('תקבע פגישה עם יוסי'), deps(withAttendees));
+    if (asked.action !== 'reply') throw new Error('expected reply');
 
-    const out = await handleInbound(
-      button(buttonId('pa', String(row?.['id']), 'a'.repeat(32), 'ok')),
-      deps(withAttendees),
-    );
-    expect(out).toMatchObject({ action: 'reply', text: statusText.confirmTypedRequired });
-    expect(writes).toHaveLength(0);
-  });
-
-  it('executes when the right code is typed back', async () => {
-    await handleInbound(text('תקבע פגישה עם יוסי'), deps(withAttendees));
-    const code = await codeFor();
-
-    const out = await handleInbound(text(`אשר ${code}`), deps(withAttendees));
+    const out = await handleInbound(button(asked.buttons![0]!.id), deps(withAttendees));
     if (out.action !== 'reply') throw new Error('expected reply');
     expect(plain(out.text)).toContain('נקבע ביומן');
     expect(writes).toHaveLength(1);
   });
 
-  it('does nothing for a wrong code', async () => {
+  for (const word of ['אישור', 'כן']) {
+    it(`executes when "${word}" is typed back`, async () => {
+      await handleInbound(text('תקבע פגישה עם יוסי'), deps(withAttendees));
+
+      const out = await handleInbound(text(word), deps(withAttendees));
+      if (out.action !== 'reply') throw new Error('expected reply');
+      expect(plain(out.text)).toContain('נקבע ביומן');
+      expect(writes).toHaveLength(1);
+    });
+  }
+
+  it('refuses a forged confirm button', async () => {
     await handleInbound(text('תקבע פגישה עם יוסי'), deps(withAttendees));
-    const code = await codeFor();
-    const wrong = String((Number(code) + 1) % 10_000).padStart(4, '0');
+    const row = driver.exec("SELECT id FROM pending_actions WHERE status = 'pending'")[0];
 
-    await handleInbound(text(`אשר ${wrong}`), deps(withAttendees));
+    await handleInbound(button(buttonId('pa', String(row?.['id']), 'a'.repeat(32), 'ok')), deps(withAttendees));
     expect(writes).toHaveLength(0);
-  });
-
-  it('does not accept a bare כן for a Tier 3 action', async () => {
-    await handleInbound(text('תקבע פגישה עם יוסי'), deps(withAttendees));
-
-    // "כן" resolves to the one pending action, but Tier 3 is not a yes/no
-    // question — the code is the whole point.
-    const out = await handleInbound(text('כן'), deps(withAttendees));
-    if (out.action !== 'reply') throw new Error('expected reply');
-    expect(writes).toHaveLength(0);
-    expect(plain(out.text)).not.toContain('נקבע ביומן');
   });
 
   it('cancels cleanly', async () => {
     const asked = await handleInbound(text('תקבע פגישה עם יוסי'), deps(withAttendees));
     if (asked.action !== 'reply') throw new Error('expected reply');
 
-    const out = await handleInbound(button(asked.buttons![0]!.id), deps(withAttendees));
+    const out = await handleInbound(button(asked.buttons![1]!.id), deps(withAttendees));
     expect(out).toMatchObject({ action: 'reply', text: statusText.cancelled });
     expect(writes).toHaveLength(0);
-  });
-
-  it('shows four digits, not a guessable count', async () => {
-    await handleInbound(text('תקבע פגישה עם יוסי'), deps(withAttendees));
-    expect(await codeFor()).toMatch(/^\d{4}$/);
-  });
-
-  it('gives different actions different codes', async () => {
-    const a = pending.create({ tool: 't', input: {}, summary: 's', tier: 3, principal: PRINCIPAL });
-    const b = pending.create({ tool: 't', input: {}, summary: 's', tier: 3, principal: PRINCIPAL });
-    expect(a.typedCode).not.toBe(b.typedCode);
   });
 });

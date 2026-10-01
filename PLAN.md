@@ -452,7 +452,7 @@ interface ToolDefinition<I, R> {
 | 0 | Read | Execute. Code renders the answer |
 | 1 | Create, reversible | Execute, then reply with a summary + Undo |
 | 2 | Modify/delete one item | Confirm button |
-| 3 | Bulk or external-facing (attendees, later: email) | Confirm + typed code (+ PIN if enabled); daily cap |
+| 3 | Bulk or external-facing (attendees, later: email) | Confirm (button, or "כן" / "אישור" typed back — the typed four-digit code was removed 2026-10-01); daily cap |
 | 4 | Forbidden (change permissions, reveal secrets, forward data, run code) | **Not implemented.** No code path exists |
 
 **Policy engine** takes `(tool, validatedInput, ctx)` and returns `ALLOW | CLARIFY | CONFIRM | DENY`.
@@ -1771,7 +1771,7 @@ Each phase ends with its exit criteria met and tests green.
 
 - [x] `create_event` (Tier 1 + Undo), `move_event` and `delete_event` (Tier 2), all matching targets in code.
 - [x] Numbered disambiguation; `If-Match` etag on every write; a 412 writes nothing and says so.
-- [x] Tier 3 for attendees: no confirm button at all, a four-digit code typed back instead.
+- [x] Tier 3 for attendees: no confirm button at all, a four-digit code typed back instead. *(Replaced 2026-10-01: Tier 3 in chat is confirmed like Tier 2, §14.)*
 - [x] The Phase 4 calendar fallback closed: an out-of-window reminder writes a popup on "Assistant Reminders", removed when it is delivered, cancelled or undone.
 - [x] 779 tests green.
 - [ ] *Exit:* §11.3 passes in tests; the manual staging pass still needs a real Google project.
@@ -2520,7 +2520,8 @@ measured on the app channel. To finish with `--resume`.
 | 2026-10-01 | **Phone actions as cards, Phase B** (§6.20): six agent-only tools (alarm, timer, navigation, open an app, quick settings, compose SMS/WhatsApp). A card is a `channel = 'card'` pending row the app claims once, with its nonce, by a signed request; the parameters leave the server only then. Runs alone only on a clean Tier 1 turn with the chat on screen; messages, DND and the ringer always wait for the tap. Offered only to an app that declared `cards` (`devices.caps`). Parser catalog and wire schema unchanged (`PARSER_TOOL_NAMES`). Agent prompt a2. App 0.3.0 |
 | 2026-10-01 | **Phone reads, Phase C** (§6.21): `phone.contacts`, `phone.notifications`, `phone.sms`, agent-only Tier 0 reads answered by the phone. The agent's turn suspends — encrypted in `agent_turns` for three minutes — and the phone's signed result continues it once; retries get the same query, late and superseded results get a stored answer. Typed messages only (invariant 13). Every phone read taints; its reply is `private`, so its notification is generic. Names, never numbers; one-time codes dropped on the phone. Migration 0013, prompt a3, app 0.4.0 |
 | 2026-10-01 | **Fix: Google Calendar, FCM and WhatsApp sends failed on Workers.** `CalendarClient`, `FcmClient` and `WhatsAppSender` stored the global `fetch` on the instance and called it as `this.fetchImpl(...)`; the Workers runtime throws "Illegal invocation" for that, so every calendar call read as `network_error` ("the calendar is unavailable") and every call push as `push_failed` ("the phone was not reachable"). Node and the test fakes allow it, so tests passed. Each now calls `fetch` through a closure, and `test/integration/workers-fetch.ts` makes the tests refuse a `this` the way Workers does |
-| 2026-10-01 | **Fix: an event with attendees was refused by Google (400).** `calendar.create_event` sent each name as an attendee with only `displayName`; Google requires an email per attendee, so every "meeting with X" failed as "the calendar is unavailable". The names now go in the event's description (`משתתפים: …`) and no `attendees` are sent — nobody was ever invited (`sendUpdates=none`). The Tier 3 rule for attendees (§6.4) is unchanged, pending a decision (§13) |
+| 2026-10-01 | **Fix: an event with attendees was refused by Google (400).** `calendar.create_event` sent each name as an attendee with only `displayName`; Google requires an email per attendee, so every "meeting with X" failed as "the calendar is unavailable". The names now go in the event's description (`משתתפים: …`) and no `attendees` are sent — nobody was ever invited (`sendUpdates=none`). |
+| 2026-10-01 | **Tier 3 in chat no longer asks for a typed four-digit code** (the user's decision). It is confirmed like Tier 2: the `✅ אישור` / `❌ ביטול` buttons, or "כן" / "אישור" typed back, with every §6.5 gate (pending, expiry, sender, nonce on a button, input hash) unchanged. Attendees still raise an event to Tier 3, so it still always stops for a confirmation. Cards (§6.20) and calls (§6.17) are confirmed on the phone as before. Replaces 2026-09-24 "no confirm button for Tier 3" and the typed-code rows |
 
 ---
 

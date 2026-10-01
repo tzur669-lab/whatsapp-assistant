@@ -227,9 +227,9 @@ describe('action cards (PLAN §6.20)', () => {
     expect(pending.resolvePlainText('כן', SENDER)).toEqual({ ok: false, reason: 'nothing_pending' });
   });
 
-  it('is never confirmed by a typed code, even at Tier 3', () => {
-    const action = card(3);
-    expect(pending.resolveTypedCode(`אשר ${action.typedCode}`, SENDER).ok).toBe(false);
+  it('is never confirmed by a typed "אישור", even at Tier 3', () => {
+    card(3);
+    expect(pending.resolvePlainText('אישור', SENDER)).toEqual({ ok: false, reason: 'nothing_pending' });
   });
 
   it('does not make a chat confirmation ambiguous', () => {

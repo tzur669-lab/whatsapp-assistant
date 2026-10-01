@@ -73,8 +73,6 @@ export type PolicyResult = {
   allReasons: PolicyReason[];
   /** Tier 1 executes immediately and offers an Undo. */
   undoable: boolean;
-  /** Tier 3 needs a typed code, not just a button. */
-  requiresTypedCode: boolean;
   /**
    * The confirmation happens on the paired phone, not in chat: dispatch, and
    * let its screen ask (PLAN §6.17). Never set on anything but CONFIRM.
@@ -130,9 +128,7 @@ export function decide(tool: ToolName, ctx: PolicyContext, extras: PolicyExtras 
   if (tier >= 2) reasons.push('tier_requires_confirmation');
 
   // A card is always a confirmation: the claim that consumes it is the tap, or,
-  // on a clean Tier 1 turn, the app running it on its own (§6.20). Tier 3 asks
-  // for no typed code — the tap on the card is that factor, as the phone's
-  // screen is for a call.
+  // on a clean Tier 1 turn, the app running it on its own (§6.20).
   if (spec.confirmation === 'card') {
     return result('CONFIRM', tier, reasons[0] ?? 'card_confirmation', reasons.length > 0 ? reasons : ['card_confirmation'], {
       confirmOnCard: true,
@@ -147,9 +143,9 @@ export function decide(tool: ToolName, ctx: PolicyContext, extras: PolicyExtras 
     if (spec.confirmation === 'device') {
       return result('CONFIRM', tier, reasons[0]!, reasons, { confirmOnDevice: true });
     }
-    return result('CONFIRM', tier, reasons[0]!, reasons, {
-      requiresTypedCode: tier >= 3,
-    });
+    // Tier 3 in chat is confirmed like Tier 2: a button or the word typed back
+    // (the four-digit code was removed at the user's request, 2026-10-01).
+    return result('CONFIRM', tier, reasons[0]!, reasons);
   }
 
   return result('ALLOW', tier, 'allowed', ['allowed'], { undoable: tier === 1 });
@@ -177,7 +173,6 @@ function result(
   allReasons: PolicyReason[],
   flags: {
     undoable?: boolean;
-    requiresTypedCode?: boolean;
     confirmOnDevice?: boolean;
     confirmOnCard?: boolean;
     autoRunAllowed?: boolean;
@@ -189,7 +184,6 @@ function result(
     reason,
     allReasons,
     undoable: flags.undoable ?? false,
-    requiresTypedCode: flags.requiresTypedCode ?? false,
     confirmOnDevice: flags.confirmOnDevice ?? false,
     confirmOnCard: flags.confirmOnCard ?? false,
     autoRunAllowed: flags.autoRunAllowed ?? false,

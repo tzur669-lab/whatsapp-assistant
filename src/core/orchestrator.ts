@@ -316,18 +316,6 @@ function askToConfirm(
 
   audit(turn, tool.name, decision, 'CONFIRM', decision.reason, action.id);
 
-  // Tier 3 gets no confirm button at all. Offering one would leave a path that
-  // skips the typed code, which is the only thing separating an invitation
-  // that was meant from one that was a mis-tap.
-  if (decision.requiresTypedCode) {
-    return {
-      text: statusText.confirmTypedPrompt(summary, action.typedCode),
-      buttons: [
-        { id: buttonId('pa', action.id, action.nonce, 'no'), title: buttonLabels.cancel(ctx.lang) },
-      ],
-    };
-  }
-
   return {
     text: statusText.confirmPrompt(summary),
     buttons: [
@@ -341,7 +329,7 @@ function askToConfirm(
  * Write the card down and send it (§6.20).
  *
  * The row is `channel = 'card'`, so no chat path can confirm it: not a button,
- * not "כן", not a typed code. The app claims it with the nonce, once.
+ * not "כן" or "אישור". The app claims it with the nonce, once.
  */
 function offerCard(
   tool: ToolDefinition,
@@ -447,15 +435,8 @@ export async function runButton(raw: string, turn: TurnContext): Promise<Reply> 
   }
 }
 
-/**
- * A tapped confirm button. Tier 3 is refused here as well as being offered no
- * button: a forged id must not reach a path the typed code was meant to guard.
- */
-async function confirmTapped(id: string, nonce: string, turn: TurnContext): Promise<Reply> {
-  if (turn.pending.tierOf(id) >= 3) {
-    turn.tool.log.warn('tier3_button_refused', {});
-    return { text: statusText.confirmTypedRequired };
-  }
+/** A tapped confirm button. */
+function confirmTapped(id: string, nonce: string, turn: TurnContext): Promise<Reply> {
   return confirmPending(id, nonce, turn);
 }
 

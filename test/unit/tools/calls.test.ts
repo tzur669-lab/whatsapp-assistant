@@ -109,13 +109,12 @@ describe('calls.place policy', () => {
     horizonExceeded: false,
   };
 
-  it('is Tier 3, confirmed on the phone — no chat button, no typed code', () => {
+  it('is Tier 3, confirmed on the phone — no chat button', () => {
     const result = decide('calls.place', base);
     expect(result).toMatchObject({
       decision: 'CONFIRM',
       tier: 3,
       confirmOnDevice: true,
-      requiresTypedCode: false,
       undoable: false,
     });
   });
