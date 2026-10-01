@@ -19,7 +19,8 @@
         // Vars are not inherited between environments; set it in each.
         "CHANNEL": "app",
         "WA_PHONE_NUMBER_ID": "",
-        "GOOGLE_CLIENT_ID": "",
+        // The OAuth client in the Google Cloud project `tzur-call-companion`. Not a secret.
+        "GOOGLE_CLIENT_ID": "1002488382572-j5hod9r4viunvs95j716nb2vn2uv9ecd.apps.googleusercontent.com",
         // Must match the redirect URI registered with Google, exactly.
         "PUBLIC_BASE_URL": "https://wa-assistant-staging.moneytime-pro-api.workers.dev"
       },
