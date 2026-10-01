@@ -342,6 +342,14 @@ class ChatActivity : Activity(), ChatEvents.Listener {
         }
         panel.addView(list, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
         panel.addView(Button(this).apply {
+            text = getString(R.string.quota_open)
+            isAllCaps = false
+            setOnClickListener {
+                closeDrawer()
+                startActivity(Intent(this@ChatActivity, QuotaActivity::class.java))
+            }
+        })
+        panel.addView(Button(this).apply {
             text = getString(R.string.guide_open)
             isAllCaps = false
             setOnClickListener {

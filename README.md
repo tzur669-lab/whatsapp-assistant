@@ -47,6 +47,17 @@ explains the app and lists every command.
 Needs the server from 2026-10-01 (migration 0014) or later: an older one
 refuses the new field.
 
+## Quotas (0.6)
+
+📊 מכסות, in the ☰ menu and in settings, asks `GET /app/quota` (signed) and
+shows a bar per quota. **Exact** (Groq's `x-ratelimit-*` headers, as of the
+last call to that model): the day's requests and the minute's tokens, per
+model. **Approximate** (counted by the server): Groq tokens over the last 24
+hours — Groq reports that limit in no header, and the count misses anything
+spent on the same key elsewhere, such as an eval run — and the server's
+requests today. Recordings in the last hour are the server's own cap, exact.
+Every time is measured on the server's clock. Needs migration 0015.
+
 ## How a reminder arrives
 
 The server writes the reminder to its outbox and sends an FCM push with

@@ -126,6 +126,39 @@ object Api {
         return answerOf(signed(context, "POST", path, AUDIO_TYPE, audio, VOICE_TIMEOUT_MS))
     }
 
+    /** The quota screen's numbers (0.6). Null when the server could not be asked or answered off-shape. */
+    fun fetchQuota(context: Context): QuotaLogic.Report? {
+        val json = (signed(context, "GET", "/app/quota", null, ByteArray(0), SHORT_TIMEOUT_MS) as? Result.Ok)?.json
+            ?: return null
+        return try {
+            fun bucket(o: JSONObject?): QuotaLogic.Bucket? = o?.let {
+                QuotaLogic.Bucket(it.getLong("limit"), it.getLong("remaining"), it.getLong("resetAt"), it.getLong("observedAt"))
+            }
+            fun counted(o: JSONObject?): QuotaLogic.Counted? = o?.let { QuotaLogic.Counted(it.getLong("limit"), it.getLong("used")) }
+
+            val models = json.getJSONArray("models")
+            val worker = json.getJSONObject("workerRequests")
+            QuotaLogic.Report(
+                at = json.getLong("at"),
+                models = List(models.length()) { i ->
+                    val m = models.getJSONObject(i)
+                    QuotaLogic.Model(
+                        model = m.getString("model"),
+                        role = m.getString("role"),
+                        requests = bucket(m.optJSONObject("requests")),
+                        minuteTokens = bucket(m.optJSONObject("minuteTokens")),
+                        dayTokens = counted(m.optJSONObject("dayTokens")),
+                    )
+                },
+                voice = counted(json.getJSONObject("voice"))!!,
+                workerRequests = QuotaLogic.Counted(worker.getLong("limit"), worker.getLong("used")),
+                workerResetAt = worker.getLong("resetAt"),
+            )
+        } catch (_: Exception) {
+            null
+        }
+    }
+
     /** One page of what the phone has not acked yet. */
     fun fetchOutbox(context: Context, timeoutMs: Int): Pair<Result, Page?> {
         val result = signed(context, "GET", "/app/outbox", null, ByteArray(0), timeoutMs)
