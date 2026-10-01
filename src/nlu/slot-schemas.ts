@@ -277,6 +277,32 @@ export const infoLookupSlots = z
   })
   .strict();
 
+// -- Google Tasks (2026-10-01) ------------------------------------------------
+//
+// Agent-only. A list is named the way the user says it ("קניות"); code finds it.
+
+export const MAX_LIST_CHARS = 60;
+
+export const tasksListSlots = z
+  .object({ list: z.string().min(1).max(MAX_LIST_CHARS).optional() })
+  .strict();
+
+export const tasksAddSlots = z
+  .object({
+    text: z.string().min(1).max(MAX_TITLE_CHARS).optional(),
+    list: z.string().min(1).max(MAX_LIST_CHARS).optional(),
+    /** A due date. Tasks has no time of day. */
+    date: dateSpecSchema.optional(),
+  })
+  .strict();
+
+export const tasksCompleteSlots = z
+  .object({
+    query_variants: queryVariantsSchema.optional(),
+    list: z.string().min(1).max(MAX_LIST_CHARS).optional(),
+  })
+  .strict();
+
 // -- drift guards -------------------------------------------------------------
 // These are compile-time only. If `src/time/resolve.ts` gains a DateSpec variant
 // that this file does not model, or vice versa, typecheck fails here rather than

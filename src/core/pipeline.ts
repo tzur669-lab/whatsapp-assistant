@@ -16,6 +16,7 @@
  * Plain TypeScript throughout — no platform imports (invariant 11). The Durable
  * Object supplies the services and the clock.
  */
+import type { TasksClient } from '../google/tasks.js';
 import type { GrantName } from '../google/grants.js';
 import { DEFAULT_PLACE, findPlace, HOME_CITY_KEY } from '../lookup/place.js';
 import type { InboundEvent, OutboundButton } from '../channels/types.js';
@@ -91,6 +92,8 @@ export type Services = {
   google?: GoogleStore;
   /** The other Google grants — gmail, tasks, drive — each its own store (2026-10-01). */
   grants?: Partial<Record<GrantName, GoogleStore>>;
+  /** Google Tasks, once its grant is connected. */
+  tasks?: TasksClient;
   /** Present once a grant exists; calendar tools answer "not connected" without it. */
   calendar?: CalendarClient;
   /** Where the one-time connect link points. */
@@ -1048,6 +1051,7 @@ function turnOf(
       ...(services.ical ? { ical: services.ical } : {}),
       ...(services.calls ? { calls: services.calls } : {}),
       ...(services.fetchImpl ? { fetchImpl: services.fetchImpl } : {}),
+      ...(services.tasks ? { tasks: services.tasks } : {}),
     },
     pending: services.pending,
     deferred: services.deferred,

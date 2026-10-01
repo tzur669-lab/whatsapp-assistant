@@ -10,6 +10,7 @@
  * nothing they can act on, and the whole reason this system asks instead of
  * guessing is that asking is cheap only when the question is a good one.
  */
+import { eventText } from './events.js';
 import { isolateLtr } from './bidi.js';
 import { callText } from './calls.js';
 import { phoneQuestion } from './phone.js';
@@ -34,6 +35,9 @@ export function renderClarify(clarify: Clarify, lang: Lang): string {
       return chooseOne(clarify.choices, lang);
     case 'nothing_scheduled':
       return lang === 'he' ? 'אין תזכורות ממתינות.' : 'No reminders pending.';
+    case 'grant_missing':
+      return eventText.grantNotConnected(clarify.grant, lang);
+
     case 'not_connected':
       return lang === 'he'
         ? `יומן Google לא מחובר. יש לשלוח ${isolateLtr('/connect google')}.`

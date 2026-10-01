@@ -32,6 +32,8 @@ import { CalendarClient } from '../google/calendar.js';
 import { buildAuthUrl, createPkce, exchangeCode } from '../google/oauth.js';
 import { GRANTS } from '../google/grants.js';
 import type { GrantName } from '../google/grants.js';
+import { GoogleApi } from '../google/api.js';
+import { TasksClient } from '../google/tasks.js';
 import { parseKeyring } from '../security/crypto.js';
 import { eventText } from '../render/events.js';
 import { budgetState, isWindowOpen, RECHECK_BEFORE_MS } from '../policy/window.js';
@@ -148,7 +150,7 @@ export class AssistantDO implements DurableObject {
   /** The Google grants other than the calendar's (2026-10-01), built on first use. */
   private readonly grantStores = new Map<GrantName, GoogleStore>();
   /** API clients per grant, holding an access token in memory between calls. */
-  private readonly googleApis = new Map<GrantName, unknown>();
+  private readonly googleApis = new Map<GrantName, GoogleApi>();
 
   /** Imported device keys, by device id. Public keys, so nothing secret is cached. */
   private readonly deviceKeys = new Map<string, CryptoKey>();
@@ -404,6 +406,26 @@ export class AssistantDO implements DurableObject {
     this.log.info('google_connected', { grant, scopes: result.grant.scopes.length });
     await this.send({ to: this.selfWaId(), text: eventText.connected('he', grant) });
     return { ok: true };
+  }
+
+  /** The API client of a connected grant, kept so its access token is reused. Null when not connected. */
+  private googleApi(grant: GrantName): GoogleApi | null {
+    const store = this.grantStore(grant);
+    if (!store.isConnected()) return null;
+    let api = this.googleApis.get(grant);
+    if (!api) {
+      api = new GoogleApi({
+        store,
+        clientId: this.env.GOOGLE_CLIENT_ID,
+        clientSecret: this.env.GOOGLE_CLIENT_SECRET,
+        log: this.log,
+        now: () => Date.now(),
+        fetchImpl: this.fetchImpl,
+        label: grant,
+      });
+      this.googleApis.set(grant, api);
+    }
+    return api;
   }
 
   /** The store of one Google grant. The calendar's is the one that predates the others. */
@@ -1454,6 +1476,7 @@ export class AssistantDO implements DurableObject {
         : {}),
       google: this.google,
       grants: { gmail: this.grantStore('gmail'), tasks: this.grantStore('tasks'), drive: this.grantStore('drive') },
+      ...(this.googleApi('tasks') ? { tasks: new TasksClient(this.googleApi('tasks')!) } : {}),
       publicBaseUrl: this.env.PUBLIC_BASE_URL,
       ...(this.calendarClient() ? { calendar: this.calendarClient()! } : {}),
       ...(this.callDispatcher() ? { calls: this.callDispatcher()! } : {}),

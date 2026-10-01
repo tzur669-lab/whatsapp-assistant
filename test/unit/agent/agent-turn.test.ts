@@ -376,7 +376,7 @@ describe('an agent turn', () => {
       await handleInbound(text('היי'), deps([{ text: 'שלום' }]));
       const names = agent.tools[0]!.map((tool) => tool.function.name);
       expect(names).toContain('reminders__create');
-      expect(names.every((name) => /^(reminders|calendar|calls|info)__/.test(name))).toBe(true);
+      expect(names.every((name) => /^(reminders|calendar|calls|info|tasks)__/.test(name))).toBe(true);
     });
   });
 

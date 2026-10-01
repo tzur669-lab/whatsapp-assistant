@@ -254,3 +254,42 @@
       topic: news
     missing: []
 
+# Google Tasks (2026-10-01, prompt a4).
+
+- id: tk-add-001
+  now: "2026-10-01T08:00:00+03:00"
+  input: "תוסיף חלב לרשימת הקניות"
+  expect:
+    intent: tasks.add
+    slots:
+      text: "חלב"
+    missing: []
+
+- id: tk-add-002
+  now: "2026-10-01T08:00:00+03:00"
+  input: "add call the plumber to my to-do list"
+  expect:
+    intent: tasks.add
+    missing: []
+
+- id: tk-list-001
+  now: "2026-10-01T08:00:00+03:00"
+  input: "מה יש ברשימת הקניות?"
+  expect:
+    intent: tasks.list
+    missing: []
+
+- id: tk-done-001
+  now: "2026-10-01T08:00:00+03:00"
+  input: "קניתי חלב, תסמן"
+  expect:
+    intent: tasks.complete
+    missing: []
+
+- id: tk-reminder-not-task-001
+  now: "2026-10-01T08:00:00+03:00"
+  input: "תזכיר לי מחר ב-9 לקנות חלב"
+  expect:
+    intent: reminders.create
+    missing: []
+

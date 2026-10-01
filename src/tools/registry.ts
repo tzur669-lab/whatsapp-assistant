@@ -24,6 +24,9 @@ import {
   phoneNotificationsSlots,
   phoneSmsSlots,
   infoLookupSlots,
+  tasksAddSlots,
+  tasksCompleteSlots,
+  tasksListSlots,
   remindersCancelSlots,
   remindersCreateSlots,
   remindersListSlots,
@@ -53,6 +56,10 @@ export const TOOL_NAMES = [
   'phone.sms',
   // Public data (2026-10-01): weather, the Hebrew calendar, exchange rates, news.
   'info.lookup',
+  // Google Tasks (2026-10-01): lists like shopping and to-do.
+  'tasks.list',
+  'tasks.add',
+  'tasks.complete',
 ] as const;
 
 export type ToolName = (typeof TOOL_NAMES)[number];
@@ -302,6 +309,35 @@ export const REGISTRY: Readonly<Record<ToolName, ToolSpec>> = {
     tier: 0,
     scopes: [],
     rateLimit: { perHour: 30, perDay: 200 },
+    implementedIn: 6,
+  },
+  'tasks.list': {
+    name: 'tasks.list',
+    llmDescription: "Show the user's Google Tasks lists (shopping, to-do), or one list.",
+    draftSchema: tasksListSlots,
+    tier: 0,
+    scopes: [],
+    rateLimit: { perHour: 30, perDay: 200 },
+    implementedIn: 6,
+  },
+  'tasks.add': {
+    name: 'tasks.add',
+    llmDescription: 'Add an item to a Google Tasks list (e.g. shopping); not for timed reminders.',
+    draftSchema: tasksAddSlots,
+    // Reversible: the Undo deletes it.
+    tier: 1,
+    scopes: [],
+    rateLimit: { perHour: 30, perDay: 150 },
+    implementedIn: 6,
+  },
+  'tasks.complete': {
+    name: 'tasks.complete',
+    llmDescription: 'Mark an item on a Google Tasks list as done.',
+    draftSchema: tasksCompleteSlots,
+    // Reversible: the Undo opens it again.
+    tier: 1,
+    scopes: [],
+    rateLimit: { perHour: 30, perDay: 150 },
     implementedIn: 6,
   },
 };

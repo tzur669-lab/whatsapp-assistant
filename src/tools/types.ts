@@ -29,6 +29,8 @@ import type { CalendarClient } from '../google/calendar.js';
 import type { IcalStore } from '../ical/store.js';
 import type { CallDispatcher } from '../device/calls.js';
 import type { PhoneQuestion } from '../render/phone.js';
+import type { GrantName } from '../google/grants.js';
+import type { TasksClient } from '../google/tasks.js';
 
 /** One candidate when a description matched more than one thing. */
 export type TargetChoice = { id: string; label: string };
@@ -50,6 +52,8 @@ export type Clarify =
   | { code: 'nothing_scheduled' }
   /** Google is not connected yet. */
   | { code: 'not_connected' }
+  /** A Google grant other than the calendar's is not connected (2026-10-01). */
+  | { code: 'grant_missing'; grant: GrantName }
   /** A call's target was a number, not a name on the phone (PLAN §6.17). */
   | { code: 'call_number_refused' }
   /**
@@ -92,6 +96,8 @@ export type ToolContext = {
   calls?: CallDispatcher;
   /** For tools that read public data (`info.lookup`). Supplied by the platform. */
   fetchImpl?: typeof fetch;
+  /** Google Tasks, once its grant is connected (2026-10-01). */
+  tasks?: TasksClient;
 };
 
 export type ExecuteResult = {

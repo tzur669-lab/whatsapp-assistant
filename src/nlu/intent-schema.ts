@@ -25,6 +25,9 @@ import {
   phoneNotificationsSlots,
   phoneSmsSlots,
   infoLookupSlots,
+  tasksAddSlots,
+  tasksCompleteSlots,
+  tasksListSlots,
   remindersCancelSlots,
   remindersCreateSlots,
   remindersListSlots,
@@ -81,6 +84,9 @@ const ignoredSlots = remindersCreateSlots
   .merge(phoneSmsSlots)
   // Partial: `topic` is required of a lookup, never of an ignored draft.
   .merge(infoLookupSlots.partial())
+  .merge(tasksListSlots)
+  .merge(tasksAddSlots)
+  .merge(tasksCompleteSlots)
   .strict();
 
 const common = {
@@ -116,6 +122,10 @@ export const intentDraftSchema = z.discriminatedUnion('intent', [
   z.object({ intent: z.literal('phone.sms'), slots: phoneSmsSlots, ...common }).strict(),
   // Public lookups (2026-10-01). Agent-only.
   z.object({ intent: z.literal('info.lookup'), slots: infoLookupSlots, ...common }).strict(),
+  // Google Tasks (2026-10-01). Agent-only.
+  z.object({ intent: z.literal('tasks.list'), slots: tasksListSlots, ...common }).strict(),
+  z.object({ intent: z.literal('tasks.add'), slots: tasksAddSlots, ...common }).strict(),
+  z.object({ intent: z.literal('tasks.complete'), slots: tasksCompleteSlots, ...common }).strict(),
   // Anything outside the tool list, including prompt-injection attempts.
   z.object({ intent: z.literal('unsupported'), slots: ignoredSlots, ...common }).strict(),
 ]);
@@ -158,6 +168,9 @@ const TOOL_SLOTS: Readonly<Record<string, ReadonlySet<string>>> = {
   'phone.notifications': new Set(Object.keys(phoneNotificationsSlots.shape)),
   'phone.sms': new Set(Object.keys(phoneSmsSlots.shape)),
   'info.lookup': new Set(Object.keys(infoLookupSlots.shape)),
+  'tasks.list': new Set(Object.keys(tasksListSlots.shape)),
+  'tasks.add': new Set(Object.keys(tasksAddSlots.shape)),
+  'tasks.complete': new Set(Object.keys(tasksCompleteSlots.shape)),
 };
 
 /** Every slot any tool declares — the flat union the wire schema offers the model. */

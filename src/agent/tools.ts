@@ -98,4 +98,6 @@ export const TAINTING_TOOLS: ReadonlySet<ToolName> = new Set<ToolName>([
   'phone.contacts',
   'phone.notifications',
   'phone.sms',
+  // A task made from a Gmail message carries its subject: someone else's words.
+  'tasks.list',
 ]);
