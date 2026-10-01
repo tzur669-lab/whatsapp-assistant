@@ -68,6 +68,25 @@
     <string name="perm_ok">✓ פעיל</string>
     <string name="privacy_note">היסטוריית הצ׳אט שמורה רק בטלפון הזה ולא נכנסת לגיבוי. הקלטות נמחקות מהטלפון מיד אחרי השליחה. שמות ומספרים של אנשי קשר לא יוצאים מהטלפון.</string>
 
+    <!-- Action cards (PLAN §6.20) -->
+    <string name="card_run">ביצוע</string>
+    <string name="card_cancel">ביטול</string>
+    <string name="card_state_working">מתבצע…</string>
+    <string name="card_state_done">✓ בוצע</string>
+    <string name="card_state_refused">בוטל</string>
+    <string name="card_state_failed">לא בוצע</string>
+    <string name="card_state_expired">פג תוקף. אפשר לבקש שוב.</string>
+    <string name="card_no_connection">אין חיבור לשרת. אפשר להקיש שוב על ביצוע.</string>
+    <string name="card_no_contact">לא נמצא בטלפון איש קשר מתאים.</string>
+    <string name="card_choose_contact">למי לשלוח?</string>
+    <string name="card_no_app">לא נמצאה בטלפון אפליקציה מתאימה.</string>
+    <string name="card_choose_app">איזו אפליקציה לפתוח?</string>
+    <string name="card_no_flash">בטלפון הזה אין פנס.</string>
+    <string name="card_need_dnd_access">כדי לשנות צלצול או \"נא לא להפריע\" צריך לאשר לאפליקציה גישה בהגדרות. המסך נפתח עכשיו.</string>
+    <string name="card_not_supported">הטלפון לא תומך בפעולה הזאת.</string>
+    <string name="card_no_contacts_permission">אין גישה לאנשי קשר. אפשר לאשר במסך ההגדרות.</string>
+    <string name="card_failed">הפעולה לא הצליחה.</string>
+
     <!-- A call request -->
     <string name="channel_name">בקשות חיוג</string>
     <string name="call_title">שיחה ל%1$s</string>

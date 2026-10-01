@@ -47,6 +47,31 @@ contacts **by name only** (`ContactMatcher`), and shows the resolved number on a
 full-screen notification. It reports `{ matched, outcome }` and never a name or
 a number.
 
+## How a phone action goes (0.3, PLAN §6.20)
+
+An alarm, a timer, navigation, opening an app, a quick setting or a message
+arrives as a **card** under the assistant's answer: a preview written by the
+server, and Run / Cancel. The card carries an id and a nonce, never the
+parameters.
+
+1. Run (or, for a low-risk card on a clean turn, the app itself while the chat
+   is open and the card is under two minutes old) first takes the card in the
+   local database — once — and then sends a signed **claim**. The server
+   consumes its pending row atomically and only then returns what to run. A
+   second claim is answered "used".
+2. `DeviceActions` validates the parameters again and runs them: the clock app
+   for an alarm or timer, Waze or Google Maps, the launcher app the words match,
+   the torch, do-not-disturb or the ringer (after notification-policy access is
+   granted), the Wi-Fi or Bluetooth panel.
+3. A message opens **prefilled** in the SMS app or WhatsApp, to a contact matched
+   here by name. Sending it is the user's own tap there.
+4. The app reports `done`, `failed`, `no_match` or `unsupported`, never what it
+   matched.
+
+Messages, do-not-disturb and the ringer never run on their own. Card buttons
+never appear in a notification. The app declares `caps: ["cards"]` with its push
+address; a build that does not is never sent a card.
+
 ## Setup
 
 1. **Firebase**: project `tzur-call-companion`, Android app
@@ -65,6 +90,8 @@ a number.
    once. Pairing a new phone unpairs the old one.
 5. In the app's settings screen: allow notifications, set the battery to
    "unrestricted", and allow the microphone (and contacts and phone for calls).
+   For ringer and do-not-disturb cards, Android asks once for notification-policy
+   access; the first such card opens that screen.
 
 `/pair off` in the chat unpairs the phone on the server.
 

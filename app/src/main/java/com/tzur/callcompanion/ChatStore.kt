@@ -19,7 +19,7 @@ import org.json.JSONObject
  * on screen is arrival order; each row keeps the time the server wrote it.
  */
 class ChatStore private constructor(context: Context) :
-    SQLiteOpenHelper(context.applicationContext, "chat.db", null, 1) {
+    SQLiteOpenHelper(context.applicationContext, "chat.db", null, 2) {
 
     class Message(
         val localId: Long,
@@ -34,6 +34,9 @@ class ChatStore private constructor(context: Context) :
         val state: Int,
         val createdAt: Long,
         val arrivedAt: Long,
+        /** A phone action under this message (PLAN §6.20), and how far it got. */
+        val card: Row.Card?,
+        val cardState: Int,
     )
 
     override fun onCreate(db: SQLiteDatabase) {
@@ -50,14 +53,22 @@ class ChatStore private constructor(context: Context) :
               answered   INTEGER NOT NULL DEFAULT 0,
               state      INTEGER NOT NULL DEFAULT 0,
               created_at INTEGER NOT NULL,
-              arrived_at INTEGER NOT NULL
+              arrived_at INTEGER NOT NULL,
+              card       TEXT,
+              card_state INTEGER NOT NULL DEFAULT 0
             )
             """.trimIndent(),
         )
         db.execSQL("CREATE INDEX messages_message_id ON messages (message_id)")
     }
 
-    override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) = Unit
+    override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
+        // 0.3: action cards (PLAN §6.20). Earlier rows simply have none.
+        if (oldVersion < 2) {
+            db.execSQL("ALTER TABLE messages ADD COLUMN card TEXT")
+            db.execSQL("ALTER TABLE messages ADD COLUMN card_state INTEGER NOT NULL DEFAULT 0")
+        }
+    }
 
     /** What the user typed, said or tapped, before it is sent. */
     fun addOutgoing(messageId: String, kind: String, text: String) {
@@ -102,6 +113,7 @@ class ChatStore private constructor(context: Context) :
                     put("kind", row.kind)
                     put("text", row.text)
                     put("buttons", buttonsJson(row.buttons))
+                    if (row.card != null) put("card", row.card.toJson().toString()) else putNull("card")
                     put("created_at", row.createdAt)
                     put("arrived_at", now)
                 }
@@ -144,6 +156,20 @@ class ChatStore private constructor(context: Context) :
         writableDatabase.update("messages", ContentValues().apply { put("answered", 1) }, "seq = ?", arrayOf(seq.toString()))
     }
 
+    /**
+     * Take a card for running: true for exactly one caller. The tap, the
+     * auto-run and a second screen all go through here, so a card is claimed
+     * from this phone once even before the server's own once-only claim.
+     */
+    fun takeCard(seq: Long): Boolean =
+        writableDatabase.compileStatement(
+            "UPDATE messages SET card_state = $CARD_WORKING WHERE seq = ? AND card_state = $CARD_OPEN AND card IS NOT NULL",
+        ).apply { bindLong(1, seq) }.executeUpdateDelete() == 1
+
+    fun setCardState(seq: Long, state: Int) {
+        writableDatabase.update("messages", ContentValues().apply { put("card_state", state) }, "seq = ?", arrayOf(seq.toString()))
+    }
+
     /** A process that died mid-send left these. Whether they arrived is not known here. */
     fun failStale() {
         writableDatabase.update(
@@ -179,6 +205,14 @@ class ChatStore private constructor(context: Context) :
         state = c.getInt(c.getColumnIndexOrThrow("state")),
         createdAt = c.getLong(c.getColumnIndexOrThrow("created_at")),
         arrivedAt = c.getLong(c.getColumnIndexOrThrow("arrived_at")),
+        card = c.getString(c.getColumnIndexOrThrow("card"))?.let { json ->
+            try {
+                Row.Card.from(JSONObject(json))
+            } catch (_: Exception) {
+                null
+            }
+        },
+        cardState = c.getInt(c.getColumnIndexOrThrow("card_state")),
     )
 
     private fun buttonsJson(buttons: List<Row.Button>): String? {
@@ -205,6 +239,15 @@ class ChatStore private constructor(context: Context) :
         const val STATE_SENT = 0
         const val STATE_SENDING = 1
         const val STATE_FAILED = 2
+
+        /** A card's life on this phone (PLAN §6.20). */
+        const val CARD_OPEN = 0
+        const val CARD_WORKING = 1
+        const val CARD_DONE = 2
+        const val CARD_REFUSED = 3
+        const val CARD_FAILED = 4
+        const val CARD_EXPIRED = 5
+
         private const val KEEP = 500
 
         @Volatile private var instance: ChatStore? = null

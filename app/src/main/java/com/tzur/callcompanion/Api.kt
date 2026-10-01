@@ -66,6 +66,16 @@ object Api {
 
     class Dispatch(val queryVariants: List<String>, val expiresAt: Long)
 
+    /** What the server says to a claim on a card (PLAN §6.20). */
+    sealed class Claim {
+        /** Consumed: this is what to run. The server will not hand it out again. */
+        class Ok(val action: JSONObject) : Claim()
+        object Cancelled : Claim()
+        /** `expired`, `used`, or `not_found`. */
+        class Refused(val reason: String) : Claim()
+        object Unreachable : Claim()
+    }
+
     // -- pairing (unsigned: the MAC is the proof) -----------------------------
 
     fun pair(publicKey: String, pushToken: String, timestamp: Long, mac: String): PairResult {
@@ -119,9 +129,36 @@ object Api {
         return signed(context, "POST", "/app/outbox/ack", JSON_TYPE, utf8(body), timeoutMs) is Result.Ok
     }
 
+    /** What this build can do, sent with the push address (PLAN §6.20). */
+    val CAPS = listOf("cards")
+
     fun updatePushToken(context: Context, pushToken: String): Boolean {
-        val body = JSONObject().put("pushToken", pushToken)
+        val body = JSONObject().put("pushToken", pushToken).put("caps", JSONArray(CAPS))
         return signed(context, "POST", "/app/push-token", JSON_TYPE, utf8(body), SHORT_TIMEOUT_MS) is Result.Ok
+    }
+
+    // -- action cards (PLAN §6.20) --------------------------------------------
+
+    /** `verb`: ok runs it, no refuses it. Either way the card is spent. */
+    fun claim(context: Context, card: Row.Card, verb: String): Claim {
+        require(verb == "ok" || verb == "no")
+        val body = JSONObject().put("actionId", card.actionId).put("nonce", card.nonce).put("verb", verb)
+        val json = when (val result = signed(context, "POST", "/app/action/claim", JSON_TYPE, utf8(body), SHORT_TIMEOUT_MS)) {
+            is Result.Ok -> result.json ?: return Claim.Refused("not_found")
+            is Result.Unreachable -> return Claim.Unreachable
+            else -> return Claim.Refused("not_found")
+        }
+        return when (json.optString("status")) {
+            "ok" -> json.optJSONObject("action")?.let { Claim.Ok(it) } ?: Claim.Refused("not_found")
+            "cancelled" -> Claim.Cancelled
+            else -> Claim.Refused(json.optString("reason", "not_found"))
+        }
+    }
+
+    /** `outcome`: done | failed | no_match | unsupported. Never what was matched. */
+    fun reportAction(context: Context, actionId: String, outcome: String): Boolean {
+        val body = JSONObject().put("actionId", actionId).put("outcome", outcome)
+        return signed(context, "POST", "/app/action/report", JSON_TYPE, utf8(body), SHORT_TIMEOUT_MS) is Result.Ok
     }
 
     // -- calls (PLAN §6.17) ---------------------------------------------------

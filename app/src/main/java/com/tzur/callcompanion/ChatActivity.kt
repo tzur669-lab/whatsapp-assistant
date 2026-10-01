@@ -267,6 +267,16 @@ class ChatActivity : Activity(), ChatEvents.Listener {
         status.visibility = if (busy || recorder.isRecording) View.VISIBLE else View.GONE
         status.text = getString(if (recorder.isRecording) R.string.chat_recording else R.string.chat_busy)
         banner.visibility = if (Notifier.areEnabled(this)) View.GONE else View.VISIBLE
+
+        // A card the server allows to run alone does, while the chat is on screen
+        // and the card is fresh (PLAN §6.20). `takeCard` makes this once-only.
+        if (ChatEvents.foreground) {
+            for (message in messages) {
+                val seq = message.seq ?: continue
+                val card = message.card ?: continue
+                if (Cards.shouldAutoRun(message)) Cards.run(this, seq, card)
+            }
+        }
     }
 
     private fun toPairing(unpairedByServer: Boolean) {
@@ -330,6 +340,8 @@ class ChatActivity : Activity(), ChatEvents.Listener {
         row.addView(box, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT))
 
         val seq = message.seq
+        val card = message.card
+        if (!message.outgoing && seq != null && card != null) addCard(row, seq, card, message.cardState)
         if (!message.outgoing && seq != null && message.buttons.isNotEmpty()) {
             for (button in message.buttons) {
                 row.addView(Button(this).apply {
@@ -346,6 +358,41 @@ class ChatActivity : Activity(), ChatEvents.Listener {
             }
         }
         return row
+    }
+
+    /**
+     * Under a card: Run and Cancel while it is open; afterwards, one line saying
+     * what became of it. Nothing about a card is in a notification (§6.20).
+     */
+    private fun addCard(row: LinearLayout, seq: Long, card: Row.Card, state: Int) {
+        if (state == ChatStore.CARD_OPEN) {
+            val buttons = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+            buttons.addView(Button(this).apply {
+                text = getString(R.string.card_run)
+                isAllCaps = false
+                setOnClickListener { Cards.run(this@ChatActivity, seq, card) }
+            })
+            buttons.addView(Button(this).apply {
+                text = getString(R.string.card_cancel)
+                isAllCaps = false
+                setOnClickListener { Cards.refuse(this@ChatActivity, seq, card) }
+            })
+            row.addView(buttons)
+            return
+        }
+        val line = when (state) {
+            ChatStore.CARD_WORKING -> R.string.card_state_working
+            ChatStore.CARD_DONE -> R.string.card_state_done
+            ChatStore.CARD_REFUSED -> R.string.card_state_refused
+            ChatStore.CARD_EXPIRED -> R.string.card_state_expired
+            else -> R.string.card_state_failed
+        }
+        row.addView(TextView(this).apply {
+            text = getString(line)
+            textSize = 12f
+            setTextColor(META)
+            setPadding(dp(8), dp(2), dp(8), dp(2))
+        })
     }
 
     private fun meta(message: ChatStore.Message): String {

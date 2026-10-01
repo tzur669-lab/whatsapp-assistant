@@ -12,6 +12,21 @@
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <!-- The call request appears over the lock screen; Android 14+ may ask for it in settings. -->
     <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
+    <!-- Action cards (PLAN §6.20): set an alarm or a timer in the clock app, after the claim. -->
+    <uses-permission android:name="com.android.alarm.permission.SET_ALARM" />
+    <!-- Do-not-disturb and the ringer. The user grants it in settings; until then the card says so. -->
+    <uses-permission android:name="android.permission.ACCESS_NOTIFICATION_POLICY" />
+
+    <!--
+      Which installed apps an "open the app" card can match, by their launcher
+      labels — read on the phone, never sent anywhere.
+    -->
+    <queries>
+        <intent>
+            <action android:name="android.intent.action.MAIN" />
+            <category android:name="android.intent.category.LAUNCHER" />
+        </intent>
+    </queries>
 
     <!-- Both are used when present; neither is required to install. -->
     <uses-feature android:name="android.hardware.telephony" android:required="false" />

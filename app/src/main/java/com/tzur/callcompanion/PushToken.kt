@@ -16,7 +16,9 @@ object PushToken {
     fun refreshIfDue(context: Context) {
         val app = context.applicationContext
         val prefs = app.getSharedPreferences("push", Context.MODE_PRIVATE)
-        if (System.currentTimeMillis() - prefs.getLong("sent_at", 0L) < REFRESH_MS) return
+        // A build that can do more says so at once, not ten minutes later (PLAN §6.20).
+        val capsChanged = prefs.getString("caps", "") != Api.CAPS.joinToString(",")
+        if (!capsChanged && System.currentTimeMillis() - prefs.getLong("sent_at", 0L) < REFRESH_MS) return
         FirebaseMessaging.getInstance().token.addOnCompleteListener { task ->
             val token = if (task.isSuccessful) task.result else null
             if (token.isNullOrEmpty()) return@addOnCompleteListener
@@ -29,6 +31,9 @@ object PushToken {
     /** Only the time is kept; the address itself is not worth storing twice. */
     fun markSent(context: Context) {
         context.applicationContext.getSharedPreferences("push", Context.MODE_PRIVATE)
-            .edit().putLong("sent_at", System.currentTimeMillis()).apply()
+            .edit()
+            .putLong("sent_at", System.currentTimeMillis())
+            .putString("caps", Api.CAPS.joinToString(","))
+            .apply()
     }
 }
