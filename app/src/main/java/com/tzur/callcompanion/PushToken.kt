@@ -6,11 +6,12 @@ import com.google.firebase.messaging.FirebaseMessaging
 /**
  * Keeps the server's copy of this phone's FCM address fresh. The server
  * forgets an address FCM calls unregistered (`E_PUSH_UNREGISTERED`), and only
- * the app can give it a new one — so the app re-sends it on open, at most every
- * few hours, and whenever FCM rotates it.
+ * the app can give it a new one — so the app re-sends it whenever it opens
+ * (the runbook's "open the app once"), at most every ten minutes, and whenever
+ * FCM rotates it.
  */
 object PushToken {
-    private const val REFRESH_MS = 6 * 60 * 60 * 1000L
+    private const val REFRESH_MS = 10 * 60 * 1000L
 
     fun refreshIfDue(context: Context) {
         val app = context.applicationContext
