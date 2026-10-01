@@ -71,7 +71,7 @@ export type AgentTurnInput = {
   /** The paired app answers phone reads, and this is a typed message (§6.21). */
   phoneReads?: boolean;
   /** Which Google grants are connected, so only their tools are offered (2026-10-01). */
-  grants?: { gmail?: boolean; tasks?: boolean };
+  grants?: { gmail?: boolean; tasks?: boolean; drive?: boolean };
 };
 
 /**
@@ -84,7 +84,7 @@ export type SuspendedState = {
   /** The app's conversation the turn belongs to, for its history (2026-10-01). */
   conversation?: string;
   /** The grants whose tools the turn was offered, so it resumes with the same ones. */
-  grants?: { gmail?: boolean; tasks?: boolean };
+  grants?: { gmail?: boolean; tasks?: boolean; drive?: boolean };
   /** Everything after the system prompt, ending with the call that asked. */
   messages: AgentMessage[];
   spent: number;
@@ -138,7 +138,7 @@ type Loop = {
   lang: Lang;
   turn: TurnContext;
   cards: boolean;
-  grants?: { gmail?: boolean; tasks?: boolean };
+  grants?: { gmail?: boolean; tasks?: boolean; drive?: boolean };
 };
 
 export async function runAgentTurn(input: AgentTurnInput, deps: AgentDeps): Promise<AgentResult> {

@@ -14,6 +14,7 @@ import { PHONE_READ_TOOLS } from '../../../src/tools/phone-reads.js';
 import { infoLookup } from '../../../src/tools/lookup.js';
 import { TASK_TOOLS } from '../../../src/tools/tasks.js';
 import { MAIL_TOOLS } from '../../../src/tools/mail.js';
+import { driveSearch } from '../../../src/tools/drive.js';
 import type { ToolDefinition } from '../../../src/tools/types.js';
 import { INTENT_NAMES } from '../../../src/nlu/intent-schema.js';
 
@@ -27,6 +28,7 @@ const IMPLEMENTATIONS: Record<string, ToolDefinition> = {
   'info.lookup': infoLookup,
   ...TASK_TOOLS,
   ...MAIL_TOOLS,
+  'drive.search': driveSearch,
 };
 
 describe('every registered tool is real', () => {

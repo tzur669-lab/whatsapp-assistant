@@ -27,6 +27,7 @@ import {
   tasksAddSlots,
   mailDraftSlots,
   mailSearchSlots,
+  driveSearchSlots,
   tasksCompleteSlots,
   tasksListSlots,
   remindersCancelSlots,
@@ -65,6 +66,8 @@ export const TOOL_NAMES = [
   // Gmail (2026-10-01): read, and drafts the user sends.
   'mail.search',
   'mail.draft',
+  // Google Drive (2026-10-01): find a file by its name.
+  'drive.search',
 ] as const;
 
 export type ToolName = (typeof TOOL_NAMES)[number];
@@ -354,6 +357,17 @@ export const REGISTRY: Readonly<Record<ToolName, ToolSpec>> = {
     tier: 2,
     scopes: [],
     rateLimit: { perHour: 10, perDay: 30 },
+    implementedIn: 6,
+  },
+  'drive.search': {
+    name: 'drive.search',
+    llmDescription: "Find files in the user's Google Drive by name, kind or how recently changed (names and dates only).",
+    draftSchema: driveSearchSlots,
+    // Read only, names never contents. A shared file's name is someone else's
+    // words: the result taints the turn.
+    tier: 0,
+    scopes: [],
+    rateLimit: { perHour: 30, perDay: 150 },
     implementedIn: 6,
   },
   'tasks.complete': {

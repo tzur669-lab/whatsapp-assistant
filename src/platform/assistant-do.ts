@@ -35,6 +35,7 @@ import type { GrantName } from '../google/grants.js';
 import { GoogleApi } from '../google/api.js';
 import { TasksClient } from '../google/tasks.js';
 import { GmailClient } from '../google/gmail.js';
+import { DriveClient } from '../google/drive.js';
 import { parseKeyring } from '../security/crypto.js';
 import { eventText } from '../render/events.js';
 import { budgetState, isWindowOpen, RECHECK_BEFORE_MS } from '../policy/window.js';
@@ -1479,6 +1480,7 @@ export class AssistantDO implements DurableObject {
       grants: { gmail: this.grantStore('gmail'), tasks: this.grantStore('tasks'), drive: this.grantStore('drive') },
       ...(this.googleApi('tasks') ? { tasks: new TasksClient(this.googleApi('tasks')!) } : {}),
       ...(this.googleApi('gmail') ? { gmail: new GmailClient(this.googleApi('gmail')!) } : {}),
+      ...(this.googleApi('drive') ? { drive: new DriveClient(this.googleApi('drive')!) } : {}),
       publicBaseUrl: this.env.PUBLIC_BASE_URL,
       ...(this.calendarClient() ? { calendar: this.calendarClient()! } : {}),
       ...(this.callDispatcher() ? { calls: this.callDispatcher()! } : {}),

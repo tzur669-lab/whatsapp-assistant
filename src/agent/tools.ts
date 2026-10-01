@@ -66,7 +66,7 @@ export type OfferOptions = {
    * is not is left out: every offered tool is prompt tokens on every call, and
    * a grant not connected is the common case.
    */
-  grants?: { gmail?: boolean; tasks?: boolean };
+  grants?: { gmail?: boolean; tasks?: boolean; drive?: boolean };
 };
 
 export function agentToolNames(options: OfferOptions = { cards: false }): ToolName[] {
@@ -74,6 +74,7 @@ export function agentToolNames(options: OfferOptions = { cards: false }): ToolNa
     const spec = REGISTRY[name];
     if (name.startsWith('mail.')) return options.grants?.gmail === true;
     if (name.startsWith('tasks.')) return options.grants?.tasks === true;
+    if (name.startsWith('drive.')) return options.grants?.drive === true;
     if (spec.confirmation === 'card') return options.cards;
     if (spec.phoneRead) return options.phoneReads === true;
     return true;
@@ -115,4 +116,6 @@ export const TAINTING_TOOLS: ReadonlySet<ToolName> = new Set<ToolName>([
   'tasks.list',
   // Mail is the plainest case of text someone else wrote.
   'mail.search',
+  // A shared file's name was chosen by whoever shared it.
+  'drive.search',
 ]);

@@ -333,6 +333,18 @@ export const mailDraftSlots = z
   })
   .strict();
 
+// -- Google Drive (2026-10-01) ---------------------------------------------------
+
+export const driveSearchSlots = z
+  .object({
+    /** Words of the file's name. */
+    name: z.string().min(1).max(100).optional(),
+    kind: z.enum(['any', 'document', 'spreadsheet', 'presentation', 'pdf', 'image', 'folder']).optional(),
+    /** Changed within this many days. */
+    days: z.number().int().min(1).max(365).optional(),
+  })
+  .strict();
+
 // -- drift guards -------------------------------------------------------------
 // These are compile-time only. If `src/time/resolve.ts` gains a DateSpec variant
 // that this file does not model, or vice versa, typecheck fails here rather than

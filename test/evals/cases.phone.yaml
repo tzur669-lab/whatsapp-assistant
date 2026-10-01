@@ -334,3 +334,23 @@
     intent: mail.draft
     missing: [body]
 
+# Google Drive (2026-10-01, prompt a4).
+
+- id: dr-search-001
+  now: "2026-10-01T08:00:00+03:00"
+  input: "תמצא לי ב-Drive את קובץ החוזה"
+  expect:
+    intent: drive.search
+    slots:
+      name: "חוזה"
+    missing: []
+
+- id: dr-search-002
+  now: "2026-10-01T08:00:00+03:00"
+  input: "which spreadsheets did I change this week"
+  expect:
+    intent: drive.search
+    slots:
+      kind: spreadsheet
+    missing: []
+

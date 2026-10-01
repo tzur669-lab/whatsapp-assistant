@@ -141,7 +141,7 @@ async function main(): Promise<void> {
 
 async function ask(provider: AgentProvider, id: string, messages: AgentMessage[]): Promise<Recorded> {
   const started = Date.now();
-  const response = await provider.complete(messages, wireTools(agentToolNames({ cards: true, phoneReads: true, grants: { gmail: true, tasks: true } })));
+  const response = await provider.complete(messages, wireTools(agentToolNames({ cards: true, phoneReads: true, grants: { gmail: true, tasks: true, drive: true } })));
   const latencyMs = Date.now() - started;
 
   if (!response.ok) {
@@ -155,7 +155,7 @@ async function ask(provider: AgentProvider, id: string, messages: AgentMessage[]
   const call = response.toolCalls[0];
   if (!call) return { id, draft: null, text: true, latencyMs, tokens };
 
-  const tool = fromWireName(call.name, agentToolNames({ cards: true, phoneReads: true, grants: { gmail: true, tasks: true } }));
+  const tool = fromWireName(call.name, agentToolNames({ cards: true, phoneReads: true, grants: { gmail: true, tasks: true, drive: true } }));
   let slots: unknown = {};
   try {
     slots = stripNulls(JSON.parse(call.arguments));

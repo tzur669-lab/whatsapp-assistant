@@ -32,6 +32,7 @@ import type { PhoneQuestion } from '../render/phone.js';
 import type { GrantName } from '../google/grants.js';
 import type { TasksClient } from '../google/tasks.js';
 import type { GmailClient } from '../google/gmail.js';
+import type { DriveClient } from '../google/drive.js';
 
 /** One candidate when a description matched more than one thing. */
 export type TargetChoice = { id: string; label: string };
@@ -101,6 +102,8 @@ export type ToolContext = {
   tasks?: TasksClient;
   /** Gmail, once its grant is connected (2026-10-01). */
   gmail?: GmailClient;
+  /** Google Drive's file search, once its grant is connected (2026-10-01). */
+  drive?: DriveClient;
 };
 
 export type ExecuteResult = {
