@@ -94,11 +94,13 @@ object Notifier {
         val title = context.getString(if (row.isReminder) R.string.notif_reminder_title else R.string.notif_message_title)
         val publicTitle = context.getString(if (row.isReminder) R.string.notif_public_reminder else R.string.notif_public_message)
 
+        // Someone else's words stay in the chat, off the lock screen and the shade (PLAN §6.21).
+        val shown = if (row.private) context.getString(R.string.notif_private) else row.text
         val builder = Notification.Builder(context, channel)
             .setSmallIcon(R.drawable.ic_assistant)
             .setContentTitle(title)
-            .setContentText(row.text)
-            .setStyle(Notification.BigTextStyle().bigText(row.text))
+            .setContentText(shown)
+            .setStyle(Notification.BigTextStyle().bigText(shown))
             // The time the server wrote it: a reminder that arrives late says when it was due.
             .setWhen(row.createdAt)
             .setShowWhen(true)

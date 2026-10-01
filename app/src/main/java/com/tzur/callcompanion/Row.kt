@@ -18,6 +18,11 @@ class Row(
     val createdAt: Long,
     /** A phone action to claim and run (PLAN §6.20). Never its parameters. */
     val card: Card? = null,
+    /**
+     * Carries text someone else wrote — an SMS, a notification, an invitation
+     * (PLAN §6.21). Its notification never shows it.
+     */
+    val private: Boolean = false,
 ) {
     class Button(val id: String, val title: String)
 
@@ -108,6 +113,7 @@ class Row(
                     buttons,
                     json.optLong("createdAt", System.currentTimeMillis()),
                     Card.from(json.optJSONObject("card")),
+                    json.optBoolean("private", false),
                 )
             } catch (_: Exception) {
                 null

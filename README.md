@@ -72,6 +72,36 @@ Messages, do-not-disturb and the ringer never run on their own. Card buttons
 never appear in a notification. The app declares `caps: ["cards"]` with its push
 address; a build that does not is never sent a card.
 
+## How a phone read goes (0.4, PLAN §6.21)
+
+"What did I get on SMS today?", "any notifications from the bank?", "do I have
+Dani in my contacts?" — the server cannot read these, so it asks the phone.
+
+1. The answer to the typed message is `device_query`: a query id and a closed
+   query (`contacts` by name, `notifications` from the last hours, `sms` from the
+   last hours, optionally from one sender or app).
+2. `PhoneReads` answers it on the Turns thread, each read checking its own
+   permission (`denied` without it). What goes back is the minimum
+   (`PhoneReadLogic`): at most 20 items of 300 characters, **names and never
+   numbers** (an unknown sender is "מספר לא שמור"), and **no message carrying a
+   one-time code** — those are dropped here and never leave.
+3. The result is a signed `POST /app/device-result`; its answer is the reply to
+   the original message. If it does not arrive, the message is asked about again,
+   gets the same query, and the read runs again. The server continues the turn
+   once, however many results reach it, and gives up after three minutes.
+
+Notifications come from `NotificationCollector`, once notification access is
+granted: the last day, in a private database (`notifications.db`) excluded from
+backup. Never this app's own, ongoing ones, group summaries, secret ones, calls
+or system status, and never an app hidden in settings ("הסתרת אפליקציות"); a
+hidden app's kept rows are deleted at once.
+
+A reply built on something read from the phone is marked `private`: its
+notification says only that there is an answer. The text stays in the chat.
+
+Voice messages never trigger a phone read (the server does not offer it), and
+the app declares `caps: ["cards", "device_query"]`.
+
 ## Setup
 
 1. **Firebase**: project `tzur-call-companion`, Android app
@@ -92,6 +122,9 @@ address; a build that does not is never sent a card.
    "unrestricted", and allow the microphone (and contacts and phone for calls).
    For ringer and do-not-disturb cards, Android asks once for notification-policy
    access; the first such card opens that screen.
+6. Phone reads, each optional: SMS, and notification access. On Android 13+ a
+   sideloaded app may need **App info → ⋮ → Allow restricted settings** before
+   notification access can be turned on.
 
 `/pair off` in the chat unpairs the phone on the server.
 
@@ -103,7 +136,10 @@ address; a build that does not is never sent a card.
 - **The signing key:** in the Keystore.
 - **Recordings:** live in `noBackupFilesDir` only while recording. They are
   deleted after reading, and any leftovers are removed at startup.
-- **Contacts:** names and numbers are read on the phone and never leave it.
+- **Contacts:** numbers never leave the phone. A name leaves only as the answer
+  to a phone read the user asked for (PLAN §6.21).
+- **Notifications:** the last day, in `notifications.db`, private and excluded
+  from backup, until a phone read asks for some of them.
 
 The only dependency is Firebase Messaging. HTTP, JSON, SQLite, crypto and the
 recorder all come from the platform.
@@ -112,7 +148,9 @@ recorder all come from the platform.
 
 `gradlew testDebugUnitTest` runs on the JVM.
 
-- **Matching rules.**
+- **Matching rules**, for calls (`ContactMatcherTest`), cards (`CardLogicTest`)
+  and phone reads (`PhoneReadLogicTest`: the query's shape, one-time codes,
+  names never numbers, the caps).
 - **The wire protocol** (`ProtocolTest`), pinned against vectors from the
   server's own code:
   - the canonical string;

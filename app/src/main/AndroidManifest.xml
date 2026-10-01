@@ -16,6 +16,11 @@
     <uses-permission android:name="com.android.alarm.permission.SET_ALARM" />
     <!-- Do-not-disturb and the ringer. The user grants it in settings; until then the card says so. -->
     <uses-permission android:name="android.permission.ACCESS_NOTIFICATION_POLICY" />
+    <!--
+      Phone reads (PLAN §6.21): recent SMS, read on the phone only when the
+      assistant asks, minimized here — no numbers, no one-time codes.
+    -->
+    <uses-permission android:name="android.permission.READ_SMS" />
 
     <!--
       Which installed apps an "open the app" card can match, by their launcher
@@ -81,6 +86,20 @@
         <receiver
             android:name=".ActionReceiver"
             android:exported="false" />
+
+        <!--
+          Keeps the last day of notifications on this phone, for "what did I get".
+          Runs only once the user grants notification access in the system settings.
+        -->
+        <service
+            android:name=".NotificationCollector"
+            android:exported="true"
+            android:label="@string/app_name"
+            android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE">
+            <intent-filter>
+                <action android:name="android.service.notification.NotificationListenerService" />
+            </intent-filter>
+        </service>
 
         <service
             android:name=".CompanionMessagingService"

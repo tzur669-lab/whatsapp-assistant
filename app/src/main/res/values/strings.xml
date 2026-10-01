@@ -39,6 +39,8 @@
     <string name="notif_public_reminder">תזכורת מהעוזר</string>
     <string name="notif_public_message">הודעה מהעוזר</string>
     <string name="notif_generic">יש הודעה חדשה מהעוזר. יש לפתוח את האפליקציה כדי לראות אותה.</string>
+    <!-- A reply that quotes an SMS, a notification or an invitation (PLAN §6.21). -->
+    <string name="notif_private">יש תשובה חדשה מהעוזר. התוכן מוצג רק באפליקציה.</string>
 
     <!-- Pairing and settings -->
     <string name="pair_title">צימוד הטלפון</string>
@@ -66,7 +68,19 @@
     <string name="perm_fullscreen">מסך מלא: כדי שבקשת חיוג תופיע מיד, גם במסך נעול</string>
     <string name="perm_grant">הפעלה</string>
     <string name="perm_ok">✓ פעיל</string>
-    <string name="privacy_note">היסטוריית הצ׳אט שמורה רק בטלפון הזה ולא נכנסת לגיבוי. הקלטות נמחקות מהטלפון מיד אחרי השליחה. שמות ומספרים של אנשי קשר לא יוצאים מהטלפון.</string>
+    <string name="privacy_note">היסטוריית הצ׳אט שמורה רק בטלפון הזה ולא נכנסת לגיבוי. הקלטות נמחקות מהטלפון מיד אחרי השליחה. מספרי טלפון של אנשי קשר לא יוצאים מהטלפון. &#x2068;SMS&#x2069; והתראות נשלחים לעוזר רק כשמבקשים, בלי מספרי טלפון ובלי קודים חד־פעמיים.</string>
+
+    <!-- Phone reads (PLAN §6.21) -->
+    <string name="perm_reads_title">קריאה מהטלפון</string>
+    <string name="perm_sms">&#x2068;SMS&#x2069;: כדי לענות על שאלות כמו \"מה כתבו לי היום\"</string>
+    <string name="perm_notification_access">גישה להתראות: כדי לענות על שאלות כמו \"מה ההתראות האחרונות\"</string>
+    <string name="perm_restricted_note">אם ההפעלה חסומה: בהגדרות הטלפון, בפרטי האפליקציה, יש לפתוח את התפריט ⋮ ולבחור \"לאפשר הגדרות מוגבלות\". זה נדרש באפליקציה שלא הותקנה מהחנות.</string>
+    <string name="perm_hide_apps">הסתרת אפליקציות: התראות מהן לא נשמרות ולא נשלחות לעוזר</string>
+    <string name="button_choose">בחירה</string>
+    <string name="button_save">שמירה</string>
+    <string name="hide_apps_title">התראות מאילו אפליקציות להסתיר?</string>
+    <string name="hide_apps_empty">עוד לא נשמרו התראות. כשיגיעו התראות, האפליקציות שלהן יופיעו כאן.</string>
+    <string name="read_unknown_sender">מספר לא שמור</string>
 
     <!-- Action cards (PLAN §6.20) -->
     <string name="card_run">ביצוע</string>

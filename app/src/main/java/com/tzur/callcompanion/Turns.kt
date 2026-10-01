@@ -149,6 +149,15 @@ object Turns {
                 ChatEvents.changed()
                 true
             }
+            is Api.Answer.DeviceQuery -> {
+                // Read here, send it back, and the answer to that is the answer to
+                // the message (PLAN §6.21). If it does not arrive, the message is
+                // asked about again, gets the same query, and this runs again: the
+                // server continues the turn once, however many results reach it.
+                val result = PhoneReads.run(app, answer.query)
+                val (sent, reply) = Api.deviceResult(app, answer.queryId, result)
+                sent is Api.Result.Ok && reply != null && reply !is Api.Answer.DeviceQuery && settle(app, id, reply)
+            }
             else -> false
         }
     }

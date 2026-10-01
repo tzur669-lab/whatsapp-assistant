@@ -54,6 +54,12 @@ object Api {
         object Pending : Answer()
         /** Recorded long ago and never finished: it may or may not have happened. */
         object Unknown : Answer()
+        /**
+         * The assistant needs the phone to read something first (PLAN §6.21).
+         * The answer to [queryId] continues the turn; the same message sent
+         * again gets the same query back until then.
+         */
+        class DeviceQuery(val queryId: String, val query: JSONObject) : Answer()
     }
 
     sealed class PairResult {
@@ -129,8 +135,8 @@ object Api {
         return signed(context, "POST", "/app/outbox/ack", JSON_TYPE, utf8(body), timeoutMs) is Result.Ok
     }
 
-    /** What this build can do, sent with the push address (PLAN §6.20). */
-    val CAPS = listOf("cards")
+    /** What this build can do, sent with the push address (PLAN §6.20, §6.21). */
+    val CAPS = listOf("cards", "device_query")
 
     fun updatePushToken(context: Context, pushToken: String): Boolean {
         val body = JSONObject().put("pushToken", pushToken).put("caps", JSONArray(CAPS))
@@ -159,6 +165,15 @@ object Api {
     fun reportAction(context: Context, actionId: String, outcome: String): Boolean {
         val body = JSONObject().put("actionId", actionId).put("outcome", outcome)
         return signed(context, "POST", "/app/action/report", JSON_TYPE, utf8(body), SHORT_TIMEOUT_MS) is Result.Ok
+    }
+
+    // -- phone reads (PLAN §6.21) ---------------------------------------------
+
+    /** The phone's answer to a read. Answered like a message: the reply, or pending. */
+    fun deviceResult(context: Context, queryId: String, result: JSONObject): Pair<Result, Answer?> {
+        require(QUERY_ID.matches(queryId))
+        val body = JSONObject().put("queryId", queryId).put("result", result)
+        return answerOf(signed(context, "POST", "/app/device-result", JSON_TYPE, utf8(body), TEXT_TIMEOUT_MS))
     }
 
     // -- calls (PLAN §6.17) ---------------------------------------------------
@@ -191,6 +206,11 @@ object Api {
             "done" -> Answer.Done
             "pending" -> Answer.Pending
             "unknown" -> Answer.Unknown
+            "device_query" -> {
+                val queryId = json.optString("queryId")
+                val query = json.optJSONObject("query")
+                if (QUERY_ID.matches(queryId) && query != null) Answer.DeviceQuery(queryId, query) else null
+            }
             else -> null
         }
         return result to answer
@@ -298,4 +318,5 @@ object Api {
     private const val JSON_TYPE = "application/json"
     private const val AUDIO_TYPE = "audio/mp4"
     private val DISPATCH_ID = Regex("^[0-9a-f]{32}$")
+    private val QUERY_ID = Regex("^[0-9a-f]{32}$")
 }

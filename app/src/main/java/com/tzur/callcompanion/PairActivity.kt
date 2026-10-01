@@ -2,6 +2,7 @@ package com.tzur.callcompanion
 
 import android.Manifest
 import android.app.Activity
+import android.app.AlertDialog
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Typeface
@@ -117,6 +118,28 @@ class PairActivity : Activity() {
             }
         }
 
+        // Phone reads (PLAN §6.21): each one optional, each one its own grant.
+        column.addView(heading(getString(R.string.perm_reads_title), 18f).apply { setPadding(0, pad, 0, 0) })
+        permissionRow(column, R.string.perm_sms, { granted(Manifest.permission.READ_SMS) }) {
+            requestPermissions(arrayOf(Manifest.permission.READ_SMS), 5)
+        }
+        permissionRow(column, R.string.perm_notification_access, { NotificationBuffer.isEnabled(this) }) {
+            startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS))
+        }
+        column.addView(TextView(this).apply {
+            text = getString(R.string.perm_restricted_note)
+            textSize = 13f
+        })
+        column.addView(TextView(this).apply {
+            text = getString(R.string.perm_hide_apps)
+            setPadding(0, pad / 2, 0, 0)
+        })
+        column.addView(Button(this).apply {
+            text = getString(R.string.button_choose)
+            isAllCaps = false
+            setOnClickListener { chooseHiddenApps() }
+        })
+
         column.addView(TextView(this).apply {
             text = getString(R.string.privacy_note)
             setPadding(0, pad, 0, 0)
@@ -126,6 +149,30 @@ class PairActivity : Activity() {
         val scroll = ScrollView(this).apply { addView(column) }
         Ui.fitSystemBars(scroll)
         return scroll
+    }
+
+    /**
+     * Which apps' notifications are never kept. The list is the apps seen in the
+     * last day plus those already hidden; a hidden app's kept rows go at once.
+     */
+    private fun chooseHiddenApps() {
+        val hidden = NotificationBuffer.hidden(this)
+        val seen = NotificationBuffer.get(this).seenApps().toMap(LinkedHashMap())
+        for (packageName in hidden) seen.putIfAbsent(packageName, packageName)
+        if (seen.isEmpty()) {
+            AlertDialog.Builder(this).setMessage(R.string.hide_apps_empty).setPositiveButton(android.R.string.ok, null).show()
+            return
+        }
+        val packages = seen.keys.toList()
+        val checked = BooleanArray(packages.size) { packages[it] in hidden }
+        AlertDialog.Builder(this)
+            .setTitle(R.string.hide_apps_title)
+            .setMultiChoiceItems(packages.map { seen[it] }.toTypedArray(), checked) { _, which, isChecked -> checked[which] = isChecked }
+            .setPositiveButton(R.string.button_save) { _, _ ->
+                NotificationBuffer.setHidden(this, packages.filterIndexed { index, _ -> checked[index] }.toSet())
+            }
+            .setNegativeButton(R.string.action_cancel, null)
+            .show()
     }
 
     private fun heading(text: String, size: Float) = TextView(this).apply {
