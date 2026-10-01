@@ -190,7 +190,8 @@ object DeviceActions {
             toast(activity, R.string.card_no_contacts_permission)
             return done("failed")
         }
-        val candidates = ContactMatcher.match(queries, ContactsReader.read(activity))
+        val match = ContactMatcher.match(queries, ContactsReader.read(activity))
+        val candidates = match.candidates
 
         val open = { chosen: Candidate ->
             if (channel == "sms") {
@@ -215,14 +216,21 @@ object DeviceActions {
             }
         }
 
-        when (candidates.size) {
-            0 -> {
+        when {
+            candidates.isEmpty() -> {
                 toast(activity, R.string.card_no_contact)
                 done("no_match")
             }
-            1 -> open(candidates[0])
+            // Only a contact the words fully named opens without a choice.
+            candidates.size == 1 && !match.partial -> open(candidates[0])
             // Names are shown only here, on this phone; nothing about them is reported.
-            else -> choose(activity, R.string.card_choose_contact, candidates.map { it.name }, { open(candidates[it]) }, { done("failed") })
+            else -> choose(
+                activity,
+                if (match.partial) R.string.card_partial_contact else R.string.card_choose_contact,
+                candidates.map { it.name },
+                { open(candidates[it]) },
+                { done("failed") },
+            )
         }
     }
 

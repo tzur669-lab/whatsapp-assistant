@@ -46,14 +46,16 @@ class CompanionMessagingService : FirebaseMessagingService() {
             return
         }
 
-        val candidates = ContactMatcher.match(dispatch.queryVariants, ContactsReader.read(this))
-        if (candidates.isEmpty()) {
+        val match = ContactMatcher.match(dispatch.queryVariants, ContactsReader.read(this))
+        if (match.candidates.isEmpty()) {
             Reports.send(this, dispatchId, "none", "no_match")
             CallNotifier.showNoMatch(this, dispatch.queryVariants.firstOrNull() ?: "")
             return
         }
 
-        CallNotifier.show(this, CallRequest(dispatchId, dispatch.expiresAt, candidates))
+        // The fullest words, to say what was not found when only part matched.
+        val heard = dispatch.queryVariants.maxByOrNull { it.trim().split(Regex("\\s+")).size } ?: ""
+        CallNotifier.show(this, CallRequest(dispatchId, dispatch.expiresAt, match.candidates, match.partial, heard))
     }
 
     /** FCM rotated this phone's address. Without telling the server, nothing arrives. */

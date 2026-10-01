@@ -16,6 +16,14 @@ data class Contact(val id: Long, val name: String, val numbers: List<PhoneNumber
 
 data class Candidate(val name: String, val number: String)
 
+/**
+ * Who the words could mean. `partial` is true when the contacts found match
+ * fewer words than were said ("יאיר אלע" → only "יאיר" matched anybody): the
+ * phone then asks "did you mean…?" and never treats the match as sure, even
+ * with a single candidate left (§6.17).
+ */
+data class Match(val candidates: List<Candidate>, val partial: Boolean)
+
 object ContactMatcher {
     private val NIKUD = Regex("[\\u0591-\\u05C7]")
     private val NOT_A_WORD = Regex("[^\\p{L}\\p{N}]+")
@@ -25,37 +33,41 @@ object ContactMatcher {
         NIKUD.replace(text, "").lowercase().replace(NOT_A_WORD, " ").trim()
 
     /**
-     * The contacts the words name, best reading first:
+     * The contacts the words name. The fullest variant is tried first — the one
+     * with the most words, so a surname is never dropped while a reading that
+     * keeps it still matches — and for each variant:
      *
-     *   1. a contact whose whole name is one of the variants ("דוד דני");
-     *   2. otherwise, contacts whose name contains every word of a variant
+     *   1. a contact whose whole name is the variant ("דוד דני");
+     *   2. otherwise, contacts whose name contains every word of it
      *      ("דני" → "דני כהן" and "דני לוי" — two, so the phone asks which).
      *
-     * Variants are tried in the order sent, and the first that matches anything
-     * decides. An empty list means no contact by that name: nothing is dialled.
+     * The first variant that matches anything decides. If it has fewer words
+     * than the fullest one, the match is `partial`. No candidates means no
+     * contact by that name: nothing is dialled.
      */
-    fun match(variants: List<String>, contacts: List<Contact>): List<Candidate> {
+    fun match(variants: List<String>, contacts: List<Contact>): Match {
         val usable = contacts
             .filter { it.numbers.isNotEmpty() && it.name.isNotBlank() }
             .map { it to normalize(it.name) }
-        val wanted = variants.map(::normalize).filter { it.isNotEmpty() }
+        // Stable: variants of equal length keep the order they were sent in.
+        val wanted = variants.map(::normalize).filter { it.isNotEmpty() }.sortedByDescending { words(it).size }
+        val fullest = wanted.firstOrNull()?.let { words(it).size } ?: 0
 
         for (variant in wanted) {
             val exact = usable.filter { (_, name) -> name == variant }
-            if (exact.isNotEmpty()) return candidatesOf(exact.map { it.first })
-        }
-
-        for (variant in wanted) {
-            val words = variant.split(' ')
-            val partial = usable.filter { (_, name) ->
-                val nameWords = name.split(' ').toSet()
-                words.all { it in nameWords }
+            val found = exact.ifEmpty {
+                val needed = words(variant)
+                usable.filter { (_, name) -> words(name).toSet().containsAll(needed) }
             }
-            if (partial.isNotEmpty()) return candidatesOf(partial.map { it.first })
+            if (found.isNotEmpty()) {
+                return Match(candidatesOf(found.map { it.first }), partial = words(variant).size < fullest)
+            }
         }
 
-        return emptyList()
+        return Match(emptyList(), partial = false)
     }
+
+    private fun words(text: String): List<String> = text.split(' ').filter { it.isNotEmpty() }
 
     private fun candidatesOf(contacts: List<Contact>): List<Candidate> =
         contacts.distinctBy { it.id }.map { Candidate(it.name, bestNumber(it.numbers)) }

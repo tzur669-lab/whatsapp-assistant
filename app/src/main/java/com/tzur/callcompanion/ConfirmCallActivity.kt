@@ -19,7 +19,9 @@ import android.widget.Toast
 /**
  * The confirmation, on the phone's own screen (PLAN §6.17). It shows who and
  * the resolved number; "חיוג" places the call from this SIM, "ביטול" does not.
- * With several matching contacts it lists them and the tap chooses one.
+ * With several matching contacts it lists them and the tap chooses one. A
+ * partial match — fewer words matched than were said — is always that list,
+ * even with one contact on it: "did you mean…?", never a sure match.
  *
  * Expiry is checked again here: a request is never acted on after its two
  * minutes, however long the notification lingered.
@@ -67,20 +69,31 @@ class ConfirmCallActivity : Activity() {
             setPadding(pad, pad, pad, pad)
         }
 
-        val single = request.candidates.singleOrNull()
+        val single = request.sure
         root.addView(TextView(this).apply {
-            text = if (single != null) getString(R.string.call_title, single.name) else getString(R.string.call_many_title)
+            text = when {
+                single != null -> getString(R.string.call_title, single.name)
+                request.partial -> getString(R.string.call_partial_title)
+                else -> getString(R.string.call_many_title)
+            }
             textSize = 26f
             setTypeface(typeface, Typeface.BOLD)
             gravity = Gravity.CENTER
         })
+        if (request.partial) {
+            root.addView(TextView(this).apply {
+                text = getString(R.string.call_partial_text, request.heard)
+                textSize = 18f
+                gravity = Gravity.CENTER
+            })
+        }
 
         request.candidates.forEachIndexed { index, candidate ->
             root.addView(Button(this).apply {
                 text = if (single != null) {
                     "${getString(R.string.action_dial)}  ${CallNotifier.ltr(candidate.number)}"
                 } else {
-                    "${candidate.name}\n${CallNotifier.ltr(candidate.number)}"
+                    "${getString(R.string.action_dial)} · ${candidate.name}\n${CallNotifier.ltr(candidate.number)}"
                 }
                 textSize = 20f
                 isAllCaps = false

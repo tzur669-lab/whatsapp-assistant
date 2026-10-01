@@ -45,10 +45,19 @@ object CallNotifier {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
 
-        val single = request.candidates.singleOrNull()
-        val title = if (single != null) context.getString(R.string.call_title, single.name) else context.getString(R.string.call_many_title)
+        // A partial match is never offered as a one-tap call, even with one candidate.
+        val single = request.sure
+        val title = when {
+            single != null -> context.getString(R.string.call_title, single.name)
+            request.partial -> context.getString(R.string.call_partial_title)
+            else -> context.getString(R.string.call_many_title)
+        }
         // The number is the fact that decides whether the right person is about to ring.
-        val text = if (single != null) ltr(single.number) else context.getString(R.string.call_many_text)
+        val text = when {
+            single != null -> ltr(single.number)
+            request.partial -> context.getString(R.string.call_partial_text, request.heard)
+            else -> context.getString(R.string.call_many_text)
+        }
 
         val publicVersion = Notification.Builder(context, CHANNEL)
             .setSmallIcon(R.drawable.ic_call)

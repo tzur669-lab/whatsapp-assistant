@@ -93,6 +93,7 @@
     <string name="card_no_connection">אין חיבור לשרת. אפשר להקיש שוב על ביצוע.</string>
     <string name="card_no_contact">לא נמצא בטלפון איש קשר מתאים.</string>
     <string name="card_choose_contact">למי לשלוח?</string>
+    <string name="card_partial_contact">לא נמצא השם המלא. למי לשלוח?</string>
     <string name="card_no_app">לא נמצאה בטלפון אפליקציה מתאימה.</string>
     <string name="card_choose_app">איזו אפליקציה לפתוח?</string>
     <string name="card_no_flash">בטלפון הזה אין פנס.</string>
@@ -106,6 +107,8 @@
     <string name="call_title">שיחה ל%1$s</string>
     <string name="call_many_title">למי להתקשר?</string>
     <string name="call_many_text">יש כמה אנשי קשר בשם הזה. הבחירה כאן.</string>
+    <string name="call_partial_title">התכוונת ל…?</string>
+    <string name="call_partial_text">לא נמצא איש קשר בשם %1$s. הבחירה כאן.</string>
     <string name="call_public_title">בקשת חיוג מהעוזר</string>
     <string name="action_dial">חיוג</string>
     <string name="action_cancel">ביטול</string>

@@ -47,6 +47,12 @@ contacts **by name only** (`ContactMatcher`), and shows the resolved number on a
 full-screen notification. It reports `{ matched, outcome }` and never a name or
 a number.
 
+It never picks between people on its own (0.4.1). The fullest words are tried
+first, so "יאיר אלע" never settles for every "יאיר". Several matching contacts
+are a list, each with its own dial button. A match on only part of what was said
+("יאיר אלע" when only "יאיר דוד" exists) is always that list too, titled
+"התכוונת ל…?", even with one contact on it. A message card follows the same rule.
+
 ## How a phone action goes (0.3, PLAN §6.20)
 
 An alarm, a timer, navigation, opening an app, a quick setting or a message
