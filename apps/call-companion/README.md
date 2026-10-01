@@ -152,7 +152,7 @@ the app declares `caps: ["cards", "device_query"]`.
    on Windows (`./gradlew assembleDebug` elsewhere), then install
    `app/build/outputs/apk/debug/app-debug.apk`. The server URL is
    `companionServerUrl` in `gradle.properties`.
-4. **Pair**: run `bot/scripts/set-staging-secrets.ps1 -PairCode`. It shows a
+4. **Pair**: run `scripts/set-staging-secrets.ps1 -PairCode` (in the repository root). It shows a
    20-character code once. Type it into the app, preferably over mobile data
    rather than the home Wi-Fi. The code itself is never sent: the app sends its
    public key and an HMAC, keyed by the code, over that key. Each code works
