@@ -43,7 +43,7 @@ SQLite schema, the reminder alarm, and every confirmation gate.
 - The alarm itself fires per reminder, not on a schedule.
 
 **Chat commands** — `/help`, `/status`, `/digest`, `/shabbat`, `/ical`, `/city`,
-`/birthday`, `/pause`, `/resume`, `/forget`, `/budget`, `/connect google`, `/pair`,
+`/birthday`, `/pause`, `/resume`, `/forget`, `/budget`, `/connect google|gmail|tasks|drive`, `/pair`,
 `/pair off`, `/ping`. In the app, `/budget` says there is no budget and `/pair`
 says to pair with a code from the script; `/pair off` unpairs this phone.
 `/city` sets the home city for weather and Shabbat times (Jerusalem until set).

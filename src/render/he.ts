@@ -16,7 +16,7 @@ const SYSTEM_COMMANDS = ['/help', '/status', '/digest', '/shabbat', '/ical', '/c
   .join(' · ');
 
 /** In the app there is no message budget, and a phone is paired with a code, not `/pair` (§6.18). */
-const APP_COMMANDS = ['/help', '/status', '/digest', '/shabbat', '/ical', '/city', '/birthday', '/pause', '/resume', '/forget', '/connect google', '/pair off']
+const APP_COMMANDS = ['/help', '/status', '/digest', '/shabbat', '/ical', '/city', '/birthday', '/pause', '/resume', '/forget', '/connect google', '/connect gmail', '/connect tasks', '/connect drive', '/pair off']
   .map(isolate)
   .join(' · ');
 
@@ -40,6 +40,7 @@ function helpText(channel: 'whatsapp' | 'app'): string {
     `לתקציר יומי: ${isolate('/digest 7')} — המספר הוא השעה. ביום ריק לא נשלחת הודעה.`,
     `לחיבור יומן חיצוני: ${isolate('/ical')} ואחריו קישור ה-ics.`,
     `מזג אוויר, לוח עברי וזמני שבת, שערי מטבע וחדשות: פשוט לשאול. העיר נקבעת ב${isolate('/city')}.`,
+    `מייל, רשימות ו־Drive: אחרי חיבור ב${isolate('/connect gmail')}, ${isolate('/connect tasks')}, ${isolate('/connect drive')}.`,
     `ימי הולדת: ${isolate('/birthday דנה 14.3')} — יופיעו בתקציר ביום עצמו.`,
     '',
     `פקודות מערכת: ${channel === 'app' ? APP_COMMANDS : SYSTEM_COMMANDS}`,
