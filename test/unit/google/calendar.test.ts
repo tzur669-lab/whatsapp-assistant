@@ -292,6 +292,14 @@ describe('calendar.list_events', () => {
     expect(endUtc - startUtc).toBe(24 * 60 * 60 * 1000);
   });
 
+  it('lists the whole of this week, from Sunday, not only what is still ahead', () => {
+    const outcome = calendarListEvents.resolve({ range: 'this_week' }, ctx);
+    if (outcome.kind !== 'ready') throw new Error('expected ready');
+    const { startUtc, endUtc } = outcome.input as { startUtc: number; endUtc: number };
+    expect(new Date(startUtc).toISOString()).toBe('2026-09-19T21:00:00.000Z'); // Sunday 20.9, 00:00
+    expect(new Date(endUtc).toISOString()).toBe('2026-09-26T21:00:00.000Z'); // Sunday 27.9, 00:00
+  });
+
   it('resolves a named day through the time rules', () => {
     const outcome = calendarListEvents.resolve({ date: { kind: 'relative_days', offset: 1 } }, ctx);
     if (outcome.kind !== 'ready') throw new Error('expected ready');

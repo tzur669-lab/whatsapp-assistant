@@ -45,7 +45,8 @@ export const calendarListEvents: ToolDefinition = {
     const range = slots.success ? slots.data.range : undefined;
 
     if (range) {
-      const { startUtc, endUtc } = resolveRange(range, ctx.nowMs);
+      // The whole range: "this week" includes the meetings already behind.
+      const { startUtc, endUtc } = resolveRange(range, ctx.nowMs, ZONE, { fromStart: true });
       return { kind: 'ready', input: { startUtc, endUtc } };
     }
 

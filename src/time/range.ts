@@ -19,7 +19,10 @@ import type { WallTime } from './tz.js';
 export type RangeName = 'this_week' | 'next_week' | 'weekend';
 
 export type ResolvedRange = {
-  /** Inclusive. Never earlier than `nowMs`, so a list never looks backwards. */
+  /**
+   * Inclusive. Never earlier than `nowMs`, so a list never looks backwards —
+   * unless `fromStart` asked for the whole range.
+   */
   startUtc: number;
   /** Exclusive: midnight at the start of the day after the range. */
   endUtc: number;
@@ -30,16 +33,34 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 const FRIDAY = 5;
 const SATURDAY = 6;
 
-export function resolveRange(range: RangeName, nowMs: number, zone: string = ZONE): ResolvedRange {
+export type RangeOptions = {
+  /**
+   * Start at the range's first midnight rather than now. A calendar asked about
+   * "this week" means the meetings already behind too; a reminder list does not
+   * want the ones that already fired.
+   */
+  fromStart?: boolean;
+};
+
+export function resolveRange(
+  range: RangeName,
+  nowMs: number,
+  zone: string = ZONE,
+  options: RangeOptions = {},
+): ResolvedRange {
   const now = localPartsOf(nowMs, zone);
   const today: WallTime = { ...now, hour: 0, minute: 0 };
+  const fromStart = options.fromStart === true;
 
   switch (range) {
     case 'this_week': {
       // From now to the end of Saturday. Starting at midnight would list
       // reminders that have already fired.
       const endsAfter = SATURDAY - now.weekday;
-      return { startUtc: nowMs, endUtc: midnightUtc(addDays(today, endsAfter + 1), zone) };
+      return {
+        startUtc: fromStart ? midnightUtc(addDays(today, -now.weekday), zone) : nowMs,
+        endUtc: midnightUtc(addDays(today, endsAfter + 1), zone),
+      };
     }
 
     case 'next_week': {
@@ -57,7 +78,7 @@ export function resolveRange(range: RangeName, nowMs: number, zone: string = ZON
       const friday = addDays(today, daysToFriday);
       const start = midnightUtc(friday, zone);
       return {
-        startUtc: Math.max(start, nowMs),
+        startUtc: fromStart ? start : Math.max(start, nowMs),
         endUtc: midnightUtc(addDays(friday, 2), zone),
       };
     }

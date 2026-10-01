@@ -47,6 +47,27 @@ describe('this_week', () => {
   });
 });
 
+describe('a whole range, for the calendar', () => {
+  it('starts this_week at midnight opening Sunday, so earlier meetings are listed', () => {
+    const { startUtc, endUtc } = resolveRange('this_week', THURSDAY_NOON, ZONE, { fromStart: true });
+    const start = parts(startUtc);
+    expect([start.weekday, start.day, start.hour, start.minute]).toEqual([0, 20, 0, 0]);
+    expect(endUtc).toBe(resolveRange('this_week', THURSDAY_NOON).endUtc);
+  });
+
+  it('starts the weekend at midnight opening Friday, even on Saturday', () => {
+    const saturday = Date.parse('2026-09-26T09:00:00Z');
+    const start = parts(resolveRange('weekend', saturday, ZONE, { fromStart: true }).startUtc);
+    expect([start.weekday, start.day, start.hour]).toEqual([5, 25, 0]);
+  });
+
+  it('leaves next_week as it is', () => {
+    expect(resolveRange('next_week', THURSDAY_NOON, ZONE, { fromStart: true })).toEqual(
+      resolveRange('next_week', THURSDAY_NOON),
+    );
+  });
+});
+
 describe('next_week', () => {
   it('runs Sunday to Saturday of the following week', () => {
     const { startUtc, endUtc } = resolveRange('next_week', THURSDAY_NOON);
