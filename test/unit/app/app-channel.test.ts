@@ -654,9 +654,10 @@ describe('the app channel', () => {
       expect(report.workerRequests.used).toBeGreaterThanOrEqual(3);
       expect(report.workerRequests.limit).toBe(100_000);
 
-      // This server's own limits, which no Groq header shows.
+      // This server's own limits, which no Groq header shows; the minute is
+      // Groq's own reading while fresh (2026-10-05): 8,000 - 7,060.
       expect(report.server.turnTokenCap).toBe(7_000);
-      expect(report.server.minute[0]).toMatchObject({ used: 940, limit: 7_500, blockedUntil: null });
+      expect(report.server.minute[0]).toMatchObject({ used: 940, limit: 8_000, blockedUntil: null });
       expect(report.server.lastFailure).toBeNull();
       expect(report.server.fallbacksToday).toBe(0);
     });
@@ -667,8 +668,9 @@ describe('the app channel', () => {
       await say(phone, 'מה נשמע?');
       fake.driver.exec("INSERT OR REPLACE INTO settings (key, value) VALUES ('last_error_code', 'E_AGENT_BUDGET_EXHAUSTED')");
       const report = await quota(phone);
-      // Groq said 8,000; a margin under it, and never over the 7,500 assumed.
-      expect(report.server.minute[0]!.limit).toBe(7_500);
+      // Groq said 8,000, and its own reading is what the minute shows while
+      // fresh (2026-10-05); the 500 margin is kept inside fits(), not shown.
+      expect(report.server.minute[0]!.limit).toBe(8_000);
       expect(report.server.lastFailure).toEqual({ code: 'E_AGENT_BUDGET_EXHAUSTED', at: null });
     });
 

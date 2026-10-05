@@ -1391,11 +1391,31 @@ with `retry-after` over 60 s sets that model aside until then (the header-only
 rule of `groq.ts` stands — the body may quote the prompt). The parser fallback
 spends from the same meter and skips an exhausted model. Rough capacity: 70–120
 turns a day per model; commands, confirmations and answers to a code question
-cost no tokens.
+cost no tokens. **Since 2026-10-05 Groq's own reading wins while fresh:** every
+Groq answer's `x-ratelimit-remaining-tokens` / `-reset-tokens` is stored per model
+and, for a minute, refilled in a straight line to the limit by its reset time;
+`fits` uses that, 500 under it, instead of this server's count (which ran ahead
+of Groq's and refused a second message 14 s after a turn). Measured: the header
+already takes off the call that carried it, prompt plus reserved `max_tokens`. A
+short 429 empties the reading until its reset. The quota screen shows the same
+reading (its "used" is Groq's, without the margin).
 
 **Failure.** The parser runs **only when no tool ran** in the turn; a fallback
 after a tool ran would run the message twice. A read that completed before the
 model failed is answered with its own code-rendered text.
+
+**Read-only fallback model** (2026-10-05, the user's decision). When qwen could
+not take the turn (out of budget, 429, an error — not `turn_token_cap` or
+`max_calls`, which another model would hit too) and the parser found no tool in
+the words (`unsupported`), the turn is tried once more on gpt-oss-120b,
+**read-only**: offered Tier 0 reads that answer here and now (calendar,
+reminders, lookups, mail/tasks/drive per grant) and nothing else — no write, no
+card, no phone read — and told so in one prompt line (`READ_ONLY_NOTE`). Code
+enforces it: a tool not offered is refused as unknown and nothing runs. It does
+not supersede a waiting phone turn and gives up quietly if a newer message holds
+the lock. It counts as one fallback (the first try's), and if it fails too the
+reply names the first failure. The model receives what qwen would: the words,
+the encrypted short history, scrubbed read results — same Groq account, ZDR on.
 
 **Taint.** A read of text someone else wrote (`calendar.list_events`: invitations,
 iCal feeds) taints the turn. `PolicyContext.tainted` adds `tainted` to the
@@ -2304,6 +2324,14 @@ failure this system exists to prevent. **It is not an agent model** (§13); it
 stays the parser's fallback, where strict structured output constrains it.
 **Before `AGENT=on`:** a full qwen run (`--resume` until all 166 + 5 answer).
 
+**Read-only fallback, gpt-oss-120b, prompt a4 + `READ_ONLY_NOTE`, 2026-10-05**
+(`pnpm eval:agent --model openai/gpt-oss-120b --read-only --sample 40`, from the
+hotspot; 12 of 40 and 1 of 13 injection lost to 10 s connection timeouts): 28 + 12
+answered. Read tool choice 7/7, invented slots in reads 0, a write asked for →
+text 100% (reached for a write: 0), injection → write 0. Off-topic → text 2/3:
+the third, `en-unsup-001`, asks for tomorrow's weather, which `info.lookup` now
+reads — right since the lookup tool, the case's label predates it.
+
 **Phone actions, prompt a2, qwen, 2026-10-01** (`cases.phone.yaml`, 16 cases, card
 tools offered): 12 answered (4 network or rate-limit), every gate 100%, schema
 rejections 0. Three asked in text instead of guessing a missing time, duration or
@@ -2355,7 +2383,7 @@ measured on the app channel. To finish with `--resume`.
 - [x] **Primary model: `qwen3.8-27b`; fallback: `gpt-oss-120b`** (2026-09-27, the user's decision). qwen met every accuracy threshold on v5. gpt-oss-120b reached 20 of 156 cases before the free tier's rolling budget stalled it, with no schema refusals after the 400 repair retry; finishing it would have held every prompt change for about two more days. It is the fallback per §4, and its partial recording is kept. Open: latency — the hotspot measurements (p95 1–10 s) are not the Worker's, and the 8 s timeout will cut qwen off if staging shows it is slow.
 - [x] **A full agent with access to my data, kept secure** (2026-10-01, the user): calendar, reminders, birthdays, contacts, Gmail read-only, notifications and SMS; phone actions alarm/timer, SMS/WhatsApp compose, navigation and opening apps, quick settings. **Model: Groq free tier**, as before (§6.19).
 - [x] **Groq Zero Data Retention is a precondition for `AGENT=on`** (2026-10-01): the agent sends calendar titles and history. **Enabled by the user, 2026-10-01.**
-- [x] **The agent runs on `qwen3.8-27b` only** (2026-10-01, measured, §11.11). gpt-oss-120b invented times and titles in tool calls (93.3% / 66.7% on the two hard gates). When qwen is out of budget the turn falls back to the parser chain, gpt-oss-120b included, under strict structured output.
+- [x] **The agent runs on `qwen3.8-27b`; gpt-oss-120b only read-only** (2026-10-01, measured, §11.11; amended 2026-10-05, the user's decision). gpt-oss-120b invented times and titles in tool calls (93.3% / 66.7% on the two hard gates), so it is never offered a write. When qwen is out of budget the turn falls back to the parser chain, gpt-oss-120b included, under strict structured output; when the parser finds no tool, gpt-oss-120b answers read-only (§6.19).
 - [ ] A full qwen agent run (all 166 + 5) before `AGENT=on`.
 - [x] **`app_outbox` text stays plaintext for its 24 h TTL** (2026-10-01, accepted risk): Durable Object storage is encrypted at rest by Cloudflare, and the rows are deleted on ack.
 - [ ] Phase C: on Android 13+ a sideloaded app needs "Allow restricted settings" before notification access can be granted. Built with a note on the settings screen (§6.21); **verify on the device**. Play policy on `READ_SMS` does not apply to a sideloaded app.
@@ -2549,6 +2577,7 @@ measured on the app channel. To finish with `--resume`.
 | 2026-10-01 | **YouTube and YouTube Music: `media.play`** (the user's request; app 0.8.1). An action card like `app.open`, Tier 1, auto-run: `{type:'media', app: youtube|youtube_music, query ≤100, mode: background|fullscreen}`. The phone asks the app to play its best match for the words — the intent Google Assistant uses — and falls back to the app's search, then the web search page; no YouTube API, key or Google scope, and nothing leaves the phone but to the app. **Background or full screen is asked when the user did not say** (`phone_missing: play_mode`), because either wrong guess is felt at once. Background starts the player and brings this app back in front of it 3 s later, inside Android's grace for an app just in front; YouTube keeps playing behind it only with Premium, which the toast says. "Full screen" opens the player in front; the app itself decides whether the video goes landscape. Three agent eval cases (`ph-media-001…003`) — `pnpm eval:agent` to be run by the user |
 | 2026-10-01 | **`media.play`: no default app** (the user's request). A song plays on YouTube Music and a video on YouTube; the model sets `app` from the words and leaves it out when they say neither, and code then asks "YouTube (a video) or YouTube Music (a song)?" (`phone_missing: media_app`) instead of defaulting to YouTube. With the mode also missing, one question asks both (`media_app_mode`). Eval case `ph-media-004` added, `-003` now a song |
 | 2026-10-05 | **Fix: YouTube opened nothing** (the user's report; app 0.8.2). Two causes, found on the phone: (1) the app's closed list of card types lacked `media`, so the card was dropped as off-shape and never ran; (2) YouTube and YouTube Music both accept `MEDIA_PLAY_FROM_SEARCH` and ignore it — the home screen opens, nothing plays. The card now opens the app's own search with the words (YouTube `ACTION_SEARCH`, YouTube Music its search link, the web page as a last resort), and playing is a tap on the result; background no longer brings this app back over the results. ColorOS asks once whether the assistant may open each app |
+| 2026-10-05 | **The backup model answers, read-only, and Groq's own minute counts** (the user's report: "the fallback models are only shown, and the minute limit is always there"). Measured on staging: a second question 14 s after a 3,344-token turn was refused by this server's minute meter while Groq still had room (the qwen parser call right after succeeded), and the parser, unable to answer a question, gave the minute-limit message; gpt-oss-120b had not been called in 81 hours. Now (1) the budget trusts Groq's `x-ratelimit-*-tokens` reading while fresh (§6.19 Budget); (2) after qwen fails and the parser says `unsupported`, gpt-oss-120b answers read-only (§6.19, §13). `pnpm eval:agent --read-only` scores that turn on its own terms (§11.11). The user chose read-only over a full fallback because of §11.11's invented times |
 
 ---
 

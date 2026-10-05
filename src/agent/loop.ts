@@ -35,7 +35,7 @@ import type { PhoneReadInput, PhoneReadResult } from '../tools/phone-reads.js';
 import { phoneReadRefused, phoneReadText } from '../render/phone-reads.js';
 import type { TokenBudget } from './budget.js';
 import type { HistoryEntry } from './history.js';
-import { nowLine, SYSTEM_PROMPT } from './prompt.js';
+import { nowLine, READ_ONLY_NOTE, SYSTEM_PROMPT } from './prompt.js';
 import type { AgentMessage, AgentProvider, ToolCall, WireTool } from './provider.js';
 import { wireToolCall } from './provider.js';
 import { agentToolNames, fromWireName, TAINTING_TOOLS, wireTools } from './tools.js';
@@ -72,6 +72,11 @@ export type AgentTurnInput = {
   phoneReads?: boolean;
   /** Which Google grants are connected, so only their tools are offered (2026-10-01). */
   grants?: { gmail?: boolean; tasks?: boolean; drive?: boolean };
+  /**
+   * The fallback model's turn (2026-10-05): reads only, and the model is told
+   * so. Code enforces it — a tool not offered is refused as unknown.
+   */
+  readOnly?: boolean;
 };
 
 /**
@@ -143,17 +148,22 @@ type Loop = {
 
 export async function runAgentTurn(input: AgentTurnInput, deps: AgentDeps): Promise<AgentResult> {
   const { budget } = deps;
-  const cards = input.cards === true;
+  const readOnly = input.readOnly === true;
+  const cards = !readOnly && input.cards === true;
   const offered: ToolName[] = agentToolNames({
     cards,
-    phoneReads: input.phoneReads === true,
+    phoneReads: !readOnly && input.phoneReads === true,
     ...(input.grants ? { grants: input.grants } : {}),
+    ...(readOnly ? { readOnly } : {}),
   });
   const tools = wireTools(offered);
   const toolChars = JSON.stringify(tools).length;
   const tainted = input.history.some((entry) => entry.tainted) || input.turn.tainted === true;
 
-  const messages: AgentMessage[] = [{ role: 'system', content: SYSTEM_PROMPT }];
+  const messages: AgentMessage[] = [
+    { role: 'system', content: readOnly ? `${SYSTEM_PROMPT}
+${READ_ONLY_NOTE}` : SYSTEM_PROMPT },
+  ];
   for (const entry of input.history) {
     messages.push({ role: 'user', content: entry.user });
     messages.push({ role: 'assistant', content: entry.reply });

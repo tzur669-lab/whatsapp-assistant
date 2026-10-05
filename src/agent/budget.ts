@@ -9,9 +9,16 @@
  * Memory only. A Durable Object that is evicted forgets the last minute, which
  * at worst costs one 429 — and a 429 is handled. The daily limit is learned the
  * only way Groq reveals it: a `retry-after` of minutes rather than seconds.
+ *
+ * Groq's own reading of the minute bucket, from the headers of its last answer,
+ * is trusted over this server's count while it is fresh (2026-10-05). This
+ * server's estimate ran ahead of Groq's: a second message 14 s after a turn was
+ * refused here while Groq still had room. Measured: the header already takes off
+ * the call that carried it, prompt plus its reserved `max_tokens`.
  */
 
 import type { NluProvider } from '../nlu/provider.js';
+import type { Bucket } from '../core/quota.js';
 
 /** Below Groq's 8,000, so an estimate that runs a little short still fits. */
 export const MINUTE_TOKEN_LIMIT = 7_500;
@@ -24,6 +31,12 @@ const DAILY_SIGNAL_SECONDS = 60;
 const LEARNED_LIMIT_MARGIN = 500;
 
 type Spend = { at: number; tokens: number };
+
+/** Groq's minute bucket as its last answer reported it. */
+type Observation = Bucket & { observedAt: number };
+
+/** A reading this old is past any reset Groq can report; the bucket is full again. */
+const OBSERVATION_TTL_MS = WINDOW_MS;
 
 /** One model's state as this server sees it, for the quota screen. */
 export type BudgetSnapshot = {
@@ -41,6 +54,7 @@ export class TokenBudget {
   private readonly spends = new Map<string, Spend[]>();
   private readonly exhaustedUntil = new Map<string, number>();
   private readonly learnedLimits = new Map<string, number>();
+  private readonly observations = new Map<string, Observation>();
 
   constructor(
     private readonly now: () => number,
@@ -81,13 +95,58 @@ export class TokenBudget {
     return Math.max(0, Math.min(MINUTE_TOKEN_LIMIT, learned - LEARNED_LIMIT_MARGIN));
   }
 
+  /** Groq's own reading of a model's minute bucket, from its response headers. */
+  observe(model: string, bucket: Bucket): void {
+    if (!Number.isInteger(bucket.limit) || bucket.limit <= 0) return;
+    this.observations.set(model, { ...bucket, observedAt: this.now() });
+  }
+
+  /**
+   * Groq's bucket now: the reading, refilled in a straight line to the limit by
+   * its reset time. Null when there is no fresh reading.
+   */
+  private observedRoom(model: string): { limit: number; room: number; resetAt: number } | null {
+    const seen = this.observations.get(model);
+    if (!seen) return null;
+    const now = this.now();
+    if (now - seen.observedAt >= OBSERVATION_TTL_MS) {
+      this.observations.delete(model);
+      return null;
+    }
+    const limit = Math.min(seen.limit, MINUTE_TOKEN_LIMIT + LEARNED_LIMIT_MARGIN);
+    const remaining = Math.min(seen.remaining, limit);
+    const span = seen.resetAt - seen.observedAt;
+    const refilled =
+      now >= seen.resetAt || span <= 0
+        ? limit
+        : remaining + ((limit - remaining) * (now - seen.observedAt)) / span;
+    return { limit, room: Math.floor(Math.min(limit, refilled)), resetAt: seen.resetAt };
+  }
+
+  /** Tokens a call may take now: Groq's own bucket while fresh, else this server's window. */
+  available(model: string): number {
+    const observed = this.observedRoom(model);
+    if (observed) return Math.max(0, observed.room - LEARNED_LIMIT_MARGIN);
+    return Math.max(0, this.limitFor(model) - this.usedInWindow(model));
+  }
+
   /** Would a call estimated at `tokens` fit this model's minute bucket now? */
   fits(model: string, tokens: number): boolean {
-    return !this.isExhausted(model) && this.usedInWindow(model) + tokens <= this.limitFor(model);
+    return !this.isExhausted(model) && tokens <= this.available(model);
   }
 
   snapshot(models: readonly string[]): BudgetSnapshot[] {
     return models.map((model) => {
+      const observed = this.observedRoom(model);
+      if (observed) {
+        return {
+          model,
+          used: observed.limit - observed.room,
+          limit: observed.limit,
+          freesAt: observed.room < observed.limit ? observed.resetAt : null,
+          blockedUntil: this.isExhausted(model) ? (this.exhaustedUntil.get(model) ?? null) : null,
+        };
+      }
       const used = this.usedInWindow(model);
       const oldest = this.spends.get(model)?.[0];
       return {
@@ -130,6 +189,15 @@ export class TokenBudget {
     // Fill the window so the next turn waits out the minute instead of retrying
     // into it. Not a spend: nothing was billed.
     this.fill(model, this.limitFor(model));
+    // The 429's own headers were read first; Groq's bucket is empty until its
+    // reset, whatever they said.
+    const seen = this.observations.get(model);
+    if (seen) {
+      this.observations.set(model, { ...seen, remaining: 0, observedAt: this.now() });
+    } else {
+      const resetAt = this.now() + Math.max(seconds, 1) * 1000;
+      this.observations.set(model, { limit: MINUTE_TOKEN_LIMIT + LEARNED_LIMIT_MARGIN, remaining: 0, resetAt, observedAt: this.now() });
+    }
   }
 }
 

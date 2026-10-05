@@ -67,11 +67,17 @@ export type OfferOptions = {
    * a grant not connected is the common case.
    */
   grants?: { gmail?: boolean; tasks?: boolean; drive?: boolean };
+  /**
+   * The fallback model's turn (2026-10-05): Tier 0 reads that answer here and
+   * now, nothing else — no write, no card, no phone read.
+   */
+  readOnly?: boolean;
 };
 
 export function agentToolNames(options: OfferOptions = { cards: false }): ToolName[] {
   return TOOL_NAMES.filter((name) => {
     const spec = REGISTRY[name];
+    if (options.readOnly && (spec.tier !== 0 || spec.phoneRead || spec.confirmation === 'card')) return false;
     if (name.startsWith('mail.')) return options.grants?.gmail === true;
     if (name.startsWith('tasks.')) return options.grants?.tasks === true;
     if (name.startsWith('drive.')) return options.grants?.drive === true;

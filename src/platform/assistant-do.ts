@@ -205,6 +205,8 @@ export class AssistantDO implements DurableObject {
         this.quota.recordLimits(model, limits);
         // Groq's own minute limit, when lower than the one assumed (2026-10-01).
         if (limits.minuteTokens) this.tokenBudget.learnMinuteLimit(model, limits.minuteTokens.limit);
+        // And its reading of the bucket now, trusted over this server's count (2026-10-05).
+        if (limits.minuteTokens) this.tokenBudget.observe(model, limits.minuteTokens);
       },
       now,
     );
@@ -1482,12 +1484,18 @@ export class AssistantDO implements DurableObject {
       ...(agentEnabled(this.env) && this.env.GROQ_API_KEY
         ? {
             agent: {
-              // qwen only. gpt-oss-120b invents times as an agent ("when I get
+              // qwen for every turn. gpt-oss-120b invents times as an agent ("when I get
               // home" → today 21:00; 93% no-invented-slots on the corpus,
               // 2026-10-01). It stays the parser's fallback, where strict
               // structured output constrains it (§6.19, §13).
               providers: [
                 createGroqAgentProvider({ apiKey: this.env.GROQ_API_KEY, model: PRIMARY_MODEL, fetchImpl: this.groqFetch }),
+              ],
+              // Read-only, after qwen could not take the turn and the parser
+              // found no tool (2026-10-05, the user's decision): it answers
+              // questions and reads, and is offered nothing that writes.
+              fallbackProviders: [
+                createGroqAgentProvider({ apiKey: this.env.GROQ_API_KEY, model: SECONDARY_MODEL, fetchImpl: this.groqFetch }),
               ],
               budget: this.tokenBudget,
               history: this.history,

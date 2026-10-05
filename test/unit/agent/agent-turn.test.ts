@@ -70,10 +70,12 @@ describe('an agent turn', () => {
   let log: ReturnType<typeof createFakeLogger>;
   let nlu: FakeNlu;
   let agent: FakeAgent;
+  let fallback: FakeAgent | undefined;
   let calendar: CalendarClient | undefined;
 
-  const deps = (steps: FakeStep[], parserScript: unknown[] = []): PipelineDeps => {
+  const deps = (steps: FakeStep[], parserScript: unknown[] = [], fallbackSteps?: FakeStep[]): PipelineDeps => {
     agent = createFakeAgent(steps);
+    fallback = fallbackSteps ? createFakeAgent(fallbackSteps, 'fake-fallback') : undefined;
     nlu = createFakeNlu(parserScript.length > 0 ? parserScript : [draft('unsupported')]);
     const services: Services = {
       reminders,
@@ -82,7 +84,7 @@ describe('an agent turn', () => {
       deferred,
       nlu: [nlu],
       ...(calendar ? { calendar } : {}),
-      agent: { providers: [agent], budget, history, lock },
+      agent: { providers: [agent], ...(fallback ? { fallbackProviders: [fallback] } : {}), budget, history, lock },
     };
     return { repo, log, now: () => NOW, principal: PRINCIPAL, services, channel: 'app' };
   };
@@ -508,6 +510,61 @@ describe('an agent turn', () => {
       const answered = await handleInbound(text('6'), withCards([], ['cards']));
       if (answered.action !== 'reply') throw new Error('expected a reply');
       expect(answered.card).toMatchObject({ type: 'alarm' });
+    });
+  });
+  describe('the read-only fallback model (2026-10-05)', () => {
+    const limited: FakeStep = { error: 'rate_limited', retryAfterSeconds: 5 };
+    const fallbacksToday = () => repo.counters(Repository.dayKey(NOW)).fallbacks;
+
+    it('answers a question when the primary is out and the parser found no tool', async () => {
+      const out = await handleInbound(text('מה בירת צרפת?'), deps([limited], [draft('unsupported', {})], [{ text: 'פריז.' }]));
+      expect(out).toMatchObject({ action: 'reply', text: 'פריז.' });
+      expect(fallback!.calls).toHaveLength(1);
+      // Counted once, for the primary that failed.
+      expect(fallbacksToday()).toBe(1);
+    });
+
+    it('is offered reads only, and told it cannot change anything', async () => {
+      await handleInbound(text('מה בירת צרפת?'), deps([limited], [draft('unsupported', {})], [{ text: 'פריז.' }]));
+      const names = fallback!.tools[0]!.map((tool) => tool.function.name);
+      expect(names).toContain('reminders__list');
+      expect(names).not.toContain('reminders__create');
+      expect(names.some((name) => name.startsWith('alarm__') || name.startsWith('phone__'))).toBe(false);
+      expect(fallback!.calls[0]![0]!.content).toContain('cannot create, change or delete');
+    });
+
+    it('cannot run a write it was not offered', async () => {
+      const out = await handleInbound(
+        text('תזכיר לי לקנות חלב'),
+        deps([limited], [draft('unsupported', {})], [
+          { tool: 'reminders.create', args: { text: 'לקנות חלב', ...TOMORROW_AT_EIGHT_PM } },
+          { text: 'אי אפשר כרגע.' },
+        ]),
+      );
+      expect(out).toMatchObject({ action: 'reply', text: 'אי אפשר כרגע.' });
+      expect(reminders.listUpcoming(PRINCIPAL)).toHaveLength(0);
+    });
+
+    it('is not asked when the parser found a tool', async () => {
+      await handleInbound(
+        text('תזכיר לי מחר ב-8 בערב לקנות חלב'),
+        deps([limited], [draft('reminders.create', { text: 'לקנות חלב', ...TOMORROW_AT_EIGHT_PM })], [{ text: 'x' }]),
+      );
+      expect(fallback!.calls).toHaveLength(0);
+      expect(reminders.listUpcoming(PRINCIPAL)).toHaveLength(1);
+    });
+
+    it('is not asked when the turn was too long rather than the model out', async () => {
+      const unknown: FakeStep = { tool: 'nothing.here', args: {} };
+      const out = await handleInbound(text('בלה'), deps([unknown, unknown, unknown], [draft('unsupported', {})], [{ text: 'x' }]));
+      expect(fallback!.calls).toHaveLength(0);
+      expect(out).toMatchObject({ action: 'reply', text: he.agentFailed('max_calls') });
+    });
+
+    it("names the primary's failure when the fallback fails too, counting it once", async () => {
+      const out = await handleInbound(text('מה בירת צרפת?'), deps([limited], [draft('unsupported', {})], [{ error: 'timeout' }]));
+      expect(out).toMatchObject({ action: 'reply', text: he.agentFailed('rate_limited') });
+      expect(fallbacksToday()).toBe(1);
     });
   });
 });

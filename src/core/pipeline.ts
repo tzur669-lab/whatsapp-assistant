@@ -74,6 +74,11 @@ import type { PhoneReadInput, PhoneReadResult } from '../tools/phone-reads.js';
 export type AgentServices = {
   /** In order of preference. A turn runs on one of them. */
   providers: readonly AgentProvider[];
+  /**
+   * Asked, read-only, when none of `providers` could take the turn and the
+   * parser found no tool in the words (2026-10-05).
+   */
+  fallbackProviders?: readonly AgentProvider[];
   budget: TokenBudget;
   history: ConversationHistory;
   lock: AgentLock;
@@ -460,6 +465,14 @@ async function respondToText(
   // The agent answers what no tool covers; the parser cannot. After the agent
   // failed, "unsupported" is the failure speaking, not the wording.
   if (agentFailure !== null && parsed.draft.intent === 'unsupported') {
+    // The fallback model may still answer — a question, or a read — but
+    // never act: it is offered reads only (2026-10-05). Not when the turn
+    // itself was the problem: it would be as long on the other model.
+    const agent = deps.services.agent;
+    if (agent?.fallbackProviders?.length && !TURN_SHAPE_FAILURES.has(agentFailure)) {
+      const answered = await respondWithAgent(agent, text, source, event, deps, now, { readOnly: true });
+      if (!('fellBack' in answered)) return answered;
+    }
     repo.markInboundOutcome(event.wamid, { decision: 'CLARIFY', errorCode: `E_AGENT_${agentFailure.toUpperCase()}` });
     return { action: 'reply', text: he.agentFailed(agentFailure) };
   }
@@ -483,6 +496,9 @@ async function respondToText(
   return replyOutcome(reply, deps);
 }
 
+/** Failures of the turn itself, not of the model: another model would hit them too. */
+const TURN_SHAPE_FAILURES: ReadonlySet<string> = new Set(['turn_token_cap', 'max_calls']);
+
 /**
  * One agent turn (PLAN §6.19). Returns `fellBack`, with why, to hand the
  * message to the parser — only ever when no tool ran, so the fallback cannot
@@ -499,11 +515,23 @@ async function respondWithAgent(
   event: Extract<InboundEvent, { kind: 'text' | 'audio' }>,
   deps: PipelineDeps,
   now: number,
+  /** The fallback model's read-only second try (2026-10-05). */
+  options: { readOnly?: boolean } = {},
 ): Promise<PipelineOutcome | { fellBack: string }> {
   const { repo, log, principal } = deps;
   const turnId = event.wamid;
+  const readOnly = options.readOnly === true;
 
-  if (!agent.lock.acquire(principal, turnId)) {
+  if (readOnly) {
+    // The lock was let go after the first try. A newer message that took it
+    // since, or left a turn waiting for the phone, is what the user is on now:
+    // this one gives up quietly rather than cancel or overtake it. Checked and
+    // taken in one synchronous step, before any await.
+    if (agent.turns?.hasWaiting(principal) || !agent.lock.acquire(principal, turnId)) {
+      log.info('agent_fallback_skipped', { wamid: event.wamid });
+      return { fellBack: 'busy' };
+    }
+  } else if (!agent.lock.acquire(principal, turnId)) {
     log.info('agent_busy', { wamid: event.wamid });
     repo.markInboundOutcome(event.wamid, { decision: 'CLARIFY', errorCode: 'E_AGENT_BUSY' });
     return { action: 'reply', text: he.agentBusy };
@@ -511,7 +539,7 @@ async function respondWithAgent(
 
   // A turn left waiting for the phone is not going to be continued now: this
   // newer message is what the user is talking about (§6.21).
-  agent.turns?.supersede(principal);
+  if (!readOnly) agent.turns?.supersede(principal);
 
   try {
     const lang = languageOf(text);
@@ -536,13 +564,15 @@ async function respondWithAgent(
             tasks: deps.services?.tasks !== undefined,
             drive: deps.services?.drive !== undefined,
           },
+          // Ignored on the read-only try, which is offered neither.
+          readOnly,
           phoneReads:
             agent.turns !== undefined &&
             source.kind === 'text' &&
             deps.channel === 'app' &&
             (deps.deviceCaps ?? []).includes('device_query'),
         },
-        { providers: agent.providers, budget: agent.budget, log },
+        { providers: readOnly ? (agent.fallbackProviders ?? []) : agent.providers, budget: agent.budget, log },
       ),
     );
 
@@ -563,6 +593,7 @@ async function respondWithAgent(
       deps,
       now,
       conversation,
+      readOnly,
     );
     if (settled) return settled;
     return { fellBack: result.kind === 'failed' ? result.errorCode : 'unknown' };
@@ -584,6 +615,8 @@ async function settleAgentResult(
   now: number,
   /** The app's conversation, '' for the shared thread. */
   conversation: string,
+  /** The read-only second try: the first already counted the fallback and its code. */
+  secondTry = false,
 ): Promise<PipelineOutcome | null> {
   const { repo, log, principal } = deps;
   const agent = deps.services?.agent;
@@ -595,8 +628,10 @@ async function settleAgentResult(
   }
 
   if (result.kind === 'failed') {
-    repo.bumpCounter(Repository.dayKey(now), 'fallbacks');
-    repo.setLastErrorCode(`E_AGENT_${result.errorCode.toUpperCase()}`, now);
+    if (!secondTry) {
+      repo.bumpCounter(Repository.dayKey(now), 'fallbacks');
+      repo.setLastErrorCode(`E_AGENT_${result.errorCode.toUpperCase()}`, now);
+    }
     log.info('agent_failed', { wamid, errorCode: result.errorCode, toolRan: result.toolRan });
     if (!result.toolRan) return null;
 

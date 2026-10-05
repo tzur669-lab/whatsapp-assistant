@@ -80,6 +80,72 @@ describe('TokenBudget', () => {
   });
 });
 
+describe("TokenBudget trusts Groq's own minute bucket (2026-10-05)", () => {
+  // Measured: the header already subtracts the call that carried it, prompt
+  // plus its reserved max_tokens (8000 - 615 - 50 = 7335).
+  const seen = (now: number, remaining: number, resetInMs: number) => ({
+    limit: 8_000,
+    remaining,
+    resetAt: now + resetInMs,
+  });
+
+  it("admits a turn Groq has room for, though this server's own window is full", () => {
+    const c = clock();
+    const budget = new TokenBudget(c.now);
+    budget.record('m', 3_344);
+    budget.observe('m', seen(c.now(), 4_600, 25_000));
+    c.advance(14_000);
+    // 4,600 + 3,400 * 14/25 = 6,504 refilled, 500 under it.
+    expect(budget.available('m')).toBe(6_004);
+    expect(budget.fits('m', 3_800)).toBe(true);
+    expect(budget.fits('m', 6_100)).toBe(false);
+  });
+
+  it('refills to the limit, less the margin, once the reset has passed', () => {
+    const c = clock();
+    const budget = new TokenBudget(c.now);
+    budget.observe('m', seen(c.now(), 1_000, 10_000));
+    c.advance(10_000);
+    expect(budget.available('m')).toBe(7_500);
+  });
+
+  it("goes back to this server's own window when the reading is over a minute old", () => {
+    const c = clock();
+    const budget = new TokenBudget(c.now);
+    budget.observe('m', seen(c.now(), 0, 60_000));
+    c.advance(61_000);
+    budget.record('m', 7_000);
+    expect(budget.available('m')).toBe(MINUTE_TOKEN_LIMIT - 7_000);
+  });
+
+  it('a short 429 empties the observed bucket and keeps its reset time', () => {
+    const c = clock();
+    const budget = new TokenBudget(c.now);
+    budget.observe('m', seen(c.now(), 2_000, 20_000));
+    budget.rateLimited('m', 3);
+    expect(budget.available('m')).toBe(0);
+    expect(budget.fits('m', 100)).toBe(false);
+    c.advance(10_000);
+    // Half way to the observed reset: 8,000 / 2, less the margin.
+    expect(budget.available('m')).toBe(3_500);
+  });
+
+  it('shows the quota screen the same room that fits() uses', () => {
+    const c = clock();
+    const budget = new TokenBudget(c.now);
+    budget.observe('m', seen(c.now(), 4_000, 30_000));
+    const [snap] = budget.snapshot(['m']);
+    expect(snap).toMatchObject({ used: 4_000, limit: 8_000, freesAt: c.now() + 30_000 });
+  });
+
+  it('ignores a reading without a usable limit', () => {
+    const c = clock();
+    const budget = new TokenBudget(c.now);
+    budget.observe('m', { limit: 0, remaining: 0, resetAt: c.now() + 1_000 });
+    expect(budget.available('m')).toBe(MINUTE_TOKEN_LIMIT);
+  });
+});
+
 describe('meterParsers', () => {
   const named = (provider: NluProvider, name: string): NluProvider => ({ name, parse: provider.parse });
 

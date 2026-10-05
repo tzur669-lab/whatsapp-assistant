@@ -114,6 +114,16 @@ export class SuspendedTurns {
     return queryId;
   }
 
+  /** Is a turn of this sender waiting for the phone? Read only (2026-10-05). */
+  hasWaiting(principal: string): boolean {
+    const row = this.sql.exec(
+      `SELECT 1 AS found FROM agent_turns WHERE principal = ? AND status = 'waiting' AND expires_at > ? LIMIT 1`,
+      principal,
+      this.now(),
+    )[0];
+    return row !== undefined;
+  }
+
   /**
    * A newer agent turn started: whatever was waiting will not be continued.
    * Synchronous, and called right after the newer turn takes the lock.
