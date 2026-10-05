@@ -15,7 +15,7 @@ import { REGISTRY, TOOL_NAMES } from '../tools/registry.js';
 import type { ToolName } from '../tools/registry.js';
 import type { WireTool } from './provider.js';
 
-type Def = { typeName?: string; innerType?: ZodTypeAny; values?: readonly string[] };
+type Def = { typeName?: string; innerType?: ZodTypeAny; type?: ZodTypeAny; values?: readonly string[] };
 
 function compactSlot(field: ZodTypeAny): Record<string, unknown> {
   const def = (field as unknown as { _def: Def })._def;
@@ -30,7 +30,8 @@ function compactSlot(field: ZodTypeAny): Record<string, unknown> {
     case 'ZodEnum':
       return { type: 'string', enum: [...(def.values ?? [])] };
     case 'ZodArray':
-      return { type: 'array', items: { type: 'string' } };
+      // Items as declared: `weekdays` is numbers, `query_variants` strings.
+      return { type: 'array', items: def.type ? compactSlot(def.type) : { type: 'string' } };
     case 'ZodNumber':
       return { type: 'integer' };
     case 'ZodBoolean':

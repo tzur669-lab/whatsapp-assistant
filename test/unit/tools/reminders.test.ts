@@ -23,7 +23,7 @@ import { stripIsolates } from '../../../src/render/bidi.js';
 import { FREE_MESSAGES_PER_MONTH } from '../../../src/policy/window.js';
 import type { Reminder } from '../../../src/tools/reminder-store.js';
 
-const MIGRATION_FILES = ['0001_init.sql', '0002_confirm.sql', '0003_reminders.sql'];
+const MIGRATION_FILES = ['0001_init.sql', '0002_confirm.sql', '0003_reminders.sql', '0017_recurring.sql'];
 const MIGRATIONS = MIGRATION_FILES.map((file, index) => ({
   id: index + 1,
   sql: readFileSync(new URL(`../../../migrations/${file}`, import.meta.url), 'utf8'),
@@ -351,6 +351,8 @@ describe('matchReminders', () => {
     status: 'scheduled',
     attempts: 0,
     backupEventId: null,
+    seriesId: null,
+    rule: null,
   });
 
   const ids = (texts: string[], variants: string[]) =>

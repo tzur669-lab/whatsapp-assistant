@@ -15,6 +15,9 @@
  * under the Node Plan B (PLAN §3.4).
  */
 import type { SqlDriver } from '../core/sql.js';
+import { nextOccurrence } from '../time/recur.js';
+import type { RecurRule } from '../time/recur.js';
+import { localPartsOf } from '../time/tz.js';
 
 /** How long a claim holds before another alarm may take the row. */
 const LEASE_MS = 60_000;
@@ -35,6 +38,10 @@ export type Reminder = {
   attempts: number;
   /** The Google Calendar event standing in for a send we cannot make (§6.7). */
   backupEventId: string | null;
+  /** The series this occurrence belongs to, for a recurring reminder (B6). */
+  seriesId: string | null;
+  /** The series' rule, joined in on reads. Null for a one-off. */
+  rule: RecurRule | null;
 };
 
 export type ClaimedReminder = Reminder & {
@@ -54,23 +61,40 @@ export class ReminderStore {
     dueAtUtc: number;
     localWallTime: string;
     tz: string;
+    /** Present for a recurring reminder: this is its first occurrence (B6). */
+    rule?: RecurRule;
   }): Reminder {
     const id = randomHex(12);
     const timestamp = this.now();
+    const seriesId = params.rule ? randomHex(12) : null;
 
-    this.sql.exec(
-      `INSERT INTO reminders
-         (id, principal, text, due_at_utc, local_wall_time, tz, status, attempts, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, 'scheduled', 0, ?, ?)`,
-      id,
-      params.principal,
-      params.text,
-      params.dueAtUtc,
-      params.localWallTime,
-      params.tz,
-      timestamp,
-      timestamp,
-    );
+    this.sql.transaction(() => {
+      if (params.rule && seriesId) {
+        this.sql.exec(
+          `INSERT INTO reminder_series (id, principal, rule_json, status, created_at, updated_at)
+           VALUES (?, ?, ?, 'active', ?, ?)`,
+          seriesId,
+          params.principal,
+          JSON.stringify(params.rule),
+          timestamp,
+          timestamp,
+        );
+      }
+      this.sql.exec(
+        `INSERT INTO reminders
+           (id, principal, text, due_at_utc, local_wall_time, tz, status, attempts, series_id, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, 'scheduled', 0, ?, ?, ?)`,
+        id,
+        params.principal,
+        params.text,
+        params.dueAtUtc,
+        params.localWallTime,
+        params.tz,
+        seriesId,
+        timestamp,
+        timestamp,
+      );
+    });
 
     return {
       id,
@@ -82,19 +106,21 @@ export class ReminderStore {
       status: 'scheduled',
       attempts: 0,
       backupEventId: null,
+      seriesId,
+      rule: params.rule ?? null,
     };
   }
 
   byId(id: string): Reminder | null {
-    const row = this.sql.exec('SELECT * FROM reminders WHERE id = ?', id)[0];
+    const row = this.sql.exec(`${SELECT_WITH_RULE} WHERE r.id = ?`, id)[0];
     return row ? toReminder(row) : null;
   }
 
   listUpcoming(principal: string, limit = 20): Reminder[] {
     const rows = this.sql.exec(
-      `SELECT * FROM reminders
-       WHERE principal = ? AND status = 'scheduled' AND due_at_utc >= ?
-       ORDER BY due_at_utc ASC
+      `${SELECT_WITH_RULE}
+       WHERE r.principal = ? AND r.status = 'scheduled' AND r.due_at_utc >= ?
+       ORDER BY r.due_at_utc ASC
        LIMIT ?`,
       principal,
       this.now(),
@@ -113,9 +139,9 @@ export class ReminderStore {
    */
   listOverdue(principal: string, limit = 20): Reminder[] {
     const rows = this.sql.exec(
-      `SELECT * FROM reminders
-       WHERE principal = ? AND status = 'scheduled' AND due_at_utc < ?
-       ORDER BY due_at_utc ASC
+      `${SELECT_WITH_RULE}
+       WHERE r.principal = ? AND r.status = 'scheduled' AND r.due_at_utc < ?
+       ORDER BY r.due_at_utc ASC
        LIMIT ?`,
       principal,
       this.now(),
@@ -134,6 +160,12 @@ export class ReminderStore {
    */
   claimDue(): ClaimedReminder[] {
     const now = this.now();
+    // The claim and the next occurrences it writes land together: a crash
+    // between them would leave a first claim whose successor nothing writes.
+    return this.sql.transaction(() => this.claimDueInside(now));
+  }
+
+  private claimDueInside(now: number): ClaimedReminder[] {
 
     this.sql.exec(
       `UPDATE reminders SET status = 'failed', lease_until = NULL, updated_at = ?
@@ -165,10 +197,54 @@ export class ReminderStore {
       now,
     );
 
+    // A recurring occurrence writes the next one on its first claim only. A
+    // retry or a requeue is a later claim of the same occurrence, so it never
+    // starts a second successor; the unique index backs that up (B6).
+    for (const row of rows) {
+      if (Number(row['attempts']) === 1 && typeof row['series_id'] === 'string') {
+        this.materializeNext(row, now);
+      }
+    }
+
     return rows.map((row) => ({
       ...toReminder(row),
       lateByMs: Math.max(0, now - Number(row['due_at_utc'])),
     }));
+  }
+
+  /**
+   * Write the occurrence after this one, if its series is still running.
+   *
+   * After `max(due, now)`, not after `due`: a reminder delivered three days
+   * late is followed by the next one still ahead, not by three catching up.
+   */
+  private materializeNext(row: Record<string, unknown>, now: number): void {
+    const seriesId = String(row['series_id']);
+    const series = this.sql.exec(
+      `SELECT rule_json FROM reminder_series WHERE id = ? AND status = 'active'`,
+      seriesId,
+    )[0];
+    const rule = series ? parseRule(series['rule_json']) : null;
+    if (!rule) return;
+
+    const tz = String(row['tz']);
+    const nextAt = nextOccurrence(rule, Math.max(Number(row['due_at_utc']), now), tz);
+    if (nextAt === null) return;
+
+    this.sql.exec(
+      `INSERT OR IGNORE INTO reminders
+         (id, principal, text, due_at_utc, local_wall_time, tz, status, attempts, series_id, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, 'scheduled', 0, ?, ?, ?)`,
+      randomHex(12),
+      String(row['principal']),
+      String(row['text']),
+      nextAt,
+      wallTimeOf(nextAt, tz),
+      tz,
+      seriesId,
+      now,
+      now,
+    );
   }
 
   /** Record the calendar event standing in for this reminder (PLAN §6.7). */
@@ -227,6 +303,18 @@ export class ReminderStore {
    * again. Returns whether it goes back in the queue or is given up on.
    */
   reopenForRetry(id: string): { retrying: boolean } | null {
+    // An occurrence of a series the user has since ended is not sent again,
+    // and not reported as given up either: it was cancelled (B6).
+    const ended = this.sql.exec(
+      `UPDATE reminders SET status = 'cancelled', lease_until = NULL, updated_at = ?
+       WHERE id = ? AND status = 'sent'
+         AND series_id IN (SELECT id FROM reminder_series WHERE status = 'cancelled')
+       RETURNING id`,
+      this.now(),
+      id,
+    );
+    if (ended.length > 0) return { retrying: false };
+
     const requeued = this.sql.exec(
       `UPDATE reminders
        SET status = 'scheduled', lease_until = NULL, wamid = NULL, updated_at = ?
@@ -257,12 +345,69 @@ export class ReminderStore {
     return rows.length > 0;
   }
 
-  /** Only the owner may cancel. Returns false if there was nothing to cancel. */
+  /**
+   * Only the owner may cancel. Returns false if there was nothing to cancel.
+   *
+   * An occurrence of a recurring reminder ends its whole series, whatever state
+   * this occurrence is in: between a preview and the tap it may have fired and
+   * been followed by the next one, and "cancel" still means the series (B6).
+   */
   cancel(id: string, principal: string): boolean {
+    const seriesId = this.sql.exec(
+      'SELECT series_id FROM reminders WHERE id = ? AND principal = ?',
+      id,
+      principal,
+    )[0]?.['series_id'];
+    if (typeof seriesId === 'string') return this.cancelSeries(seriesId, principal);
+
     const rows = this.sql.exec(
       `UPDATE reminders SET status = 'cancelled', lease_until = NULL, updated_at = ?
        WHERE id = ? AND principal = ? AND status IN ('scheduled', 'sending')
        RETURNING id`,
+      this.now(),
+      id,
+      principal,
+    );
+    return rows.length > 0;
+  }
+
+  /** End a series and every occurrence still waiting. True if anything changed. */
+  cancelSeries(seriesId: string, principal: string): boolean {
+    return this.sql.transaction(() => {
+      const now = this.now();
+      const series = this.sql.exec(
+        `UPDATE reminder_series SET status = 'cancelled', updated_at = ?
+         WHERE id = ? AND principal = ? AND status = 'active'
+         RETURNING id`,
+        now,
+        seriesId,
+        principal,
+      );
+      const rows = this.sql.exec(
+        `UPDATE reminders SET status = 'cancelled', lease_until = NULL, updated_at = ?
+         WHERE series_id = ? AND principal = ? AND status IN ('scheduled', 'sending')
+         RETURNING id`,
+        now,
+        seriesId,
+        principal,
+      );
+      return series.length > 0 || rows.length > 0;
+    });
+  }
+
+  /**
+   * Move a waiting reminder to a new time (B8). Only a `scheduled` row moves:
+   * one that fired between the preview and the tap is left alone, and the
+   * caller says so. A recurring occurrence moves alone; its series goes on.
+   */
+  reschedule(id: string, principal: string, dueAtUtc: number, localWallTime: string): boolean {
+    const rows = this.sql.exec(
+      `UPDATE OR IGNORE reminders
+       SET due_at_utc = ?, local_wall_time = ?, updated_at = ?
+       WHERE id = ? AND principal = ? AND status = 'scheduled'
+       RETURNING id`,
+      dueAtUtc,
+      localWallTime,
       this.now(),
       id,
       principal,
@@ -310,7 +455,42 @@ function toReminder(row: Record<string, unknown>): Reminder {
       typeof row['backup_event_id'] === 'string' && row['backup_event_id'].length > 0
         ? row['backup_event_id']
         : null,
+    seriesId: typeof row['series_id'] === 'string' ? row['series_id'] : null,
+    rule: parseRule(row['rule_json']),
   };
+}
+
+/** Reads join the series' rule, so a list can say an occurrence repeats. */
+const SELECT_WITH_RULE = `SELECT r.*, s.rule_json AS rule_json
+  FROM reminders r LEFT JOIN reminder_series s ON s.id = r.series_id`;
+
+/** A stored rule, or null for anything that does not read as one. */
+function parseRule(value: unknown): RecurRule | null {
+  if (typeof value !== 'string') return null;
+  let parsed: Partial<RecurRule>;
+  try {
+    parsed = JSON.parse(value) as Partial<RecurRule>;
+  } catch {
+    return null;
+  }
+  if (parsed.freq !== 'daily' && parsed.freq !== 'weekly' && parsed.freq !== 'monthly') return null;
+  if (typeof parsed.hour !== 'number' || typeof parsed.minute !== 'number') return null;
+  return {
+    freq: parsed.freq,
+    hour: parsed.hour,
+    minute: parsed.minute,
+    ...(Array.isArray(parsed.weekdays)
+      ? { weekdays: parsed.weekdays.filter((d): d is number => typeof d === 'number') }
+      : {}),
+    ...(typeof parsed.day === 'number' ? { day: parsed.day } : {}),
+  };
+}
+
+/** `2026-09-25T14:00`, the wall time stored beside the instant (§6.8). */
+function wallTimeOf(utcMs: number, tz: string): string {
+  const p = localPartsOf(utcMs, tz);
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${p.year}-${pad(p.month)}-${pad(p.day)}T${pad(p.hour)}:${pad(p.minute)}`;
 }
 
 function randomHex(bytes: number): string {

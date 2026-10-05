@@ -31,9 +31,12 @@ import {
   driveSearchSlots,
   tasksCompleteSlots,
   tasksListSlots,
+  remindersAtRestSlots,
   remindersCancelSlots,
   remindersCreateSlots,
   remindersListSlots,
+  remindersMoveSlots,
+  remindersRepeatSlots,
   settingsSetSlots,
   timerSetSlots,
 } from '../nlu/slot-schemas.js';
@@ -47,6 +50,11 @@ export const TOOL_NAMES = [
   'calendar.move_event',
   'calendar.delete_event',
   'calls.place',
+  // Reminders the parser does not know (2026-10-05): recurring (B6), moved
+  // (B8), and set by Shabbat and chag times. Agent-only.
+  'reminders.repeat',
+  'reminders.move',
+  'reminders.at_rest',
   // Phone actions (PLAN §6.20): agent-only, each one an action card.
   'alarm.set',
   'timer.set',
@@ -162,6 +170,38 @@ export const REGISTRY: Readonly<Record<ToolName, ToolSpec>> = {
     scopes: [],
     rateLimit: { perHour: 20, perDay: 60 },
     implementedIn: 4,
+  },
+  'reminders.repeat': {
+    name: 'reminders.repeat',
+    llmDescription:
+      'A repeating reminder at a stated time: every day, on given weekdays (0=Sunday), or a day of the month.',
+    draftSchema: remindersRepeatSlots,
+    // Like a one-off reminder: the user's own words, to the user, undone in
+    // one tap — the Undo ends the whole series.
+    tier: 1,
+    scopes: [],
+    rateLimit: { perHour: 10, perDay: 30 },
+    implementedIn: 6,
+  },
+  'reminders.move': {
+    name: 'reminders.move',
+    llmDescription: 'Move a pending reminder the user describes to a new day or time.',
+    draftSchema: remindersMoveSlots,
+    // Found by description, so it is confirmed first, like a cancel.
+    tier: 2,
+    scopes: [],
+    rateLimit: { perHour: 20, perDay: 60 },
+    implementedIn: 6,
+  },
+  'reminders.at_rest': {
+    name: 'reminders.at_rest',
+    llmDescription:
+      'A reminder relative to Shabbat or a chag: minutes before it starts (candle lighting) or after it ends.',
+    draftSchema: remindersAtRestSlots,
+    tier: 1,
+    scopes: [],
+    rateLimit: { perHour: 10, perDay: 30 },
+    implementedIn: 6,
   },
   'calendar.list_events': {
     name: 'calendar.list_events',

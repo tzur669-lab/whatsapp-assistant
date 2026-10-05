@@ -11,7 +11,9 @@ import { duskOn, sunriseOn, sunsetOn, JERUSALEM } from '../../../src/time/sun.js
 import {
   CANDLE_LIGHTING_MINUTES,
   hebrewDateOf,
+  isYomTov,
   nextPermittedAt,
+  upcomingRestTimes,
   restKindOfDay,
   restPeriodAt,
 } from '../../../src/time/shabbat.js';
@@ -43,6 +45,43 @@ function offsetAt(ms: number): string {
     .find((part) => part.type === 'timeZoneName')?.value;
   return (name ?? 'GMT+03:00').replace('GMT', '');
 }
+
+describe('upcomingRestTimes (reminders by Shabbat and chag)', () => {
+  const first = (fromLocal: string, which: 'shabbat' | 'chag') =>
+    upcomingRestTimes(at(fromLocal), which).next().value!;
+
+  it('the next Shabbat: candle lighting on Friday, nightfall on Saturday', () => {
+    const shabbat = first('2026-10-05T10:00', 'shabbat');
+    const period = restPeriodAt(at('2026-10-10T12:00'))!;
+    expect(shabbat).toEqual({ startUtc: period.startUtc, endUtc: period.endUtc });
+    expect(clock(shabbat.startUtc)).toBe(clock(sunsetOn(at('2026-10-09T12:00'))! - CANDLE_LIGHTING_MINUTES * 60_000));
+  });
+
+  it('Shabbat on its own day, even when a chag runs on from it', () => {
+    // Rosh Hashana 5787 is Saturday 12.9 and Sunday 13.9.
+    const shabbat = first('2026-09-07T10:00', 'shabbat');
+    expect(shabbat.endUtc).toBeLessThan(at('2026-09-13T00:00'));
+    expect(restPeriodAt(shabbat.endUtc)).not.toBeNull();
+  });
+
+  it('a two-day chag is one run, from its eve to its last nightfall', () => {
+    const chag = first('2026-09-01T10:00', 'chag');
+    const period = restPeriodAt(at('2026-09-12T12:00'))!;
+    expect(chag).toEqual({ startUtc: period.startUtc, endUtc: period.endUtc });
+  });
+
+  it('the next chag after Sukkot is Pesach', () => {
+    const chag = first('2026-10-05T10:00', 'chag');
+    expect(clock(chag.startUtc)).not.toBe('none');
+    expect(chag.startUtc).toBeGreaterThan(at('2027-04-21T12:00'));
+    expect(chag.startUtc).toBeLessThan(at('2027-04-21T20:00'));
+  });
+
+  it('isYomTov does not count an ordinary Shabbat', () => {
+    expect(isYomTov(at('2026-10-10T12:00'))).toBe(false);
+    expect(isYomTov(at('2026-09-13T12:00'))).toBe(true);
+  });
+});
 
 describe('sunset in Jerusalem', () => {
   // Published times for Jerusalem, to the minute. A solar algorithm that is

@@ -99,9 +99,50 @@ export function restKindOfDay(atMs: number, zone: string = ZONE): RestKind | nul
   // Saturday. The local weekday, so a Friday-evening instant is not mistaken
   // for Shabbat by a UTC reading of the date.
   if (localPartsOf(atMs, zone).weekday === 6) return 'shabbat';
+  return isYomTov(atMs) ? 'chag' : null;
+}
 
+/** Is this civil day a yom tov, whatever the weekday? Takes any instant inside it. */
+export function isYomTov(atMs: number): boolean {
   const { month, day } = hebrewDateOf(atMs);
-  return YOM_TOV.some(([name, date]) => name === month && date === day) ? 'chag' : null;
+  return YOM_TOV.some(([name, date]) => name === month && date === day);
+}
+
+/** How far ahead to look: a chag can be seven months away (Sukkot to Pesach). */
+const MAX_DAYS_AHEAD: Record<'shabbat' | 'chag', number> = { shabbat: 14, chag: 400 };
+
+/**
+ * The coming Shabbatot, or the coming chagim, as candle lighting to nightfall,
+ * in order, from today on (2026-10-05, "an hour before Shabbat").
+ *
+ * Per day, not per merged run as `restPeriodAt` is: "before Shabbat" means
+ * Friday evening even when a chag began on Thursday, and "after Shabbat"
+ * means Saturday night even when a chag follows. A chag of two days in a row
+ * (Rosh Hashana) is one, from its eve to its last nightfall. The caller skips
+ * whatever has already passed.
+ */
+export function* upcomingRestTimes(
+  fromMs: number,
+  which: 'shabbat' | 'chag',
+  zone: string = ZONE,
+  place?: Place,
+): Generator<{ startUtc: number; endUtc: number }> {
+  const isDay = (noon: number) =>
+    which === 'shabbat' ? localPartsOf(noon, zone).weekday === 6 : isYomTov(noon);
+
+  for (let offset = 0; offset <= MAX_DAYS_AHEAD[which]; offset++) {
+    const noon = localNoon(fromMs, offset, zone);
+    if (!isDay(noon) || (offset > 0 && isDay(localNoon(noon, -1, zone)))) continue;
+
+    let last = noon;
+    while (isDay(localNoon(last, 1, zone))) last = localNoon(last, 1, zone);
+
+    const sunset = sunsetOn(localNoon(noon, -1, zone), place);
+    const nightfall = duskOn(last, NIGHTFALL_DEPRESSION_DEGREES, place);
+    if (sunset === null || nightfall === null) continue;
+
+    yield { startUtc: sunset - CANDLE_LIGHTING_MINUTES * 60_000, endUtc: nightfall };
+  }
 }
 
 /**

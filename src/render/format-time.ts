@@ -92,6 +92,11 @@ export function formatDuration(count: number, unit: DurationUnit, lang: Lang): s
   }
 }
 
+/** A weekday by number, 0 = Sunday: `יום א׳` / `Sun`. */
+export function weekdayName(weekday: number, lang: Lang): string {
+  return (lang === 'he' ? HE_WEEKDAYS : EN_WEEKDAYS)[weekday] ?? '';
+}
+
 function weekdayOf(local: LocalParts, lang: Lang): string {
   const names = lang === 'he' ? HE_WEEKDAYS : EN_WEEKDAYS;
   return names[local.weekday] ?? '';

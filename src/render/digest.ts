@@ -63,7 +63,7 @@ function birthdayLine(names: readonly string[], lang: Lang): string {
 function section(header: string, views: readonly ReminderView[], lang: Lang): string {
   const lines = views.map(
     (view, index) =>
-      `${isolateLtr(String(index + 1))}. ${formatWhen(view.local, lang)} — ${isolate(view.text)}`,
+      `${isolateLtr(String(index + 1))}. ${formatWhen(view.local, lang)} — ${isolate(view.text)}${view.rule ? ' 🔁' : ''}`,
   );
   return [header, '', ...lines].join('\n');
 }

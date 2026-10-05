@@ -115,6 +115,40 @@ export const remindersCancelSlots = z
   })
   .strict();
 
+/**
+ * "כל יום ראשון ב-8 תזכיר לי לשים זבל" (B6). Agent-only: the parser's wire
+ * schema is unchanged. Code computes every occurrence from the rule.
+ */
+export const remindersRepeatSlots = z
+  .object({
+    text: z.string().min(1).max(MAX_TITLE_CHARS).optional(),
+    time: timeSpecSchema.optional(),
+    every: z.enum(['day', 'week', 'month']).optional(),
+    /** 0 = Sunday … 6 = Saturday, as in DateSpec. */
+    weekdays: z.array(z.number().int().min(0).max(6)).min(1).max(7).optional(),
+    day_of_month: z.number().int().min(1).max(31).optional(),
+  })
+  .strict();
+
+/** "תזיז את התזכורת של הרופא לשעה 5" (B8). Agent-only. */
+export const remindersMoveSlots = z
+  .object({
+    query_variants: queryVariantsSchema.optional(),
+    to_date: dateSpecSchema.optional(),
+    to_time: timeSpecSchema.optional(),
+  })
+  .strict();
+
+/** "תזכיר לי שעה לפני כניסת שבת" (2026-10-05). Agent-only; code computes the time. */
+export const remindersAtRestSlots = z
+  .object({
+    text: z.string().min(1).max(MAX_TITLE_CHARS).optional(),
+    event: z.enum(['shabbat_start', 'shabbat_end', 'chag_start', 'chag_end']).optional(),
+    /** Before a start, after an end. Absent: at the moment itself. */
+    minutes: z.number().int().min(0).max(24 * 60).optional(),
+  })
+  .strict();
+
 export const calendarListEventsSlots = z
   .object({
     date: dateSpecSchema.optional(),

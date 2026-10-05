@@ -410,3 +410,123 @@
       kind: spreadsheet
     missing: []
 
+
+# Reminders added 2026-10-05 (prompt a5): recurring (B6), moved (B8), and by
+# Shabbat or a chag. Agent-only. Monday 5.10.2026, 10:00.
+
+- id: rm-repeat-001
+  now: "2026-10-05T10:00:00+03:00"
+  input: "כל יום ראשון ב-8 תזכיר לי לשים זבל"
+  expect:
+    intent: reminders.repeat
+    slots:
+      weekdays: [0]
+      time: { hour: 8, minute: 0, meridiem: unspecified, part_of_day: unspecified }
+    missing: []
+
+- id: rm-repeat-002
+  now: "2026-10-05T10:00:00+03:00"
+  input: "תזכיר לי כל בוקר בשבע לקחת כדור"
+  expect:
+    intent: reminders.repeat
+    slots:
+      every: day
+      time: { hour: 7, minute: 0, meridiem: unspecified, part_of_day: morning }
+    missing: []
+
+- id: rm-repeat-003
+  now: "2026-10-05T10:00:00+03:00"
+  input: "בכל 1 לחודש ב-9 בבוקר תזכיר לי לשלם שכר דירה"
+  expect:
+    intent: reminders.repeat
+    slots:
+      every: month
+      day_of_month: 1
+      time: { hour: 9, minute: 0, meridiem: unspecified, part_of_day: morning }
+    missing: []
+
+- id: rm-repeat-004
+  now: "2026-10-05T10:00:00+03:00"
+  input: "remind me every Monday and Thursday at 18:00 to go to the gym"
+  expect:
+    intent: reminders.repeat
+    slots:
+      weekdays: [1, 4]
+      time: { hour: 18, minute: 0, meridiem: unspecified, part_of_day: unspecified }
+    missing: []
+
+- id: rm-repeat-005
+  now: "2026-10-05T10:00:00+03:00"
+  input: "תזכיר לי כל יום שלישי להתקשר לסבתא"
+  expect:
+    intent: reminders.repeat
+    slots:
+      weekdays: [2]
+    missing: [time]
+
+- id: rm-move-001
+  now: "2026-10-05T10:00:00+03:00"
+  input: "תזיז את התזכורת של הרופא לשעה 17:00"
+  expect:
+    intent: reminders.move
+    slots:
+      to_time: { hour: 17, minute: 0, meridiem: unspecified, part_of_day: unspecified }
+    missing: []
+
+- id: rm-move-002
+  now: "2026-10-05T10:00:00+03:00"
+  input: "תדחה את התזכורת על החשמל למחר"
+  expect:
+    intent: reminders.move
+    slots:
+      to_date: { kind: relative_days, offset: 1 }
+    missing: []
+
+- id: rm-move-003
+  now: "2026-10-05T10:00:00+03:00"
+  input: "move the dentist reminder to Wednesday"
+  expect:
+    intent: reminders.move
+    slots:
+      to_date: { kind: weekday, weekday: 3, qualifier: unspecified }
+    missing: []
+
+- id: rm-rest-001
+  now: "2026-10-05T10:00:00+03:00"
+  input: "תזכיר לי שעה לפני כניסת שבת לכבות את הדוד"
+  expect:
+    intent: reminders.at_rest
+    slots:
+      event: shabbat_start
+      minutes: 60
+    missing: []
+
+- id: rm-rest-002
+  now: "2026-10-05T10:00:00+03:00"
+  input: "חצי שעה אחרי צאת שבת תזכיר לי להתקשר לאמא"
+  expect:
+    intent: reminders.at_rest
+    slots:
+      event: shabbat_end
+      minutes: 30
+    missing: []
+
+- id: rm-rest-003
+  now: "2026-10-05T10:00:00+03:00"
+  input: "remind me 20 minutes before the holiday starts to light candles"
+  expect:
+    intent: reminders.at_rest
+    slots:
+      event: chag_start
+      minutes: 20
+    missing: []
+
+- id: rm-once-001
+  now: "2026-10-05T10:00:00+03:00"
+  input: "תזכיר לי ביום ראשון ב-8 לשים זבל"
+  expect:
+    intent: reminders.create
+    slots:
+      date: { kind: weekday, weekday: 0, qualifier: unspecified }
+      time: { hour: 8, minute: 0, meridiem: unspecified, part_of_day: unspecified }
+    missing: []

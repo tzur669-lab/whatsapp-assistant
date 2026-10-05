@@ -9,15 +9,43 @@
  * `1.` at the start of a Hebrew line jumps to the wrong end without it.
  */
 import { isolate, isolateLtr } from './bidi.js';
-import { formatWhen } from './format-time.js';
+import { formatWhen, weekdayName } from './format-time.js';
 import type { Lang } from './format-time.js';
 import type { LocalParts } from '../time/tz.js';
+import type { RecurRule } from '../time/recur.js';
 
 export type ReminderView = {
   id: string;
   text: string;
   local: LocalParts;
+  /** Set for an occurrence of a recurring reminder (B6). */
+  rule?: RecurRule;
 };
+
+/** `כל יום ב׳, יום ה׳ · 08:00` / `Every Mon, Thu · 08:00`. */
+export function repeatLabel(rule: RecurRule, lang: Lang): string {
+  const pad = (n: number) => String(n).padStart(2, '0');
+  const time = isolateLtr(`${pad(rule.hour)}:${pad(rule.minute)}`);
+  const he = lang === 'he';
+
+  switch (rule.freq) {
+    case 'daily':
+      return he ? `כל יום · ${time}` : `Every day · ${time}`;
+    case 'weekly': {
+      const days = [...(rule.weekdays ?? [])].sort((a, b) => a - b).map((d) => weekdayName(d, lang));
+      return he ? `כל ${days.join(', ')} · ${time}` : `Every ${days.join(', ')} · ${time}`;
+    }
+    case 'monthly': {
+      const day = isolateLtr(String(rule.day ?? 1));
+      return he ? `כל ${day} בחודש · ${time}` : `Monthly on day ${day} · ${time}`;
+    }
+  }
+}
+
+/** The 🔁 mark and its rule, after a listed occurrence. Empty for a one-off. */
+function repeatSuffix(view: ReminderView, lang: Lang): string {
+  return view.rule ? ` 🔁 ${repeatLabel(view.rule, lang)}` : '';
+}
 
 export const reminderText = {
   /** Tier 1: it is already scheduled. The reply exists to be checked. */
@@ -37,12 +65,51 @@ export const reminderText = {
       : `Reminder set for ${formatWhen(view.local, 'en')}\n${isolate(view.text)}\n\nIt will arrive as a calendar alert — the WhatsApp window will be closed by then.`;
   },
 
+  /** A recurring reminder, Tier 1: the rule, then the first one, to be checked. */
+  createdRepeat(view: ReminderView & { rule: RecurRule }, lang: Lang): string {
+    return lang === 'he'
+      ? `נקבעה תזכורת חוזרת: ${repeatLabel(view.rule, 'he')}\nהראשונה: ${formatWhen(view.local, 'he')}\n${isolate(view.text)}`
+      : `Recurring reminder set: ${repeatLabel(view.rule, 'en')}\nFirst: ${formatWhen(view.local, 'en')}\n${isolate(view.text)}`;
+  },
+
+  /** Appended when the time falls inside Shabbat or a chag and the hold is on (§6.13). */
+  heldNote(lang: Lang): string {
+    return lang === 'he'
+      ? 'הזמן הזה נופל בתוך שבת או חג, ולכן התזכורת תגיע בצאת השבת או החג.'
+      : 'That time falls inside Shabbat or a chag, so it will arrive when it ends.';
+  },
+
+  /** Tier 2: shown with the confirm buttons, before anything moves (B8). */
+  movePreview(view: ReminderView, to: LocalParts, lang: Lang): string {
+    const once = view.rule
+      ? lang === 'he'
+        ? '\nרק הפעם הזאת. התזכורת החוזרת תמשיך כרגיל.'
+        : '\nThis time only. The recurring reminder carries on.'
+      : '';
+    return lang === 'he'
+      ? `הזזת התזכורת מ${formatWhen(view.local, 'he')} ל${formatWhen(to, 'he')}\n${isolate(view.text)}${once}`
+      : `Move the reminder from ${formatWhen(view.local, 'en')} to ${formatWhen(to, 'en')}\n${isolate(view.text)}${once}`;
+  },
+
+  moved(to: LocalParts, lang: Lang): string {
+    return lang === 'he'
+      ? `התזכורת הוזזה ל${formatWhen(to, 'he')}.`
+      : `Reminder moved to ${formatWhen(to, 'en')}.`;
+  },
+
+  /** Between the preview and the tap it fired or was cancelled elsewhere. */
+  noLongerPending(lang: Lang): string {
+    return lang === 'he'
+      ? 'התזכורת כבר לא ממתינה — היא נשלחה או בוטלה בינתיים.'
+      : 'That reminder is no longer pending — it fired or was cancelled already.';
+  },
+
   list(views: readonly ReminderView[], lang: Lang): string {
     if (views.length === 0) return reminderText.empty(lang);
 
     const lines = views.map(
       (view, index) =>
-        `${isolateLtr(String(index + 1))}. ${formatWhen(view.local, lang)} — ${isolate(view.text)}`,
+        `${isolateLtr(String(index + 1))}. ${formatWhen(view.local, lang)} — ${isolate(view.text)}${repeatSuffix(view, lang)}`,
     );
     const header = lang === 'he' ? 'תזכורות ממתינות:' : 'Upcoming reminders:';
     return [header, '', ...lines].join('\n');
@@ -54,6 +121,11 @@ export const reminderText = {
 
   /** Tier 2: shown with the confirm buttons, before anything is deleted. */
   cancelPreview(view: ReminderView, lang: Lang): string {
+    if (view.rule) {
+      return lang === 'he'
+        ? `ביטול התזכורת החוזרת (${repeatLabel(view.rule, 'he')}), כולל כל הפעמים הבאות\n${isolate(view.text)}`
+        : `Cancel the recurring reminder (${repeatLabel(view.rule, 'en')}), every future time\n${isolate(view.text)}`;
+    }
     return lang === 'he'
       ? `ביטול התזכורת ל${formatWhen(view.local, 'he')}\n${isolate(view.text)}`
       : `Cancel the reminder for ${formatWhen(view.local, 'en')}\n${isolate(view.text)}`;

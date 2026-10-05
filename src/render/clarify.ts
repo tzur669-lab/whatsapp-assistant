@@ -186,6 +186,13 @@ function timeQuestion(detail: ClarifyTime, lang: Lang): string {
       return [header, ...options.map((option, i) => `${isolateLtr(String(i + 1))}. ${option}`)].join('\n');
     }
 
+    case 'recurring_dst':
+      // A recurring time that a clock change skips or repeats on one of its
+      // days. That later day cannot ask, so the rule is asked about now (R2).
+      return he
+        ? 'בגלל מעבר שעון, השעה הזאת לא קיימת או מופיעה פעמיים באחד הימים. כדאי לבחור שעה אחרת, למשל אחרי 03:00.'
+        : 'A clock change skips or repeats that time on one of the days. Pick another time, for example after 03:00.';
+
     case 'small_hours_relative_date':
       // "מחר" said at 02:00 means different days to different people (R6).
       return he

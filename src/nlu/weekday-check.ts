@@ -30,22 +30,36 @@ export function checkNamedWeekdays(draft: IntentDraft, text: string): WeekdayChe
 
   const slots = draft.slots as Record<string, unknown>;
   const candidates = DATE_SLOTS.filter((name) => weekdayOf(slots[name]) !== null);
-  if (candidates.length === 0) return { draft, mismatched: [] };
+  const days = weekdayList(slots[WEEKDAYS_SLOT]);
+  if (candidates.length === 0 && days.length === 0) return { draft, mismatched: [] };
 
   const named = weekdaysNamed(text);
   if (named.size === 0) return { draft, mismatched: [] };
 
-  const mismatched = candidates.filter((name) => {
+  const mismatched: string[] = candidates.filter((name) => {
     const weekday = weekdayOf(slots[name]);
     return weekday !== null && !named.has(weekday);
   });
+  // A recurring reminder's days (B6): every one of them must be a day the
+  // message names. A series on the wrong day repeats the mistake every week.
+  if (days.some((day) => !named.has(day))) mismatched.push(WEEKDAYS_SLOT);
   if (mismatched.length === 0) return { draft, mismatched: [] };
 
   const kept = Object.fromEntries(
-    Object.entries(slots).filter(([name]) => !mismatched.includes(name as (typeof DATE_SLOTS)[number])),
+    Object.entries(slots).filter(([name]) => !mismatched.includes(name)),
   );
   // Removing an optional slot cannot make a valid draft invalid.
   return { draft: { ...draft, slots: kept } as IntentDraft, mismatched };
+}
+
+/** The weekday-list slot of `reminders.repeat`, 0 = Sunday. */
+const WEEKDAYS_SLOT = 'weekdays';
+
+function weekdayList(value: unknown): (0 | 1 | 2 | 3 | 4 | 5 | 6)[] {
+  if (!Array.isArray(value)) return [];
+  return value.filter(
+    (day): day is 0 | 1 | 2 | 3 | 4 | 5 | 6 => Number.isInteger(day) && day >= 0 && day <= 6,
+  );
 }
 
 function weekdayOf(value: unknown): 0 | 1 | 2 | 3 | 4 | 5 | 6 | null {

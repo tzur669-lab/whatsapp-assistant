@@ -421,6 +421,14 @@ function withPreposition(name: string): RegExp {
   return new RegExp(`${START}ו?[בלמ]-?${name}${END}`);
 }
 
+const DAY_NAMES = WEEKDAYS.map(([name]) => name).join('|');
+
+/** "יום X, Y וZ": captures the list after the day word. */
+const DAY_LIST = new RegExp(
+  `${START}${PREFIX}(?:יום|ימי)\\s+((?:${DAY_NAMES})(?:\\s*,\\s*(?:ו-?)?(?:${DAY_NAMES})|\\s+ו-?(?:${DAY_NAMES}))*)${END}`,
+  'g',
+);
+
 export function weekdaysNamed(raw: string): ReadonlySet<Weekday> {
   const text = normalizeHebrew(raw);
   const named = new Set<Weekday>();
@@ -440,6 +448,14 @@ export function weekdaysNamed(raw: string): ReadonlySet<Weekday> {
 
   for (const [pattern, weekday] of EN_WEEKDAYS) {
     if (pattern.test(text)) named.add(weekday);
+  }
+
+  // A list after one day word: "בימי ראשון ושלישי", "כל יום שני, רביעי וחמישי"
+  // (B6). Only inside such a list is a bare "שני" a day rather than a number.
+  for (const match of text.matchAll(DAY_LIST)) {
+    for (const [name, weekday] of WEEKDAYS) {
+      if (new RegExp(`(?:^|[\\s,]|[\\s,]ו-?)${name}${END}`).test(` ${match[1] ?? ''}`)) named.add(weekday);
+    }
   }
 
   return named;

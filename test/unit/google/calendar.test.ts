@@ -20,7 +20,7 @@ import { workersFetch } from '../../integration/workers-fetch.js';
 import { stripIsolates } from '../../../src/render/bidi.js';
 import type { ToolContext } from '../../../src/tools/types.js';
 
-const MIGRATIONS = ['0001_init.sql', '0002_confirm.sql', '0003_reminders.sql', '0004_google.sql'].map(
+const MIGRATIONS = ['0001_init.sql', '0002_confirm.sql', '0003_reminders.sql', '0004_google.sql', '0017_recurring.sql'].map(
   (file, i) => ({
     id: i + 1,
     sql: readFileSync(new URL(`../../../migrations/${file}`, import.meta.url), 'utf8'),

@@ -32,9 +32,12 @@ import {
   driveSearchSlots,
   tasksCompleteSlots,
   tasksListSlots,
+  remindersAtRestSlots,
   remindersCancelSlots,
   remindersCreateSlots,
   remindersListSlots,
+  remindersMoveSlots,
+  remindersRepeatSlots,
   settingsSetSlots,
   timerSetSlots,
 } from './slot-schemas.js';
@@ -116,6 +119,11 @@ export const intentDraftSchema = z.discriminatedUnion('intent', [
   z.object({ intent: z.literal('calendar.move_event'), slots: calendarMoveEventSlots, ...common }).strict(),
   z.object({ intent: z.literal('calendar.delete_event'), slots: calendarDeleteEventSlots, ...common }).strict(),
   z.object({ intent: z.literal('calls.place'), slots: callsPlaceSlots, ...common }).strict(),
+  // Agent-only reminders (2026-10-05). Not in `ignoredSlots`: the parser's wire
+  // schema never offers them, so an `unsupported` draft never carries them.
+  z.object({ intent: z.literal('reminders.repeat'), slots: remindersRepeatSlots, ...common }).strict(),
+  z.object({ intent: z.literal('reminders.move'), slots: remindersMoveSlots, ...common }).strict(),
+  z.object({ intent: z.literal('reminders.at_rest'), slots: remindersAtRestSlots, ...common }).strict(),
   // Phone actions (§6.20). Agent-only; the parser's wire schema never offers them.
   z.object({ intent: z.literal('alarm.set'), slots: alarmSetSlots, ...common }).strict(),
   z.object({ intent: z.literal('timer.set'), slots: timerSetSlots, ...common }).strict(),

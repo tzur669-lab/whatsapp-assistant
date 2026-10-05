@@ -11,8 +11,11 @@
  * one extra message.
  */
 import { z } from 'zod';
-import { resolveWhen } from '../time/resolve.js';
-import type { DateSpec, TimeSpec } from '../time/resolve.js';
+import { applyMeridiem, DEFAULT_TIME_SETTINGS, resolveWhen } from '../time/resolve.js';
+import type { DateSpec, ResolveRule, TimeSpec } from '../time/resolve.js';
+import { firstOccurrence } from '../time/recur.js';
+import type { RecurRule } from '../time/recur.js';
+import { restPeriodAt, upcomingRestTimes } from '../time/shabbat.js';
 import { resolveRange } from '../time/range.js';
 import type { RangeName } from '../time/range.js';
 import { localPartsOf, ZONE } from '../time/tz.js';
@@ -22,7 +25,12 @@ import { reminderText } from '../render/reminders.js';
 import type { ReminderView } from '../render/reminders.js';
 import { formatWhen } from '../render/format-time.js';
 import type { Lang } from '../render/format-time.js';
-import { MAX_TITLE_CHARS } from '../nlu/slot-schemas.js';
+import {
+  MAX_TITLE_CHARS,
+  remindersAtRestSlots,
+  remindersMoveSlots,
+  remindersRepeatSlots,
+} from '../nlu/slot-schemas.js';
 import type { Reminder } from './reminder-store.js';
 import type {
   ExecuteResult,
@@ -51,6 +59,17 @@ const createInputSchema = z
   .strict();
 
 type CreateInput = z.infer<typeof createInputSchema>;
+
+/** A recurring reminder's rule, as stored and as re-validated (B6). */
+const recurRuleSchema = z
+  .object({
+    freq: z.enum(['daily', 'weekly', 'monthly']),
+    hour: z.number().int().min(0).max(23),
+    minute: z.number().int().min(0).max(59),
+    weekdays: z.array(z.number().int().min(0).max(6)).min(1).max(7).optional(),
+    day: z.number().int().min(1).max(31).optional(),
+  })
+  .strict();
 
 const createSlotsSchema = z
   .object({
@@ -190,6 +209,8 @@ const cancelInputSchema = z
     text: z.string().min(1).max(MAX_TITLE_CHARS),
     dueAtUtc: z.number().int().positive(),
     tz: z.string().min(1).max(64),
+    /** Present when it repeats: the preview says the whole series ends (B6). */
+    rule: recurRuleSchema.optional(),
   })
   .strict();
 
@@ -237,7 +258,12 @@ export const remindersCancel: ToolDefinition = {
   preview(rawInput, lang): string {
     const input = parseInput<CancelInput>(cancelInputSchema, rawInput, 'reminders.cancel');
     return reminderText.cancelPreview(
-      { id: input.reminderId, text: input.text, local: localPartsOf(input.dueAtUtc, input.tz) },
+      {
+        id: input.reminderId,
+        text: input.text,
+        local: localPartsOf(input.dueAtUtc, input.tz),
+        ...(input.rule ? { rule: input.rule } : {}),
+      },
       lang,
     );
   },
@@ -262,6 +288,321 @@ export const remindersCancel: ToolDefinition = {
   },
 };
 
+// -- reminders.repeat (B6) ----------------------------------------------------
+
+const repeatInputSchema = createInputSchema.extend({ rule: recurRuleSchema }).strict();
+
+type RepeatInput = z.infer<typeof repeatInputSchema>;
+
+export const remindersRepeat: ToolDefinition = {
+  name: 'reminders.repeat',
+  inputSchema: repeatInputSchema,
+
+  resolve(rawSlots, ctx): ResolveOutcome {
+    const slots = remindersRepeatSlots.safeParse(rawSlots);
+    if (!slots.success) return clarifyMissing('text');
+
+    const text = slots.data.text?.trim();
+    if (!text) return clarifyMissing('text');
+
+    // R3: never invent a time. R4 and R5 exactly as a one-off reminder has them.
+    const time = slots.data.time;
+    if (!time) return clarifyTime('R3', 'missing_time');
+    const adjusted = applyMeridiem(time);
+    if (!adjusted) return clarifyTime('R4', 'invalid_time');
+    if (
+      adjusted.hour >= DEFAULT_TIME_SETTINGS.unlikelyHourStart &&
+      adjusted.hour < DEFAULT_TIME_SETTINGS.unlikelyHourEnd &&
+      time.meridiem === 'unspecified' &&
+      time.part_of_day === 'unspecified'
+    ) {
+      return clarifyTime('R5', 'unlikely_hour');
+    }
+
+    const rule = ruleOf(slots.data, adjusted);
+    // "Every what?" is asked without an open question: the answer is a rule,
+    // which no answer parser reads, so the agent takes it from history.
+    if (!rule) return clarifyMissing('date');
+
+    const first = firstOccurrence(rule, ctx.nowMs, ZONE);
+    if (first.kind === 'gap' || first.kind === 'fold') return clarifyTime('R2', 'recurring_dst');
+    if (first.kind === 'never') return clarifyMissing('date');
+
+    const input: RepeatInput = {
+      text,
+      dueAtUtc: first.utcMs,
+      localWallTime: wallTimeString(first.utcMs, ZONE),
+      tz: ZONE,
+      rule,
+    };
+    return { kind: 'ready', input };
+  },
+
+  preview(rawInput, lang): string {
+    const input = parseInput<RepeatInput>(repeatInputSchema, rawInput, 'reminders.repeat');
+    return reminderText.createdRepeat({ ...viewOf(input), rule: input.rule }, lang);
+  },
+
+  async execute(rawInput, ctx): Promise<ExecuteResult> {
+    const input = parseInput<RepeatInput>(repeatInputSchema, rawInput, 'reminders.repeat');
+
+    // No calendar stand-in: the app has no 24-hour window, and WhatsApp, which
+    // needed one, is frozen (§6.18). A series of backup events is not worth
+    // building for a channel that is off.
+    const reminder = ctx.reminders.schedule({
+      principal: ctx.principal,
+      text: input.text,
+      dueAtUtc: input.dueAtUtc,
+      localWallTime: input.localWallTime,
+      tz: input.tz,
+      rule: input.rule,
+    });
+
+    return {
+      text: reminderText.createdRepeat({ ...viewOf(input), rule: input.rule }, ctx.lang),
+      compensating: { reminderId: reminder.id, seriesId: reminder.seriesId },
+      externalRef: reminder.id,
+      rescheduleAlarm: true,
+    };
+  },
+
+  async undo(compensating, ctx): Promise<ExecuteResult> {
+    const { seriesId } = parseInput<{ reminderId: string; seriesId: string }>(
+      z.object({ reminderId: z.string().min(1).max(64), seriesId: z.string().min(1).max(64) }).strict(),
+      compensating,
+      'reminders.repeat',
+    );
+    // By series: by the time Undo is tapped the first one may have fired and
+    // been followed by the next.
+    ctx.reminders.cancelSeries(seriesId, ctx.principal);
+    return { text: reminderText.undoneCreate(ctx.lang), rescheduleAlarm: true };
+  },
+};
+
+/** The rule the slots describe, or null when they do not say how often. */
+function ruleOf(
+  slots: z.infer<typeof remindersRepeatSlots>,
+  at: { hour: number; minute: number },
+): RecurRule | null {
+  const weekdays = slots.weekdays ? [...new Set(slots.weekdays)].sort((a, b) => a - b) : undefined;
+  const every = slots.every ?? (weekdays ? 'week' : slots.day_of_month ? 'month' : undefined);
+
+  // Named days win over "every day": "כל יום ראשון" is a weekly rule.
+  if (weekdays && every !== 'month') {
+    return weekdays.length === 7
+      ? { freq: 'daily', ...at }
+      : { freq: 'weekly', ...at, weekdays };
+  }
+  if (every === 'day') return { freq: 'daily', ...at };
+  if (every === 'month' && slots.day_of_month) return { freq: 'monthly', ...at, day: slots.day_of_month };
+  return null;
+}
+
+function clarifyTime(rule: ResolveRule, reason: string): ResolveOutcome {
+  return { kind: 'clarify', clarify: { code: 'time', detail: { kind: 'clarify', rule, reason } } };
+}
+
+// -- reminders.move (B8) ------------------------------------------------------
+
+const moveInputSchema = z
+  .object({
+    reminderId: z.string().min(1).max(64),
+    text: z.string().min(1).max(MAX_TITLE_CHARS),
+    fromDueAtUtc: z.number().int().positive(),
+    dueAtUtc: z.number().int().positive(),
+    localWallTime: z.string().min(1).max(32),
+    tz: z.string().min(1).max(64),
+    recurring: z.boolean(),
+  })
+  .strict();
+
+type MoveInput = z.infer<typeof moveInputSchema>;
+
+export const remindersMove: ToolDefinition = {
+  name: 'reminders.move',
+  inputSchema: moveInputSchema,
+
+  resolve(rawSlots, ctx): ResolveOutcome {
+    const slots = remindersMoveSlots.safeParse(rawSlots);
+    const data = slots.success ? slots.data : {};
+
+    const target = findPending(data.query_variants ?? [], ctx);
+    if (!('reminder' in target)) return target.outcome;
+    const reminder = target.reminder;
+
+    if (!data.to_date && !data.to_time) return clarifyMissing('time');
+
+    // What was not said stays as it was: "לשעה 5" keeps the day, "למחר" the hour.
+    const current = localPartsOf(reminder.dueAtUtc, reminder.tz);
+    const date: DateSpec = data.to_date ?? {
+      kind: 'absolute',
+      day: current.day,
+      month: current.month,
+      year: current.year,
+    };
+    const time: TimeSpec = data.to_time ?? {
+      hour: current.hour,
+      minute: current.minute,
+      // The stored hour is already on the 24-hour clock; saying so keeps R5
+      // from asking about a time the user set and did not mention.
+      meridiem: current.hour < 12 ? 'am' : 'pm',
+      part_of_day: 'unspecified',
+    };
+
+    const when = resolveWhen({ date, time }, { nowMs: ctx.nowMs });
+    if (when.kind === 'clarify') return { kind: 'clarify', clarify: { code: 'time', detail: when } };
+
+    const input: MoveInput = {
+      reminderId: reminder.id,
+      text: reminder.text,
+      fromDueAtUtc: reminder.dueAtUtc,
+      dueAtUtc: when.utcMs,
+      localWallTime: wallTimeString(when.utcMs, when.zone),
+      tz: when.zone,
+      recurring: reminder.seriesId !== null,
+    };
+    return { kind: 'ready', input, needsConfirm: when.needsConfirm };
+  },
+
+  preview(rawInput, lang): string {
+    const input = parseInput<MoveInput>(moveInputSchema, rawInput, 'reminders.move');
+    return reminderText.movePreview(
+      {
+        id: input.reminderId,
+        text: input.text,
+        local: localPartsOf(input.fromDueAtUtc, input.tz),
+        // Only whether it repeats matters to the preview, not the rule itself.
+        ...(input.recurring ? { rule: { freq: 'daily' as const, hour: 0, minute: 0 } } : {}),
+      },
+      localPartsOf(input.dueAtUtc, input.tz),
+      lang,
+    );
+  },
+
+  async execute(rawInput, ctx): Promise<ExecuteResult> {
+    const input = parseInput<MoveInput>(moveInputSchema, rawInput, 'reminders.move');
+
+    // The stand-in was written for the old time. WhatsApp, which needed it, is
+    // frozen, so it is removed rather than rewritten (§6.18).
+    await dropBackupEvent(input.reminderId, ctx);
+    const moved = ctx.reminders.reschedule(
+      input.reminderId,
+      ctx.principal,
+      input.dueAtUtc,
+      input.localWallTime,
+    );
+    return {
+      text: moved
+        ? reminderText.moved(localPartsOf(input.dueAtUtc, input.tz), ctx.lang)
+        : reminderText.noLongerPending(ctx.lang),
+      externalRef: input.reminderId,
+      rescheduleAlarm: true,
+    };
+  },
+};
+
+// -- reminders.at_rest (2026-10-05) -------------------------------------------
+
+const atRestInputSchema = createInputSchema.extend({ held: z.boolean() }).strict();
+
+type AtRestInput = z.infer<typeof atRestInputSchema>;
+
+export const remindersAtRest: ToolDefinition = {
+  name: 'reminders.at_rest',
+  inputSchema: atRestInputSchema,
+
+  resolve(rawSlots, ctx): ResolveOutcome {
+    const slots = remindersAtRestSlots.safeParse(rawSlots);
+    if (!slots.success) return clarifyMissing('text');
+
+    const text = slots.data.text?.trim();
+    if (!text) return clarifyMissing('text');
+    const event = slots.data.event;
+    if (!event) return clarifyMissing('date');
+
+    const dueAtUtc = restEventTime(event, slots.data.minutes ?? 0, ctx.nowMs);
+    if (dueAtUtc === null) return clarifyMissing('date');
+
+    const input: AtRestInput = {
+      text,
+      dueAtUtc,
+      localWallTime: wallTimeString(dueAtUtc, ZONE),
+      tz: ZONE,
+      // A chag running into Shabbat or out of it puts some of these times
+      // inside the hold. Still set; the reply says it will come at the end.
+      held: ctx.repo.restHoldEnabled() && restPeriodAt(dueAtUtc) !== null,
+    };
+    return { kind: 'ready', input };
+  },
+
+  preview(rawInput, lang): string {
+    const input = parseInput<AtRestInput>(atRestInputSchema, rawInput, 'reminders.at_rest');
+    return withHeldNote(remindersCreate.preview(createPart(input), lang), input.held, lang);
+  },
+
+  async execute(rawInput, ctx): Promise<ExecuteResult> {
+    const input = parseInput<AtRestInput>(atRestInputSchema, rawInput, 'reminders.at_rest');
+    const result = await remindersCreate.execute(createPart(input), ctx);
+    return { ...result, text: withHeldNote(result.text, input.held, ctx.lang) };
+  },
+
+  async undo(compensating, ctx): Promise<ExecuteResult> {
+    return remindersCreate.undo!(compensating, ctx);
+  },
+};
+
+/** Minutes before a start or after an end; the earliest of those still ahead. */
+function restEventTime(
+  event: 'shabbat_start' | 'shabbat_end' | 'chag_start' | 'chag_end',
+  minutes: number,
+  nowMs: number,
+): number | null {
+  const which = event.startsWith('shabbat') ? 'shabbat' : 'chag';
+  const atStart = event.endsWith('_start');
+  // "At candle lighting" is a minute before it: at the start itself it would
+  // be inside the hold and arrive a day late.
+  const offsetMs = (atStart ? -Math.max(minutes, 1) : minutes) * 60_000;
+
+  for (const times of upcomingRestTimes(nowMs, which)) {
+    const dueAtUtc = (atStart ? times.startUtc : times.endUtc) + offsetMs;
+    if (dueAtUtc > nowMs + 60_000) return dueAtUtc;
+  }
+  return null;
+}
+
+function createPart(input: AtRestInput): CreateInput {
+  return { text: input.text, dueAtUtc: input.dueAtUtc, localWallTime: input.localWallTime, tz: input.tz };
+}
+
+function withHeldNote(text: string, held: boolean, lang: Lang): string {
+  return held ? `${text}\n\n${reminderText.heldNote(lang)}` : text;
+}
+
+/** One pending reminder by description, the way `reminders.cancel` finds it. */
+function findPending(
+  variants: readonly string[],
+  ctx: ToolContext,
+): { reminder: Reminder } | { outcome: ResolveOutcome } {
+  const pending = ctx.reminders.listUpcoming(ctx.principal, LIST_LIMIT);
+  if (pending.length === 0) return { outcome: { kind: 'clarify', clarify: { code: 'nothing_scheduled' } } };
+
+  if (variants.length === 0) {
+    return pending.length === 1 && pending[0]
+      ? { reminder: pending[0] }
+      : { outcome: clarifyMissing('target') };
+  }
+
+  const matches = matchByText(pending, variants, (reminder) => reminder.text);
+  if (matches.length === 0) return { outcome: { kind: 'clarify', clarify: { code: 'not_found' } } };
+  if (matches.length === 1 && matches[0]) return { reminder: matches[0] };
+  return {
+    outcome: {
+      kind: 'clarify',
+      clarify: { code: 'ambiguous', choices: choicesOf(matches.slice(0, MAX_CHOICES), 'he') },
+    },
+  };
+}
+
 /** Kept as a named export: the reminder matching has its own tests. */
 export function matchReminders(
   reminders: readonly Reminder[],
@@ -274,6 +615,9 @@ export const REMINDER_TOOLS = {
   'reminders.create': remindersCreate,
   'reminders.list': remindersList,
   'reminders.cancel': remindersCancel,
+  'reminders.repeat': remindersRepeat,
+  'reminders.move': remindersMove,
+  'reminders.at_rest': remindersAtRest,
 } as const;
 
 // -- the calendar fallback ----------------------------------------------------
@@ -329,7 +673,7 @@ const BACKUP_EVENT_MINUTES = 5;
 
 // -- helpers ------------------------------------------------------------------
 
-function clarifyMissing(slot: 'text' | 'target'): ResolveOutcome {
+function clarifyMissing(slot: 'text' | 'target' | 'time' | 'date'): ResolveOutcome {
   return { kind: 'clarify', clarify: { code: 'missing_slot', slot } };
 }
 
@@ -348,6 +692,7 @@ function cancelInputOf(reminder: Reminder): CancelInput {
     text: reminder.text,
     dueAtUtc: reminder.dueAtUtc,
     tz: reminder.tz,
+    ...(reminder.rule ? { rule: reminder.rule } : {}),
   };
 }
 
@@ -371,6 +716,7 @@ function viewOfReminder(reminder: Reminder): ReminderView {
     id: reminder.id,
     text: reminder.text,
     local: localPartsOf(reminder.dueAtUtc, reminder.tz),
+    ...(reminder.rule ? { rule: reminder.rule } : {}),
   };
 }
 

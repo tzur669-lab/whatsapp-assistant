@@ -22,6 +22,7 @@
  */
 import type { CalendarClient, CalendarEvent } from '../google/calendar.js';
 import type { ReminderStore, Reminder } from '../tools/reminder-store.js';
+import type { ReminderView } from '../render/reminders.js';
 import type { IcalStore } from '../ical/store.js';
 import type { BirthdayStore } from './birthdays.js';
 import { asCalendarEvents } from '../ical/merge.js';
@@ -120,10 +121,11 @@ async function todaysEvents(ctx: DigestContext, endOfDay: number): Promise<Calen
   return [...result.value, ...subscribed].sort((a, b) => a.startUtc - b.startUtc);
 }
 
-function view(reminder: Reminder): { id: string; text: string; local: ReturnType<typeof localPartsOf> } {
+function view(reminder: Reminder): ReminderView {
   return {
     id: reminder.id,
     text: reminder.text,
     local: localPartsOf(reminder.dueAtUtc, reminder.tz),
+    ...(reminder.rule ? { rule: reminder.rule } : {}),
   };
 }

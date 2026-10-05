@@ -437,7 +437,10 @@ interface ToolDefinition<I, R> {
 |---|---|---|---|
 | `reminders.create` | text, date?, time?, in_duration? | 1 | Undo button, 10 min |
 | `reminders.list` | range? | 0 | Rendered by code |
-| `reminders.cancel` | query_variants, date? | 2 | Code matches; if several match → numbered choice |
+| `reminders.cancel` | query_variants, date? | 2 | Code matches; if several match → numbered choice. An occurrence of a recurring reminder ends its **whole series**, whatever state that occurrence is in |
+| `reminders.repeat` (agent-only, 2026-10-05) | text, time, every? (day · week · month), weekdays? (0–6), day_of_month? (1–31) | 1 | B6. Code builds the rule and computes every occurrence (§6.7). `every` is inferred from weekdays or day_of_month; absent all three → "how often?" without an open question. R3/R4/R5 as a one-off; a time a coming DST change skips or repeats → CLARIFY (R2). Undo ends the series. No calendar stand-in (WhatsApp frozen). `weekdays` is held against the days the message names (§6.2) |
+| `reminders.move` (agent-only, 2026-10-05) | query_variants, to_date?, to_time? | 2 | B8. Matched in code like a cancel. What was not said stays: "לשעה 5" keeps the day, "למחר" the hour. A recurring occurrence moves alone; its series goes on. A row that fired between preview and tap is not moved, and the reply says so |
+| `reminders.at_rest` (agent-only, 2026-10-05) | text, event (shabbat_start · shabbat_end · chag_start · chag_end), minutes? | 1 | "שעה לפני כניסת שבת". Code computes the time from `src/time/shabbat.ts` (Jerusalem, candle lighting −18 min, nightfall 8.5°), per day rather than per merged run; "at candle lighting" is one minute before. With `/shabbat on`, a time inside a rest period (a chag running into or out of Shabbat) is still set and the reply says it arrives when the period ends. Undo as `reminders.create` |
 | `calendar.list_events` | date or range | 0 | Code formats. **Event data never goes to the LLM** |
 | `calendar.create_event` | title, date, time, duration?, attendees? | 1 (3 if attendees) | `sendUpdates=none` unless Tier 3 confirmed |
 | `calendar.move_event` | query_variants, old date?/time?, new date?/time | 2 | Code searches the next 14 days; etag check on update |
@@ -578,7 +581,14 @@ Policy is code plus static config. **Nothing in chat can change it.**
 - Expire stale pending actions.
 - [O] Encrypted export.
 
-[O] **Recurring reminders (later):** store an RRULE + tz and compute the next occurrence in local time after each fire.
+**Recurring reminders (B6, 2026-10-05).** A `reminder_series` row holds the rule (daily · weekly on given weekdays · monthly on a day, at a wall-clock time) and its status; a `reminders` row is one occurrence, linked by `series_id`. Only the next occurrence is ever stored:
+
+- `claimDue` writes it, inside the same transaction as the claim, when a series row is claimed **for the first time** (`attempts = 1`) and its series is still `active`. A retry, or a requeue after a late failure report, is a later claim of the same occurrence and never writes a second successor; `UNIQUE(series_id, due_at_utc)` with `INSERT OR IGNORE` backs that up. Writing at claim rather than at `markSent` keeps the series going whatever the send does — sent, retried or abandoned.
+- The next occurrence is the first after `max(due, now)`, found through the zone (`src/time/recur.ts`), never by adding 24 h: a reminder delivered three days late is followed by the next one still ahead. Monthly day 29–31 falls on the month's last day when shorter.
+- Cancelling any occurrence marks the series `cancelled` and cancels its waiting rows; `reopenForRetry` will not requeue an occurrence of a cancelled series (it lands in `cancelled`, not `failed`, so no "gave up" message).
+- DST (R2): a rule is asked about at creation if any occurrence in the next 400 days falls in a gap or fold (checked only for hours before 04:00 — Israel changes clocks at 02:00). Past that horizon, which a monthly rule can reach, a skipped wall time is delivered an hour on and a repeated one once, at the earlier instant.
+
+**Moving a reminder (B8, 2026-10-05):** `reminders.move` (§6.4), `ReminderStore.reschedule` — `scheduled` rows only.
 
 ### 6.8 Storage (Durable Object SQLite)
 
@@ -588,7 +598,8 @@ Policy is code plus static config. **Nothing in chat can change it.**
 | `open_questions` | principal PK, tool, slots_json, asked, language, expires_at — see §6.11 | 10 min |
 | `pending_actions` | see §6.5 | 90 days |
 | `undo_actions` | id, compensating_json, nonce_hash, expires_at | 1 day |
-| `reminders` | id, text, due_at_utc, local_wall_time, tz, status, channel, attempts, lease_until, backup_event_id, wamid | 90 days after final state |
+| `reminders` | id, text, due_at_utc, local_wall_time, tz, status, channel, attempts, lease_until, backup_event_id, wamid, series_id (2026-10-05) | 90 days after final state (**not yet enforced**: the daily purge does not touch reminders; a daily series adds about 365 rows a year) |
+| `reminder_series` | id PK, principal, rule_json, status (`active` / `cancelled`) — §6.7 | as its reminders |
 | `outbound_messages` | wamid PK, kind, sent_at, delivery_status, pricing_category, principal, reminder_id, status_at, error_code | 30 days |
 | `ical_feeds` | id PK, principal, url, etag, last_fetched_at, last_error, event_count — see §6.15 | until unsubscribed |
 | `ical_events` | (feed_id, uid, start_utc) PK, title, end_utc, all_day — replaced wholesale on refresh | 60-day horizon |
@@ -2578,6 +2589,7 @@ measured on the app channel. To finish with `--resume`.
 | 2026-10-01 | **`media.play`: no default app** (the user's request). A song plays on YouTube Music and a video on YouTube; the model sets `app` from the words and leaves it out when they say neither, and code then asks "YouTube (a video) or YouTube Music (a song)?" (`phone_missing: media_app`) instead of defaulting to YouTube. With the mode also missing, one question asks both (`media_app_mode`). Eval case `ph-media-004` added, `-003` now a song |
 | 2026-10-05 | **Fix: YouTube opened nothing** (the user's report; app 0.8.2). Two causes, found on the phone: (1) the app's closed list of card types lacked `media`, so the card was dropped as off-shape and never ran; (2) YouTube and YouTube Music both accept `MEDIA_PLAY_FROM_SEARCH` and ignore it — the home screen opens, nothing plays. The card now opens the app's own search with the words (YouTube `ACTION_SEARCH`, YouTube Music its search link, the web page as a last resort), and playing is a tap on the result; background no longer brings this app back over the results. ColorOS asks once whether the assistant may open each app |
 | 2026-10-05 | **The backup model answers, read-only, and Groq's own minute counts** (the user's report: "the fallback models are only shown, and the minute limit is always there"). Measured on staging: a second question 14 s after a 3,344-token turn was refused by this server's minute meter while Groq still had room (the qwen parser call right after succeeded), and the parser, unable to answer a question, gave the minute-limit message; gpt-oss-120b had not been called in 81 hours. Now (1) the budget trusts Groq's `x-ratelimit-*-tokens` reading while fresh (§6.19 Budget); (2) after qwen fails and the parser says `unsupported`, gpt-oss-120b answers read-only (§6.19, §13). `pnpm eval:agent --read-only` scores that turn on its own terms (§11.11). The user chose read-only over a full fallback because of §11.11's invented times |
+| 2026-10-05 | **Recurring reminders, moving a reminder, and reminders by Shabbat and chag** (ROADMAP block A: B6, B8, idea #3). Three agent-only tools — `reminders.repeat` (Tier 1), `reminders.move` (Tier 2), `reminders.at_rest` (Tier 1) — so the parser is untouched. Migration 0017: `reminder_series` + `reminders.series_id`; the next occurrence is written on the first claim of the current one (§6.7). Reviewed in three rounds before building; what the review changed: cancel and Undo act on the **series**, not the row (a cancel tapped after the occurrence fired still ends it); a late failure report cannot revive a cancelled series; a retry never writes a second successor; a recurring time that a coming DST change skips or repeats is asked about at creation, as R2 requires, rather than resolved silently; Shabbat and chag times are per day, not per merged rest period; a time inside the hold says it will arrive late. `weekdays` joins the weekday check (§6.2), and the lexicon now reads lists like "ראשון ושלישי". Agent prompt **a5** (one sentence: repeating → `reminders.repeat`, Shabbat-relative → `reminders.at_rest`); twelve eval cases `rm-*` |
 
 ---
 
@@ -2675,7 +2687,7 @@ Built deterministically, so it cost no Groq budget and works when the provider
 is down. The round-trip, the four outcomes, the gates and what was deliberately
 left out (a numbered pick from an ambiguous list) are all specified there.
 
-**B6. No recurring reminders.** "כל יום ראשון", "כל בוקר", "בכל 1 לחודש" — the
+**B6. No recurring reminders.** ✅ **Done 2026-10-05** — see §6.7 and `reminders.repeat` in §6.4. Agent-only, so the parser's prompt and wire schema did not change and the gate below no longer applies. "כל יום ראשון", "כל בוקר", "בכל 1 לחודש" — the
 most requested feature in every comparable project, and absent here.
 *Do:* store an RRULE-shaped rule plus **one materialized next occurrence**, and
 re-materialize on delivery. Full RRULE expansion is the wrong shape for a 10 ms
@@ -2688,7 +2700,7 @@ occurrence has to be recomputed through the zone each time, never by adding 24 h
 which is the only thing that keeps a scheduled message from decaying into the
 one the user has learned to dismiss.
 
-**B8. No way to see or edit a reminder after the Undo window.** Ten minutes after
+**B8. No way to see or edit a reminder after the Undo window.** ✅ **Done 2026-10-05** — `reminders.move` (§6.4); the list marks recurring ones with 🔁. Ten minutes after
 setting one, the only options are cancel and re-create. `/status` reports a count
 and nothing else.
 *Do:* `reminders.list` already exists — add reschedule-by-description, and a

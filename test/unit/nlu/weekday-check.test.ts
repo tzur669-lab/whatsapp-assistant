@@ -24,6 +24,39 @@ function reminder(date: unknown): IntentDraft {
   } as IntentDraft;
 }
 
+function repeating(weekdays: number[]): IntentDraft {
+  return {
+    intent: 'reminders.repeat',
+    language: 'he',
+    slots: { text: 'לשים זבל', time: EIGHT, weekdays },
+    missing: [],
+    ambiguities: [],
+  } as IntentDraft;
+}
+
+describe('checkNamedWeekdays on a recurring reminder (B6)', () => {
+  it('passes days the message named', () => {
+    const draft = repeating([0, 2]);
+    expect(checkNamedWeekdays(draft, 'כל יום ראשון ושלישי ב-8 תזכיר לי לשים זבל').mismatched).toEqual([]);
+  });
+
+  it('reads a list with commas and a closing ו', () => {
+    const draft = repeating([1, 3, 4]);
+    expect(checkNamedWeekdays(draft, 'בימי שני, רביעי וחמישי ב-8 תזכיר לי').mismatched).toEqual([]);
+  });
+
+  it('drops the list when any day in it was not named', () => {
+    // Counting Sunday as 1, the classic slip.
+    const result = checkNamedWeekdays(repeating([1]), 'כל יום ראשון ב-8 תזכיר לי לשים זבל');
+    expect(result.mismatched).toEqual(['weekdays']);
+    expect(result.draft.slots).toEqual({ text: 'לשים זבל', time: EIGHT });
+  });
+
+  it('leaves it alone when the message names no day', () => {
+    expect(checkNamedWeekdays(repeating([0, 1, 2, 3, 4]), 'בימי חול ב-8 תזכיר לי').mismatched).toEqual([]);
+  });
+});
+
 describe('checkNamedWeekdays', () => {
   it('flags a weekday the message did not name, and drops it', () => {
     const result = checkNamedWeekdays(reminder(onWeekday(2)), 'תזכיר לי ביום שני ב-8');
