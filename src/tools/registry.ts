@@ -35,6 +35,12 @@ import {
   tasksListSlots,
   remindersAtRestSlots,
   remindersScheduledReadSlots,
+  notesSaveSlots,
+  notesFindSlots,
+  notesDeleteSlots,
+  expensesAddSlots,
+  expensesSummarySlots,
+  expensesExportSlots,
   remindersCancelSlots,
   remindersCreateSlots,
   remindersListSlots,
@@ -87,6 +93,13 @@ export const TOOL_NAMES = [
   // ROADMAP block B (2026-10-05): sums and conversions, and free time.
   'calc.compute',
   'calendar.free_time',
+  // ROADMAP block D (2026-10-05): notes, kept from the model, and expenses.
+  'notes.save',
+  'notes.find',
+  'notes.delete',
+  'expenses.add',
+  'expenses.summary',
+  'expenses.export',
 ] as const;
 
 export type ToolName = (typeof TOOL_NAMES)[number];
@@ -147,6 +160,21 @@ export type ToolSpec = {
    * agent's turn waits for the phone, and the result is text someone else wrote.
    */
   phoneRead?: true;
+  /**
+   * Every reply of this tool is kept from the model (2026-10-05, notes): a read
+   * ends the agent's turn instead of returning to it, and the agent's history
+   * keeps a placeholder for the exchange. The clarify, the confirmation, the
+   * Undo and the button replies are stamped too, not only the execute.
+   */
+  private?: true;
+  /**
+   * A Tier 0 read whose code-rendered text is the whole answer: it ends the
+   * agent's turn instead of returning to the model (2026-10-05, expense sums —
+   * numbers the model-bound scrub would blank anyway).
+   */
+  terminal?: true;
+  /** A card tool offered only to an app that reports this capability (§6.20). */
+  needsCap?: 'file';
 };
 
 const EVENTS_OWNED: GoogleScope = 'https://www.googleapis.com/auth/calendar.events.owned';
@@ -436,6 +464,73 @@ export const REGISTRY: Readonly<Record<ToolName, ToolSpec>> = {
     scopes: [],
     rateLimit: { perHour: 10, perDay: 30 },
     implementedIn: 6,
+  },
+  'notes.save': {
+    name: 'notes.save',
+    llmDescription: 'Keep a note the user asks to remember ("remember that…"), with no time. text: what to keep, in the user\'s words.',
+    draftSchema: notesSaveSlots,
+    // The user's own words, kept for them; Undo deletes it. Private: no reply
+    // of a notes tool goes back to the model or into its history.
+    tier: 1,
+    scopes: [],
+    rateLimit: { perHour: 30, perDay: 100 },
+    implementedIn: 6,
+    private: true,
+  },
+  'notes.find': {
+    name: 'notes.find',
+    llmDescription: 'Show the user\'s notes, or those about what they describe. The notes are shown to the user directly; you will not see them.',
+    draftSchema: notesFindSlots,
+    tier: 0,
+    scopes: [],
+    rateLimit: { perHour: 60, perDay: 300 },
+    implementedIn: 6,
+    private: true,
+  },
+  'notes.delete': {
+    name: 'notes.delete',
+    llmDescription: 'Delete a note the user describes.',
+    draftSchema: notesDeleteSlots,
+    // Found by description, so it is confirmed first, like a cancel.
+    tier: 2,
+    scopes: [],
+    rateLimit: { perHour: 20, perDay: 60 },
+    implementedIn: 6,
+    private: true,
+  },
+  'expenses.add': {
+    name: 'expenses.add',
+    llmDescription:
+      'Record money the user spent, in shekels. amount: the number. category: the closest one (petrol is fuel, a supermarket is groceries). description: a few words, if said. The day only if said: days_ago (1 = yesterday), or weekday, or on_date.',
+    draftSchema: expensesAddSlots,
+    tier: 1,
+    scopes: [],
+    rateLimit: { perHour: 60, perDay: 200 },
+    implementedIn: 6,
+  },
+  'expenses.summary': {
+    name: 'expenses.summary',
+    llmDescription: 'How much the user spent in a period; category when the user names what it was on (petrol is fuel). The answer is shown to the user directly.',
+    draftSchema: expensesSummarySlots,
+    // Sums are numbers the model-bound scrub would blank; code's text is the answer.
+    tier: 0,
+    scopes: [],
+    rateLimit: { perHour: 60, perDay: 300 },
+    implementedIn: 6,
+    terminal: true,
+  },
+  'expenses.export': {
+    name: 'expenses.export',
+    llmDescription: 'Export the user\'s expenses to a spreadsheet file (Excel) on the phone.',
+    draftSchema: expensesExportSlots,
+    // A card: the file is saved on the user's own phone, from the signed claim.
+    tier: 1,
+    scopes: [],
+    rateLimit: { perHour: 10, perDay: 30 },
+    implementedIn: 6,
+    confirmation: 'card',
+    autoRun: true,
+    needsCap: 'file',
   },
   'drive.search': {
     name: 'drive.search',

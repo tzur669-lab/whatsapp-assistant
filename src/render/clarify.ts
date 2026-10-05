@@ -14,6 +14,7 @@ import { eventText } from './events.js';
 import { isolateLtr } from './bidi.js';
 import { callText } from './calls.js';
 import { phoneQuestion } from './phone.js';
+import { personalQuestion } from './personal.js';
 import { formatWhen } from './format-time.js';
 import type { Lang } from './format-time.js';
 import type { Clarify, TargetChoice } from '../tools/types.js';
@@ -46,6 +47,8 @@ export function renderClarify(clarify: Clarify, lang: Lang): string {
       return callText.numberRefused(lang);
     case 'phone_missing':
       return phoneQuestion(clarify.what, lang);
+    case 'personal':
+      return personalQuestion(clarify.what, lang);
   }
 }
 

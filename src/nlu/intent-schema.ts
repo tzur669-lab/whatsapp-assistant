@@ -36,6 +36,12 @@ import {
   tasksListSlots,
   remindersAtRestSlots,
   remindersScheduledReadSlots,
+  notesSaveSlots,
+  notesFindSlots,
+  notesDeleteSlots,
+  expensesAddSlots,
+  expensesSummarySlots,
+  expensesExportSlots,
   remindersCancelSlots,
   remindersCreateSlots,
   remindersListSlots,
@@ -146,6 +152,13 @@ export const intentDraftSchema = z.discriminatedUnion('intent', [
   // the agent-only reminders.
   z.object({ intent: z.literal('calc.compute'), slots: calcComputeSlots, ...common }).strict(),
   z.object({ intent: z.literal('calendar.free_time'), slots: calendarFreeTimeSlots, ...common }).strict(),
+  // ROADMAP block D (2026-10-05). Agent-only.
+  z.object({ intent: z.literal('notes.save'), slots: notesSaveSlots, ...common }).strict(),
+  z.object({ intent: z.literal('notes.find'), slots: notesFindSlots, ...common }).strict(),
+  z.object({ intent: z.literal('notes.delete'), slots: notesDeleteSlots, ...common }).strict(),
+  z.object({ intent: z.literal('expenses.add'), slots: expensesAddSlots, ...common }).strict(),
+  z.object({ intent: z.literal('expenses.summary'), slots: expensesSummarySlots, ...common }).strict(),
+  z.object({ intent: z.literal('expenses.export'), slots: expensesExportSlots, ...common }).strict(),
   // Google Tasks (2026-10-01). Agent-only.
   z.object({ intent: z.literal('tasks.list'), slots: tasksListSlots, ...common }).strict(),
   z.object({ intent: z.literal('tasks.add'), slots: tasksAddSlots, ...common }).strict(),

@@ -33,7 +33,9 @@ export type CardInput =
       state?: 'on' | 'off' | 'silent' | 'vibrate' | 'normal' | undefined;
     }
   | { type: 'message'; channel: 'sms' | 'whatsapp'; queries: string[]; text: string }
-  | { type: 'media'; app: 'youtube' | 'youtube_music'; query: string; mode: 'background' | 'fullscreen' };
+  | { type: 'media'; app: 'youtube' | 'youtube_music'; query: string; mode: 'background' | 'fullscreen' }
+  /** The expenses export (2026-10-05). `preview` is rendered by its tool; never the content. */
+  | { type: 'file'; name: string; mime: 'text/csv'; content: string; preview: string };
 
 const pad = (n: number) => String(n).padStart(2, '0');
 
@@ -75,6 +77,9 @@ export function cardPreview(input: CardInput, lang: Lang): string {
         : input.mode === 'background' ? 'in the background' : 'full screen';
       return `${music ? '🎵' : '▶️'} ${app}: ${input.query} · ${how}`;
     }
+
+    case 'file':
+      return input.preview;
 
     case 'message': {
       const via = isolate(input.channel === 'whatsapp' ? 'WhatsApp' : 'SMS');

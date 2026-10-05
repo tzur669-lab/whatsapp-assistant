@@ -61,6 +61,8 @@ export function fromWireName(wire: string, offered: readonly ToolName[]): ToolNa
  */
 export type OfferOptions = {
   cards: boolean;
+  /** The app saves a file a card carries (2026-10-05, the expenses export). */
+  fileCards?: boolean;
   phoneReads?: boolean;
   /**
    * The Google grants that are connected (2026-10-01). A tool for a grant that
@@ -82,6 +84,7 @@ export function agentToolNames(options: OfferOptions = { cards: false }): ToolNa
     if (name.startsWith('mail.')) return options.grants?.gmail === true;
     if (name.startsWith('tasks.')) return options.grants?.tasks === true;
     if (name.startsWith('drive.')) return options.grants?.drive === true;
+    if (spec.needsCap === 'file') return options.cards && options.fileCards === true;
     if (spec.confirmation === 'card') return options.cards;
     if (spec.phoneRead) return options.phoneReads === true;
     return true;

@@ -103,7 +103,7 @@ function offered() {
   const grants = { gmail: true, tasks: true, drive: true };
   return readOnly
     ? agentToolNames({ cards: false, phoneReads: false, grants, readOnly: true })
-    : agentToolNames({ cards: true, phoneReads: true, grants });
+    : agentToolNames({ cards: true, fileCards: true, phoneReads: true, grants });
 }
 
 async function main(): Promise<void> {

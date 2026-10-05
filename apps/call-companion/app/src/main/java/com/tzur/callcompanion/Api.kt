@@ -219,7 +219,7 @@ object Api {
     }
 
     /** What this build can do, sent with the push address (PLAN §6.20, §6.21). */
-    val CAPS = listOf("cards", "device_query")
+    val CAPS = listOf("cards", "device_query", "file")
 
     fun updatePushToken(context: Context, pushToken: String): Boolean {
         val body = JSONObject().put("pushToken", pushToken).put("caps", JSONArray(CAPS))

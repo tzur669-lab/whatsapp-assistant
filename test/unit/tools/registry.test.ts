@@ -3,6 +3,8 @@
  * (PLAN §6.4). These are drift guards: each one fails the build for a mistake
  * that would otherwise only show up as a bad reply in production.
  */
+import { NOTE_TOOLS } from '../../../src/tools/notes.js';
+import { EXPENSE_TOOLS } from '../../../src/tools/expenses.js';
 import { describe, expect, it } from 'vitest';
 import { REGISTRY, TOOL_NAMES, toolCatalog } from '../../../src/tools/registry.js';
 import { REMINDER_TOOLS } from '../../../src/tools/reminders.js';
@@ -33,6 +35,8 @@ const IMPLEMENTATIONS: Record<string, ToolDefinition> = {
   'drive.search': driveSearch,
   'calc.compute': calcCompute,
   'calendar.free_time': calendarFreeTime,
+  ...NOTE_TOOLS,
+  ...EXPENSE_TOOLS,
 };
 
 describe('every registered tool is real', () => {

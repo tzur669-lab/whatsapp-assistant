@@ -18,6 +18,8 @@
  * guards against everything else, and it is what makes the erased types here
  * honest rather than a cast.
  */
+import type { NoteStore } from './note-store.js';
+import type { ExpenseStore } from './expense-store.js';
 import type { ZodTypeAny } from 'zod';
 import type { Lang } from '../render/format-time.js';
 import type { ClarifyTime } from '../time/resolve.js';
@@ -63,7 +65,23 @@ export type Clarify =
    * A phone action is missing something (PLAN §6.20). Not recorded as an open
    * question: the answer goes back to the agent, which has the turn in history.
    */
-  | { code: 'phone_missing'; what: PhoneQuestion };
+  | { code: 'phone_missing'; what: PhoneQuestion }
+  /**
+   * Notes and expenses (2026-10-05): what to keep, how much, or a day that is
+   * not a past one. Not recorded as an open question; the agent has the turn.
+   */
+  | { code: 'personal'; what: PersonalQuestion };
+
+export type PersonalQuestion =
+  | 'note_text'
+  | 'notes_full'
+  | 'no_notes'
+  | 'expense_amount'
+  | 'expense_future'
+  | 'expense_too_old'
+  | 'expense_invalid_date'
+  | 'expenses_full'
+  | 'no_expenses';
 
 export type ResolveOutcome =
   | {
@@ -110,6 +128,10 @@ export type ToolContext = {
   gmail?: GmailClient;
   /** Google Drive's file search, once its grant is connected (2026-10-01). */
   drive?: DriveClient;
+  /** Notes (§6.22). Absent only in tests that predate them. */
+  notes?: NoteStore;
+  /** Expenses (§6.22). Absent only in tests that predate them. */
+  expenses?: ExpenseStore;
   /**
    * The turn already read text someone else wrote (§6.19). Set by `runIntent`
    * for the one tool that sends the model's words out: Wikipedia (2026-10-05).

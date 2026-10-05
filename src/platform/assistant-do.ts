@@ -44,6 +44,8 @@ import { statusText } from '../render/status.js';
 import { localPartsOf, ZONE } from '../time/tz.js';
 import { buildDigest } from '../core/digest.js';
 import { scheduledReadMessage } from '../core/scheduled-read.js';
+import { NoteStore } from '../tools/note-store.js';
+import { ExpenseStore } from '../tools/expense-store.js';
 import { DEFAULT_PLACE, findPlace, HOME_CITY_KEY } from '../lookup/place.js';
 import type { Place } from '../lookup/place.js';
 import type { ScheduledTopic } from '../nlu/slot-schemas.js';
@@ -133,6 +135,8 @@ export class AssistantDO implements DurableObject {
   private readonly questions: OpenQuestions;
   private readonly ical: IcalStore;
   private readonly birthdays: BirthdayStore;
+  private readonly notes: NoteStore;
+  private readonly expenses: ExpenseStore;
   private readonly deferred: UndoActions;
   private readonly google: GoogleStore;
   private readonly devices: DeviceStore;
@@ -190,6 +194,8 @@ export class AssistantDO implements DurableObject {
     this.questions = new OpenQuestions(this.sql, now);
     this.ical = new IcalStore(this.sql, now);
     this.birthdays = new BirthdayStore(this.sql, now);
+    this.notes = new NoteStore(this.sql, now);
+    this.expenses = new ExpenseStore(this.sql, now);
     this.deferred = new UndoActions(this.sql, now);
     this.google = new GoogleStore(this.sql, now, () =>
       parseKeyring(this.env as unknown as Record<string, string | undefined>),
@@ -1571,6 +1577,8 @@ export class AssistantDO implements DurableObject {
   private services(): Services {
     return {
       reminders: this.reminders,
+      notes: this.notes,
+      expenses: this.expenses,
       pending: this.pending,
       questions: this.questions,
       ical: this.ical,

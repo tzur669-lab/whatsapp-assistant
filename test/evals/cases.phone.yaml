@@ -721,3 +721,106 @@
     slots:
       topic: weather
     missing: []
+
+# ROADMAP block D (2026-10-05, prompt a8): notes (nx-) and expenses (xp-). Agent-only.
+# A note has no time (a reminder has one); money spent is an expense. A note's
+# text is the model's wording of what to keep, so only the tool is scored.
+
+- id: nx-save-001
+  now: "2026-10-05T10:00:00+03:00"
+  input: "תזכור שהקוד של השער הוא 4321"
+  expect:
+    intent: notes.save
+    missing: []
+
+- id: nx-save-002
+  now: "2026-10-05T10:00:00+03:00"
+  input: "remember that my parking spot is B12"
+  expect:
+    intent: notes.save
+    missing: []
+
+- id: nx-save-003
+  now: "2026-10-05T10:00:00+03:00"
+  input: "תזכיר לי מחר ב-8 להתקשר לאבא"
+  expect:
+    intent: reminders.create
+    missing: []
+
+- id: nx-find-001
+  now: "2026-10-05T10:00:00+03:00"
+  input: "מה רשמתי לך על השער?"
+  expect:
+    intent: notes.find
+    missing: []
+
+- id: nx-find-002
+  now: "2026-10-05T10:00:00+03:00"
+  input: "תראה לי את הפתקים שלי"
+  expect:
+    intent: notes.find
+    missing: []
+
+- id: nx-delete-001
+  now: "2026-10-05T10:00:00+03:00"
+  input: "תמחק את הפתק על החניה"
+  expect:
+    intent: notes.delete
+    missing: []
+
+- id: xp-add-001
+  now: "2026-10-05T10:00:00+03:00"
+  input: "הוצאתי 45 שקל על קפה"
+  expect:
+    intent: expenses.add
+    slots:
+      amount: 45
+      category: food
+    missing: []
+
+- id: xp-add-002
+  now: "2026-10-05T10:00:00+03:00"
+  input: "אתמול תדלקתי ב-300"
+  expect:
+    intent: expenses.add
+    slots:
+      amount: 300
+      category: fuel
+      days_ago: 1
+    missing: []
+
+- id: xp-add-003
+  now: "2026-10-05T10:00:00+03:00"
+  input: "I spent 120 shekels at the supermarket"
+  expect:
+    intent: expenses.add
+    slots:
+      amount: 120
+      category: groceries
+    missing: []
+
+- id: xp-sum-001
+  now: "2026-10-05T10:00:00+03:00"
+  input: "כמה הוצאתי החודש?"
+  expect:
+    intent: expenses.summary
+    slots:
+      period: this_month
+    missing: []
+
+- id: xp-sum-002
+  now: "2026-10-05T10:00:00+03:00"
+  input: "כמה הוצאתי על דלק בחודש שעבר?"
+  expect:
+    intent: expenses.summary
+    slots:
+      period: last_month
+      category: fuel
+    missing: []
+
+- id: xp-export-001
+  now: "2026-10-05T10:00:00+03:00"
+  input: "תייצא לי את ההוצאות לאקסל"
+  expect:
+    intent: expenses.export
+    missing: []

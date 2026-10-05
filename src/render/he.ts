@@ -128,6 +128,8 @@ export const he = {
    * reply does not claim that nothing happened (§6.19).
    */
   agentIncomplete: 'לא הצלחתי להשלים את התשובה. כדאי לבדוק מה כבר בוצע לפני ששולחים שוב.',
+  /** What the agent's history keeps for a private exchange (notes, 2026-10-05). */
+  privatePlaceholder: '[פתק]',
 
   /** `/forget` (§6.19). */
   forgotten: 'זיכרון השיחה נמחק.',

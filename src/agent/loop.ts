@@ -68,6 +68,11 @@ export type AgentTurnInput = {
   history: readonly HistoryEntry[];
   /** The paired app runs action cards, so phone actions may be offered (§6.20). */
   cards?: boolean;
+  /**
+   * The app also saves a file a card carries (2026-10-05). Not kept in a
+   * suspended turn: a resumed turn is not offered the export.
+   */
+  fileCards?: boolean;
   /** The paired app answers phone reads, and this is a typed message (§6.21). */
   phoneReads?: boolean;
   /** Which Google grants are connected, so only their tools are offered (2026-10-01). */
@@ -152,6 +157,7 @@ export async function runAgentTurn(input: AgentTurnInput, deps: AgentDeps): Prom
   const cards = !readOnly && input.cards === true;
   const offered: ToolName[] = agentToolNames({
     cards,
+    fileCards: input.fileCards === true,
     phoneReads: !readOnly && input.phoneReads === true,
     ...(input.grants ? { grants: input.grants } : {}),
     ...(readOnly ? { readOnly } : {}),

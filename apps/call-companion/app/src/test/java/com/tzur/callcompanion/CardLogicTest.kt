@@ -47,4 +47,22 @@ class CardLogicTest {
         assertNull(CardLogic.whatsAppNumber("*100#"))
         assertNull(CardLogic.whatsAppNumber(""))
     }
+
+    @Test fun aCsvFileCardPasses() {
+        val file = CardLogic.fileCard("file", "expenses-2026-10-05.csv", "text/csv", "a,b")
+        assertEquals("expenses-2026-10-05.csv", file?.name)
+    }
+
+    @Test fun aFileCardWithAPathOrAnotherTypeIsRefused() {
+        assertNull(CardLogic.fileCard("file", "../evil.csv", "text/csv", "x"))
+        assertNull(CardLogic.fileCard("file", "Expenses.csv", "text/csv", "x"))
+        assertNull(CardLogic.fileCard("file", "run.apk", "text/csv", "x"))
+        assertNull(CardLogic.fileCard("file", "a.csv", "application/vnd.android.package-archive", "x"))
+        assertNull(CardLogic.fileCard("media", "a.csv", "text/csv", "x"))
+    }
+
+    @Test fun anEmptyOrOversizedFileIsRefused() {
+        assertNull(CardLogic.fileCard("file", "a.csv", "text/csv", ""))
+        assertNull(CardLogic.fileCard("file", "a.csv", "text/csv", "x".repeat(CardLogic.MAX_FILE_CHARS + 1)))
+    }
 }

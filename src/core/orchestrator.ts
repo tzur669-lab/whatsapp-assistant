@@ -24,6 +24,8 @@ import type { PolicyResult } from '../policy/engine.js';
 import { REGISTRY } from '../tools/registry.js';
 import type { ToolName } from '../tools/registry.js';
 import { REMINDER_TOOLS } from '../tools/reminders.js';
+import { NOTE_TOOLS } from '../tools/notes.js';
+import { EXPENSE_TOOLS } from '../tools/expenses.js';
 import { calendarListEvents } from '../tools/calendar-read.js';
 import { infoLookup } from '../tools/lookup.js';
 import { calcCompute } from '../tools/calc.js';
@@ -86,6 +88,11 @@ export type Reply = {
   /** A phone action for the app to claim and run (§6.20). */
   card?: ActionCard;
   /**
+   * The reply of a private tool (notes, 2026-10-05): never shown to the model,
+   * never kept in the agent's history, notified generically by the app.
+   */
+  private?: true;
+  /**
    * A phone read policy allowed (§6.21). Nothing ran: the agent suspends its
    * turn and the phone answers this query. `text` is empty and never sent.
    */
@@ -135,6 +142,8 @@ const IMPLEMENTED: Partial<Record<ToolName, ToolDefinition>> = {
   ...TASK_TOOLS,
   ...MAIL_TOOLS,
   'drive.search': driveSearch,
+  ...NOTE_TOOLS,
+  ...EXPENSE_TOOLS,
 };
 
 export type RunOptions = {
@@ -151,6 +160,26 @@ export async function runIntent(
   draft: IntentDraft,
   turn: TurnContext,
   options: RunOptions = {},
+): Promise<Reply> {
+  return withPrivacy(draft.intent, await runIntentInner(draft, turn, options));
+}
+
+/**
+ * Every reply of a private tool is stamped, whatever produced it — a question,
+ * a choice list, a confirmation, an Undo — and a private or terminal read does
+ * not go back to the model (2026-10-05).
+ */
+function withPrivacy(toolName: string, reply: Reply): Reply {
+  const spec = REGISTRY[toolName as ToolName];
+  if (!spec || (!spec.private && !spec.terminal)) return reply;
+  const { read: _read, ...rest } = reply;
+  return spec.private ? { ...rest, private: true } : rest;
+}
+
+async function runIntentInner(
+  draft: IntentDraft,
+  turn: TurnContext,
+  options: RunOptions,
 ): Promise<Reply> {
   const ctx = turn.tool;
 
@@ -467,16 +496,20 @@ export function runPlainConfirmation(id: string, turn: TurnContext): Promise<Rep
 
 async function confirmPending(id: string, nonce: string | null, turn: TurnContext): Promise<Reply> {
   const ctx = turn.tool;
-  const checked =
-    nonce === null
-      ? turn.pending.confirmResolved(id, ctx.principal)
-      : turn.pending.confirm(id, nonce, ctx.principal);
-
+  const checked = nonce === null ? turn.pending.confirmResolved(id, ctx.principal) : turn.pending.confirm(id, nonce, ctx.principal);
   if (!checked.ok) {
     ctx.log.info('confirm_rejected', { reason: checked.reason });
     return { text: confirmFailureText(checked.reason) };
   }
+  return withPrivacy(checked.action.tool, await runConfirmed(checked.action, turn));
+}
 
+async function runConfirmed(
+  action: { id: string; tool: string; input: unknown },
+  turn: TurnContext,
+): Promise<Reply> {
+  const ctx = turn.tool;
+  const checked = { action };
   const tool = IMPLEMENTED[checked.action.tool as ToolName];
   if (!tool) return { text: statusText.notAvailableYet };
 
@@ -528,7 +561,7 @@ async function runDeferred(
   try {
     const result = await tool.undo(used.compensating, ctx);
     audit(turn, tool.name, null, 'UNDO', 'ok');
-    return { text: result.text, rescheduleAlarm: true };
+    return withPrivacy(used.tool, { text: result.text, rescheduleAlarm: true });
   } catch (error) {
     ctx.log.error('undo_failed', {
       tool: used.tool,

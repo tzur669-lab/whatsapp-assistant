@@ -12,7 +12,9 @@ import android.hardware.camera2.CameraCharacteristics
 import android.hardware.camera2.CameraManager
 import android.media.AudioManager
 import android.net.Uri
+import android.content.ContentValues
 import android.os.Build
+import android.provider.MediaStore
 import android.provider.AlarmClock
 import android.provider.Settings
 import android.widget.Toast
@@ -41,6 +43,7 @@ object DeviceActions {
                 "settings" -> settings(activity, action, done)
                 "message" -> message(activity, action, done)
                 "media" -> media(activity, action, done)
+                "file" -> saveFile(activity, action, done)
                 else -> done("unsupported")
             }
         } catch (_: ActivityNotFoundException) {
@@ -280,6 +283,53 @@ object DeviceActions {
         }
 
         toast(activity, if (mode == "background") R.string.card_media_background else R.string.card_media_tap)
+        done("done")
+    }
+
+    /**
+     * Save the file to Downloads and open it (2026-10-05, the expenses export).
+     * MediaStore needs no permission on Android 10 and later; earlier versions
+     * are told the phone does not support it rather than asked for storage.
+     */
+    private fun saveFile(activity: Activity, a: JSONObject, done: (String) -> Unit) {
+        val file = CardLogic.fileCard(
+            a.optString("type"),
+            a.optString("name").ifEmpty { null },
+            a.optString("mime").ifEmpty { null },
+            a.optString("content").ifEmpty { null },
+        ) ?: return done("failed")
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
+            toast(activity, R.string.card_not_supported)
+            return done("unsupported")
+        }
+
+        val values = ContentValues().apply {
+            put(MediaStore.Downloads.DISPLAY_NAME, file.name)
+            put(MediaStore.Downloads.MIME_TYPE, "text/csv")
+            put(MediaStore.Downloads.IS_PENDING, 1)
+        }
+        val resolver = activity.contentResolver
+        val uri = resolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values) ?: return done("failed")
+        try {
+            resolver.openOutputStream(uri)?.use { it.write(file.content.toByteArray(Charsets.UTF_8)) }
+                ?: throw IllegalStateException("no stream")
+            values.clear()
+            values.put(MediaStore.Downloads.IS_PENDING, 0)
+            resolver.update(uri, values, null, null)
+        } catch (error: Exception) {
+            resolver.delete(uri, null, null)
+            throw error
+        }
+
+        val open = Intent(Intent.ACTION_VIEW)
+            .setDataAndType(uri, "text/csv")
+            .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
+        try {
+            activity.startActivity(open)
+        } catch (_: ActivityNotFoundException) {
+            // Saved all the same; there is just nothing here that opens a CSV.
+        }
+        toast(activity, R.string.card_file_saved)
         done("done")
     }
 

@@ -57,6 +57,21 @@ describe('checkNamedWeekdays on a recurring reminder (B6)', () => {
   });
 });
 
+describe('checkNamedWeekdays on an expense day (2026-10-05)', () => {
+  const spent = (weekday: number): IntentDraft =>
+    ({ intent: 'expenses.add', language: 'he', slots: { amount: 50, weekday }, missing: [], ambiguities: [] }) as IntentDraft;
+
+  it('passes the day the message named', () => {
+    expect(checkNamedWeekdays(spent(0), 'ביום ראשון הוצאתי 50 על דלק').mismatched).toEqual([]);
+  });
+
+  it('drops a miscounted day, so the day is asked for', () => {
+    const result = checkNamedWeekdays(spent(1), 'ביום ראשון הוצאתי 50 על דלק');
+    expect(result.mismatched).toEqual(['weekday']);
+    expect(result.draft.slots).toEqual({ amount: 50 });
+  });
+});
+
 describe('checkNamedWeekdays', () => {
   it('flags a weekday the message did not name, and drops it', () => {
     const result = checkNamedWeekdays(reminder(onWeekday(2)), 'תזכיר לי ביום שני ב-8');

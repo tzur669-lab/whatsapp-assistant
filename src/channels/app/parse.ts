@@ -96,7 +96,8 @@ const pushTokenSchema = z
   .object({
     pushToken: z.string().min(1).max(4_096),
     // `cards`: runs action cards (§6.20). `device_query`: answers phone reads (§6.21).
-    caps: z.array(z.enum(['cards', 'device_query'])).max(8).optional(),
+    // `file`: saves the file a card carries (2026-10-05, the expenses export).
+    caps: z.array(z.enum(['cards', 'device_query', 'file'])).max(8).optional(),
   })
   .strict();
 

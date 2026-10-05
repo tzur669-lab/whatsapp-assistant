@@ -25,6 +25,7 @@ import { handleInbound } from '../../../src/core/pipeline.js';
 import type { PipelineDeps } from '../../../src/core/pipeline.js';
 import { ReminderStore } from '../../../src/tools/reminder-store.js';
 import { buildDigest } from '../../../src/core/digest.js';
+import { expensesCsv, MAX_EXPORT_ROWS } from '../../../src/tools/expense-store.js';
 import { PendingActions, sha256Hex } from '../../../src/confirm/pending.js';
 import { OpenQuestions } from '../../../src/confirm/questions.js';
 import { UndoActions } from '../../../src/confirm/undo.js';
@@ -167,6 +168,26 @@ describe('a whole turn', () => {
       buildDigest({ nowMs: sunday, principal: PRINCIPAL, lang: 'he', reminders, log: createFakeLogger(), place }),
     );
     expect(median, `${median.toFixed(3)} ms per digest`).toBeLessThan(CATASTROPHE_MS);
+  });
+
+  it('does not blow it on the largest expenses export: build, store and claim the card (§6.22)', async () => {
+    // The file rides in the card's pending row, which hashes its input on the
+    // way in and again at the claim, in pure JS. Measured at the caps.
+    const rows = Array.from({ length: MAX_EXPORT_ROWS }, (_, i) => ({
+      id: String(i),
+      amountAgorot: 12_345 + i,
+      category: 'groceries' as const,
+      description: 'קניות בסופר השכונתי ליד הבית',
+      spentOn: '2026-09-01',
+    }));
+    const pending = new PendingActions(driver, () => NOW);
+    const median = await medianMs(20, () => {
+      const csv = expensesCsv(rows, ['תאריך', 'סכום', 'קטגוריה', 'תיאור'], () => 'סופר');
+      const input = { type: 'file', name: 'expenses-2026-09-24.csv', mime: 'text/csv', content: csv.content, preview: 'x' };
+      const action = pending.create({ tool: 'expenses.export', input, summary: 'x', tier: 1, principal: PRINCIPAL, channel: 'card' });
+      pending.confirm(action.id, action.nonce, PRINCIPAL, 'card');
+    });
+    expect(median, `${median.toFixed(3)} ms per export`).toBeLessThan(CATASTROPHE_MS);
   });
 
   it('does not blow it on an agent turn with a full, encrypted history (§6.19)', async () => {

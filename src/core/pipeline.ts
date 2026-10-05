@@ -16,6 +16,8 @@
  * Plain TypeScript throughout — no platform imports (invariant 11). The Durable
  * Object supplies the services and the clock.
  */
+import type { NoteStore } from '../tools/note-store.js';
+import type { ExpenseStore } from '../tools/expense-store.js';
 import type { DriveClient } from '../google/drive.js';
 import type { GmailClient } from '../google/gmail.js';
 import type { TasksClient } from '../google/tasks.js';
@@ -89,6 +91,9 @@ export type AgentServices = {
 /** The stateful collaborators the Durable Object owns and hands in. */
 export type Services = {
   reminders: ReminderStore;
+  /** Notes and expenses (§6.22). Absent only in tests that predate them. */
+  notes?: NoteStore;
+  expenses?: ExpenseStore;
   pending: PendingActions;
   /** The one clarifying question a sender may have open (§6.11). */
   questions: OpenQuestions;
@@ -556,6 +561,7 @@ async function respondWithAgent(
           history,
           // Phone actions only where an app that runs cards will receive them (§6.20).
           cards: deps.channel === 'app' && (deps.deviceCaps ?? []).includes('cards'),
+          fileCards: deps.channel === 'app' && (deps.deviceCaps ?? []).includes('file'),
           // Phone reads only from an app that answers them, and only for typed
           // words: a suspended turn stores the message (§6.21, invariant 13).
           // Only the tools of the Google grants that are connected (2026-10-01).
@@ -646,12 +652,16 @@ async function settleAgentResult(
   const outcome = replyOutcome(result.reply, deps);
 
   if (outcome.action === 'reply' && agent) {
+    // A private tool's exchange (notes) is remembered as a placeholder only:
+    // neither the words that saved a note nor a reply showing one reach the
+    // model on a later turn (2026-10-05).
+    const kept = outcome.private === true;
     await agent.history.append(
       principal,
       {
         // A transcript is never stored (invariant 13); the reply carries the context.
-        user: userText,
-        reply: outcome.text,
+        user: kept ? he.privatePlaceholder : userText,
+        reply: kept ? he.privatePlaceholder : outcome.text,
         tainted: result.tainted,
       },
       conversation,
@@ -1116,6 +1126,8 @@ function turnOf(
       ...(services.tasks ? { tasks: services.tasks } : {}),
       ...(services.gmail ? { gmail: services.gmail } : {}),
       ...(services.drive ? { drive: services.drive } : {}),
+      ...(services.notes ? { notes: services.notes } : {}),
+      ...(services.expenses ? { expenses: services.expenses } : {}),
     },
     pending: services.pending,
     deferred: services.deferred,
@@ -1135,6 +1147,7 @@ function asOutcome(reply: Reply): PipelineOutcome {
     ...(reply.buttons ? { buttons: reply.buttons } : {}),
     ...(reply.rescheduleAlarm ? { rescheduleAlarm: true } : {}),
     ...(reply.card ? { card: reply.card } : {}),
+    ...(reply.private ? { private: true as const } : {}),
   };
 }
 

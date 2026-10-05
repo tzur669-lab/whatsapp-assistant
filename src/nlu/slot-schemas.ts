@@ -343,6 +343,83 @@ export const remindersScheduledReadSlots = z
   })
   .strict();
 
+// -- notes and expenses (2026-10-05, ROADMAP #9, #10) ----------------------------
+//
+// Agent-only. A note's text is the user's own; the tools that show one are
+// private (`ToolSpec.private`), so no note goes back to the model. An expense's
+// day looks back, never forward (`src/time/past-day.ts`).
+
+export const MAX_NOTE_TEXT_CHARS = 500;
+export const MAX_EXPENSE_DESCRIPTION_CHARS = 60;
+
+/** "תזכור שהקוד של השער הוא…". */
+export const notesSaveSlots = z
+  .object({ text: z.string().min(1).max(MAX_NOTE_TEXT_CHARS).optional() })
+  .strict();
+
+/**
+ * "מה רשמתי על השער?". Absent or empty: the newest notes — measured: a model
+ * asked for "all my notes" sends an empty list (2026-10-05).
+ */
+export const notesFindSlots = z
+  .object({ query_variants: z.array(z.string().min(1).max(MAX_QUERY_CHARS)).max(MAX_QUERY_VARIANTS).optional() })
+  .strict();
+
+export const notesDeleteSlots = z.object({ query_variants: queryVariantsSchema.optional() }).strict();
+
+export const EXPENSE_CATEGORY_SLOTS = [
+  'food',
+  'groceries',
+  'fuel',
+  'transport',
+  'shopping',
+  'bills',
+  'health',
+  'fun',
+  'home',
+  'other',
+] as const;
+
+/** A past date, as said. Without a year: the latest such date. */
+export const spentOnSchema = z
+  .object({
+    day: z.number().int().min(1).max(31),
+    month: z.number().int().min(1).max(12),
+    year: z.number().int().min(2020).max(2100).optional(),
+  })
+  .strict();
+
+/**
+ * "הוצאתי 45 על קפה". Shekels only. The day is flat slots that look back —
+ * not a DateSpec, whose `relative_days` counts forward: measured, a model
+ * wrote "yesterday" as `{relative_days, offset: 1}`, which is tomorrow there.
+ */
+export const expensesAddSlots = z
+  .object({
+    amount: z.number().positive().max(1_000_000).optional(),
+    category: z.enum(EXPENSE_CATEGORY_SLOTS).optional(),
+    description: z.string().min(1).max(MAX_EXPENSE_DESCRIPTION_CHARS).optional(),
+    /** 0 = today, 1 = yesterday. */
+    days_ago: z.number().int().min(0).max(366).optional(),
+    /** The latest such weekday, today included. 0 = Sunday. */
+    weekday: z.number().int().min(0).max(6).optional(),
+    on_date: spentOnSchema.optional(),
+  })
+  .strict();
+
+export const EXPENSE_PERIODS = ['today', 'this_week', 'last_week', 'this_month', 'last_month', 'this_year', 'all'] as const;
+
+/** "כמה הוצאתי החודש על אוכל?". Absent period: this month. */
+export const expensesSummarySlots = z
+  .object({
+    period: z.enum(EXPENSE_PERIODS).optional(),
+    category: z.enum(EXPENSE_CATEGORY_SLOTS).optional(),
+  })
+  .strict();
+
+/** "תייצא לי את ההוצאות לאקסל". Absent period: everything. */
+export const expensesExportSlots = z.object({ period: z.enum(EXPENSE_PERIODS).optional() }).strict();
+
 export const infoLookupSlots = z
   .object({
     topic: z.enum(LOOKUP_TOPICS),

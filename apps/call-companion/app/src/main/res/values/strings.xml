@@ -124,6 +124,7 @@
     <string name="card_not_supported">הטלפון לא תומך בפעולה הזאת.</string>
     <string name="card_no_contacts_permission">אין גישה לאנשי קשר. אפשר לאשר במסך ההגדרות.</string>
     <string name="card_failed">הפעולה לא הצליחה.</string>
+    <string name="card_file_saved">הקובץ נשמר בתיקיית ההורדות.</string>
     <string name="card_media_background">התוצאות פתוחות. יש ללחוץ על התוצאה הרצויה ואז לחזור לעוזר. הנגינה ממשיכה ברקע רק עם YouTube Premium.</string>
     <string name="card_media_tap">התוצאות פתוחות. יש ללחוץ על התוצאה הרצויה כדי לנגן.</string>
 
