@@ -35,7 +35,7 @@ import type { PhoneReadInput, PhoneReadResult } from '../tools/phone-reads.js';
 import { phoneReadRefused, phoneReadText } from '../render/phone-reads.js';
 import type { TokenBudget } from './budget.js';
 import type { HistoryEntry } from './history.js';
-import { nowLine, READ_ONLY_NOTE, SYSTEM_PROMPT } from './prompt.js';
+import { languageLine, nowLine, READ_ONLY_NOTE, SYSTEM_PROMPT } from './prompt.js';
 import type { AgentMessage, AgentProvider, ToolCall, WireTool } from './provider.js';
 import { wireToolCall } from './provider.js';
 import { agentToolNames, fromWireName, TAINTING_TOOLS, wireTools } from './tools.js';
@@ -161,14 +161,13 @@ export async function runAgentTurn(input: AgentTurnInput, deps: AgentDeps): Prom
   const tainted = input.history.some((entry) => entry.tainted) || input.turn.tainted === true;
 
   const messages: AgentMessage[] = [
-    { role: 'system', content: readOnly ? `${SYSTEM_PROMPT}
-${READ_ONLY_NOTE}` : SYSTEM_PROMPT },
+    { role: 'system', content: readOnly ? `${SYSTEM_PROMPT}\n${READ_ONLY_NOTE}` : SYSTEM_PROMPT },
   ];
   for (const entry of input.history) {
     messages.push({ role: 'user', content: entry.user });
     messages.push({ role: 'assistant', content: entry.reply });
   }
-  messages.push({ role: 'user', content: `${nowLine(input.nowMs)}\n\n${input.text}` });
+  messages.push({ role: 'user', content: `${nowLine(input.nowMs)}\n${languageLine(input.lang)}\n\n${input.text}` });
 
   // One model for the whole turn: the first that can take two calls of this
   // size, else one. Switching mid-turn would spend a second model's budget on a

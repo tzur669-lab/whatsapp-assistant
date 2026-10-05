@@ -28,7 +28,7 @@ import { fileURLToPath } from 'node:url';
 import { parse as parseYaml } from 'yaml';
 import { createGroqAgentProvider } from '../../src/agent/provider.js';
 import type { AgentMessage, AgentProvider } from '../../src/agent/provider.js';
-import { nowLine, READ_ONLY_NOTE, SYSTEM_PROMPT, AGENT_PROMPT_VERSION } from '../../src/agent/prompt.js';
+import { languageLine, nowLine, READ_ONLY_NOTE, SYSTEM_PROMPT, AGENT_PROMPT_VERSION } from '../../src/agent/prompt.js';
 import { agentToolNames, fromWireName, wireTools } from '../../src/agent/tools.js';
 import { stripNulls } from '../../src/nlu/json-schema.js';
 import { validateIntentDraft } from '../../src/nlu/intent-schema.js';
@@ -186,7 +186,8 @@ function firstTurn(input: string, nowMs: number): AgentMessage[] {
   return [
     { role: 'system', content: readOnly ? `${SYSTEM_PROMPT}
 ${READ_ONLY_NOTE}` : SYSTEM_PROMPT },
-    { role: 'user', content: `${nowLine(nowMs)}\n\n${input}` },
+    // The same language rule the pipeline's languageOf applies.
+    { role: 'user', content: `${nowLine(nowMs)}\n${languageLine(/[֐-׿]/.test(input) || !/[A-Za-z]/.test(input) ? 'he' : 'en')}\n\n${input}` },
   ];
 }
 

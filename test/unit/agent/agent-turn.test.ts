@@ -412,6 +412,22 @@ describe('an agent turn', () => {
       expect(withGrants).toEqual(expect.arrayContaining(['mail__search', 'mail__draft', 'tasks__list', 'tasks__add', 'tasks__complete']));
     });
 
+    it('is told by code to answer in the language of the message, unless it asks for another (2026-10-05)', async () => {
+      await handleInbound(text('who painted the mona lisa'), deps([{ text: 'Leonardo da Vinci.' }]));
+      expect(agent.calls[0]!.at(-1)!.content).toContain('Reply in English, unless the message asks for another language.');
+
+      await handleInbound(text('מי צייר את המונה ליזה'), deps([{ text: 'לאונרדו דה וינצ׳י.' }]));
+      expect(agent.calls[0]!.at(-1)!.content).toContain('Reply in Hebrew, unless the message asks for another language.');
+    });
+
+    it('tells the read-only fallback the same', async () => {
+      await handleInbound(
+        text('who painted the mona lisa'),
+        deps([{ error: 'rate_limited', retryAfterSeconds: 5 }], [draft('unsupported', {})], [{ text: 'Leonardo da Vinci.' }]),
+      );
+      expect(fallback!.calls[0]!.at(-1)!.content).toContain('Reply in English');
+    });
+
     it('is offered only registry tools', async () => {
       await handleInbound(text('היי'), deps([{ text: 'שלום' }]));
       const names = agent.tools[0]!.map((tool) => tool.function.name);
