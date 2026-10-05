@@ -124,7 +124,8 @@
     <string name="card_not_supported">הטלפון לא תומך בפעולה הזאת.</string>
     <string name="card_no_contacts_permission">אין גישה לאנשי קשר. אפשר לאשר במסך ההגדרות.</string>
     <string name="card_failed">הפעולה לא הצליחה.</string>
-    <string name="card_media_background">מנגן ברקע. בלי YouTube Premium, יוטיוב עוצר את הנגינה כשהוא לא על המסך.</string>
+    <string name="card_media_background">התוצאות פתוחות. יש ללחוץ על התוצאה הרצויה ואז לחזור לעוזר. הנגינה ממשיכה ברקע רק עם YouTube Premium.</string>
+    <string name="card_media_tap">התוצאות פתוחות. יש ללחוץ על התוצאה הרצויה כדי לנגן.</string>
 
     <!-- A call request -->
     <string name="channel_name">בקשות חיוג</string>

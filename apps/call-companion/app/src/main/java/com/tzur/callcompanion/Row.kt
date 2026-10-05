@@ -47,7 +47,7 @@ class Row(
 
         companion object {
             /** The closed list of what a card may be. Anything else is not a card. */
-            val TYPES = setOf("alarm", "timer", "nav", "app", "settings", "message")
+            val TYPES = setOf("alarm", "timer", "nav", "app", "settings", "message", "media")
             private val ACTION_ID = Regex("^[0-9a-f]{24}$")
             private val NONCE = Regex("^[0-9a-f]{32}$")
             private const val MAX_PREVIEW = 2_000
