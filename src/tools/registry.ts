@@ -34,6 +34,7 @@ import {
   tasksCompleteSlots,
   tasksListSlots,
   remindersAtRestSlots,
+  remindersScheduledReadSlots,
   remindersCancelSlots,
   remindersCreateSlots,
   remindersListSlots,
@@ -57,6 +58,8 @@ export const TOOL_NAMES = [
   'reminders.repeat',
   'reminders.move',
   'reminders.at_rest',
+  // ROADMAP #7 (2026-10-05): a public lookup sent on a schedule.
+  'reminders.scheduled_read',
   // Phone actions (PLAN §6.20): agent-only, each one an action card.
   'alarm.set',
   'timer.set',
@@ -203,6 +206,18 @@ export const REGISTRY: Readonly<Record<ToolName, ToolSpec>> = {
     llmDescription:
       'A reminder relative to Shabbat or a chag: minutes before it starts (candle lighting) or after it ends.',
     draftSchema: remindersAtRestSlots,
+    tier: 1,
+    scopes: [],
+    rateLimit: { perHour: 10, perDay: 30 },
+    implementedIn: 6,
+  },
+  'reminders.scheduled_read': {
+    name: 'reminders.scheduled_read',
+    llmDescription:
+      'Send a lookup on a schedule: weather, day times, UV and air, exchange rates, news or the Hebrew calendar, every day, on given weekdays (0=Sunday), or a day of the month, at a stated time.',
+    draftSchema: remindersScheduledReadSlots,
+    // Like reminders.repeat: the user's own setting, to the user, undone in
+    // one tap. At the due time code runs a Tier 0 read; no model is involved.
     tier: 1,
     scopes: [],
     rateLimit: { perHour: 10, perDay: 30 },

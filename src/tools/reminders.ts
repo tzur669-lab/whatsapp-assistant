@@ -30,6 +30,8 @@ import {
   remindersAtRestSlots,
   remindersMoveSlots,
   remindersRepeatSlots,
+  remindersScheduledReadSlots,
+  SCHEDULED_TOPICS,
 } from '../nlu/slot-schemas.js';
 import type { Reminder } from './reminder-store.js';
 import type {
@@ -305,36 +307,10 @@ export const remindersRepeat: ToolDefinition = {
     const text = slots.data.text?.trim();
     if (!text) return clarifyMissing('text');
 
-    // R3: never invent a time. R4 and R5 exactly as a one-off reminder has them.
-    const time = slots.data.time;
-    if (!time) return clarifyTime('R3', 'missing_time');
-    const adjusted = applyMeridiem(time);
-    if (!adjusted) return clarifyTime('R4', 'invalid_time');
-    if (
-      adjusted.hour >= DEFAULT_TIME_SETTINGS.unlikelyHourStart &&
-      adjusted.hour < DEFAULT_TIME_SETTINGS.unlikelyHourEnd &&
-      time.meridiem === 'unspecified' &&
-      time.part_of_day === 'unspecified'
-    ) {
-      return clarifyTime('R5', 'unlikely_hour');
-    }
+    const resolved = resolveRule(slots.data, ctx.nowMs);
+    if (resolved.kind === 'clarify') return resolved;
 
-    const rule = ruleOf(slots.data, adjusted);
-    // "Every what?" is asked without an open question: the answer is a rule,
-    // which no answer parser reads, so the agent takes it from history.
-    if (!rule) return clarifyMissing('date');
-
-    const first = firstOccurrence(rule, ctx.nowMs, ZONE);
-    if (first.kind === 'gap' || first.kind === 'fold') return clarifyTime('R2', 'recurring_dst');
-    if (first.kind === 'never') return clarifyMissing('date');
-
-    const input: RepeatInput = {
-      text,
-      dueAtUtc: first.utcMs,
-      localWallTime: wallTimeString(first.utcMs, ZONE),
-      tz: ZONE,
-      rule,
-    };
+    const input: RepeatInput = { text, ...resolved.at };
     return { kind: 'ready', input };
   },
 
@@ -379,9 +355,49 @@ export const remindersRepeat: ToolDefinition = {
   },
 };
 
+type RuleSlots = Pick<z.infer<typeof remindersRepeatSlots>, 'time' | 'every' | 'weekdays' | 'day_of_month'>;
+
+/**
+ * The rule and its first occurrence, or the question to ask. Shared by
+ * `reminders.repeat` and `reminders.scheduled_read`, so both read a time and
+ * a "how often" by exactly the same rules.
+ */
+function resolveRule(
+  slots: RuleSlots,
+  nowMs: number,
+): { kind: 'ok'; at: Omit<RepeatInput, 'text'> } | Extract<ResolveOutcome, { kind: 'clarify' }> {
+  // R3: never invent a time. R4 and R5 exactly as a one-off reminder has them.
+  const time = slots.time;
+  if (!time) return clarifyTime('R3', 'missing_time');
+  const adjusted = applyMeridiem(time);
+  if (!adjusted) return clarifyTime('R4', 'invalid_time');
+  if (
+    adjusted.hour >= DEFAULT_TIME_SETTINGS.unlikelyHourStart &&
+    adjusted.hour < DEFAULT_TIME_SETTINGS.unlikelyHourEnd &&
+    time.meridiem === 'unspecified' &&
+    time.part_of_day === 'unspecified'
+  ) {
+    return clarifyTime('R5', 'unlikely_hour');
+  }
+
+  const rule = ruleOf(slots, adjusted);
+  // "Every what?" is asked without an open question: the answer is a rule,
+  // which no answer parser reads, so the agent takes it from history.
+  if (!rule) return clarifyMissing('date');
+
+  const first = firstOccurrence(rule, nowMs, ZONE);
+  if (first.kind === 'gap' || first.kind === 'fold') return clarifyTime('R2', 'recurring_dst');
+  if (first.kind === 'never') return clarifyMissing('date');
+
+  return {
+    kind: 'ok',
+    at: { dueAtUtc: first.utcMs, localWallTime: wallTimeString(first.utcMs, ZONE), tz: ZONE, rule },
+  };
+}
+
 /** The rule the slots describe, or null when they do not say how often. */
 function ruleOf(
-  slots: z.infer<typeof remindersRepeatSlots>,
+  slots: RuleSlots,
   at: { hour: number; minute: number },
 ): RecurRule | null {
   const weekdays = slots.weekdays ? [...new Set(slots.weekdays)].sort((a, b) => a - b) : undefined;
@@ -398,9 +414,72 @@ function ruleOf(
   return null;
 }
 
-function clarifyTime(rule: ResolveRule, reason: string): ResolveOutcome {
+function clarifyTime(rule: ResolveRule, reason: string): Extract<ResolveOutcome, { kind: 'clarify' }> {
   return { kind: 'clarify', clarify: { code: 'time', detail: { kind: 'clarify', rule, reason } } };
 }
+
+// -- reminders.scheduled_read (ROADMAP #7) -------------------------------------
+//
+// "Send me the weather every morning at 7." A recurring reminder whose
+// occurrence carries a closed action: at the due time code runs the lookup and
+// sends what it renders (`src/core/scheduled-read.ts`). No model is involved
+// then, and nothing but the topic is stored — no text the model wrote.
+
+const scheduledReadInputSchema = createInputSchema
+  .extend({ rule: recurRuleSchema, action: z.enum(SCHEDULED_TOPICS) })
+  .strict();
+
+type ScheduledReadInput = z.infer<typeof scheduledReadInputSchema>;
+
+export const remindersScheduledRead: ToolDefinition = {
+  name: 'reminders.scheduled_read',
+  inputSchema: scheduledReadInputSchema,
+
+  resolve(rawSlots, ctx): ResolveOutcome {
+    const slots = remindersScheduledReadSlots.safeParse(rawSlots);
+    if (!slots.success || !slots.data.topic) return clarifyMissing('target');
+
+    const resolved = resolveRule(slots.data, ctx.nowMs);
+    if (resolved.kind === 'clarify') return resolved;
+
+    // The label is code's, in the language of the turn: it is what the list
+    // shows and what a later "cancel the weather" is matched against.
+    const input: ScheduledReadInput = {
+      text: reminderText.scheduledLabel(slots.data.topic, ctx.lang),
+      ...resolved.at,
+      action: slots.data.topic,
+    };
+    return { kind: 'ready', input };
+  },
+
+  preview(rawInput, lang): string {
+    const input = parseInput<ScheduledReadInput>(scheduledReadInputSchema, rawInput, 'reminders.scheduled_read');
+    return reminderText.createdScheduledRead({ ...viewOf(input), rule: input.rule }, lang);
+  },
+
+  async execute(rawInput, ctx): Promise<ExecuteResult> {
+    const input = parseInput<ScheduledReadInput>(scheduledReadInputSchema, rawInput, 'reminders.scheduled_read');
+    const reminder = ctx.reminders.schedule({
+      principal: ctx.principal,
+      text: input.text,
+      dueAtUtc: input.dueAtUtc,
+      localWallTime: input.localWallTime,
+      tz: input.tz,
+      rule: input.rule,
+      action: input.action,
+    });
+
+    return {
+      text: reminderText.createdScheduledRead({ ...viewOf(input), rule: input.rule }, ctx.lang),
+      compensating: { reminderId: reminder.id, seriesId: reminder.seriesId },
+      externalRef: reminder.id,
+      rescheduleAlarm: true,
+    };
+  },
+
+  // The same Undo as a repeat: the whole series.
+  undo: (compensating, ctx) => remindersRepeat.undo!(compensating, ctx),
+};
 
 // -- reminders.move (B8) ------------------------------------------------------
 
@@ -618,6 +697,7 @@ export const REMINDER_TOOLS = {
   'reminders.repeat': remindersRepeat,
   'reminders.move': remindersMove,
   'reminders.at_rest': remindersAtRest,
+  'reminders.scheduled_read': remindersScheduledRead,
 } as const;
 
 // -- the calendar fallback ----------------------------------------------------
@@ -673,7 +753,7 @@ const BACKUP_EVENT_MINUTES = 5;
 
 // -- helpers ------------------------------------------------------------------
 
-function clarifyMissing(slot: 'text' | 'target' | 'time' | 'date'): ResolveOutcome {
+function clarifyMissing(slot: 'text' | 'target' | 'time' | 'date'): Extract<ResolveOutcome, { kind: 'clarify' }> {
   return { kind: 'clarify', clarify: { code: 'missing_slot', slot } };
 }
 

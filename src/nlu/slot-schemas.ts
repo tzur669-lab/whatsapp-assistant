@@ -322,6 +322,27 @@ export const LOOKUP_TOPICS = [
   'wikipedia',
 ] as const;
 
+/**
+ * The lookups a scheduled read may run (ROADMAP #7, 2026-10-05): a closed list
+ * of Tier 0 public reads, each computed and rendered by code at the due time.
+ * Wikipedia is not here: its query is free text, and a schedule would send it
+ * out again and again with nobody there to see what it says.
+ */
+export const SCHEDULED_TOPICS = ['weather', 'day_times', 'uv_air', 'exchange_rate', 'news', 'jewish_calendar'] as const;
+export type ScheduledTopic = (typeof SCHEDULED_TOPICS)[number];
+
+/** "תשלח לי כל בוקר ב-7 את מזג האוויר" (#7). Agent-only; the rule as in reminders.repeat. */
+export const remindersScheduledReadSlots = z
+  .object({
+    topic: z.enum(SCHEDULED_TOPICS).optional(),
+    time: timeSpecSchema.optional(),
+    every: z.enum(['day', 'week', 'month']).optional(),
+    /** 0 = Sunday … 6 = Saturday, as in DateSpec. */
+    weekdays: z.array(z.number().int().min(0).max(6)).min(1).max(7).optional(),
+    day_of_month: z.number().int().min(1).max(31).optional(),
+  })
+  .strict();
+
 export const infoLookupSlots = z
   .object({
     topic: z.enum(LOOKUP_TOPICS),

@@ -9,26 +9,62 @@
  * value of a scheduled message is that it is worth opening.
  */
 import { isolate, isolateLtr } from './bidi.js';
-import { formatWhen } from './format-time.js';
+import { formatDay, formatWhen } from './format-time.js';
 import type { Lang } from './format-time.js';
 import type { ReminderView } from './reminders.js';
 import type { CalendarEvent } from '../google/calendar.js';
+import type { LocalParts } from '../time/tz.js';
 import { eventText } from './events.js';
+
+/** Lines that set the scene (#6). Shown only in a digest that is sent anyway. */
+export type DigestContextLines = {
+  /** `23 בתשרי 5787`. */
+  hebrewDate?: string;
+  /** The rendered forecast line for the home city. */
+  weather?: string;
+  /** On the eve of Shabbat or a chag. */
+  candleLighting?: LocalParts;
+};
+
+/** An open Google Task due today or before (#6). */
+export type DigestTask = { title: string; overdue: boolean; due: string };
+
+/** One day of the week ahead, with something on it (#8). */
+export type DigestWeekDay = {
+  local: LocalParts;
+  /** Null when the calendar could not be read: no number rather than a wrong one. */
+  events: number | null;
+  reminders: number;
+  birthdays: readonly string[];
+};
+
+export type DigestWeek = {
+  days: readonly DigestWeekDay[];
+  /** A read hit its cap, so the counts are a floor. */
+  partial: boolean;
+};
 
 export type DigestParts = {
   /** Local hour, so the greeting matches the time it actually arrives. */
   hour: number;
+  context?: DigestContextLines;
   events: readonly CalendarEvent[];
   reminders: readonly ReminderView[];
   /** Due and not delivered — held over a shut window, most likely (§6.7). */
   overdue: readonly ReminderView[];
   /** Names with a birthday today (§6.16). */
   birthdays: readonly string[];
+  tasks?: readonly DigestTask[];
+  /** Sunday's look at the week ahead; null on other days (#8). */
+  week?: DigestWeek | null;
 };
 
 export const digestText = {
   compose(parts: DigestParts, lang: Lang): string {
     const sections: string[] = [greeting(parts.hour, lang)];
+
+    const context = contextBlock(parts.context, lang);
+    if (context) sections.push(context);
 
     if (parts.birthdays.length > 0) {
       // First. It is the one line that is about a person rather than a task,
@@ -44,15 +80,98 @@ export const digestText = {
       sections.push(section(heading('reminders', lang), parts.reminders, lang));
     }
 
+    if (parts.tasks && parts.tasks.length > 0) {
+      sections.push(taskSection(parts.tasks, lang));
+    }
+
     if (parts.overdue.length > 0) {
       // Last, and named for what it is. A reminder that did not arrive is the
       // one thing in here the user may need to act on immediately.
       sections.push(section(heading('overdue', lang), parts.overdue, lang));
     }
 
+    if (parts.week && parts.week.days.length > 0) {
+      // After today's business: the week is a look ahead, not a to-do.
+      sections.push(weekSection(parts.week, lang));
+    }
+
     return sections.join('\n\n');
   },
 };
+
+function contextBlock(context: DigestContextLines | undefined, lang: Lang): string | null {
+  if (!context) return null;
+  const lines: string[] = [];
+  if (context.hebrewDate) lines.push(isolate(context.hebrewDate));
+  if (context.weather) lines.push(context.weather);
+  if (context.candleLighting) {
+    const clock = isolateLtr(clockOf(context.candleLighting));
+    lines.push(lang === 'en' ? `Candle lighting today: ${clock}` : `הדלקת נרות היום: ${clock}`);
+  }
+  return lines.length > 0 ? lines.join('\n') : null;
+}
+
+function taskSection(tasks: readonly DigestTask[], lang: Lang): string {
+  const header = lang === 'en' ? 'Tasks due:' : 'משימות להיום:';
+  const late = lang === 'en' ? ' (overdue)' : ' (באיחור)';
+  const lines = tasks.map((task) => `• ${isolate(task.title)}${task.overdue ? late : ''}`);
+  return [header, '', ...lines].join('\n');
+}
+
+function weekSection(week: DigestWeek, lang: Lang): string {
+  const header =
+    lang === 'en'
+      ? week.partial ? 'The week ahead (at least):' : 'The week ahead:'
+      : week.partial ? 'השבוע הקרוב (לפחות):' : 'השבוע הקרוב:';
+  const lines = week.days.map((day) => {
+    const parts: string[] = [];
+    if (day.events !== null && day.events > 0) parts.push(countOf(day.events, 'event', lang));
+    if (day.reminders > 0) parts.push(countOf(day.reminders, 'reminder', lang));
+    if (day.birthdays.length > 0) {
+      const names = day.birthdays.map(isolate).join(', ');
+      parts.push(lang === 'en' ? `birthday: ${names}` : `יום הולדת: ${names}`);
+    }
+    return `${formatDay(day.local, lang)}: ${parts.join(' · ')}`;
+  });
+  return [header, '', ...lines].join('\n');
+}
+
+/**
+ * `אירוע אחד` · `שני אירועים` · `3 אירועים`. Hebrew counts take the dual as a
+ * word of its own, so this is Intl's one/two/other, not a suffix.
+ */
+const HE_COUNTS = {
+  event: { one: 'אירוע אחד', two: 'שני אירועים', other: 'אירועים' },
+  reminder: { one: 'תזכורת אחת', two: 'שתי תזכורות', other: 'תזכורות' },
+} as const;
+
+const EN_COUNTS = {
+  event: { one: 'event', other: 'events' },
+  reminder: { one: 'reminder', other: 'reminders' },
+} as const;
+
+const pluralHe = new Intl.PluralRules('he-IL');
+const pluralEn = new Intl.PluralRules('en');
+
+function countOf(count: number, noun: 'event' | 'reminder', lang: Lang): string {
+  if (lang === 'en') {
+    const form = EN_COUNTS[noun];
+    return `${isolateLtr(String(count))} ${pluralEn.select(count) === 'one' ? form.one : form.other}`;
+  }
+  const form = HE_COUNTS[noun];
+  switch (pluralHe.select(count)) {
+    case 'one':
+      return form.one;
+    case 'two':
+      return form.two;
+    default:
+      return `${isolateLtr(String(count))} ${form.other}`;
+  }
+}
+
+function clockOf(local: LocalParts): string {
+  return `${String(local.hour).padStart(2, '0')}:${String(local.minute).padStart(2, '0')}`;
+}
 
 function birthdayLine(names: readonly string[], lang: Lang): string {
   const list = names.map(isolate).join(', ');

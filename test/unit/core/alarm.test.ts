@@ -353,4 +353,49 @@ describe('the alarm', () => {
       expect(repo.digestDoneOn()).toBeNull();
     });
   });
+
+  // -- scheduled reads (ROADMAP #7) -------------------------------------------
+
+  describe('a scheduled read', () => {
+    const scheduleRead = (dueAtUtc: number) =>
+      reminders.schedule({
+        principal,
+        text: 'זמני היום (שליחה קבועה)',
+        dueAtUtc,
+        localWallTime: 'x',
+        tz: 'Asia/Jerusalem',
+        rule: { freq: 'daily', hour: 8, minute: 0 },
+        action: 'day_times',
+      });
+
+    it('is computed by code and sent under its name, with no snooze buttons', async () => {
+      scheduleRead(NOW - 1_000);
+      await assistant.alarm();
+
+      expect(meta.sent).toHaveLength(1);
+      expect(plain(meta.sent[0]!.text)).toContain('זמני היום (שליחה קבועה)');
+      expect(plain(meta.sent[0]!.text)).toContain('שקיעה');
+      expect(meta.sent[0]!.buttons ?? []).toHaveLength(0);
+      // And the series goes on.
+      expect(reminders.listUpcoming(principal)[0]?.action).toBe('day_times');
+    });
+
+    it('goes after the plain reminders that are due with it', async () => {
+      scheduleRead(NOW - 2_000);
+      schedule('להתקשר לאבא', NOW - 1_000);
+      await assistant.alarm();
+
+      expect(meta.sent).toHaveLength(2);
+      expect(plain(meta.sent[0]!.text)).toContain('להתקשר לאבא');
+      expect(plain(meta.sent[1]!.text)).toContain('זמני היום');
+    });
+
+    it('is dropped, not sent stale, when it is more than two hours late', async () => {
+      const row = scheduleRead(NOW - 3 * 60 * 60_000);
+      await assistant.alarm();
+
+      expect(meta.sent).toHaveLength(0);
+      expect(reminders.byId(row.id)?.status).toBe('done');
+    });
+  });
 });

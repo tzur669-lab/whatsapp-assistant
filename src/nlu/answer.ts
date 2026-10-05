@@ -197,6 +197,7 @@ const SLOT_NAMES: Record<string, Partial<Record<keyof AnswerPatch, string>>> = {
   'reminders.repeat': { text: 'text', time: 'time' },
   'reminders.move': { target: 'query_variants', date: 'to_date', time: 'to_time' },
   'reminders.at_rest': { text: 'text' },
+  'reminders.scheduled_read': { time: 'time' },
   // Phone actions (§6.20): the two questions code asks itself. The rest are
   // answered through the agent, which has the turn in history.
   'alarm.set': { time: 'time' },

@@ -649,3 +649,75 @@
   expect:
     intent: calendar.free_time
     missing: []
+
+# ROADMAP block C (2026-10-05, prompt a7): scheduled reads. Agent-only. A
+# lookup sent on a schedule is reminders.scheduled_read; a reminder that
+# repeats stays reminders.repeat, and a lookup now stays info.lookup.
+
+- id: sc-read-001
+  now: "2026-10-05T10:00:00+03:00"
+  input: "תשלח לי כל בוקר ב-7 את מזג האוויר"
+  expect:
+    intent: reminders.scheduled_read
+    slots:
+      topic: weather
+      every: day
+      time: { hour: 7, minute: 0, meridiem: unspecified, part_of_day: unspecified }
+    missing: []
+
+- id: sc-read-002
+  now: "2026-10-05T10:00:00+03:00"
+  input: "send me the news headlines every day at 8pm"
+  expect:
+    intent: reminders.scheduled_read
+    slots:
+      topic: news
+      every: day
+    missing: []
+
+- id: sc-read-003
+  now: "2026-10-05T10:00:00+03:00"
+  input: "כל יום שישי ב-12 תשלח לי את זמני השבת"
+  expect:
+    intent: reminders.scheduled_read
+    slots:
+      topic: jewish_calendar
+      weekdays: [5]
+      time: { hour: 12, minute: 0, meridiem: unspecified, part_of_day: unspecified }
+    missing: []
+
+- id: sc-read-004
+  now: "2026-10-05T10:00:00+03:00"
+  input: "כל בוקר בשמונה תשלח לי את שער הדולר"
+  expect:
+    intent: reminders.scheduled_read
+    slots:
+      topic: exchange_rate
+      every: day
+    missing: []
+
+- id: sc-read-005
+  now: "2026-10-05T10:00:00+03:00"
+  input: "תשלח לי כל יום את מזג האוויר"
+  expect:
+    intent: reminders.scheduled_read
+    slots:
+      topic: weather
+      every: day
+    missing: [time]
+
+- id: sc-read-006
+  now: "2026-10-05T10:00:00+03:00"
+  input: "תזכיר לי כל בוקר ב-7 לבדוק את מזג האוויר"
+  expect:
+    intent: reminders.repeat
+    missing: []
+
+- id: sc-read-007
+  now: "2026-10-05T10:00:00+03:00"
+  input: "מה מזג האוויר מחר?"
+  expect:
+    intent: info.lookup
+    slots:
+      topic: weather
+    missing: []

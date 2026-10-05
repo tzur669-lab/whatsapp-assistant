@@ -43,6 +43,10 @@ import { reminderText } from '../render/reminders.js';
 import { statusText } from '../render/status.js';
 import { localPartsOf, ZONE } from '../time/tz.js';
 import { buildDigest } from '../core/digest.js';
+import { scheduledReadMessage } from '../core/scheduled-read.js';
+import { DEFAULT_PLACE, findPlace, HOME_CITY_KEY } from '../lookup/place.js';
+import type { Place } from '../lookup/place.js';
+import type { ScheduledTopic } from '../nlu/slot-schemas.js';
 import { restPeriodAt } from '../time/shabbat.js';
 import type { DeviceLocation, InboundEvent, OutboundButton, OutboundMessage } from '../channels/types.js';
 import type { AppEnv, ChannelMode } from '../core/env.js';
@@ -323,12 +327,18 @@ export class AssistantDO implements DurableObject {
     const due = this.reminders.claimDue();
     this.log.info('alarm_fired', { claimed: due.length });
 
-    for (const reminder of due) {
-      await this.deliver(reminder, now);
+    // Plain reminders first: a scheduled read waits on the network, and a
+    // reminder in the same batch should not wait behind it (#7).
+    const ordered = [...due.filter((r) => r.action === null), ...due.filter((r) => r.action !== null)];
+    for (const reminder of ordered) {
+      if (reminder.action !== null) await this.deliverRead({ ...reminder, action: reminder.action }, now);
+      else await this.deliver(reminder, now);
     }
 
-    // Reminders that ran out of attempts are reported once, then closed.
+    // Reminders that ran out of attempts are reported once, then closed. A
+    // scheduled read is closed quietly: the next one comes on its own (#7).
     for (const abandoned of this.reminders.takeFailed()) {
+      if (abandoned.action !== null) continue;
       await this.send({
         to: this.selfWaId(),
         text: reminderText.deliveryGaveUp(
@@ -560,11 +570,30 @@ export class AssistantDO implements DurableObject {
       ical: this.ical,
       birthdays: this.birthdays,
       log: this.log,
+      fetchImpl: this.fetchImpl,
+      ...(await this.digestPlace()),
+      ...(this.googleApi('tasks') ? { tasks: new TasksClient(this.googleApi('tasks')!) } : {}),
       ...(this.calendarClient() ? { calendar: this.calendarClient()! } : {}),
     });
     if (text === null) return;
 
     await this.send({ to: this.selfWaId(), text }, { kind: 'digest', principal });
+  }
+
+  /**
+   * The home city for the digest's weather and candle lighting (#6): `/city`,
+   * else Jerusalem. A city that cannot be found gives neither line — a forecast
+   * or a candle-lighting time for somewhere else is worse than none.
+   */
+  private async digestPlace(): Promise<{ place?: Place }> {
+    const city = this.repo.getSetting(HOME_CITY_KEY);
+    if (!city) return { place: DEFAULT_PLACE };
+    try {
+      const place = await findPlace(this.fetchImpl, city);
+      return place ? { place } : {};
+    } catch {
+      return {};
+    }
   }
 
   // -- inbound ---------------------------------------------------------------
@@ -1332,6 +1361,78 @@ export class AssistantDO implements DurableObject {
       // A shut window or an undeliverable recipient answers the same way every
       // time. Stop, report it once, and leave the calendar stand-in in place —
       // which is the whole reason it is written at creation (PLAN §6.7, §6.8).
+      this.reminders.abandon(reminder.id);
+    }
+  }
+
+  /**
+   * A scheduled read (ROADMAP #7, PLAN §6.7): code runs the lookup and sends
+   * what it renders. No snooze buttons — there is nothing to snooze.
+   *
+   * The read awaits the network after the claim, so the claim is checked again
+   * before anything leaves: a cancel during the fetch, or a lease that ran out
+   * and was taken by another claim, means this copy is not sent.
+   */
+  private async deliverRead(reminder: ClaimedReminder & { action: ScheduledTopic }, now: number): Promise<void> {
+    const text = await scheduledReadMessage(reminder, {
+      nowMs: now,
+      lang: 'he',
+      repo: this.repo,
+      log: this.log,
+      fetchImpl: this.fetchImpl,
+    });
+    if (text === null) {
+      this.reminders.markSkipped(reminder.id);
+      return;
+    }
+
+    const audit = () =>
+      this.repo.audit({
+        ts: now,
+        principal: reminder.principal,
+        tool: 'reminders.deliver',
+        tier: 0,
+        decision: 'ALLOW',
+        outcome: 'ok',
+        externalRef: reminder.id,
+      });
+
+    if (this.channel() === 'app') {
+      const accepted = this.sql.transaction(() => {
+        if (!this.reminders.stillClaimed(reminder.id, reminder.attempts)) return null;
+        const row = this.outbox.accept({
+          kind: 'reminder',
+          text,
+          reminderId: reminder.id,
+          principal: reminder.principal,
+        });
+        this.reminders.markSent(reminder.id, row.wamid);
+        audit();
+        return row;
+      });
+      if (accepted === null) {
+        this.log.info('scheduled_read_dropped', { reminderId: reminder.id });
+        return;
+      }
+      if (accepted.adopted) this.log.error('outbox_row_adopted', { reminderId: reminder.id });
+      await this.pushOutbox();
+      return;
+    }
+
+    if (!this.reminders.stillClaimed(reminder.id, reminder.attempts)) {
+      this.log.info('scheduled_read_dropped', { reminderId: reminder.id });
+      return;
+    }
+    const sent = await this.send(
+      { to: this.selfWaId(), text },
+      { kind: 'reminder', principal: reminder.principal, reminderId: reminder.id },
+    );
+    if (sent.ok) {
+      this.reminders.markSent(reminder.id, sent.wamid);
+      audit();
+    } else if (sent.failure.disposition === 'retry' || sent.failure.disposition === 'back_off') {
+      this.reminders.markFailed(reminder.id);
+    } else {
       this.reminders.abandon(reminder.id);
     }
   }

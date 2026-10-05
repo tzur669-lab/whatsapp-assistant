@@ -41,10 +41,13 @@ const inputSchema = z
 
 type LookupInput = z.infer<typeof inputSchema>;
 
+/** What a lookup needs from its caller: a turn's context, or the alarm's (#7). */
+export type LookupContext = Pick<ToolContext, 'lang' | 'repo' | 'log' | 'location' | 'fetchImpl' | 'tainted'>;
+
 /** Topics whose text was written by someone else (§6.19). */
 const TAINTING_TOPICS: ReadonlySet<LookupInput['topic']> = new Set(['news', 'jewish_calendar', 'wikipedia']);
 
-const unavailable = (lang: 'he' | 'en') =>
+export const unavailable = (lang: 'he' | 'en') =>
   lang === 'he' ? 'המידע לא זמין כרגע. אפשר לנסות שוב בעוד רגע.' : 'That information is unavailable right now. Try again in a moment.';
 
 export const infoLookup: ToolDefinition = {
@@ -93,68 +96,76 @@ export const infoLookup: ToolDefinition = {
   },
 
   async execute(rawInput, ctx): Promise<ExecuteResult> {
-    const input = parseInput<LookupInput>(inputSchema, rawInput, 'info.lookup');
-    const fetchImpl = ctx.fetchImpl;
-    if (!fetchImpl) return { text: unavailable(ctx.lang) };
-    const day = localPartsOf(input.dayUtc, ZONE);
-
-    let text: string | null = null;
-    switch (input.topic) {
-      case 'weather': {
-        const place = await placeFor(input.place, ctx, fetchImpl);
-        if (!place) return { text: placeNotFound(input.place ?? '', ctx.lang) };
-        text = await weatherFor(fetchImpl, place, day, input.isToday, ctx.lang);
-        break;
-      }
-      case 'jewish_calendar': {
-        const place = await placeFor(input.place, ctx, fetchImpl);
-        if (!place) return { text: placeNotFound(input.place ?? '', ctx.lang) };
-        text = await jewishCalendarFor(fetchImpl, place, day, ctx.lang);
-        break;
-      }
-      case 'exchange_rate':
-        text = await ratesFor(fetchImpl, input.currency, input.amount, ctx.lang);
-        break;
-      case 'news':
-        text = await newsFor(fetchImpl, ctx.lang);
-        break;
-      case 'day_times': {
-        const place = await placeFor(input.place, ctx, fetchImpl);
-        if (!place) return { text: placeNotFound(input.place ?? '', ctx.lang) };
-        text = dayTimesFor(place, input.dayUtc, ctx.lang);
-        break;
-      }
-      case 'uv_air': {
-        const place = await placeFor(input.place, ctx, fetchImpl);
-        if (!place) return { text: placeNotFound(input.place ?? '', ctx.lang) };
-        text = await uvAirFor(fetchImpl, place, day, input.isToday, ctx.lang);
-        break;
-      }
-      case 'wikipedia': {
-        // The query is the one thing this sends out. In a turn that already
-        // read someone else's text, that text could be choosing it (§6.19).
-        if (ctx.tainted) return { text: wikiRefused(ctx.lang) };
-        if (!input.query) return { text: unavailable(ctx.lang) };
-        const found = await wikipediaFor(fetchImpl, input.query, ctx.lang);
-        if (found.kind === 'failed') break;
-        // A disambiguation names Wikipedia's titles, so every answer taints.
-        return { text: found.text, tainting: true };
-      }
-    }
-
-    if (text === null) {
-      ctx.log.warn('lookup_failed', { topic: input.topic });
-      return { text: unavailable(ctx.lang) };
-    }
-    return { text, ...(TAINTING_TOPICS.has(input.topic) ? { tainting: true as const } : {}) };
+    return runLookup(parseInput<LookupInput>(inputSchema, rawInput, 'info.lookup'), ctx);
   },
 };
+
+/**
+ * Fetch and render one lookup. Shared by `info.lookup` and by a scheduled read
+ * at its due time (ROADMAP #7), which has no model and no turn: code computes
+ * the answer, and code sends it.
+ */
+export async function runLookup(input: LookupInput, ctx: LookupContext): Promise<ExecuteResult> {
+  const fetchImpl = ctx.fetchImpl;
+  if (!fetchImpl) return { text: unavailable(ctx.lang) };
+  const day = localPartsOf(input.dayUtc, ZONE);
+
+  let text: string | null = null;
+  switch (input.topic) {
+    case 'weather': {
+      const place = await placeFor(input.place, ctx, fetchImpl);
+      if (!place) return { text: placeNotFound(input.place ?? '', ctx.lang) };
+      text = await weatherFor(fetchImpl, place, day, input.isToday, ctx.lang);
+      break;
+    }
+    case 'jewish_calendar': {
+      const place = await placeFor(input.place, ctx, fetchImpl);
+      if (!place) return { text: placeNotFound(input.place ?? '', ctx.lang) };
+      text = await jewishCalendarFor(fetchImpl, place, day, ctx.lang);
+      break;
+    }
+    case 'exchange_rate':
+      text = await ratesFor(fetchImpl, input.currency, input.amount, ctx.lang);
+      break;
+    case 'news':
+      text = await newsFor(fetchImpl, ctx.lang);
+      break;
+    case 'day_times': {
+      const place = await placeFor(input.place, ctx, fetchImpl);
+      if (!place) return { text: placeNotFound(input.place ?? '', ctx.lang) };
+      text = dayTimesFor(place, input.dayUtc, ctx.lang);
+      break;
+    }
+    case 'uv_air': {
+      const place = await placeFor(input.place, ctx, fetchImpl);
+      if (!place) return { text: placeNotFound(input.place ?? '', ctx.lang) };
+      text = await uvAirFor(fetchImpl, place, day, input.isToday, ctx.lang);
+      break;
+    }
+    case 'wikipedia': {
+      // The query is the one thing this sends out. In a turn that already
+      // read someone else's text, that text could be choosing it (§6.19).
+      if (ctx.tainted) return { text: wikiRefused(ctx.lang) };
+      if (!input.query) return { text: unavailable(ctx.lang) };
+      const found = await wikipediaFor(fetchImpl, input.query, ctx.lang);
+      if (found.kind === 'failed') break;
+      // A disambiguation names Wikipedia's titles, so every answer taints.
+      return { text: found.text, tainting: true };
+    }
+  }
+
+  if (text === null) {
+    ctx.log.warn('lookup_failed', { topic: input.topic });
+    return { text: unavailable(ctx.lang) };
+  }
+  return { text, ...(TAINTING_TOPICS.has(input.topic) ? { tainting: true as const } : {}) };
+}
 
 /**
  * The place named in the message, else where the phone is now (when the app
  * sent it), else the home city (`/city`), else Jerusalem.
  */
-async function placeFor(named: string | undefined, ctx: ToolContext, fetchImpl: typeof fetch): Promise<Place | null> {
+async function placeFor(named: string | undefined, ctx: LookupContext, fetchImpl: typeof fetch): Promise<Place | null> {
   if (!named && ctx.location) return currentPlace(ctx.location, ctx.lang);
   const wanted = named ?? ctx.repo.getSetting(HOME_CITY_KEY);
   if (!wanted) return DEFAULT_PLACE;

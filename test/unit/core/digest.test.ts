@@ -16,6 +16,8 @@ import { matchCommand } from '../../../src/core/router.js';
 import { stripIsolates } from '../../../src/render/bidi.js';
 import { endOfLocalDay } from '../../../src/time/range.js';
 import type { CalendarClient, CalendarEvent } from '../../../src/google/calendar.js';
+import type { TasksClient } from '../../../src/google/tasks.js';
+import { BirthdayStore } from '../../../src/core/birthdays.js';
 
 const MIGRATIONS = readdirSync(new URL('../../../migrations/', import.meta.url))
   .filter((file) => file.endsWith('.sql'))
@@ -257,5 +259,167 @@ describe('the digest setting', () => {
     expect(repo.digestDoneOn()).toBeNull();
     repo.markDigestDone('2026-09-24');
     expect(repo.digestDoneOn()).toBe('2026-09-24');
+  });
+});
+
+// -- ROADMAP #6 and #8 (2026-10-05): context, tasks, the week ahead ---------------
+
+describe('the richer digest', () => {
+  let driver: TestSqlDriver;
+  let reminders: ReminderStore;
+  let birthdays: BirthdayStore;
+  let log: ReturnType<typeof createFakeLogger>;
+
+  /** Sunday 2026-09-27, 07:00 local. */
+  const SUNDAY = Date.parse('2026-09-27T04:00:00Z');
+  /** Friday 2026-10-02, 07:00 local: the eve of Shabbat. */
+  const FRIDAY = Date.parse('2026-10-02T04:00:00Z');
+  const JERUSALEM = { name: 'ירושלים', latitude: 31.7683, longitude: 35.2137 };
+
+  const base = (nowMs: number) => ({ nowMs, principal: PRINCIPAL, lang: 'he' as const, reminders, birthdays, log });
+  const remind = (dueAtUtc: number, text: string, rule?: { freq: 'daily'; hour: number; minute: number }) =>
+    reminders.schedule({ principal: PRINCIPAL, text, dueAtUtc, localWallTime: '', tz: TZ, ...(rule ? { rule } : {}) });
+
+  const fakeTasks = (tasks: { title: string; due: string | null }[]): TasksClient =>
+    ({
+      async lists() {
+        return { ok: true as const, value: [{ id: 'l1', title: 'משימות' }] };
+      },
+      async openTasks() {
+        return { ok: true as const, value: tasks.map((task, i) => ({ id: `t${i}`, ...task })) };
+      },
+    }) as unknown as TasksClient;
+
+  beforeEach(() => {
+    driver = new TestSqlDriver();
+    new Repository(driver).migrate(MIGRATIONS);
+    reminders = new ReminderStore(driver, () => NOW);
+    birthdays = new BirthdayStore(driver, () => NOW);
+    log = createFakeLogger();
+  });
+  afterEach(() => driver.close());
+
+  it('context lines alone never make a quiet day send', async () => {
+    // The Hebrew date and candle lighting are always there to say; saying them
+    // every morning is the noise rule 1 forbids.
+    reminders = new ReminderStore(driver, () => FRIDAY);
+    expect(await buildDigest({ ...base(FRIDAY), place: JERUSALEM })).toBeNull();
+  });
+
+  it('leaves a scheduled read out: it is not a reminder, and would make every day send', async () => {
+    reminders.schedule({
+      principal: PRINCIPAL,
+      text: 'מזג האוויר (שליחה קבועה)',
+      dueAtUtc: Date.parse('2026-09-24T10:00:00Z'),
+      localWallTime: '',
+      tz: TZ,
+      rule: { freq: 'daily', hour: 13, minute: 0 },
+      action: 'weather',
+    });
+    expect(await buildDigest(base(NOW))).toBeNull();
+  });
+
+  it('adds the Hebrew date, and candle lighting on the eve of Shabbat', async () => {
+    reminders = new ReminderStore(driver, () => FRIDAY);
+    remind(Date.parse('2026-10-02T09:00:00Z'), 'לקנות חלות');
+    const text = plain(await buildDigest({ ...base(FRIDAY), place: JERUSALEM }))!;
+    expect(text).toContain('בתשרי');
+    expect(text).toMatch(/הדלקת נרות היום: 1[78]:\d\d/);
+  });
+
+  it('has no candle lighting on a weekday', async () => {
+    remind(Date.parse('2026-09-24T11:00:00Z'), 'להתקשר לאבא');
+    const text = plain(await buildDigest({ ...base(NOW), place: JERUSALEM }))!;
+    expect(text).not.toContain('הדלקת נרות');
+  });
+
+  it('has the weather when the home city is known, and goes on without it when it fails', async () => {
+    remind(Date.parse('2026-09-24T11:00:00Z'), 'להתקשר לאבא');
+    const forecast = {
+      daily: {
+        time: ['2026-09-24'],
+        weather_code: [0],
+        temperature_2m_max: [29],
+        temperature_2m_min: [19],
+        precipitation_probability_max: [0],
+      },
+    };
+    const ok = (async () => new Response(JSON.stringify(forecast))) as unknown as typeof fetch;
+    expect(plain(await buildDigest({ ...base(NOW), place: JERUSALEM, fetchImpl: ok }))).toContain('מזג האוויר בירושלים');
+
+    const down = (async () => new Response('', { status: 503 })) as unknown as typeof fetch;
+    const text = plain(await buildDigest({ ...base(NOW), place: JERUSALEM, fetchImpl: down }))!;
+    expect(text).not.toContain('מזג האוויר');
+    expect(text).toContain('להתקשר לאבא');
+  });
+
+  it('lists Google Tasks due today or earlier, and only those', async () => {
+    const text = plain(
+      await buildDigest({
+        ...base(NOW),
+        tasks: fakeTasks([
+          { title: 'לשלם ארנונה', due: '2026-09-24T00:00:00.000Z' },
+          { title: 'לחדש דרכון', due: '2026-09-20T00:00:00.000Z' },
+          { title: 'מחר', due: '2026-09-25T00:00:00.000Z' },
+          { title: 'בלי תאריך', due: null },
+        ]),
+      }),
+    )!;
+    expect(text).toContain('משימות להיום');
+    expect(text).toContain('לשלם ארנונה');
+    expect(text).toContain('לחדש דרכון (באיחור)');
+    expect(text).not.toContain('מחר');
+    expect(text).not.toContain('בלי תאריך');
+  });
+
+  it('a task due today is something to say on its own', async () => {
+    const tasks = fakeTasks([{ title: 'x', due: '2026-09-24T00:00:00.000Z' }]);
+    expect(await buildDigest({ ...base(NOW), tasks })).not.toBeNull();
+  });
+
+  describe('the week ahead (Sunday)', () => {
+    beforeEach(() => {
+      reminders = new ReminderStore(driver, () => SUNDAY);
+    });
+
+    it('counts each day from Monday to Saturday, with the dual in Hebrew', async () => {
+      const calendar = fakeCalendar([
+        event('2026-09-28T06:00:00Z', 'א'),
+        event('2026-09-28T09:00:00Z', 'ב'),
+        event('2026-09-30T06:00:00Z', 'ג'),
+      ]);
+      remind(Date.parse('2026-09-29T06:00:00Z'), 'תזכורת');
+      birthdays.add({ principal: PRINCIPAL, name: 'דנה', day: 1, month: 10 });
+
+      const text = plain(await buildDigest({ ...base(SUNDAY), calendar }))!;
+      expect(text).toContain('השבוע הקרוב:');
+      expect(text).toContain('28.9: שני אירועים');
+      expect(text).toContain('29.9: תזכורת אחת');
+      expect(text).toContain('30.9: אירוע אחד');
+      expect(text).toContain('1.10: יום הולדת: דנה');
+      expect(text).not.toContain('2.10');
+    });
+
+    it('counts a daily reminder on every day, not only its next one', async () => {
+      remind(Date.parse('2026-09-28T05:00:00Z'), 'כדור', { freq: 'daily', hour: 8, minute: 0 });
+      const text = plain(await buildDigest(base(SUNDAY)))!;
+      for (const day of ['28.9', '29.9', '30.9', '1.10', '2.10', '3.10']) {
+        expect(text).toContain(`${day}: תזכורת אחת`);
+      }
+    });
+
+    it('shows no event count, rather than a wrong zero, when the calendar fails', async () => {
+      remind(Date.parse('2026-09-29T06:00:00Z'), 'תזכורת');
+      const text = plain(await buildDigest({ ...base(SUNDAY), calendar: fakeCalendar({ error: 'unavailable' }) }))!;
+      expect(text).toContain('29.9: תזכורת אחת');
+      expect(text).not.toContain('אירוע');
+    });
+
+    it('is not on Monday', async () => {
+      const monday = Date.parse('2026-09-28T04:00:00Z');
+      reminders = new ReminderStore(driver, () => monday);
+      remind(Date.parse('2026-09-29T06:00:00Z'), 'תזכורת');
+      expect(await buildDigest(base(monday))).toBeNull();
+    });
   });
 });

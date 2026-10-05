@@ -20,6 +20,7 @@ import conversations0014 from '../../migrations/0014_conversations.sql';
 import quota0015 from '../../migrations/0015_quota.sql';
 import grants0016 from '../../migrations/0016_grants.sql';
 import recurring0017 from '../../migrations/0017_recurring.sql';
+import scheduledReads0018 from '../../migrations/0018_scheduled_reads.sql';
 
 export const MIGRATIONS = [
   { id: 1, sql: init0001 },
@@ -39,4 +40,5 @@ export const MIGRATIONS = [
   { id: 15, sql: quota0015 },
   { id: 16, sql: grants0016 },
   { id: 17, sql: recurring0017 },
+  { id: 18, sql: scheduledReads0018 },
 ] as const;

@@ -24,6 +24,7 @@ import { Repository } from '../../../src/core/repo.js';
 import { handleInbound } from '../../../src/core/pipeline.js';
 import type { PipelineDeps } from '../../../src/core/pipeline.js';
 import { ReminderStore } from '../../../src/tools/reminder-store.js';
+import { buildDigest } from '../../../src/core/digest.js';
 import { PendingActions, sha256Hex } from '../../../src/confirm/pending.js';
 import { OpenQuestions } from '../../../src/confirm/questions.js';
 import { UndoActions } from '../../../src/confirm/undo.js';
@@ -143,6 +144,29 @@ describe('a whole turn', () => {
     // `/status` reads five counters and now a sixth for undelivered messages.
     const median = await medianMs(200, () => handleInbound(textEvent('/status'), deps));
     expect(median, `${median.toFixed(3)} ms per /status`).toBeLessThan(CATASTROPHE_MS);
+  });
+
+  it('does not blow it on the richest digest: Sunday, a daily reminder, Friday sums (#6, #8)', async () => {
+    // The week ahead walks each recurring rule across six days and asks the
+    // birthday list once a day; candle lighting is sun arithmetic. All of it
+    // runs in the Durable Object, once a day — this only guards a catastrophe.
+    const sunday = Date.parse('2026-09-27T04:00:00Z');
+    const reminders = new ReminderStore(driver, () => sunday);
+    for (let i = 0; i < 20; i++) {
+      reminders.schedule({
+        principal: PRINCIPAL,
+        text: `כדור ${i}`,
+        dueAtUtc: sunday + (i + 1) * 60 * 60_000,
+        localWallTime: '',
+        tz: 'Asia/Jerusalem',
+        rule: { freq: 'daily', hour: (7 + i) % 24, minute: 0 },
+      });
+    }
+    const place = { name: 'ירושלים', latitude: 31.7683, longitude: 35.2137 };
+    const median = await medianMs(50, () =>
+      buildDigest({ nowMs: sunday, principal: PRINCIPAL, lang: 'he', reminders, log: createFakeLogger(), place }),
+    );
+    expect(median, `${median.toFixed(3)} ms per digest`).toBeLessThan(CATASTROPHE_MS);
   });
 
   it('does not blow it on an agent turn with a full, encrypted history (§6.19)', async () => {

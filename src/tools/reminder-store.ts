@@ -17,6 +17,8 @@
 import type { SqlDriver } from '../core/sql.js';
 import { nextOccurrence } from '../time/recur.js';
 import type { RecurRule } from '../time/recur.js';
+import { SCHEDULED_TOPICS } from '../nlu/slot-schemas.js';
+import type { ScheduledTopic } from '../nlu/slot-schemas.js';
 import { localPartsOf } from '../time/tz.js';
 
 /** How long a claim holds before another alarm may take the row. */
@@ -42,7 +44,15 @@ export type Reminder = {
   seriesId: string | null;
   /** The series' rule, joined in on reads. Null for a one-off. */
   rule: RecurRule | null;
+  /**
+   * A scheduled read (ROADMAP #7): a public lookup code runs and sends at the
+   * due time instead of the text. Null for an ordinary reminder.
+   */
+  action: ScheduledTopic | null;
 };
+
+/** `listUpcoming` / `listOverdue`: the digest counts reminders, not scheduled reads. */
+export type ListOptions = { plainOnly?: boolean };
 
 export type ClaimedReminder = Reminder & {
   /** How far past its due time this delivery is. Zero when on time. */
@@ -63,6 +73,8 @@ export class ReminderStore {
     tz: string;
     /** Present for a recurring reminder: this is its first occurrence (B6). */
     rule?: RecurRule;
+    /** Present for a scheduled read (ROADMAP #7). */
+    action?: ScheduledTopic;
   }): Reminder {
     const id = randomHex(12);
     const timestamp = this.now();
@@ -82,8 +94,8 @@ export class ReminderStore {
       }
       this.sql.exec(
         `INSERT INTO reminders
-           (id, principal, text, due_at_utc, local_wall_time, tz, status, attempts, series_id, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, 'scheduled', 0, ?, ?, ?)`,
+           (id, principal, text, due_at_utc, local_wall_time, tz, status, attempts, series_id, action, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, 'scheduled', 0, ?, ?, ?, ?)`,
         id,
         params.principal,
         params.text,
@@ -91,6 +103,7 @@ export class ReminderStore {
         params.localWallTime,
         params.tz,
         seriesId,
+        params.action ?? null,
         timestamp,
         timestamp,
       );
@@ -108,6 +121,7 @@ export class ReminderStore {
       backupEventId: null,
       seriesId,
       rule: params.rule ?? null,
+      action: params.action ?? null,
     };
   }
 
@@ -116,10 +130,10 @@ export class ReminderStore {
     return row ? toReminder(row) : null;
   }
 
-  listUpcoming(principal: string, limit = 20): Reminder[] {
+  listUpcoming(principal: string, limit = 20, options: ListOptions = {}): Reminder[] {
     const rows = this.sql.exec(
       `${SELECT_WITH_RULE}
-       WHERE r.principal = ? AND r.status = 'scheduled' AND r.due_at_utc >= ?
+       WHERE r.principal = ? AND r.status = 'scheduled' AND r.due_at_utc >= ?${plainOnly(options)}
        ORDER BY r.due_at_utc ASC
        LIMIT ?`,
       principal,
@@ -137,10 +151,10 @@ export class ReminderStore {
    * That is exactly what a digest should lead with: not "you have a reminder",
    * but "this one did not reach you".
    */
-  listOverdue(principal: string, limit = 20): Reminder[] {
+  listOverdue(principal: string, limit = 20, options: ListOptions = {}): Reminder[] {
     const rows = this.sql.exec(
       `${SELECT_WITH_RULE}
-       WHERE r.principal = ? AND r.status = 'scheduled' AND r.due_at_utc < ?
+       WHERE r.principal = ? AND r.status = 'scheduled' AND r.due_at_utc < ?${plainOnly(options)}
        ORDER BY r.due_at_utc ASC
        LIMIT ?`,
       principal,
@@ -233,8 +247,8 @@ export class ReminderStore {
 
     this.sql.exec(
       `INSERT OR IGNORE INTO reminders
-         (id, principal, text, due_at_utc, local_wall_time, tz, status, attempts, series_id, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, 'scheduled', 0, ?, ?, ?)`,
+         (id, principal, text, due_at_utc, local_wall_time, tz, status, attempts, series_id, action, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, 'scheduled', 0, ?, ?, ?, ?)`,
       randomHex(12),
       String(row['principal']),
       String(row['text']),
@@ -242,6 +256,8 @@ export class ReminderStore {
       wallTimeOf(nextAt, tz),
       tz,
       seriesId,
+      // A scheduled read stays one: the successor carries the same action.
+      typeof row['action'] === 'string' ? row['action'] : null,
       now,
       now,
     );
@@ -263,6 +279,36 @@ export class ReminderStore {
       `UPDATE reminders SET status = 'sent', wamid = ?, lease_until = NULL, updated_at = ?
        WHERE id = ? AND status = 'sending'`,
       wamid,
+      this.now(),
+      id,
+    );
+  }
+
+  /**
+   * Is this claim still the live one? False once the row was cancelled, or its
+   * lease ran out and another claim took it (which counts another attempt).
+   *
+   * For a scheduled read, which awaits the network between the claim and the
+   * send: a cancel that lands during the fetch must stop the message (#7).
+   */
+  stillClaimed(id: string, attempts: number): boolean {
+    const rows = this.sql.exec(
+      `SELECT id FROM reminders WHERE id = ? AND status = 'sending' AND attempts = ?`,
+      id,
+      attempts,
+    );
+    return rows.length > 0;
+  }
+
+  /**
+   * Close a claimed row without sending it. For a scheduled read held too long
+   * (over Shabbat, say): the weather at seven is not worth sending at noon,
+   * and the next occurrence was already written at the claim (#7).
+   */
+  markSkipped(id: string): void {
+    this.sql.exec(
+      `UPDATE reminders SET status = 'done', lease_until = NULL, updated_at = ?
+       WHERE id = ? AND status = 'sending'`,
       this.now(),
       id,
     );
@@ -457,7 +503,19 @@ function toReminder(row: Record<string, unknown>): Reminder {
         : null,
     seriesId: typeof row['series_id'] === 'string' ? row['series_id'] : null,
     rule: parseRule(row['rule_json']),
+    action: parseAction(row['action']),
   };
+}
+
+/** A stored action, or null for anything not on the closed list (#7). */
+function parseAction(value: unknown): ScheduledTopic | null {
+  return typeof value === 'string' && (SCHEDULED_TOPICS as readonly string[]).includes(value)
+    ? (value as ScheduledTopic)
+    : null;
+}
+
+function plainOnly(options: ListOptions): string {
+  return options.plainOnly ? ' AND r.action IS NULL' : '';
 }
 
 /** Reads join the series' rule, so a list can say an occurrence repeats. */

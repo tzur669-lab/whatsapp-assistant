@@ -8,6 +8,7 @@
  * Gender-neutral, ktiv maleh, dugri. Numbers and Latin runs are bidi-isolated —
  * `1.` at the start of a Hebrew line jumps to the wrong end without it.
  */
+import type { ScheduledTopic } from '../nlu/slot-schemas.js';
 import { isolate, isolateLtr } from './bidi.js';
 import { formatWhen, weekdayName } from './format-time.js';
 import type { Lang } from './format-time.js';
@@ -70,6 +71,35 @@ export const reminderText = {
     return lang === 'he'
       ? `נקבעה תזכורת חוזרת: ${repeatLabel(view.rule, 'he')}\nהראשונה: ${formatWhen(view.local, 'he')}\n${isolate(view.text)}`
       : `Recurring reminder set: ${repeatLabel(view.rule, 'en')}\nFirst: ${formatWhen(view.local, 'en')}\n${isolate(view.text)}`;
+  },
+
+  /**
+   * The name of a scheduled read (ROADMAP #7). Stored as the reminder's text,
+   * so the list shows it and a cancel finds it; the mark in brackets keeps it
+   * from reading as a reminder the user typed.
+   */
+  scheduledLabel(topic: ScheduledTopic, lang: Lang): string {
+    const names: Record<ScheduledTopic, readonly [string, string]> = {
+      weather: ['מזג האוויר', 'Weather'],
+      day_times: ['זמני היום', 'Times of day'],
+      uv_air: ['קרינת UV ואיכות האוויר', 'UV and air quality'],
+      exchange_rate: ['שערי המטבע', 'Exchange rates'],
+      news: ['כותרות החדשות', 'News headlines'],
+      jewish_calendar: ['לוח השנה העברי', 'Hebrew calendar'],
+    };
+    const [he, en] = names[topic];
+    return lang === 'he' ? `${he} (שליחה קבועה)` : `${en} (scheduled)`;
+  },
+
+  /** A scheduled read, Tier 1: the rule, then the first one, to be checked. */
+  createdScheduledRead(view: ReminderView & { rule: RecurRule }, lang: Lang): string {
+    return lang === 'he'
+      ? `נקבעה שליחה קבועה: ${repeatLabel(view.rule, 'he')}
+הראשונה: ${formatWhen(view.local, 'he')}
+${isolate(view.text)}`
+      : `Scheduled: ${repeatLabel(view.rule, 'en')}
+First: ${formatWhen(view.local, 'en')}
+${isolate(view.text)}`;
   },
 
   /** Appended when the time falls inside Shabbat or a chag and the hold is on (§6.13). */
