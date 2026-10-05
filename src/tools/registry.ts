@@ -13,6 +13,8 @@ import type { ZodTypeAny } from 'zod';
 import {
   alarmSetSlots,
   appOpenSlots,
+  calcComputeSlots,
+  calendarFreeTimeSlots,
   calendarCreateEventSlots,
   calendarDeleteEventSlots,
   calendarListEventsSlots,
@@ -79,6 +81,9 @@ export const TOOL_NAMES = [
   'mail.draft',
   // Google Drive (2026-10-01): find a file by its name.
   'drive.search',
+  // ROADMAP block B (2026-10-05): sums and conversions, and free time.
+  'calc.compute',
+  'calendar.free_time',
 ] as const;
 
 export type ToolName = (typeof TOOL_NAMES)[number];
@@ -366,10 +371,11 @@ export const REGISTRY: Readonly<Record<ToolName, ToolSpec>> = {
   'info.lookup': {
     name: 'info.lookup',
     llmDescription:
-      'Look up public data: weather (forecast for a place and day), jewish_calendar (Hebrew date, Shabbat times, parasha, holidays), exchange_rate (Bank of Israel), news (headlines).',
+      'Look up public data: weather (forecast for a place and day), jewish_calendar (Hebrew date, Shabbat times, parasha, holidays), exchange_rate (Bank of Israel), news (headlines), day_times (dawn, sunrise, sunset, nightfall), uv_air (UV index, air quality), wikipedia (an article; query: what to look up).',
     draftSchema: infoLookupSlots,
-    // Reads public data and changes nothing. News and Hebcal titles are text
-    // others wrote: those reads taint the turn (the tool says so per result).
+    // Reads public data and changes nothing. News, Hebcal titles and Wikipedia
+    // are text others wrote: those reads taint the turn (the tool says so per
+    // result). A Wikipedia query is refused in a turn already tainted.
     tier: 0,
     scopes: [],
     rateLimit: { perHour: 30, perDay: 200 },
@@ -434,6 +440,27 @@ export const REGISTRY: Readonly<Record<ToolName, ToolSpec>> = {
     // Reversible: the Undo opens it again.
     tier: 1,
     scopes: [],
+    rateLimit: { perHour: 30, perDay: 150 },
+    implementedIn: 6,
+  },
+  'calc.compute': {
+    name: 'calc.compute',
+    llmDescription:
+      'Compute arithmetic (+ - * / ^ % sqrt) or convert units. expression: digits and operators only. A conversion: expression is just the amount, with from_unit and to_unit; never write a conversion formula.',
+    draftSchema: calcComputeSlots,
+    // Computes in code and changes nothing.
+    tier: 0,
+    scopes: [],
+    rateLimit: { perHour: 60, perDay: 300 },
+    implementedIn: 6,
+  },
+  'calendar.free_time': {
+    name: 'calendar.free_time',
+    llmDescription: 'Find free time in the calendar on a day or range. minutes: the shortest gap wanted, if said.',
+    draftSchema: calendarFreeTimeSlots,
+    // A read. Times only, never titles, so it does not taint the turn.
+    tier: 0,
+    scopes: [EVENTS_OWNED],
     rateLimit: { perHour: 30, perDay: 150 },
     implementedIn: 6,
   },

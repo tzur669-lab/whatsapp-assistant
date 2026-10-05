@@ -252,4 +252,94 @@ describe('info.lookup', () => {
     await run({ topic: 'weather' }, []);
     expect(JSON.stringify((ctx.log as unknown as { captured: unknown }).captured ?? '')).not.toContain('כותרת');
   });
+
+  // ROADMAP block B (2026-10-05).
+
+  describe('day times', () => {
+    it('computes dawn to nightfall for Jerusalem in code, with no network, and does not taint', async () => {
+      const out = await run({ topic: 'day_times' }, []);
+      expect(out.urls).toEqual([]);
+      // Pinned: a change to the sun arithmetic shows here.
+      expect(out.plain).toBe(
+        'זמני היום בירושלים · יום ה׳ 1.10: עלות השחר 05:20, זריחה 06:32, חצות היום 12:28, שקיעה 18:25, צאת הכוכבים 19:01 (חישוב אסטרונומי)',
+      );
+      expect(out.tainting).toBeUndefined();
+    });
+
+    it('reads a named day and place', async () => {
+      const out = await run({ topic: 'day_times', place: 'חיפה', date: { kind: 'relative_days', offset: 1 } }, [GEOCODER]);
+      expect(out.plain.startsWith('זמני היום בחיפה · יום ו׳ 2.10:')).toBe(true);
+    });
+  });
+
+  describe('uv and air', () => {
+    const UV: Route = (url) =>
+      url.hostname === 'api.open-meteo.com'
+        ? json({ daily: { time: ['2026-10-01', '2026-10-02'], uv_index_max: [6.35, 2.1] } })
+        : null;
+    const AIR: Route = (url) =>
+      url.hostname === 'air-quality-api.open-meteo.com' ? json({ current: { european_aqi: 47, pm2_5: 18.4 } }) : null;
+
+    it('gives the max UV and, today, the air now, and does not taint', async () => {
+      const out = await run({ topic: 'uv_air' }, [UV, AIR]);
+      expect(out.plain).toBe(
+        'קרינת UV ואיכות אוויר בירושלים · יום ה׳ 1.10: מדד UV מרבי 6.4 (גבוה); איכות האוויר עכשיו בינונית (מדד 47, PM2.5 18 µg/m³)',
+      );
+      expect(out.tainting).toBeUndefined();
+    });
+
+    it('does not ask for the air on another day', async () => {
+      const out = await run({ topic: 'uv_air', date: { kind: 'relative_days', offset: 1 } }, [UV, AIR]);
+      expect(out.plain).toContain('מדד UV מרבי 2.1 (נמוך)');
+      expect(out.urls.some((u) => u.includes('air-quality'))).toBe(false);
+    });
+
+    it('says unavailable when both fail', async () => {
+      expect((await run({ topic: 'uv_air' }, [])).plain).toContain('לא זמין');
+    });
+  });
+
+  describe('wikipedia', () => {
+    const WIKI: Route = (url) => {
+      if (!url.hostname.endsWith('wikipedia.org')) return null;
+      if (url.pathname.endsWith('/search/title')) {
+        return json(url.searchParams.get('q') === 'אין כזה' ? { pages: [] } : { pages: [{ key: 'אלברט_איינשטיין' }] });
+      }
+      if (url.pathname.includes('/page/summary/')) {
+        return json({ type: 'standard', title: 'אלברט איינשטיין', extract: 'פיזיקאי תאורטי. ראו www.example.test לפרטים.' });
+      }
+      return null;
+    };
+
+    it('reads the best article, from Hebrew Wikipedia for a Hebrew query, and taints', async () => {
+      const out = await run({ topic: 'wikipedia', query: 'איינשטיין' }, [WIKI]);
+      expect(out.plain).toBe('ויקיפדיה · אלברט איינשטיין: פיזיקאי תאורטי. ראו www.example.test לפרטים.');
+      expect(out.tainting).toBe(true);
+      expect(out.urls[0]).toContain('he.wikipedia.org');
+      expect(out.urls[1]).toContain(encodeURIComponent('אלברט_איינשטיין'));
+    });
+
+    it('uses English Wikipedia for a Latin query', async () => {
+      const out = await run({ topic: 'wikipedia', query: 'Einstein' }, [WIKI]);
+      expect(out.urls[0]).toContain('en.wikipedia.org');
+    });
+
+    it('asks what to look up when there is no query', () => {
+      expect(infoLookup.resolve({ topic: 'wikipedia' }, ctx)).toMatchObject({ kind: 'clarify' });
+    });
+
+    it('says when nothing matched, and when the service is down', async () => {
+      expect((await run({ topic: 'wikipedia', query: 'אין כזה' }, [WIKI])).plain).toBe('לא מצאתי בוויקיפדיה ערך על אין כזה.');
+      expect((await run({ topic: 'wikipedia', query: 'איינשטיין' }, [])).plain).toContain('לא זמין');
+    });
+
+    it('sends nothing out in a turn already tainted (§6.19)', async () => {
+      const web = fakeWeb([WIKI]);
+      const resolved = infoLookup.resolve({ topic: 'wikipedia', query: 'איינשטיין' }, ctx);
+      if (resolved.kind !== 'ready') throw new Error('expected ready');
+      const out = await infoLookup.execute(resolved.input, { ...ctx, fetchImpl: web.fetchImpl, tainted: true });
+      expect(web.urls).toEqual([]);
+      expect(stripIsolates(out.text)).toContain('חיפוש בוויקיפדיה לא זמין');
+    });
+  });
 });

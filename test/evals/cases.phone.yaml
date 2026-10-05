@@ -530,3 +530,122 @@
       date: { kind: weekday, weekday: 0, qualifier: unspecified }
       time: { hour: 8, minute: 0, meridiem: unspecified, part_of_day: unspecified }
     missing: []
+
+# ROADMAP block B (2026-10-05, prompt a6): calculator, the day's times, UV and
+# air, Wikipedia, free time. Agent-only. The expression is the model's own
+# wording of the sum, so only the units are scored, never its exact text.
+
+- id: bx-calc-001
+  now: "2026-10-05T10:00:00+03:00"
+  input: "כמה זה 15 אחוז מ-240?"
+  expect:
+    intent: calc.compute
+    missing: []
+
+- id: bx-calc-002
+  now: "2026-10-05T10:00:00+03:00"
+  input: "what's 1234 times 56"
+  expect:
+    intent: calc.compute
+    missing: []
+
+- id: bx-calc-003
+  now: "2026-10-05T10:00:00+03:00"
+  input: "כמה זה 5 מייל בקילומטרים?"
+  expect:
+    intent: calc.compute
+    slots:
+      from_unit: mi
+      to_unit: km
+    missing: []
+
+- id: bx-calc-004
+  now: "2026-10-05T10:00:00+03:00"
+  input: "convert 30 celsius to fahrenheit"
+  expect:
+    intent: calc.compute
+    slots:
+      from_unit: c
+      to_unit: f
+    missing: []
+
+- id: bx-day-001
+  now: "2026-10-05T10:00:00+03:00"
+  input: "מתי השקיעה היום?"
+  expect:
+    intent: info.lookup
+    slots:
+      topic: day_times
+    missing: []
+
+- id: bx-day-002
+  now: "2026-10-05T10:00:00+03:00"
+  input: "what time is sunrise tomorrow in Haifa"
+  expect:
+    intent: info.lookup
+    slots:
+      topic: day_times
+      date: { kind: relative_days, offset: 1 }
+    missing: []
+
+- id: bx-uv-001
+  now: "2026-10-05T10:00:00+03:00"
+  input: "מה מדד הקרינה היום?"
+  expect:
+    intent: info.lookup
+    slots:
+      topic: uv_air
+    missing: []
+
+- id: bx-uv-002
+  now: "2026-10-05T10:00:00+03:00"
+  input: "איך איכות האוויר עכשיו?"
+  expect:
+    intent: info.lookup
+    slots:
+      topic: uv_air
+    missing: []
+
+- id: bx-wiki-001
+  now: "2026-10-05T10:00:00+03:00"
+  input: "תחפש בוויקיפדיה מי זה דוד בן גוריון"
+  expect:
+    intent: info.lookup
+    slots:
+      topic: wikipedia
+    missing: []
+
+- id: bx-wiki-002
+  now: "2026-10-05T10:00:00+03:00"
+  input: "look up the Eiffel Tower on Wikipedia"
+  expect:
+    intent: info.lookup
+    slots:
+      topic: wikipedia
+    missing: []
+
+- id: bx-free-001
+  now: "2026-10-05T10:00:00+03:00"
+  input: "מתי אני פנוי מחר?"
+  expect:
+    intent: calendar.free_time
+    slots:
+      date: { kind: relative_days, offset: 1 }
+    missing: []
+
+- id: bx-free-002
+  now: "2026-10-05T10:00:00+03:00"
+  input: "find me a free hour this week"
+  expect:
+    intent: calendar.free_time
+    slots:
+      range: this_week
+      minutes: 60
+    missing: []
+
+- id: bx-free-003
+  now: "2026-10-05T10:00:00+03:00"
+  input: "יש לי זמן פנוי היום?"
+  expect:
+    intent: calendar.free_time
+    missing: []

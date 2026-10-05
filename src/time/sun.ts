@@ -65,6 +65,14 @@ export function duskOn(atMs: number, depressionDegrees: number, place: Place = J
   return solarEvent(atMs, place, 90 + depressionDegrees, 'set');
 }
 
+/**
+ * The sun at a depression below the horizon, coming up: `alot hashachar` —
+ * dawn — at 16.1° (2026-10-05, the day's times in `info.lookup`).
+ */
+export function dawnOn(atMs: number, depressionDegrees: number, place: Place = JERUSALEM): number | null {
+  return solarEvent(atMs, place, 90 + depressionDegrees, 'rise');
+}
+
 function solarEvent(
   atMs: number,
   place: Place,

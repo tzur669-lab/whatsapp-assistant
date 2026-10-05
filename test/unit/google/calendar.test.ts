@@ -190,6 +190,16 @@ describe('CalendarClient', () => {
       const result = await client(fetchImpl).listAllEvents({ startUtc: NOW, endUtc: NOW + 86_400_000 });
       expect(result.ok && result.value.map((e) => e.title)).toEqual(['x']);
     });
+
+    it('fails the whole read when one calendar fails and the caller is strict (free time, 2026-10-05)', async () => {
+      await store.connect({ refreshToken: 'rt', scopes: [ALL_CALENDARS] });
+      const { fetchImpl } = routed(
+        { primary: [at('2026-09-24T14:00:00+03:00', 'a', 'x')] },
+        [{ id: 'broken@group.calendar.google.com', summary: 'Broken', selected: true }],
+      );
+      const result = await client(fetchImpl).listAllEvents({ startUtc: NOW, endUtc: NOW + 86_400_000, strict: true });
+      expect(result.ok).toBe(false);
+    });
   });
 
   it('lists events in the window', async () => {

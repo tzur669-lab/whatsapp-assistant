@@ -11,6 +11,7 @@
  */
 import { z } from 'zod';
 import type { DateSpec, TimeSpec } from '../time/resolve.js';
+import { MAX_EXPRESSION_CHARS, UNITS } from '../lookup/calc.js';
 
 export const MAX_TITLE_CHARS = 200;
 export const MAX_QUERY_VARIANTS = 5;
@@ -310,7 +311,16 @@ export const phoneSmsSlots = z
 // Agent-only, like the phone reads. One tool for four kinds of public data, so
 // the catalog grows by one entry rather than four (every tool is prompt tokens).
 
-export const LOOKUP_TOPICS = ['weather', 'jewish_calendar', 'exchange_rate', 'news'] as const;
+export const LOOKUP_TOPICS = [
+  'weather',
+  'jewish_calendar',
+  'exchange_rate',
+  'news',
+  // 2026-10-05 (ROADMAP block B): sunrise to nightfall, UV and air, Wikipedia.
+  'day_times',
+  'uv_air',
+  'wikipedia',
+] as const;
 
 export const infoLookupSlots = z
   .object({
@@ -321,6 +331,34 @@ export const infoLookupSlots = z
     /** An ISO 4217 code, for exchange rates. */
     currency: z.string().regex(/^[A-Za-z]{3}$/).optional(),
     amount: z.number().positive().max(1_000_000_000).optional(),
+    /** What to look up on Wikipedia, in the user's words. */
+    query: z.string().min(1).max(MAX_QUERY_CHARS).optional(),
+  })
+  .strict();
+
+// -- calculator and free time (2026-10-05) ------------------------------------
+//
+// Agent-only. The model writes the arithmetic; code reads and computes it
+// (`src/lookup/calc.ts`), so a model never does sums it may get wrong.
+
+export const calcComputeSlots = z
+  .object({
+    expression: z.string().min(1).max(MAX_EXPRESSION_CHARS).optional(),
+    /** A conversion: the expression's value, from one unit to another. */
+    from_unit: z.enum(UNITS).optional(),
+    to_unit: z.enum(UNITS).optional(),
+  })
+  .strict();
+
+export const MIN_FREE_MINUTES = 15;
+export const MAX_FREE_MINUTES = 480;
+
+export const calendarFreeTimeSlots = z
+  .object({
+    date: dateSpecSchema.optional(),
+    range: rangeSchema.optional(),
+    /** The shortest gap worth naming. Absent: half an hour. */
+    minutes: z.number().int().min(MIN_FREE_MINUTES).max(MAX_FREE_MINUTES).optional(),
   })
   .strict();
 

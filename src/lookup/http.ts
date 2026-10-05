@@ -11,10 +11,17 @@ const TIMEOUT_MS = 8_000;
 /** Enough for a year of Hebcal events or a news feed; anything bigger is refused. */
 const MAX_BYTES = 400_000;
 
-async function body(fetchImpl: typeof fetch, url: string): Promise<Fetched<string>> {
+/**
+ * Wikimedia asks every client to name itself (2026-10-05). A product name only:
+ * no address, no account, nothing that identifies the user.
+ */
+export const USER_AGENT = 'PersonalAssistantBot/1.0 (single-user, private)';
+
+async function body(fetchImpl: typeof fetch, url: string, named = false): Promise<Fetched<string>> {
   let response: Response;
   try {
-    response = await fetchImpl(url, { signal: AbortSignal.timeout(TIMEOUT_MS), headers: { accept: '*/*' } });
+    const headers: Record<string, string> = named ? { accept: '*/*', 'user-agent': USER_AGENT } : { accept: '*/*' };
+    response = await fetchImpl(url, { signal: AbortSignal.timeout(TIMEOUT_MS), headers });
   } catch {
     return { ok: false, error: 'network' };
   }
@@ -28,8 +35,8 @@ async function body(fetchImpl: typeof fetch, url: string): Promise<Fetched<strin
   }
 }
 
-export async function getJson(fetchImpl: typeof fetch, url: string): Promise<Fetched<unknown>> {
-  const text = await body(fetchImpl, url);
+export async function getJson(fetchImpl: typeof fetch, url: string, options: { named?: boolean } = {}): Promise<Fetched<unknown>> {
+  const text = await body(fetchImpl, url, options.named === true);
   if (!text.ok) return text;
   try {
     return { ok: true, value: JSON.parse(text.value) as unknown };

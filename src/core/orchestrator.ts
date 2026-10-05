@@ -26,6 +26,8 @@ import type { ToolName } from '../tools/registry.js';
 import { REMINDER_TOOLS } from '../tools/reminders.js';
 import { calendarListEvents } from '../tools/calendar-read.js';
 import { infoLookup } from '../tools/lookup.js';
+import { calcCompute } from '../tools/calc.js';
+import { calendarFreeTime } from '../tools/free-time.js';
 import { TASK_TOOLS } from '../tools/tasks.js';
 import { MAIL_TOOLS } from '../tools/mail.js';
 import { driveSearch } from '../tools/drive.js';
@@ -123,11 +125,13 @@ export type TurnContext = {
 const IMPLEMENTED: Partial<Record<ToolName, ToolDefinition>> = {
   ...REMINDER_TOOLS,
   'calendar.list_events': calendarListEvents,
+  'calendar.free_time': calendarFreeTime,
   ...CALENDAR_WRITE_TOOLS,
   'calls.place': callsPlace,
   ...PHONE_ACTION_TOOLS,
   ...PHONE_READ_TOOLS,
   'info.lookup': infoLookup,
+  'calc.compute': calcCompute,
   ...TASK_TOOLS,
   ...MAIL_TOOLS,
   'drive.search': driveSearch,
@@ -377,7 +381,8 @@ async function execute(
   decision: PolicyResult,
   turn: TurnContext,
 ): Promise<Reply> {
-  const ctx = turn.tool;
+  // The turn's taint rides along for a read that sends words out (Wikipedia).
+  const ctx = turn.tainted ? { ...turn.tool, tainted: true } : turn.tool;
 
   let result: ExecuteResult;
   try {

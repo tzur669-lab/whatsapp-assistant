@@ -187,6 +187,8 @@ const SLOT_NAMES: Record<string, Partial<Record<keyof AnswerPatch, string>>> = {
     time: 'time',
     durationMinutes: 'duration_minutes',
   },
+  // "Which day?" after a weekday mismatch lands in the date (2026-10-05).
+  'calendar.free_time': { date: 'date' },
   'calendar.move_event': { target: 'query_variants', date: 'to_date', time: 'to_time' },
   'calendar.delete_event': { target: 'query_variants', date: 'date', time: 'time' },
   'calls.place': { target: 'query_variants' },

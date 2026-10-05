@@ -110,6 +110,11 @@ export type ToolContext = {
   gmail?: GmailClient;
   /** Google Drive's file search, once its grant is connected (2026-10-01). */
   drive?: DriveClient;
+  /**
+   * The turn already read text someone else wrote (§6.19). Set by `runIntent`
+   * for the one tool that sends the model's words out: Wikipedia (2026-10-05).
+   */
+  tainted?: boolean;
 };
 
 export type ExecuteResult = {

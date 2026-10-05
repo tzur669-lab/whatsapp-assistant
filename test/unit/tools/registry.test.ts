@@ -15,6 +15,8 @@ import { infoLookup } from '../../../src/tools/lookup.js';
 import { TASK_TOOLS } from '../../../src/tools/tasks.js';
 import { MAIL_TOOLS } from '../../../src/tools/mail.js';
 import { driveSearch } from '../../../src/tools/drive.js';
+import { calcCompute } from '../../../src/tools/calc.js';
+import { calendarFreeTime } from '../../../src/tools/free-time.js';
 import type { ToolDefinition } from '../../../src/tools/types.js';
 import { INTENT_NAMES } from '../../../src/nlu/intent-schema.js';
 
@@ -29,6 +31,8 @@ const IMPLEMENTATIONS: Record<string, ToolDefinition> = {
   ...TASK_TOOLS,
   ...MAIL_TOOLS,
   'drive.search': driveSearch,
+  'calc.compute': calcCompute,
+  'calendar.free_time': calendarFreeTime,
 };
 
 describe('every registered tool is real', () => {

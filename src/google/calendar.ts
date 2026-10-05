@@ -116,17 +116,25 @@ export class CalendarClient {
    * Events from every calendar shown in Google Calendar, merged in time order
    * (2026-10-01): the main one, then each other visible calendar, named. Needs
    * `calendar.readonly`; until the grant has it, the main calendar alone. One
-   * failing calendar is left out rather than failing the whole read.
+   * failing calendar is left out rather than failing the whole read — unless
+   * `strict`, where a missing calendar would make busy time look free
+   * (`calendar.free_time`, 2026-10-05): then any failure fails the read.
    */
-  async listAllEvents(params: { startUtc: number; endUtc: number; limit?: number }): Promise<CalendarResult<CalendarEvent[]>> {
-    const primary = await this.listEvents(params);
+  async listAllEvents(params: {
+    startUtc: number;
+    endUtc: number;
+    limit?: number;
+    strict?: boolean;
+  }): Promise<CalendarResult<CalendarEvent[]>> {
+    const { strict, ...range } = params;
+    const primary = await this.listEvents(range);
     if (!primary.ok) return primary;
     if (!(this.config.store.get()?.scopes ?? []).includes(READ_ALL_SCOPE)) return primary;
 
     const list = await this.call('/users/me/calendarList?minAccessRole=reader&maxResults=50', { method: 'GET' });
-    if (!list.ok) return primary;
+    if (!list.ok) return strict ? list : primary;
     const items = (list.value as { items?: unknown }).items;
-    if (!Array.isArray(items)) return primary;
+    if (!Array.isArray(items)) return strict ? { ok: false, error: { code: 'invalid_response' } } : primary;
 
     const others = items
       .map((item) => item as Record<string, unknown>)
@@ -137,8 +145,11 @@ export class CalendarClient {
     const seen = new Set(merged.map(eventKey));
     for (const item of others) {
       const name = String(item['summaryOverride'] ?? item['summary'] ?? '').slice(0, 60) || undefined;
-      const result = await this.listEvents({ ...params, calendarId: String(item['id']) });
-      if (!result.ok) continue;
+      const result = await this.listEvents({ ...range, calendarId: String(item['id']) });
+      if (!result.ok) {
+        if (strict) return result;
+        continue;
+      }
       for (const event of result.value) {
         // An invitation shows on both calendars; list it once.
         if (seen.has(eventKey(event))) continue;

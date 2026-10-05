@@ -92,6 +92,8 @@ const READ_TOOLS = new Set([
   'info.lookup',
   'tasks.list',
   'mail.search',
+  'calc.compute',
+  'calendar.free_time',
 ]);
 
 /** Set once from `--read-only`, before any case is built. */
@@ -184,8 +186,7 @@ async function ask(provider: AgentProvider, id: string, messages: AgentMessage[]
 /** The same messages the loop builds for a first call, with no history. */
 function firstTurn(input: string, nowMs: number): AgentMessage[] {
   return [
-    { role: 'system', content: readOnly ? `${SYSTEM_PROMPT}
-${READ_ONLY_NOTE}` : SYSTEM_PROMPT },
+    { role: 'system', content: readOnly ? `${SYSTEM_PROMPT}\n${READ_ONLY_NOTE}` : SYSTEM_PROMPT },
     // The same language rule the pipeline's languageOf applies.
     { role: 'user', content: `${nowLine(nowMs)}\n${languageLine(/[֐-׿]/.test(input) || !/[A-Za-z]/.test(input) ? 'he' : 'en')}\n\n${input}` },
   ];

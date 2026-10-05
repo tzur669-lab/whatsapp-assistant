@@ -30,6 +30,8 @@ import {
   mailDraftSlots,
   mailSearchSlots,
   driveSearchSlots,
+  calcComputeSlots,
+  calendarFreeTimeSlots,
   tasksCompleteSlots,
   tasksListSlots,
   remindersAtRestSlots,
@@ -138,6 +140,10 @@ export const intentDraftSchema = z.discriminatedUnion('intent', [
   z.object({ intent: z.literal('phone.sms'), slots: phoneSmsSlots, ...common }).strict(),
   // Public lookups (2026-10-01). Agent-only.
   z.object({ intent: z.literal('info.lookup'), slots: infoLookupSlots, ...common }).strict(),
+  // ROADMAP block B (2026-10-05). Agent-only, and not in `ignoredSlots`, like
+  // the agent-only reminders.
+  z.object({ intent: z.literal('calc.compute'), slots: calcComputeSlots, ...common }).strict(),
+  z.object({ intent: z.literal('calendar.free_time'), slots: calendarFreeTimeSlots, ...common }).strict(),
   // Google Tasks (2026-10-01). Agent-only.
   z.object({ intent: z.literal('tasks.list'), slots: tasksListSlots, ...common }).strict(),
   z.object({ intent: z.literal('tasks.add'), slots: tasksAddSlots, ...common }).strict(),
@@ -196,6 +202,8 @@ const TOOL_SLOTS: Readonly<Record<string, ReadonlySet<string>>> = {
   'mail.search': new Set(Object.keys(mailSearchSlots.shape)),
   'mail.draft': new Set(Object.keys(mailDraftSlots.shape)),
   'drive.search': new Set(Object.keys(driveSearchSlots.shape)),
+  'calc.compute': new Set(Object.keys(calcComputeSlots.shape)),
+  'calendar.free_time': new Set(Object.keys(calendarFreeTimeSlots.shape)),
 };
 
 /** Every slot any tool declares — the flat union the wire schema offers the model. */

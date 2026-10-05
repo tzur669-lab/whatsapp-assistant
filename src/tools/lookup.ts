@@ -1,6 +1,7 @@
 /**
  * `info.lookup` (2026-10-01): public data the agent can read — weather, the
- * Hebrew calendar, exchange rates, news. Tier 0, agent-only.
+ * Hebrew calendar, exchange rates, news; since 2026-10-05 also the day's times,
+ * UV and air quality, and Wikipedia. Tier 0, agent-only.
  *
  * Each source fetches and renders in code (`src/lookup/`); the model gets the
  * rendered text, scrubbed, like any read. News and Hebcal titles are text
@@ -18,6 +19,10 @@ import { weatherFor } from '../lookup/weather.js';
 import { jewishCalendarFor } from '../lookup/jewish.js';
 import { ratesFor } from '../lookup/rates.js';
 import { newsFor } from '../lookup/news.js';
+import { dayTimesFor } from '../lookup/day-times.js';
+import { uvAirFor } from '../lookup/uv-air.js';
+import { wikipediaFor } from '../lookup/wikipedia.js';
+import { MAX_QUERY_CHARS } from '../nlu/slot-schemas.js';
 import { parseInput } from './types.js';
 import type { ExecuteResult, ResolveOutcome, ToolContext, ToolDefinition } from './types.js';
 
@@ -30,13 +35,14 @@ const inputSchema = z
     isToday: z.boolean(),
     currency: z.string().regex(/^[A-Z]{3}$/).optional(),
     amount: z.number().positive().max(1_000_000_000).optional(),
+    query: z.string().min(1).max(MAX_QUERY_CHARS).optional(),
   })
   .strict();
 
 type LookupInput = z.infer<typeof inputSchema>;
 
 /** Topics whose text was written by someone else (§6.19). */
-const TAINTING_TOPICS: ReadonlySet<LookupInput['topic']> = new Set(['news', 'jewish_calendar']);
+const TAINTING_TOPICS: ReadonlySet<LookupInput['topic']> = new Set(['news', 'jewish_calendar', 'wikipedia']);
 
 const unavailable = (lang: 'he' | 'en') =>
   lang === 'he' ? 'המידע לא זמין כרגע. אפשר לנסות שוב בעוד רגע.' : 'That information is unavailable right now. Try again in a moment.';
@@ -48,7 +54,10 @@ export const infoLookup: ToolDefinition = {
   resolve(rawSlots, ctx): ResolveOutcome {
     const slots = infoLookupSlots.safeParse(rawSlots);
     if (!slots.success) return { kind: 'clarify', clarify: { code: 'missing_slot', slot: 'target' } };
-    const { topic, place, date, currency, amount } = slots.data;
+    const { topic, place, date, currency, amount, query } = slots.data;
+    // Wikipedia needs something to look up; there is no "the article".
+    const wanted = query?.trim();
+    if (topic === 'wikipedia' && !wanted) return { kind: 'clarify', clarify: { code: 'missing_slot', slot: 'target' } };
 
     // A day is resolved by the time rules like every other date, at noon so no
     // hour rule turns it into a question. None named: today.
@@ -74,6 +83,7 @@ export const infoLookup: ToolDefinition = {
         isToday,
         ...(currency ? { currency: currency.toUpperCase() } : {}),
         ...(amount !== undefined ? { amount } : {}),
+        ...(topic === 'wikipedia' && wanted ? { query: wanted } : {}),
       } satisfies LookupInput,
     };
   },
@@ -108,6 +118,28 @@ export const infoLookup: ToolDefinition = {
       case 'news':
         text = await newsFor(fetchImpl, ctx.lang);
         break;
+      case 'day_times': {
+        const place = await placeFor(input.place, ctx, fetchImpl);
+        if (!place) return { text: placeNotFound(input.place ?? '', ctx.lang) };
+        text = dayTimesFor(place, input.dayUtc, ctx.lang);
+        break;
+      }
+      case 'uv_air': {
+        const place = await placeFor(input.place, ctx, fetchImpl);
+        if (!place) return { text: placeNotFound(input.place ?? '', ctx.lang) };
+        text = await uvAirFor(fetchImpl, place, day, input.isToday, ctx.lang);
+        break;
+      }
+      case 'wikipedia': {
+        // The query is the one thing this sends out. In a turn that already
+        // read someone else's text, that text could be choosing it (§6.19).
+        if (ctx.tainted) return { text: wikiRefused(ctx.lang) };
+        if (!input.query) return { text: unavailable(ctx.lang) };
+        const found = await wikipediaFor(fetchImpl, input.query, ctx.lang);
+        if (found.kind === 'failed') break;
+        // A disambiguation names Wikipedia's titles, so every answer taints.
+        return { text: found.text, tainting: true };
+      }
     }
 
     if (text === null) {
@@ -127,6 +159,12 @@ async function placeFor(named: string | undefined, ctx: ToolContext, fetchImpl: 
   const wanted = named ?? ctx.repo.getSetting(HOME_CITY_KEY);
   if (!wanted) return DEFAULT_PLACE;
   return findPlace(fetchImpl, wanted);
+}
+
+function wikiRefused(lang: 'he' | 'en'): string {
+  return lang === 'he'
+    ? 'אחרי קריאת מידע שאחרים כתבו, חיפוש בוויקיפדיה לא זמין באותה פנייה. אפשר לשאול שוב בהודעה נפרדת.'
+    : 'After reading text others wrote, I do not search Wikipedia in the same request. Ask again in a new message.';
 }
 
 function placeNotFound(place: string, lang: 'he' | 'en'): string {
