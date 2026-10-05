@@ -10,7 +10,10 @@
       "Bash(git status)",
       "Bash(git diff:*)",
       "Bash(git -c core.quotepath=false status --short)",
-      "Bash(python -)"
+      "Bash(python -)",
+      "Bash(curl -s -o /dev/null -w \"health %{http_code}\\\\n\" https://wa-assistant-staging.moneytime-pro-api.workers.dev/health)",
+      "Bash(pnpm -s typecheck)",
+      "Bash(pnpm -s lint)"
     ],
     "deny": [
       "Read(./.env)",
