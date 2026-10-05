@@ -16,10 +16,11 @@
  *
  * Since 2026-10-05 (ROADMAP #6, #8) it also carries:
  *
- *   - **Context lines** — the Hebrew date, the weather at the home city, and
- *     candle lighting on the eve of Shabbat or a chag. They ride along with a
- *     digest that is being sent anyway and never make a quiet day send: the
- *     weather alone, every morning, is exactly the noise rule 1 is about.
+ *   - **Context lines** — the Hebrew date and the weather at the home city.
+ *     They ride along with a digest that is being sent anyway and never make a
+ *     quiet day send: the weather alone, every morning, is exactly the noise
+ *     rule 1 is about. No candle lighting: the user asked for it out
+ *     (2026-10-05) — `reminders.at_rest` covers it for whoever wants it.
  *   - **Google Tasks** due today or earlier, when Tasks is connected.
  *   - **The week ahead, on Sunday** — per day, how many events and reminders,
  *     and whose birthday. Counts, not titles: each day's own digest has those.
@@ -44,7 +45,6 @@ import type { DigestContextLines, DigestTask, DigestWeek, DigestWeekDay } from '
 import { endOfLocalDay } from '../time/range.js';
 import { localPartsOf, ZONE } from '../time/tz.js';
 import { nextOccurrence } from '../time/recur.js';
-import { restKindOfDay, upcomingRestTimes } from '../time/shabbat.js';
 import type { Place } from '../lookup/place.js';
 import { weatherFor } from '../lookup/weather.js';
 import { hebrewDate } from '../lookup/jewish.js';
@@ -60,7 +60,6 @@ const MAX_WEEK_ITEMS = 100;
 const WEEK_DIGEST_DAY = 0;
 /** Monday to Saturday. */
 const WEEK_DAYS_AHEAD = 6;
-const HOUR_MS = 60 * 60_000;
 
 export type DigestContext = {
   nowMs: number;
@@ -77,7 +76,7 @@ export type DigestContext = {
   tasks?: TasksClient;
   /**
    * The home city, resolved by the caller. Absent when it could not be: then
-   * there is no weather and no candle lighting, rather than Jerusalem's.
+   * there is no weather, rather than Jerusalem's.
    */
   place?: Place;
   /** For the weather. Absent: no weather line. */
@@ -126,7 +125,7 @@ export async function buildDigest(ctx: DigestContext): Promise<string | null> {
   return digestText.compose(
     {
       hour: localPartsOf(ctx.nowMs, ZONE).hour,
-      context: await contextLines(ctx, endOfDay),
+      context: await contextLines(ctx),
       events,
       reminders: today.map(view),
       overdue: overdue.map(view),
@@ -173,7 +172,7 @@ async function todaysEvents(ctx: DigestContext, endOfDay: number): Promise<Calen
  * The lines that set the scene. Only ever shown inside a digest that has
  * something else to say; each is left out when it cannot be had.
  */
-async function contextLines(ctx: DigestContext, endOfDay: number): Promise<DigestContextLines> {
+async function contextLines(ctx: DigestContext): Promise<DigestContextLines> {
   const local = localPartsOf(ctx.nowMs, ZONE);
   const lines: DigestContextLines = {};
 
@@ -189,18 +188,6 @@ async function contextLines(ctx: DigestContext, endOfDay: number): Promise<Diges
     }
     if (weather) lines.weather = weather;
     else ctx.log.warn('digest_weather_failed', {});
-  }
-
-  // Candle lighting, on the eve only: today is a working day and tomorrow is
-  // not. Checked by the day first, so the generator below yields at once.
-  if (ctx.place && restKindOfDay(ctx.nowMs) === null) {
-    const kind = restKindOfDay(endOfDay + 12 * HOUR_MS);
-    if (kind) {
-      const next = upcomingRestTimes(ctx.nowMs, kind, ZONE, ctx.place).next();
-      if (!next.done && next.value.startUtc > ctx.nowMs && next.value.startUtc <= endOfDay) {
-        lines.candleLighting = localPartsOf(next.value.startUtc, ZONE);
-      }
-    }
   }
   return lines;
 }

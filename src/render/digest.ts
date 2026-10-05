@@ -22,8 +22,6 @@ export type DigestContextLines = {
   hebrewDate?: string;
   /** The rendered forecast line for the home city. */
   weather?: string;
-  /** On the eve of Shabbat or a chag. */
-  candleLighting?: LocalParts;
 };
 
 /** An open Google Task due today or before (#6). */
@@ -63,7 +61,7 @@ export const digestText = {
   compose(parts: DigestParts, lang: Lang): string {
     const sections: string[] = [greeting(parts.hour, lang)];
 
-    const context = contextBlock(parts.context, lang);
+    const context = contextBlock(parts.context);
     if (context) sections.push(context);
 
     if (parts.birthdays.length > 0) {
@@ -99,15 +97,11 @@ export const digestText = {
   },
 };
 
-function contextBlock(context: DigestContextLines | undefined, lang: Lang): string | null {
+function contextBlock(context: DigestContextLines | undefined): string | null {
   if (!context) return null;
   const lines: string[] = [];
   if (context.hebrewDate) lines.push(isolate(context.hebrewDate));
   if (context.weather) lines.push(context.weather);
-  if (context.candleLighting) {
-    const clock = isolateLtr(clockOf(context.candleLighting));
-    lines.push(lang === 'en' ? `Candle lighting today: ${clock}` : `הדלקת נרות היום: ${clock}`);
-  }
   return lines.length > 0 ? lines.join('\n') : null;
 }
 
@@ -169,9 +163,6 @@ function countOf(count: number, noun: 'event' | 'reminder', lang: Lang): string 
   }
 }
 
-function clockOf(local: LocalParts): string {
-  return `${String(local.hour).padStart(2, '0')}:${String(local.minute).padStart(2, '0')}`;
-}
 
 function birthdayLine(names: readonly string[], lang: Lang): string {
   const list = names.map(isolate).join(', ');

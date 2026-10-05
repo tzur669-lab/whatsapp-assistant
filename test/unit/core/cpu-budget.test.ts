@@ -146,10 +146,10 @@ describe('a whole turn', () => {
     expect(median, `${median.toFixed(3)} ms per /status`).toBeLessThan(CATASTROPHE_MS);
   });
 
-  it('does not blow it on the richest digest: Sunday, a daily reminder, Friday sums (#6, #8)', async () => {
+  it('does not blow it on the richest digest: Sunday, twenty daily reminders (#6, #8)', async () => {
     // The week ahead walks each recurring rule across six days and asks the
-    // birthday list once a day; candle lighting is sun arithmetic. All of it
-    // runs in the Durable Object, once a day — this only guards a catastrophe.
+    // birthday list once a day. All of it runs in the Durable Object, once a
+    // day — this only guards a catastrophe.
     const sunday = Date.parse('2026-09-27T04:00:00Z');
     const reminders = new ReminderStore(driver, () => sunday);
     for (let i = 0; i < 20; i++) {

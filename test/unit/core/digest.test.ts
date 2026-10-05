@@ -300,7 +300,7 @@ describe('the richer digest', () => {
   afterEach(() => driver.close());
 
   it('context lines alone never make a quiet day send', async () => {
-    // The Hebrew date and candle lighting are always there to say; saying them
+    // The Hebrew date and the weather are always there to say; saying them
     // every morning is the noise rule 1 forbids.
     reminders = new ReminderStore(driver, () => FRIDAY);
     expect(await buildDigest({ ...base(FRIDAY), place: JERUSALEM })).toBeNull();
@@ -319,17 +319,12 @@ describe('the richer digest', () => {
     expect(await buildDigest(base(NOW))).toBeNull();
   });
 
-  it('adds the Hebrew date, and candle lighting on the eve of Shabbat', async () => {
+  it('adds the Hebrew date, and no candle lighting even on the eve of Shabbat', async () => {
+    // Taken out at the user's request (2026-10-05): not in every Friday's digest.
     reminders = new ReminderStore(driver, () => FRIDAY);
     remind(Date.parse('2026-10-02T09:00:00Z'), 'לקנות חלות');
     const text = plain(await buildDigest({ ...base(FRIDAY), place: JERUSALEM }))!;
     expect(text).toContain('בתשרי');
-    expect(text).toMatch(/הדלקת נרות היום: 1[78]:\d\d/);
-  });
-
-  it('has no candle lighting on a weekday', async () => {
-    remind(Date.parse('2026-09-24T11:00:00Z'), 'להתקשר לאבא');
-    const text = plain(await buildDigest({ ...base(NOW), place: JERUSALEM }))!;
     expect(text).not.toContain('הדלקת נרות');
   });
 
