@@ -10,6 +10,9 @@ It runs at **$0/month**: Cloudflare Workers Free, one Durable Object with
 SQLite, and Groq's free LLM tier. The user talks to it through its own
 Android app; a WhatsApp channel exists but is frozen.
 
+> **Setting it up from scratch?** Follow [SETUP.md](SETUP.md): accounts,
+> the Groq API key, models, secrets, deploy, the app, and working with an AI.
+>
 > **For AI agents:** start with [HANDOFF.md](HANDOFF.md). It is short, says
 > what breaks easily, and links to everything else. Rules are in
 > [CLAUDE.md](CLAUDE.md).
@@ -50,7 +53,7 @@ Details: [ARCHITECTURE.md](ARCHITECTURE.md) (code map) and
 | Server | TypeScript, Hono, Cloudflare Workers + SQLite Durable Object |
 | LLM | Groq free tier: `qwen3.8-27b` (primary), `gpt-oss-120b` (read-only backup), Whisper for voice |
 | Validation | Zod (strict) |
-| Integrations | Google Calendar, Tasks, Gmail (read + drafts), Drive (metadata), FCM, public keyless APIs |
+| Integrations | Google Calendar, Tasks, Gmail (read + drafts), Drive (metadata), Contacts (birthdays), FCM, public keyless APIs |
 | App | Kotlin, Android, Keystore-signed requests (`apps/call-companion/`) |
 | Tests | Vitest (unit, integration with fakes, security), LLM eval corpora |
 
@@ -58,7 +61,7 @@ Details: [ARCHITECTURE.md](ARCHITECTURE.md) (code map) and
 
 ```
 src/               server source — see ARCHITECTURE.md §3 for each folder
-migrations/        SQLite schema, 0001…0019
+migrations/        SQLite schema, 0001…0020
 test/              unit · integration · security · evals
 apps/call-companion/  Android app (own Gradle build and README)
 ops/               runbook, secret rotation, token revoke, restore
@@ -77,13 +80,14 @@ pnpm dev           # wrangler dev, staging config
 ```
 
 Production deploys, secrets and rollbacks are done by the owner only
-(`ops/runbook.md`). Secrets never live in the repo; a gitleaks pre-commit hook
-and CI scan enforce it.
+(`ops/runbook.md`). Secrets never live in the repo; the CI gitleaks scan
+enforces it (a local gitleaks pre-commit hook is optional, see SETUP.md).
 
 ## Documentation
 
 | Doc | What it is | Read it when |
 |---|---|---|
+| [SETUP.md](SETUP.md) | Every step from zero: accounts, keys, models, deploy, app | Setting up a new copy |
 | [HANDOFF.md](HANDOFF.md) | One-page entry point: status, request path, "touch X → watch Y" | First, every session |
 | [CLAUDE.md](CLAUDE.md) | Rules and the 13 architecture invariants | Before any change |
 | [ARCHITECTURE.md](ARCHITECTURE.md) | Diagram, modules, storage, coupling | Finding where code lives |

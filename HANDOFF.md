@@ -89,6 +89,7 @@ Network on the hotspot: `NODE_OPTIONS=--dns-result-order=ipv4first` for wrangler
 | `apps/call-companion/README.md` | Anything in the Android app or the app ↔ server protocol. |
 | `.claude/skills/add-tool/SKILL.md` | Adding or changing a tool. |
 | [README.md](README.md) | Human-facing overview (GitHub page). |
+| [SETUP.md](SETUP.md) | Setting up a new copy from zero: accounts, Groq key, models, secrets, deploy, app, AI agent. |
 
 ## 8. Session log (docs)
 
@@ -100,6 +101,9 @@ Network on the hotspot: `NODE_OPTIONS=--dns-result-order=ipv4first` for wrangler
 
 - 2026-10-06: Block E (contacts grant, bills, call log, missed calls in the
   digest, Spotify, Waze to a contact or event). Migration 0020, app 0.10.0.
+
+- 2026-10-06: SETUP.md — every step from zero for a newcomer (and their AI).
+  README: Contacts, migration 0020, honest gitleaks note. No code changed.
 
 **Update rule:** when a session changes architecture, a version, the next
 block, or a doc's role, update §1/§6/§7 here (and ARCHITECTURE.md if modules,
