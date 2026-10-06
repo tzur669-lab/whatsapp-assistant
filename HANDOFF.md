@@ -96,6 +96,10 @@ Network on the hotspot: `NODE_OPTIONS=--dns-result-order=ipv4first` for wrangler
 
 ## 8. Session log (docs)
 
+- 2026-10-06: CI was red since 14:48 on `pnpm audit` only (new advisories in
+  tinypool, source-map-js, sharp, vitest). vitest 3 → 4.1.11 (drops tinypool),
+  pnpm overrides for `source-map-js` and `sharp`. No source code changed.
+
 - 2026-10-06: Block F, server side of part 11 and 12: `reminders.leave`
   ("time to leave" for a calendar event, a Waze card on delivery) and text
   shared into the app (`channels/app/shared.ts`, tainted, skips the
