@@ -4,12 +4,15 @@ A single-user assistant for reminders and Google Calendar, reached through its o
 
 **Before starting any task:**
 
-- Read `PLAN.md` for the full spec, especially §3 Architecture, §6 Component specs, §7 Security, and §10 Phases.
+- `HANDOFF.md` is imported below and is the entry point: status, request path, "if you touch X, watch Y", and which doc to read when. Read further only as it directs — `ARCHITECTURE.md` for the code map, and `PLAN.md` **by section** (§6.x for the component you touch, §7 Security, §13 Open, §14 Decisions). Never read PLAN.md whole.
 - If a request conflicts with this file or `PLAN.md`, **stop and ask**. Don't improvise.
+- When a session changes architecture, versions, the next ROADMAP block, or a doc's role, update `HANDOFF.md` in the same commit.
+
+@HANDOFF.md
 
 ## Commands
 
-(Phase 1 creates these scripts. Keep the names stable.)
+Keep the script names stable.
 
 - `pnpm install` — install dependencies. **Ask before adding any new dependency.**
 - `pnpm typecheck` · `pnpm lint` · `pnpm test` — run all three before calling a task done.

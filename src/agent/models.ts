@@ -30,7 +30,7 @@ export type ModelEntry = {
   turnCap: number;
   /** May run an agent turn that writes. Backups' writes still always confirm (§6). */
   canWrite: boolean;
-  /** The environment the write gate was passed in (§8). */
+  /** The environment the write gate was passed in (PLAN §6.19, "Failover and tokens"). */
   evaluated?: { fingerprint: string; date: string };
 };
 

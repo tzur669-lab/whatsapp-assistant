@@ -1,6 +1,6 @@
 # WhatsApp Personal Assistant — Technical Plan
 
-> **Status:** v1 plan, pre-implementation
+> **Status:** implemented and evolving — see `HANDOFF.md` for the current state and `ARCHITECTURE.md` for the code map. Read this file by section, not whole.
 > **Research verified:** 2026-09-24 (re-check anything tagged [V] before relying on it; prices and free tiers change)
 > **Companion file:** `CLAUDE.md` (rules Claude Code must follow). This file is the *why* and the *spec*; `CLAUDE.md` is the *rules*.
 
@@ -1818,43 +1818,10 @@ ROADMAP #9 and #10. Two decisions were the user's: **a note is never sent to the
 
 ## 8. Project structure
 
-```
-wa-assistant/
-├─ CLAUDE.md                 # rules for Claude Code
-├─ PLAN.md                   # this file
-├─ .claude/settings.json     # Claude Code permission guardrails
-├─ wrangler.jsonc            # envs: staging, production; DO binding; cron; vars only
-├─ package.json · tsconfig.json · vitest.config.ts · .gitignore
-├─ migrations/               # 0001_init.sql …
-├─ .githooks/pre-commit      # gitleaks scan; enable with `git config core.hooksPath .githooks`
-├─ .gitleaks.toml
-├─ .github/workflows/ci.yml  # gitleaks, typecheck, lint, test, audit
-├─ src/
-│  ├─ index.ts               # Hono routes: /wa/webhook, /oauth/google/*, /health; scheduled()
-│  ├─ platform/              # ONLY place importing Cloudflare APIs
-│  │  ├─ assistant-do.ts     # DO class: pipeline entry, alarm()
-│  │  ├─ sql-repo.ts         # adapts ctx.storage.sql to the core SqlDriver
-│  │  └─ migrations.ts       # migrations/*.sql inlined as text modules
-│  ├─ channels/
-│  │  ├─ types.ts            # ChannelAdapter, InboundEvent, OutboundMessage
-│  │  └─ whatsapp/           # verify.ts, parse.ts, send.ts, limits.ts, media.ts, voice.ts
-│  ├─ core/                  # pipeline.ts, router.ts, repo.ts, sql.ts, env.ts, clarify.ts, errors.ts
-│  ├─ nlu/                   # provider.ts, groq.ts, prompt.ts, intent-schema.ts, rules-fallback.ts
-│  ├─ voice/                 # transcribe.ts (contract + confidence gate), groq-whisper.ts
-│  ├─ time/                  # resolve.ts, tz.ts, hebrew-lexicon.ts
-│  ├─ policy/                # tiers.ts, engine.ts, limits.ts
-│  ├─ tools/                 # registry.ts, reminders.ts, calendar-read.ts, calendar-write.ts
-│  ├─ confirm/               # pending.ts, undo.ts, render.ts
-│  ├─ google/                # oauth.ts, tokens.ts, calendar-client.ts
-│  ├─ security/              # crypto.ts, redact.ts, allowlist.ts, hmac.ts
-│  └─ render/                # he.ts, en.ts, bidi.ts, format-time.ts
-├─ test/
-│  ├─ unit/                  # time/, policy/, confirm/, security/, render/
-│  ├─ integration/           # fake Meta, fake Google, fake NLU, node:sqlite driver
-│  ├─ security/              # ingress, replay, injection, log-canary, banlist
-│  └─ evals/                 # cases.he.yaml, cases.en.yaml, run-evals.ts
-└─ ops/                      # runbook.md, rotate-secrets.md, revoke-tokens.md, restore.md
-```
+Moved to `ARCHITECTURE.md` (2026-10-06): the tree that stood here dated from
+before the agent, the app, iCal, lookups and the device folders, and had
+drifted from the code. `ARCHITECTURE.md` §3 maps every `src/` folder to its
+PLAN section; §4 lists the tables per migration area.
 
 ---
 
@@ -2726,6 +2693,7 @@ measured on the app channel. To finish with `--resume`.
 | 2026-10-05 | **The richer digest, the week ahead, and scheduled reads** (ROADMAP block C: #6, #7, #8). The digest gains context lines (Hebrew date, weather; a candle-lighting line was built and taken out the same day at the user's request), Google Tasks due, and on Sunday the week ahead as counts per day (§6.12). New agent-only tool `reminders.scheduled_read` (Tier 1): a recurring reminder carrying a closed Tier 0 lookup that code runs and sends at the due time, with no model on that path; migration 0018 (`reminders.action`) (§6.4, §6.7). Reviewed in two rounds before building; what the review changed: the migration is registered in `src/platform/migrations.ts`; the digest leaves scheduled reads out (`plainOnly`), or a daily weather read would make every day send; the week walks recurring rules, so a daily reminder counts every day; a read re-checks its claim before the send, so a cancel during the fetch stops it; plain reminders go before reads, each read capped at 10 s; the agent prompt names the new tool. **Taint decision:** none needed — no model sees a scheduled read's result. Agent prompt **a7** (one sentence: a lookup on a schedule → `reminders.scheduled_read`); seven eval cases `sc-*`. `eval:agent --filter sc-` on qwen: 7/7, every quality gate passing (p95 latency failed on hotspot network errors). `--filter rm-` on qwen ran out of daily budget before starting; on gpt-oss-120b it scored 10/15, the five misses in alarm, move, monthly-slot and chag cases that the new sentence does not touch, none choosing the new tool — but there is no a6 gpt-oss baseline for these cases to compare. The `rm-` run on qwen and a full a7 run are owed |
 | 2026-10-05 | **Notes and expenses** (ROADMAP block D: #9, #10; app 0.9.0). The user's decisions: notes are never sent to the model; expenses stay on the server with an export to Excel as CSV through the app; a missing expense day is today (an explicit exception to invariant 4, asked and approved). Six agent-only tools (§6.4, §6.22): `notes.save` (1), `notes.find` (0), `notes.delete` (2), `expenses.add` (1), `expenses.summary` (0, terminal), `expenses.export` (card, cap `file`). Migration 0019. New registry flags `private`, `terminal`, `needsCap`; new `file` card. Reviewed in two rounds before building; what the review changed: privacy is a property of the tool, stamped on every reply path, not a flag on `execute` (the confirmation, the choice list and the Undo reply would otherwise carry a note into the history); expense days needed their own past-looking resolver, because `resolveWhen` only looks forward and its `relative_days` cannot say yesterday; the app's caps enum in `parse.ts` must accept `file`, and the server ships before the APK; notes are not encrypted at rest, since a key rotation would delete them; the export is capped at 2,000 rows and 150 KB and measured. Agent prompt **a8** (two sentences). Twelve eval cases `nx-*`, `xp-*`. qwen's daily budget was spent before they could run (1/6 answered, correct). On gpt-oss-120b the first run found two real faults, both fixed: "yesterday" sent as a DateSpec (`relative_days` offset 1, which is tomorrow there — the expense day became flat slots), and "all my notes" sent as an empty `query_variants` (now accepted). After the fix: `nx-` 6/6 with every quality gate passing; `xp-` 5 of 6 answered (one rate-limited; it answered correctly in the first run), one slot miss — "תדלקתי" filed under `other` rather than `fuel`, which the reply shows. p95 latency failed on hotspot network errors. qwen runs of `nx-`/`xp-`/`rm-` and a full a8 run are owed |
 | 2026-10-06 | **Real rate/budget failover, and fewer tokens per minute** (§6.19, "Failover and tokens"). The problem, measured: every agent call was about 6.2K tokens, so a read turn's second call failed the 7K turn cap and the backup was never tried; and one failed message spent both buckets — the parser re-asked qwen (metered only for the day) and then gpt-oss twice. Built: the static model table; reservations before every call (a missing usage is no longer charged as zero); the per-message refused set shared by agent, parser and read-only try; tool selection by code (one group or the full catalog); text-only calls after a read and on the last call; backup writes always confirm (`backup_model`); the write gate's fingerprint; evals `--select-tools`, a shared daily ledger, `run-turn-evals.ts` and `bench-tokens.ts`. A 429 now blocks until the later of the observed reset and its `retry-after` (an early unblock, found by a test, is fixed). Estimated by `bench-tokens`: first call median 6,220 → 2,834 tokens, read turn 12,631 → 4,118. Owed: qwen's `--select-tools` run and fingerprint, the turn benchmark, the calibration fixture, the Groq candidates, and Phase B. The user declined Gemini, Mistral and OpenRouter for this; Groq stays on the Free tier |
+| 2026-10-06 | **Docs entry point** (no code change): `HANDOFF.md` is imported by `CLAUDE.md` and read first in every session; `ARCHITECTURE.md` replaces §8's stale tree; `README.md` is the GitHub page and docs index. `CLAUDE.md` no longer asks a session to read this file whole |
 ---
 
 ## 15. Sources (checked 2026-09-24)

@@ -1,5 +1,5 @@
 /**
- * The eval fingerprint (PLAN §8, 2026-10-06): the environment a model was
+ * The eval fingerprint (PLAN §6.19, 2026-10-06): the environment a model was
  * judged in. A `canWrite` model whose recorded fingerprint no longer matches
  * was judged on a different prompt, catalog, request or selection, and must be
  * evaluated again before it may write.

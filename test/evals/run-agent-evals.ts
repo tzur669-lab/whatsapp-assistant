@@ -20,7 +20,7 @@
  *
  * `--select-tools` (2026-10-06): offer each case only what the bot would — the
  * one group its words name, or the full catalog — and, after a read, no tools
- * at all, as the loop does. This is the write gate's run (PLAN §8); its report
+ * at all, as the loop does. This is the write gate's run (PLAN §6.19); its report
  * ends with the fingerprint to record in `src/agent/models.ts`.
  *
  * Every request is charged to the shared daily ledger before it is sent

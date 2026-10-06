@@ -1,5 +1,5 @@
 /**
- * The write gate's fingerprint (PLAN §8, 2026-10-06): a model that may write
+ * The write gate's fingerprint (PLAN §6.19, 2026-10-06): a model that may write
  * was evaluated in the environment the bot runs now.
  */
 import { describe, expect, it } from 'vitest';

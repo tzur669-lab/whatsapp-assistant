@@ -18,7 +18,7 @@ const MAX_COMPLETION_TOKENS = 1_024;
 
 /**
  * Bumped by hand whenever what this adapter puts on the wire changes. It is
- * part of the eval fingerprint (§8): a model judged on one translation is not
+ * part of the eval fingerprint (PLAN §6.19): a model judged on one translation is not
  * silently trusted with another.
  */
 export const ADAPTER_VERSION = 'openai-compatible/1';
