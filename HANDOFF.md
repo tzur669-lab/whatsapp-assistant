@@ -93,5 +93,11 @@ Network on the hotspot: `NODE_OPTIONS=--dns-result-order=ipv4first` for wrangler
 - 2026-10-06: Added HANDOFF.md (imported by CLAUDE.md), ARCHITECTURE.md,
   README.md. PLAN §8 now points to ARCHITECTURE.md. No code changed.
 
+- 2026-10-06: Stop hook `.claude/hooks/docs-guard.mjs` enforces the update
+  rule below.
+
 **Update rule:** when a session changes architecture, a version, the next
-block, or a doc's role, update §1/§6/§7 here in the same commit.
+block, or a doc's role, update §1/§6/§7 here (and ARCHITECTURE.md if modules,
+tools, tables or coupling changed) in the same commit. Enforced by the Stop
+hook: code/schema/config/ROADMAP changed this session but neither doc did →
+it asks once. Update, or state in one line why nothing is affected.

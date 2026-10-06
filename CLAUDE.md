@@ -6,7 +6,7 @@ A single-user assistant for reminders and Google Calendar, reached through its o
 
 - `HANDOFF.md` is imported below and is the entry point: status, request path, "if you touch X, watch Y", and which doc to read when. Read further only as it directs — `ARCHITECTURE.md` for the code map, and `PLAN.md` **by section** (§6.x for the component you touch, §7 Security, §13 Open, §14 Decisions). Never read PLAN.md whole.
 - If a request conflicts with this file or `PLAN.md`, **stop and ask**. Don't improvise.
-- When a session changes architecture, versions, the next ROADMAP block, or a doc's role, update `HANDOFF.md` in the same commit.
+- When a session changes architecture, versions, the next ROADMAP block, or a doc's role, update `HANDOFF.md` (and `ARCHITECTURE.md` when modules, tools, tables or coupling change) in the same commit. A Stop hook (`.claude/hooks/docs-guard.mjs`) enforces this: if code, schema, config or ROADMAP changed this session and neither doc did, it stops the session once and asks. Update them, or say in one line why nothing there is affected.
 
 @HANDOFF.md
 

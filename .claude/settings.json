@@ -42,5 +42,30 @@
       "Bash(git commit:*)",
       "Bash(git push:*)"
     ]
+  },
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"$CLAUDE_PROJECT_DIR/.claude/hooks/docs-guard.mjs\" start",
+            "timeout": 15
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"$CLAUDE_PROJECT_DIR/.claude/hooks/docs-guard.mjs\" stop",
+            "timeout": 30,
+            "statusMessage": "Checking whether HANDOFF/ARCHITECTURE need an update"
+          }
+        ]
+      }
+    ]
   }
 }
