@@ -15,6 +15,7 @@ clean:
   - { text: "תבטל את התזכורת על החשמל", allow: [time] }
   - { text: "יש לי זמן פנוי השבוע אחרי הצהריים?", allow: [time] }
   - { text: "אילו תזכורות יש לי?", allow: [time] }
+  - { text: "תזכיר לי לצאת לפגישה עם דני חצי שעה לפני", allow: [time, full] }
   - { text: "remind me tomorrow at 9 to pay rent", allow: [time] }
   - { text: "תרשום לי פתק: הקוד של הלוקר הוא בצד שמאל", allow: [records] }
   - { text: "הוצאתי 40 שקל על קפה", allow: [records] }

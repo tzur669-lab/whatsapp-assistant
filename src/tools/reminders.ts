@@ -26,8 +26,10 @@ import type { ReminderView } from '../render/reminders.js';
 import { formatWhen } from '../render/format-time.js';
 import type { Lang } from '../render/format-time.js';
 import {
+  MAX_DESTINATION_CHARS,
   MAX_TITLE_CHARS,
   remindersAtRestSlots,
+  remindersLeaveSlots,
   remindersMoveSlots,
   remindersRepeatSlots,
   remindersScheduledReadSlots,
@@ -118,57 +120,69 @@ export const remindersCreate: ToolDefinition = {
 
   async execute(rawInput, ctx): Promise<ExecuteResult> {
     const input = parseInput<CreateInput>(createInputSchema, rawInput, 'reminders.create');
-
-    const reminder = ctx.reminders.schedule({
-      principal: ctx.principal,
-      text: input.text,
-      dueAtUtc: input.dueAtUtc,
-      localWallTime: input.localWallTime,
-      tz: input.tz,
-    });
-
-    // Which channel it will arrive on is decided now, not when it comes due:
-    // outside the window nothing but a paid template gets through, so that is a
-    // send that must never be attempted rather than one that fails (§6.7).
-    const plan = planDelivery({
-      dueAtUtc: input.dueAtUtc,
-      lastInboundAt: ctx.lastInboundAt,
-      nowMs: ctx.nowMs,
-      monthlySent: ctx.monthlySent,
-      ...(ctx.channel ? { channel: ctx.channel } : {}),
-    });
-
-    const view = viewOf(input);
-
-    // Out of window, a WhatsApp send is not a send that fails — it is one that
-    // must never be attempted. A calendar popup is the delivery instead, and it
-    // is written now rather than discovered missing when the reminder is due.
-    const backupEventId =
-      plan.channel === 'calendar' ? await writeBackupEvent(input, ctx) : null;
-    if (backupEventId) ctx.reminders.setBackupEvent(reminder.id, backupEventId);
-
-    return {
-      text:
-        plan.channel === 'calendar'
-          ? reminderText.createdViaCalendar(view, ctx.lang)
-          : reminderText.created(view, ctx.lang),
-      compensating: { reminderId: reminder.id },
-      externalRef: reminder.id,
-      rescheduleAlarm: true,
-    };
+    return scheduleOne(input, ctx);
   },
 
   async undo(compensating, ctx): Promise<ExecuteResult> {
-    const { reminderId } = parseInput<{ reminderId: string }>(
-      z.object({ reminderId: z.string().min(1).max(64) }).strict(),
-      compensating,
-      'reminders.create',
-    );
-    await dropBackupEvent(reminderId, ctx);
-    ctx.reminders.cancel(reminderId, ctx.principal);
-    return { text: reminderText.undoneCreate(ctx.lang), rescheduleAlarm: true };
+    return undoCreate(compensating, ctx);
   },
 };
+
+/**
+ * Schedule one reminder and say so. `place` is set only by `reminders.leave`
+ * (ROADMAP #5): the input schemas of the other tools have no such field.
+ */
+async function scheduleOne(input: CreateInput, ctx: ToolContext, place?: string): Promise<ExecuteResult> {
+  const reminder = ctx.reminders.schedule({
+    principal: ctx.principal,
+    text: input.text,
+    dueAtUtc: input.dueAtUtc,
+    localWallTime: input.localWallTime,
+    tz: input.tz,
+    ...(place ? { place } : {}),
+  });
+
+  // Which channel it will arrive on is decided now, not when it comes due:
+  // outside the window nothing but a paid template gets through, so that is a
+  // send that must never be attempted rather than one that fails (§6.7).
+  const plan = planDelivery({
+    dueAtUtc: input.dueAtUtc,
+    lastInboundAt: ctx.lastInboundAt,
+    nowMs: ctx.nowMs,
+    monthlySent: ctx.monthlySent,
+    ...(ctx.channel ? { channel: ctx.channel } : {}),
+  });
+
+  const view = viewOf(input);
+
+  // Out of window, a WhatsApp send is not a send that fails — it is one that
+  // must never be attempted. A calendar popup is the delivery instead, and it
+  // is written now rather than discovered missing when the reminder is due.
+  const backupEventId =
+    plan.channel === 'calendar' ? await writeBackupEvent(input, ctx) : null;
+  if (backupEventId) ctx.reminders.setBackupEvent(reminder.id, backupEventId);
+
+  return {
+    text:
+      plan.channel === 'calendar'
+        ? reminderText.createdViaCalendar(view, ctx.lang)
+        : reminderText.created(view, ctx.lang),
+    compensating: { reminderId: reminder.id },
+    externalRef: reminder.id,
+    rescheduleAlarm: true,
+  };
+}
+
+async function undoCreate(compensating: unknown, ctx: ToolContext): Promise<ExecuteResult> {
+  const { reminderId } = parseInput<{ reminderId: string }>(
+    z.object({ reminderId: z.string().min(1).max(64) }).strict(),
+    compensating,
+    'reminders.create',
+  );
+  await dropBackupEvent(reminderId, ctx);
+  ctx.reminders.cancel(reminderId, ctx.principal);
+  return { text: reminderText.undoneCreate(ctx.lang), rescheduleAlarm: true };
+}
 
 // -- reminders.list -----------------------------------------------------------
 
@@ -199,7 +213,9 @@ export const remindersList: ToolDefinition = {
     const all = ctx.reminders.listUpcoming(ctx.principal, LIST_LIMIT);
 
     const shown = input.range ? withinRange(all, input.range, ctx.nowMs) : all;
-    return { text: reminderText.list(shown.map(viewOfReminder), ctx.lang) };
+    const text = reminderText.list(shown.map(viewOfReminder), ctx.lang);
+    // A "time to leave" reminder's text holds a calendar title (ROADMAP #5).
+    return { text, ...(shown.some((reminder) => reminder.place) ? { tainting: true as const } : {}) };
   },
 };
 
@@ -657,6 +673,115 @@ function withHeldNote(text: string, held: boolean, lang: Lang): string {
   return held ? `${text}\n\n${reminderText.heldNote(lang)}` : text;
 }
 
+// -- reminders.leave (ROADMAP #5, 2026-10-06) ---------------------------------
+
+/** The user's decision (2026-10-06): no travel time said is half an hour. */
+export const DEFAULT_TRAVEL_MINUTES = 30;
+/** How far ahead an event to leave for is looked for, as `nav.go` does. */
+const LEAVE_EVENT_DAYS = 7;
+
+const leaveInputSchema = createInputSchema
+  .extend({
+    place: z.string().min(1).max(MAX_DESTINATION_CHARS).optional(),
+    eventStartUtc: z.number().int().positive(),
+    minutes: z.number().int().min(5).max(240),
+    held: z.boolean(),
+  })
+  .strict();
+
+type LeaveInput = z.infer<typeof leaveInputSchema>;
+
+/**
+ * "Remind me when to leave for the meeting with Dani": the event is found in
+ * code (its title's words, or the next timed one), and the reminder is set the
+ * travel time before it starts. At the due time it carries a Waze card to the
+ * event's place, when it has one. No traffic API: the time is the user's, or
+ * half an hour. A calendar title is someone else's words: every reply taints.
+ */
+export const remindersLeave: ToolDefinition = {
+  name: 'reminders.leave',
+  inputSchema: leaveInputSchema,
+
+  resolve(): ResolveOutcome {
+    // Only the async path can see the calendar.
+    return { kind: 'clarify', clarify: { code: 'not_connected' } };
+  },
+
+  async resolveAsync(rawSlots, ctx): Promise<ResolveOutcome> {
+    const parsed = remindersLeaveSlots.safeParse(rawSlots);
+    if (!parsed.success) return clarifyMissing('target');
+    const slots = parsed.data;
+    if (!slots.event && slots.next_event !== true) return clarifyMissing('target');
+    if (!ctx.calendar) return { kind: 'clarify', clarify: { code: 'not_connected' } };
+
+    const listed = await ctx.calendar.listAllEvents({
+      startUtc: ctx.nowMs,
+      endUtc: ctx.nowMs + LEAVE_EVENT_DAYS * 86_400_000,
+      limit: 50,
+    });
+    if (!listed.ok) {
+      return listed.error.code === 'not_connected' || listed.error.code === 'disconnected'
+        ? { kind: 'clarify', clarify: { code: 'not_connected' } }
+        : { kind: 'clarify', clarify: { code: 'not_found' } };
+    }
+    // A timed event still to start; an all-day one has no hour to leave by.
+    const timed = listed.value
+      .filter((event) => !event.allDay && event.startUtc > ctx.nowMs)
+      .sort((a, b) => a.startUtc - b.startUtc);
+    const candidates = slots.event ? matchByText(timed, slots.event, (event) => event.title) : timed;
+    const target = candidates[0];
+    if (!target) return { kind: 'clarify', clarify: { code: 'not_found' } };
+
+    const minutes = slots.minutes ?? DEFAULT_TRAVEL_MINUTES;
+    const dueAtUtc = target.startUtc - minutes * 60_000;
+    if (dueAtUtc <= ctx.nowMs + 60_000) return { kind: 'clarify', clarify: { code: 'leave_too_late' }, tainting: true };
+
+    const input: LeaveInput = {
+      text: reminderText.leaveLabel(target.title, ctx.lang),
+      dueAtUtc,
+      localWallTime: wallTimeString(dueAtUtc, ZONE),
+      tz: ZONE,
+      ...(target.location ? { place: target.location.slice(0, MAX_DESTINATION_CHARS) } : {}),
+      eventStartUtc: target.startUtc,
+      minutes,
+      held: ctx.repo.restHoldEnabled() && restPeriodAt(dueAtUtc) !== null,
+    };
+    return { kind: 'ready', input, tainting: true };
+  },
+
+  preview(rawInput, lang): string {
+    const input = parseInput<LeaveInput>(leaveInputSchema, rawInput, 'reminders.leave');
+    return withHeldNote(leaveText(input, lang), input.held, lang);
+  },
+
+  async execute(rawInput, ctx): Promise<ExecuteResult> {
+    const input = parseInput<LeaveInput>(leaveInputSchema, rawInput, 'reminders.leave');
+    const result = await scheduleOne(
+      { text: input.text, dueAtUtc: input.dueAtUtc, localWallTime: input.localWallTime, tz: input.tz },
+      ctx,
+      input.place,
+    );
+    return { ...result, text: withHeldNote(leaveText(input, ctx.lang), input.held, ctx.lang), tainting: true };
+  },
+
+  async undo(compensating, ctx): Promise<ExecuteResult> {
+    return undoCreate(compensating, ctx);
+  },
+};
+
+function leaveText(input: LeaveInput, lang: Lang): string {
+  return reminderText.createdLeave(
+    {
+      text: input.text,
+      leave: localPartsOf(input.dueAtUtc, input.tz),
+      start: localPartsOf(input.eventStartUtc, input.tz),
+      minutes: input.minutes,
+      hasPlace: input.place !== undefined,
+    },
+    lang,
+  );
+}
+
 /** One pending reminder by description, the way `reminders.cancel` finds it. */
 function findPending(
   variants: readonly string[],
@@ -698,6 +823,7 @@ export const REMINDER_TOOLS = {
   'reminders.move': remindersMove,
   'reminders.at_rest': remindersAtRest,
   'reminders.scheduled_read': remindersScheduledRead,
+  'reminders.leave': remindersLeave,
 } as const;
 
 // -- the calendar fallback ----------------------------------------------------

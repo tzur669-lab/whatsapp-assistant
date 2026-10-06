@@ -274,6 +274,39 @@ describe('the app channel', () => {
       expect(repo.getOutbound(`app:${row!.seq}`)?.['delivery_status']).toBe('delivered');
     });
 
+    it('carry a Waze card to the place of a "time to leave" reminder, off the lock screen (ROADMAP #5)', async () => {
+      const phone = await pair();
+      reminders.schedule({
+        principal,
+        text: 'לצאת ל־רופא שיניים',
+        dueAtUtc: NOW - 1_000,
+        localWallTime: '',
+        tz: 'Asia/Jerusalem',
+        place: 'הרצל 10, רחובות',
+      });
+      await assistant.alarm();
+      const [row] = (await outbox(phone)).rows as unknown as {
+        card?: { actionId: string; type: string; autoRun: boolean; preview: string };
+        private?: boolean;
+      }[];
+      expect(row?.card).toMatchObject({ type: 'nav', autoRun: false });
+      expect(stripIsolates(row!.card!.preview)).toContain('הרצל 10, רחובות');
+      expect(row?.private).toBe(true);
+      // The card outlives the five minutes a confirmation gets.
+      const stored = fake.driver.exec('SELECT expires_at, channel FROM pending_actions WHERE id = ?', row!.card!.actionId)[0]!;
+      expect(stored['channel']).toBe('card');
+      expect(Number(stored['expires_at'])).toBe(NOW + 2 * 60 * 60 * 1000);
+    });
+
+    it('carry no card for an ordinary reminder', async () => {
+      const phone = await pair();
+      due('להתקשר לאבא');
+      await assistant.alarm();
+      const [row] = (await outbox(phone)).rows as unknown as { card?: unknown; private?: boolean }[];
+      expect(row?.card).toBeUndefined();
+      expect(row?.private).toBeUndefined();
+    });
+
     it('leave with any link in them defanged (PLAN §6.19)', async () => {
       const phone = await pair();
       due('להיכנס ל-https://evil.example/x ולשלם');
@@ -463,6 +496,57 @@ describe('the app channel', () => {
       );
       expect(response.status).toBe(200);
       expect(stripIsolates((response.body as unknown as Reply).row!.text).startsWith('שמעתי: עזרה')).toBe(true);
+    });
+  });
+
+  describe('text shared from another app (block F, 2026-10-06)', () => {
+    it('reaches the model under a header, taints the turn and keeps the answer off the lock screen', async () => {
+      env = { ...baseEnv(), GROQ_API_KEY: 'test-groq-key', AGENT: 'on' };
+      const seen: string[] = [];
+      const fetchImpl = (async (input: string | URL | Request, init?: RequestInit) => {
+        const url = String(input instanceof Request ? input.url : input);
+        if (!url.endsWith('/chat/completions')) return google.fetchImpl(input as never, init);
+        const body = JSON.parse(String(init?.body)) as { messages: { role: string; content: string | null }[] };
+        seen.push(...body.messages.filter((m) => m.role === 'user').map((m) => String(m.content)));
+        return new Response(
+          JSON.stringify({ choices: [{ message: { content: 'בסדר' } }], usage: { prompt_tokens: 900, completion_tokens: 10 } }),
+          { status: 200, headers: { 'content-type': 'application/json' } },
+        );
+      }) as unknown as typeof fetch;
+      assistant = new AssistantDO(fake.state as never, env, fetchImpl);
+      const phone = await pair();
+
+      const response = await send(
+        await phone.toDo('POST', '/app/message', { id: messageId(), kind: 'text', text: 'מה זה?', shared: 'פגישה מחר ב-14:00' }),
+      );
+      expect(response.status).toBe(200);
+      const user = seen.join(' ');
+      expect(user).toContain('מה זה?');
+      expect(user).toContain('הטקסט ששותף');
+      expect(user).toContain('פגישה מחר ב-14:00');
+      expect((response.body as unknown as { row: { private?: boolean } }).row.private).toBe(true);
+    });
+
+    it('refuses shared text under a command', async () => {
+      const phone = await pair();
+      const response = await send(
+        await phone.toDo('POST', '/app/message', { id: messageId(), kind: 'text', text: '/pause', shared: 'x' }),
+      );
+      expect(response.status).toBe(400);
+      expect(repo.isPaused()).toBe(false);
+    });
+
+    it('takes the longest message and shared text, three bytes a character, under the size cap', async () => {
+      const phone = await pair();
+      const response = await send(
+        await phone.toDo('POST', '/app/message', {
+          id: messageId(),
+          kind: 'text',
+          text: '₪'.repeat(2_000),
+          shared: '₪'.repeat(1_200),
+        }),
+      );
+      expect(response.status).toBe(200);
     });
   });
 

@@ -5,7 +5,7 @@ system is, where things live, and what breaks easily, then links out. It does
 **not** repeat the rules in `CLAUDE.md` (always loaded) or the spec in
 `PLAN.md` (read by section, never whole).
 
-_Last updated: 2026-10-06 · server at migration 0020 · agent prompt a8 · parser prompt v6 · app 0.10.0_
+_Last updated: 2026-10-06 · server at migration 0021 · agent prompt a8 · parser prompt v6 · app 0.10.0_
 
 ## 1. What this is
 
@@ -50,7 +50,7 @@ Full map with every module: [ARCHITECTURE.md](ARCHITECTURE.md).
 | a tool (`src/tools/`) | Use the `add-tool` skill. Registry → one group in `agent/tool-groups.ts` → eval cases. Changing groups changes the eval fingerprint (`test/evals/fingerprint.ts`). New Google scope = stop and ask. |
 | `src/agent/` prompt, catalog, models | `pnpm eval:agent` (use `--filter`; a full run can burn a model's daily 200K tokens). `canWrite` in `models.ts` changes only after a human reads an eval report. |
 | `src/nlu/` | `pnpm eval`; "no invented slots" and "missing-slot detection" must stay 100%. The parser catalog is pinned to `PARSER_TOOL_NAMES` — new tools are agent-only. |
-| anything a model can read | Pass it through `scrubForModel`; decide **taint** (text someone else wrote → every resulting write CONFIRMs). A `terminal` read or a card still taints through `TAINTING_TOOLS` / `Reply.tainting` (fixed 2026-10-06). Private tools (`notes.*`) never reach the model or history. |
+| anything a model can read | Pass it through `scrubForModel`; decide **taint** (text someone else wrote → every resulting write CONFIRMs). A `terminal` read or a card still taints through `TAINTING_TOOLS` / `Reply.tainting` (fixed 2026-10-06). A tool whose `resolveAsync` finds someone else's words (a calendar title in `reminders.leave`) sets `ResolveOutcome.tainting`, carried onto the reply (2026-10-06). Private tools (`notes.*`) never reach the model or history. |
 | time/date logic | Only `src/time/resolve.ts` (forward) or `src/time/past-day.ts` (expenses, backward). DST: next fall-back 2026-10-25. Never default a missing time. |
 | a migration | Add `migrations/00NN_*.sql` **and** register it in `src/platform/migrations.ts`. Backward-compatible for one version. |
 | `src/channels/app/parse.ts` or the wire protocol | The app has a matching `Protocol.kt` with test vectors. **Deploy the server before installing a new APK**, or the old server rejects the new app. |
@@ -69,10 +69,15 @@ Network on the hotspot: `NODE_OPTIONS=--dns-result-order=ipv4first` for wrangler
 
 ## 6. Where the current work is
 
-- **Next work:** [ROADMAP.md](ROADMAP.md) (Hebrew) — first unchecked block
-  (block F as of 2026-10-06: share to the bot, default assistant, widget,
-  "time to leave"). Block E needs a deploy, `/connect contacts`, and the 0.10.0
-  APK with the call-log permission granted — server first.
+- **Next work:** [ROADMAP.md](ROADMAP.md) (Hebrew) — block F, part 11 (share
+  to the bot) and part 12 (`reminders.leave`, the simple version with no
+  traffic API) are done **server-side** (migration 0021, `pnpm eval:agent`
+  not yet run on either — no new parser slot, so no gate blocks it, but it's
+  still owed). The Android half of part 11 (an `ACTION_SEND` share target
+  sending `shared` in `/app/message`) and all of part 12's widget are not
+  built — `Protocol.kt` has no matching field yet. Block E still needs a
+  deploy, `/connect contacts`, and the 0.10.0 APK with the call-log permission
+  granted.
 - **Owed / open decisions:** PLAN §13 (unchecked items) — e.g. a full qwen
   `eval:agent` run on a8, qwen `--select-tools` fingerprint, token calibration.
 - **Latest decisions:** last rows of PLAN §14.
@@ -92,6 +97,15 @@ Network on the hotspot: `NODE_OPTIONS=--dns-result-order=ipv4first` for wrangler
 | [SETUP.md](SETUP.md) | Setting up a new copy from zero: accounts, Groq key, models, secrets, deploy, app, AI agent. |
 
 ## 8. Session log (docs)
+
+- 2026-10-06: Block F, server side of part 11 and 12: `reminders.leave`
+  ("time to leave" for a calendar event, a Waze card on delivery) and text
+  shared into the app (`channels/app/shared.ts`, tainted, skips the
+  deterministic shortcuts in `pipeline.ts`). Migration 0021. typecheck, lint
+  and 1892 server tests passed. `pnpm eval:agent` not run (no new parser
+  slot, so no threshold gates it, but it's still owed before the block is
+  called done). The Android app was not touched — still needed: an
+  `ACTION_SEND` share target and the widget.
 
 - 2026-10-06: Added HANDOFF.md (imported by CLAUDE.md), ARCHITECTURE.md,
   README.md. PLAN §8 now points to ARCHITECTURE.md. No code changed.

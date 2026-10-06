@@ -917,3 +917,42 @@
   expect:
     intent: nav.go
     missing: [destination]
+
+# ROADMAP block F (2026-10-06): "time to leave" on request, `reminders.leave`.
+# Agent-only. The event is found in code; the travel time is the user's or 30.
+
+- id: lv-001
+  now: "2026-10-06T09:00:00+03:00"
+  input: "תזכיר לי מתי לצאת לפגישה עם דני, הנסיעה לוקחת 40 דקות"
+  expect:
+    intent: reminders.leave
+    slots:
+      minutes: 40
+    missing: []
+
+- id: lv-002
+  now: "2026-10-06T09:00:00+03:00"
+  input: "תגיד לי מתי צריך לצאת לאירוע הבא שלי"
+  expect:
+    intent: reminders.leave
+    slots:
+      next_event: true
+    missing: []
+
+- id: lv-003
+  now: "2026-10-06T09:00:00+03:00"
+  input: "remind me when to leave for the dentist, it's a 20 minute drive"
+  expect:
+    intent: reminders.leave
+    slots:
+      minutes: 20
+    missing: []
+
+- id: lv-004
+  now: "2026-10-06T09:00:00+03:00"
+  input: "שעה לפני הטיסה תזכיר לי לצאת לשדה"
+  expect:
+    intent: reminders.leave
+    slots:
+      minutes: 60
+    missing: []

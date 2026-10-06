@@ -39,6 +39,7 @@ import {
   tasksListSlots,
   remindersAtRestSlots,
   remindersScheduledReadSlots,
+  remindersLeaveSlots,
   notesSaveSlots,
   notesFindSlots,
   notesDeleteSlots,
@@ -137,6 +138,7 @@ export const intentDraftSchema = z.discriminatedUnion('intent', [
   z.object({ intent: z.literal('reminders.move'), slots: remindersMoveSlots, ...common }).strict(),
   z.object({ intent: z.literal('reminders.at_rest'), slots: remindersAtRestSlots, ...common }).strict(),
   z.object({ intent: z.literal('reminders.scheduled_read'), slots: remindersScheduledReadSlots, ...common }).strict(),
+  z.object({ intent: z.literal('reminders.leave'), slots: remindersLeaveSlots, ...common }).strict(),
   // Phone actions (§6.20). Agent-only; the parser's wire schema never offers them.
   z.object({ intent: z.literal('alarm.set'), slots: alarmSetSlots, ...common }).strict(),
   z.object({ intent: z.literal('timer.set'), slots: timerSetSlots, ...common }).strict(),

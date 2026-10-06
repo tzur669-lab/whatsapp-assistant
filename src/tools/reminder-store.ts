@@ -49,6 +49,11 @@ export type Reminder = {
    * due time instead of the text. Null for an ordinary reminder.
    */
   action: ScheduledTopic | null;
+  /**
+   * "Time to leave" (ROADMAP #5): the event's place, for a Waze card at the
+   * due time. Its text holds a calendar title, so showing it taints.
+   */
+  place: string | null;
 };
 
 /** `listUpcoming` / `listOverdue`: the digest counts reminders, not scheduled reads. */
@@ -75,6 +80,8 @@ export class ReminderStore {
     rule?: RecurRule;
     /** Present for a scheduled read (ROADMAP #7). */
     action?: ScheduledTopic;
+    /** Present for a "time to leave" reminder (ROADMAP #5). */
+    place?: string;
   }): Reminder {
     const id = randomHex(12);
     const timestamp = this.now();
@@ -94,8 +101,8 @@ export class ReminderStore {
       }
       this.sql.exec(
         `INSERT INTO reminders
-           (id, principal, text, due_at_utc, local_wall_time, tz, status, attempts, series_id, action, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, 'scheduled', 0, ?, ?, ?, ?)`,
+           (id, principal, text, due_at_utc, local_wall_time, tz, status, attempts, series_id, action, place, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, 'scheduled', 0, ?, ?, ?, ?, ?)`,
         id,
         params.principal,
         params.text,
@@ -104,6 +111,7 @@ export class ReminderStore {
         params.tz,
         seriesId,
         params.action ?? null,
+        params.place ?? null,
         timestamp,
         timestamp,
       );
@@ -122,6 +130,7 @@ export class ReminderStore {
       seriesId,
       rule: params.rule ?? null,
       action: params.action ?? null,
+      place: params.place ?? null,
     };
   }
 
@@ -504,6 +513,7 @@ function toReminder(row: Record<string, unknown>): Reminder {
     seriesId: typeof row['series_id'] === 'string' ? row['series_id'] : null,
     rule: parseRule(row['rule_json']),
     action: parseAction(row['action']),
+    place: typeof row['place'] === 'string' && row['place'].length > 0 ? row['place'] : null,
   };
 }
 

@@ -55,6 +55,12 @@ export const he = {
 
   pong: 'פונג ✅',
 
+  /**
+   * Above text shared into the app (block F): what follows was written by
+   * someone else, and is what the user's request is about.
+   */
+  sharedHeader: 'הטקסט ששותף (נכתב על ידי מישהו אחר):',
+
   /** Reply to image, document, location — anything that is not text, audio, or a button. */
   unsupportedType:
     'אפשר לשלוח הודעת טקסט או הקלטה קולית. סוגי קבצים אחרים לא נתמכים כרגע.',

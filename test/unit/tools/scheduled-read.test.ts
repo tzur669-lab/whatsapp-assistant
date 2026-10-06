@@ -229,6 +229,7 @@ describe('reminders.scheduled_read', () => {
       seriesId: 's1',
       rule: { freq: 'daily', hour: 12, minute: 0 },
       action,
+      place: null,
       lateByMs,
     });
 

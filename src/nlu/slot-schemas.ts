@@ -150,6 +150,19 @@ export const remindersAtRestSlots = z
   })
   .strict();
 
+/**
+ * "תזכיר לי מתי לצאת לפגישה עם דני" (ROADMAP #5, 2026-10-06). The event is
+ * found in code, by its title's words or as the next timed one. The travel
+ * time is the user's; absent, 30 minutes (the user's decision, 2026-10-06).
+ */
+export const remindersLeaveSlots = z
+  .object({
+    event: queryVariantsSchema.optional(),
+    next_event: z.boolean().optional(),
+    minutes: z.number().int().min(5).max(240).optional(),
+  })
+  .strict();
+
 export const calendarListEventsSlots = z
   .object({
     date: dateSpecSchema.optional(),

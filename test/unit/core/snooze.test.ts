@@ -107,6 +107,21 @@ describe('snooze', () => {
     expect(pending[0]?.text).toBe('להתקשר לאבא');
   });
 
+  it('keeps the place of a "time to leave" reminder, so the snoozed one has its card too', async () => {
+    reminders.schedule({
+      principal,
+      text: 'לצאת ל־ישיבה',
+      dueAtUtc: Date.now() - 1_000,
+      localWallTime: 'x',
+      tz: 'Asia/Jerusalem',
+      place: 'הרצל 10',
+    });
+    await assistant.alarm();
+    const snooze10 = meta.sent.at(-1)!.buttons.find((b) => parseButtonId(b.id)?.verb === 'm10')!;
+    await deliver(tap(snooze10.id));
+    expect(reminders.listUpcoming(principal)[0]).toMatchObject({ text: 'לצאת ל־ישיבה', place: 'הרצל 10' });
+  });
+
   it('reschedules an hour on', async () => {
     const buttons = await ring();
     const hour = buttons.find((b) => parseButtonId(b.id)?.verb === 'h1')!;

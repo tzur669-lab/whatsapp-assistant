@@ -72,7 +72,9 @@ export type Clarify =
    * Notes and expenses (2026-10-05): what to keep, how much, or a day that is
    * not a past one. Not recorded as an open question; the agent has the turn.
    */
-  | { code: 'personal'; what: PersonalQuestion };
+  | { code: 'personal'; what: PersonalQuestion }
+  /** "Time to leave" (ROADMAP #5): the time to leave has already gone. */
+  | { code: 'leave_too_late' };
 
 export type PersonalQuestion =
   | 'note_text'
@@ -85,7 +87,7 @@ export type PersonalQuestion =
   | 'expenses_full'
   | 'no_expenses';
 
-export type ResolveOutcome =
+export type ResolveOutcome = (
   | {
       kind: 'ready';
       /** Validated and complete. Safe to store and to execute later. */
@@ -93,7 +95,15 @@ export type ResolveOutcome =
       /** R8: far-future writes execute only after a confirmation. */
       needsConfirm?: boolean;
     }
-  | { kind: 'clarify'; clarify: Clarify };
+  | { kind: 'clarify'; clarify: Clarify }
+) & {
+  /**
+   * What resolve found carries someone else's words — a reminder whose text
+   * holds a calendar title (2026-10-06). Every reply that follows, a question,
+   * a choice list or a confirmation, taints the turn.
+   */
+  tainting?: true;
+};
 
 export type ToolContext = {
   principal: string;

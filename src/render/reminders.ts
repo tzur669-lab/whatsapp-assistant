@@ -9,6 +9,7 @@
  * `1.` at the start of a Hebrew line jumps to the wrong end without it.
  */
 import type { ScheduledTopic } from '../nlu/slot-schemas.js';
+import { MAX_TITLE_CHARS } from '../nlu/slot-schemas.js';
 import { isolate, isolateLtr } from './bidi.js';
 import { formatWhen, weekdayName } from './format-time.js';
 import type { Lang } from './format-time.js';
@@ -100,6 +101,30 @@ ${isolate(view.text)}`
       : `Scheduled: ${repeatLabel(view.rule, 'en')}
 First: ${formatWhen(view.local, 'en')}
 ${isolate(view.text)}`;
+  },
+
+  /**
+   * A "time to leave" reminder's stored text (ROADMAP #5): the event's title,
+   * capped so the whole text fits a reminder's.
+   */
+  leaveLabel(title: string, lang: Lang): string {
+    const prefix = lang === 'he' ? 'לצאת ל־' : 'Leave for ';
+    return `${prefix}${title.trim().slice(0, MAX_TITLE_CHARS - prefix.length)}`;
+  },
+
+  /** Tier 1: set, with when to leave and when the event starts. */
+  createdLeave(
+    view: { text: string; leave: LocalParts; start: LocalParts; minutes: number; hasPlace: boolean },
+    lang: Lang,
+  ): string {
+    const hhmm = (local: LocalParts) =>
+      isolate(`${String(local.hour).padStart(2, '0')}:${String(local.minute).padStart(2, '0')}`);
+    if (lang === 'he') {
+      const nav = view.hasPlace ? `\nבזמן התזכורת יופיע גם כפתור ניווט ב־${isolateLtr('Waze')}.` : '';
+      return `נקבעה תזכורת יציאה ל${formatWhen(view.leave, 'he')}, ${view.minutes} דקות לפני תחילת האירוע (${hhmm(view.start)}).\n${isolate(view.text)}${nav}`;
+    }
+    const nav = view.hasPlace ? '\nThe reminder will come with a Waze button.' : '';
+    return `Leave reminder set for ${formatWhen(view.leave, 'en')}, ${view.minutes} minutes before the event starts (${hhmm(view.start)}).\n${isolate(view.text)}${nav}`;
   },
 
   /** Appended when the time falls inside Shabbat or a chag and the hold is on (§6.13). */

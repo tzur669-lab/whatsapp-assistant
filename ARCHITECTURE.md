@@ -2,7 +2,7 @@
 
 How the code is laid out and how the parts talk. The *why* behind each piece
 is in `PLAN.md` (section numbers given); the rules are in `CLAUDE.md`.
-Current as of 2026-10-06 (migration 0020).
+Current as of 2026-10-06 (migration 0021).
 
 ## 1. System diagram
 
@@ -69,6 +69,18 @@ Special shapes:
   (`/app/action/claim`) and runs it on the phone.
 - **Calls**: `device/calls.ts` writes a 2-minute dispatch, FCM pushes its id,
   the phone fetches, matches the contact locally, and dials after a tap.
+- **"Time to leave" reminders** (`reminders.leave`, ROADMAP #5, 2026-10-06):
+  `resolveAsync` finds a timed calendar event (by title words, or the next
+  one) and sets the reminder's due time to its start minus a travel time (the
+  user's, else 30 min). The event's title is stored as the reminder text and
+  its location as `reminders.place`, so delivery (`assistant-do.ts`) attaches
+  a Waze nav card. A calendar title is someone else's words, so the turn and
+  `reminders.list` (when any shown reminder has a place) are tainted.
+- **Text shared into the app** (`channels/app/shared.ts`, ROADMAP #17,
+  2026-10-06): an OS share composes the user's own text with the shared text
+  under a header (`composeShared`), marks the inbound event `forwarded`, and
+  skips every deterministic shortcut in `pipeline.ts` (commands, plain "כן",
+  the open question) — those are the user's alone, never someone else's text.
 
 ## 3. Modules (`src/`)
 
@@ -95,7 +107,7 @@ Special shapes:
 
 **Tools by tier** (from `tools/registry.ts`; parser sees only the first 8 marked *):
 - Tier 0 (read): `reminders.list`*, `calendar.list_events`*, `calendar.free_time`, `phone.contacts|notifications|sms|calls`, `info.lookup`, `tasks.list`, `mail.search|bills`, `drive.search`, `notes.find`, `expenses.summary`, `calc.compute`, `birthdays.upcoming`
-- Tier 1 (runs now; Undo where reversible; cards run on the phone): `reminders.create`*, `reminders.repeat|at_rest|scheduled_read`, `calendar.create_event`* (Tier 3 with attendees), `tasks.add|complete`, `notes.save`, `expenses.add|export`, cards `alarm.set`, `timer.set`, `nav.go`, `app.open`, `media.play`, `settings.set`
+- Tier 1 (runs now; Undo where reversible; cards run on the phone): `reminders.create`*, `reminders.repeat|at_rest|scheduled_read|leave`, `calendar.create_event`* (Tier 3 with attendees), `tasks.add|complete`, `notes.save`, `expenses.add|export`, cards `alarm.set`, `timer.set`, `nav.go`, `app.open`, `media.play`, `settings.set`
 - Tier 2 (confirm): `reminders.cancel`*, `reminders.move`, `calendar.move_event`*, `calendar.delete_event`*, `mail.draft`, `notes.delete`
 - Tier 3 (confirm on phone): `calls.place`*, `message.compose`
 

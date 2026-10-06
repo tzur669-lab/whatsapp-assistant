@@ -28,6 +28,7 @@ export const GROUPS: Readonly<Record<GroupName, readonly ToolName[]>> = {
     'reminders.move',
     'reminders.at_rest',
     'reminders.scheduled_read',
+    'reminders.leave',
     'calendar.list_events',
     'calendar.create_event',
     'calendar.move_event',

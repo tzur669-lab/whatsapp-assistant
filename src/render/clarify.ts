@@ -49,6 +49,10 @@ export function renderClarify(clarify: Clarify, lang: Lang): string {
       return phoneQuestion(clarify.what, lang);
     case 'personal':
       return personalQuestion(clarify.what, lang);
+    case 'leave_too_late':
+      return lang === 'he'
+        ? 'כבר מאוחר מדי: הזמן לצאת לאירוע הזה עבר, או שנשארה פחות מדקה.'
+        : 'Too late: the time to leave for that event has already passed.';
   }
 }
 

@@ -21,7 +21,10 @@ import { createGroqWhisperProvider, WHISPER_MODEL } from '../voice/groq-whisper.
 import { buildNluChain } from '../nlu/index.js';
 import { ReminderStore } from '../tools/reminder-store.js';
 import type { ClaimedReminder } from '../tools/reminder-store.js';
-import { PendingActions } from '../confirm/pending.js';
+import { MAX_EXPIRY_MS, PendingActions } from '../confirm/pending.js';
+import { cardPreview } from '../render/phone.js';
+import type { CardInput } from '../render/phone.js';
+import { MAX_DESTINATION_CHARS } from '../nlu/slot-schemas.js';
 import { OpenQuestions } from '../confirm/questions.js';
 import { IcalStore } from '../ical/store.js';
 import { BirthdayStore } from '../core/birthdays.js';
@@ -59,6 +62,7 @@ import type { AppEnv, ChannelMode } from '../core/env.js';
 import { channelOf } from '../core/env.js';
 import { AppOutbox } from '../channels/app/outbox.js';
 import type { OutboxCard, OutboxKind, OutboxRow } from '../channels/app/outbox.js';
+import { composeShared } from '../channels/app/shared.js';
 import {
   canonicalRequest,
   importDeviceKey,
@@ -107,6 +111,8 @@ const RETENTION_INBOUND_MS = 30 * 24 * 60 * 60 * 1000;
 
 /** Late enough to be worth mentioning. Below this, nobody would notice. */
 const LATE_THRESHOLD_MS = 60_000;
+/** How long a delivered leave reminder's Waze card can be claimed (ROADMAP #5). */
+const LEAVE_CARD_EXPIRY_MS = MAX_EXPIRY_MS;
 
 /** A floor on alarm scheduling, so a due-now reminder does not spin. */
 const MIN_ALARM_DELAY_MS = 1_000;
@@ -884,9 +890,16 @@ export class AssistantDO implements DurableObject {
       forwarded: false,
       ...(message.conversationId ? { conversationId: message.conversationId } : {}),
     };
+    // Text shared from another app is someone else's: forwarded, so tainted (block F).
     const event: InboundEvent =
       message.kind === 'text'
-        ? { kind: 'text', ...base, text: message.text, ...(message.location ? { location: message.location } : {}) }
+        ? {
+            kind: 'text',
+            ...base,
+            ...(message.shared !== undefined ? { forwarded: true } : {}),
+            text: message.shared !== undefined ? composeShared(message.text, message.shared) : message.text,
+            ...(message.location ? { location: message.location } : {}),
+          }
         : { kind: 'button', ...base, buttonId: message.buttonId };
     return this.runAppTurn(event, message.id, device.id, principal);
   }
@@ -1371,7 +1384,12 @@ export class AssistantDO implements DurableObject {
     // same gates as a confirmation, for the same reason (PLAN §6.5).
     const offer = this.deferred.offer({
       tool: SNOOZE_TOOL,
-      compensating: { reminderId: reminder.id, text: reminder.text, tz: reminder.tz },
+      compensating: {
+        reminderId: reminder.id,
+        text: reminder.text,
+        tz: reminder.tz,
+        ...(reminder.place ? { place: reminder.place } : {}),
+      },
       principal: reminder.principal,
       expiryMs: SNOOZE_EXPIRY_MS,
     });
@@ -1380,12 +1398,17 @@ export class AssistantDO implements DurableObject {
       // Acceptance, `markSent` and the audit row land together or not at all
       // (§6.18). The calendar stand-in, if WhatsApp wrote one, goes on ack.
       const accepted = this.sql.transaction(() => {
+        // "Time to leave" (ROADMAP #5): a Waze card to the event's place, in
+        // the same transaction as its row. Its text holds a calendar title, so
+        // the row stays off the lock screen.
+        const card = reminder.place ? this.leaveCard(reminder.place, reminder.principal) : undefined;
         const row = this.outbox.accept({
           kind: 'reminder',
           text: lines.join('\n'),
           buttons: snoozeButtons(offer.id, offer.nonce, 'he'),
           reminderId: reminder.id,
           principal: reminder.principal,
+          ...(card ? { card, private: true } : {}),
         });
         this.reminders.markSent(reminder.id, row.wamid);
         this.repo.audit({
@@ -1436,6 +1459,25 @@ export class AssistantDO implements DurableObject {
       // which is the whole reason it is written at creation (PLAN §6.7, §6.8).
       this.reminders.abandon(reminder.id);
     }
+  }
+
+  /**
+   * The nav card a delivered "time to leave" reminder carries (ROADMAP #5).
+   * The place came from a calendar event: the card never runs on its own.
+   */
+  private leaveCard(place: string, principal: string): OutboxCard {
+    const input: CardInput = { type: 'nav', app: 'waze', destination: place.slice(0, MAX_DESTINATION_CHARS), source: 'event' };
+    const preview = cardPreview(input, 'he');
+    const action = this.pending.create({
+      tool: 'nav.go',
+      input,
+      summary: preview,
+      tier: 1,
+      principal,
+      channel: 'card',
+      expiryMs: LEAVE_CARD_EXPIRY_MS,
+    });
+    return { actionId: action.id, nonce: action.nonce, type: 'nav', preview, autoRun: false };
   }
 
   /**

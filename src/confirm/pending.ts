@@ -18,6 +18,8 @@
 import type { SqlDriver } from '../core/sql.js';
 
 const EXPIRY_MS = 5 * 60 * 1000;
+/** The longest any pending row may live: a leave reminder's card (ROADMAP #5). */
+export const MAX_EXPIRY_MS = 2 * 60 * 60 * 1000;
 /** How long past its expiry a row is kept before it is deleted. */
 const PURGE_AFTER_MS = 60 * 60 * 1000;
 const ID_BYTES = 12;
@@ -84,10 +86,17 @@ export class PendingActions {
     tier: number;
     principal: string;
     channel?: PendingChannel;
+    /**
+     * A card on a delivered "time to leave" reminder lives longer than five
+     * minutes: the user may look at the notification later (ROADMAP #5).
+     * Capped; absent is the five minutes every confirmation gets.
+     */
+    expiryMs?: number;
   }): PendingAction {
     const id = randomHex(ID_BYTES);
     const nonce = randomHex(NONCE_BYTES);
     const createdAt = this.now();
+    const expiresAt = createdAt + Math.min(Math.max(params.expiryMs ?? EXPIRY_MS, 1), MAX_EXPIRY_MS);
     const inputJson = JSON.stringify(params.input);
 
     this.sql.exec(
@@ -103,7 +112,7 @@ export class PendingActions {
       params.principal,
       digest(nonce),
       createdAt,
-      createdAt + EXPIRY_MS,
+      expiresAt,
       params.channel ?? 'chat',
     );
 
@@ -117,7 +126,7 @@ export class PendingActions {
       principal: params.principal,
       status: 'pending',
       createdAt,
-      expiresAt: createdAt + EXPIRY_MS,
+      expiresAt,
     };
   }
 

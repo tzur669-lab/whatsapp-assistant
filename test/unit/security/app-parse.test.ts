@@ -52,6 +52,19 @@ describe('parseMessage', () => {
     expect(parseMessage(bytes({ id: ID, kind: 'text', text: '' }))).toBeNull();
   });
 
+  it('reads shared text, capped, and never under a command (block F)', () => {
+    expect(parseMessage(bytes({ id: ID, kind: 'text', text: 'מה זה?', shared: 'פגישה' }))).toEqual({
+      id: ID,
+      kind: 'text',
+      text: 'מה זה?',
+      shared: 'פגישה',
+    });
+    expect(parseMessage(bytes({ id: ID, kind: 'text', text: 'x', shared: 'y'.repeat(1201) }))).toBeNull();
+    expect(parseMessage(bytes({ id: ID, kind: 'text', text: 'x', shared: '' }))).toBeNull();
+    expect(parseMessage(bytes({ id: ID, kind: 'text', text: ' /pause', shared: 'y' }))).toBeNull();
+    expect(parseMessage(bytes({ id: ID, kind: 'button', buttonId: 'a', shared: 'y' }))).toBeNull();
+  });
+
   it('refuses a button id with anything but the button alphabet', () => {
     expect(parseMessage(bytes({ id: ID, kind: 'button', buttonId: 'snooze:<script>' }))).toBeNull();
     expect(parseMessage(bytes({ id: ID, kind: 'button', buttonId: 'a'.repeat(257) }))).toBeNull();

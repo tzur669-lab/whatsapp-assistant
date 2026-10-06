@@ -23,6 +23,7 @@ import { DEFAULT_LIMITS } from '../policy/engine.js';
 import type { PolicyResult } from '../policy/engine.js';
 import { REGISTRY } from '../tools/registry.js';
 import type { ToolName } from '../tools/registry.js';
+import { MAX_DESTINATION_CHARS } from '../nlu/slot-schemas.js';
 import { REMINDER_TOOLS } from '../tools/reminders.js';
 import { NOTE_TOOLS } from '../tools/notes.js';
 import { EXPENSE_TOOLS } from '../tools/expenses.js';
@@ -42,7 +43,7 @@ import { PHONE_READ_TOOLS } from '../tools/phone-reads.js';
 import type { PhoneReadInput } from '../tools/phone-reads.js';
 import { cardReply } from '../render/phone.js';
 import type { CardInput } from '../render/phone.js';
-import type { Clarify, ExecuteResult, ToolContext, ToolDefinition } from '../tools/types.js';
+import type { Clarify, ExecuteResult, ResolveOutcome, ToolContext, ToolDefinition } from '../tools/types.js';
 import { ToolInputError } from '../tools/types.js';
 import { buttonId, parseButtonId } from '../confirm/pending.js';
 import type { AskedSlot } from '../confirm/questions.js';
@@ -214,7 +215,7 @@ async function runIntentInner(
   }
 
   // 1. Resolve. Everything the model left out is decided here or asked about.
-  let resolved;
+  let resolved: ResolveOutcome;
   try {
     // A tool whose target lives behind the network resolves asynchronously; the
     // rest stay synchronous so nothing is fetched before policy has a chance.
@@ -229,20 +230,33 @@ async function runIntentInner(
     return { text: he.internalError };
   }
 
+  const reply = await decideAndAct(draft, resolved, tool, turn);
+  return resolved.tainting ? { ...reply, tainting: true } : reply;
+}
+
+async function decideAndAct(
+  draft: IntentDraft,
+  resolved: ResolveOutcome,
+  tool: ToolDefinition,
+  turn: TurnContext,
+): Promise<Reply> {
+  const ctx = turn.tool;
+  // Only a tool's draft reaches here: `unsupported` returned above.
+  const intent = draft.intent as ToolName;
   if (resolved.kind === 'clarify') {
-    ctx.log.info('clarify', { tool: draft.intent, reason: resolved.clarify.code });
-    audit(turn, draft.intent, null, 'CLARIFY', resolved.clarify.code);
+    ctx.log.info('clarify', { tool: intent, reason: resolved.clarify.code });
+    audit(turn, intent, null, 'CLARIFY', resolved.clarify.code);
 
     return clarifyReply(draft, resolved.clarify, ctx.lang, true);
   }
 
   // 2. Decide, on the resolved input.
-  const decision = decide(draft.intent, {
+  const decision = decide(intent, {
     nowMs: ctx.nowMs,
     messageSentAtMs: turn.messageSentAtMs,
     forwarded: turn.forwarded,
     paused: turn.paused,
-    usage: ctx.repo.toolUsage(ctx.principal, draft.intent, ctx.nowMs),
+    usage: ctx.repo.toolUsage(ctx.principal, intent, ctx.nowMs),
     limits: DEFAULT_LIMITS,
     horizonExceeded: resolved.needsConfirm === true,
     source: turn.source,
@@ -253,7 +267,7 @@ async function runIntentInner(
   }, { hasAttendees: hasAttendees(resolved.input) });
 
   ctx.log.info('policy_decision', {
-    tool: draft.intent,
+    tool: intent,
     tier: decision.tier,
     decision: decision.decision,
     reason: decision.reason,
@@ -263,7 +277,7 @@ async function runIntentInner(
   // 3. Act.
   switch (decision.decision) {
     case 'DENY':
-      audit(turn, draft.intent, decision, 'DENY', decision.reason);
+      audit(turn, intent, decision, 'DENY', decision.reason);
       return { text: decision.reason === 'paused' ? statusText.paused : statusText.rateLimited };
 
     case 'CONFIRM':
@@ -279,8 +293,8 @@ async function runIntentInner(
 
     case 'ALLOW':
       // The phone answers this one; the server has nothing to run (§6.21).
-      if (REGISTRY[draft.intent].phoneRead) {
-        audit(turn, draft.intent, decision, 'DEVICE_QUERY', 'issued');
+      if (REGISTRY[intent].phoneRead) {
+        audit(turn, intent, decision, 'DEVICE_QUERY', 'issued');
         return { text: '', deviceQuery: resolved.input as PhoneReadInput };
       }
       return execute(tool, resolved.input, decision, turn);
@@ -598,9 +612,12 @@ function snoozeMinutes(verb: string): number {
 
 function snooze(compensating: unknown, minutes: number, turn: TurnContext): Reply {
   const ctx = turn.tool;
-  const record = (compensating ?? {}) as { text?: unknown; tz?: unknown };
+  const record = (compensating ?? {}) as { text?: unknown; tz?: unknown; place?: unknown };
   const text = typeof record.text === 'string' ? record.text : '';
   const tz = typeof record.tz === 'string' ? record.tz : 'Asia/Jerusalem';
+  // A "time to leave" reminder keeps its Waze card when snoozed (ROADMAP #5).
+  const place =
+    typeof record.place === 'string' && record.place.length > 0 ? record.place.slice(0, MAX_DESTINATION_CHARS) : undefined;
 
   if (minutes === 0 || text.length === 0) {
     return { text: ctx.lang === 'he' ? 'סומן כבוצע.' : 'Marked done.' };
@@ -613,12 +630,15 @@ function snooze(compensating: unknown, minutes: number, turn: TurnContext): Repl
     dueAtUtc,
     localWallTime: '',
     tz,
+    ...(place ? { place } : {}),
   });
 
   audit(turn, SNOOZE_TOOL, null, 'ALLOW', 'ok');
   return {
     text: reminderText.created({ id: '', text, local: localPartsOf(dueAtUtc, tz) }, ctx.lang),
     rescheduleAlarm: true,
+    // Its text holds a calendar title.
+    ...(place ? { tainting: true as const } : {}),
   };
 }
 

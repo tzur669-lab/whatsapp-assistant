@@ -31,7 +31,8 @@ export const APP_ROUTES: readonly AppRoute[] = [
   { method: 'GET', pattern: /^\/device\/dispatch\/[0-9a-f]{32}$/, maxBytes: 0, channels: ['whatsapp', 'app'] },
   { method: 'POST', pattern: /^\/device\/report$/, maxBytes: 1_024, contentType: JSON_TYPE, channels: ['whatsapp', 'app'] },
   // The assistant itself, only when the app is the channel.
-  { method: 'POST', pattern: /^\/app\/message$/, maxBytes: 8_192, contentType: JSON_TYPE, channels: ['app'] },
+  // 2,000 + 1,200 characters, three bytes each at worst, plus JSON (block F).
+  { method: 'POST', pattern: /^\/app\/message$/, maxBytes: 16_384, contentType: JSON_TYPE, channels: ['app'] },
   {
     method: 'POST',
     // The message id, then optionally the conversation it was recorded in, then

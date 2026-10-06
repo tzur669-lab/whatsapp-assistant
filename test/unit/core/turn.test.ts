@@ -289,6 +289,34 @@ describe('a turn, end to end', () => {
       expect(plain(out.text)).toContain('לאשר?');
     });
 
+    // Shared text (block F, 2026-10-06): someone else's words never take a
+    // deterministic shortcut, and their answer stays off the lock screen.
+    it('keeps a forwarded reply off the lock screen on the parser path', async () => {
+      const out = await handleInbound(text('תזכיר לי', { forwarded: true }), deps(create));
+      expect(out).toMatchObject({ action: 'reply', private: true });
+    });
+
+    it('never lets a forwarded כן confirm what is pending', async () => {
+      reminders.schedule({
+        principal: PRINCIPAL,
+        text: 'להתקשר לאבא',
+        dueAtUtc: Date.parse('2026-09-25T05:00:00Z'),
+        localWallTime: 'x',
+        tz: 'Asia/Jerusalem',
+      });
+      const cancel = [draft('reminders.cancel', { query_variants: ['אבא'] })];
+      await handleInbound(text('תבטל'), deps(cancel));
+
+      await handleInbound(text('כן', { forwarded: true }), deps([draft('reminders.list', {})]));
+      expect(reminders.listUpcoming(PRINCIPAL)).toHaveLength(1);
+    });
+
+    it('never runs a forwarded command', async () => {
+      const out = await handleInbound(text('/pause', { forwarded: true }), deps([draft('reminders.list', {})]));
+      expect(repo.isPaused()).toBe(false);
+      expect(out.action).toBe('reply');
+    });
+
     it('confirms a reminder set beyond the horizon', async () => {
       const out = await handleInbound(
         text('תזכיר לי'),

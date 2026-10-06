@@ -35,6 +35,7 @@ import {
   tasksListSlots,
   remindersAtRestSlots,
   remindersScheduledReadSlots,
+  remindersLeaveSlots,
   notesSaveSlots,
   notesFindSlots,
   notesDeleteSlots,
@@ -69,6 +70,8 @@ export const TOOL_NAMES = [
   'reminders.at_rest',
   // ROADMAP #7 (2026-10-05): a public lookup sent on a schedule.
   'reminders.scheduled_read',
+  // ROADMAP #5 (2026-10-06): when to leave for a calendar event.
+  'reminders.leave',
   // Phone actions (PLAN §6.20): agent-only, each one an action card.
   'alarm.set',
   'timer.set',
@@ -254,6 +257,18 @@ export const REGISTRY: Readonly<Record<ToolName, ToolSpec>> = {
     draftSchema: remindersScheduledReadSlots,
     // Like reminders.repeat: the user's own setting, to the user, undone in
     // one tap. At the due time code runs a Tier 0 read; no model is involved.
+    tier: 1,
+    scopes: [],
+    rateLimit: { perHour: 10, perDay: 30 },
+    implementedIn: 6,
+  },
+  'reminders.leave': {
+    name: 'reminders.leave',
+    llmDescription:
+      'A reminder to leave for a calendar event: the event by title words (event) or the next one (next_event), and the travel time in minutes if the user said it.',
+    draftSchema: remindersLeaveSlots,
+    // The user's own reminder, undone in one tap. The time is code's: the
+    // event's start minus the travel time (ROADMAP #5).
     tier: 1,
     scopes: [],
     rateLimit: { perHour: 10, perDay: 30 },

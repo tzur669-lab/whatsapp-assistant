@@ -86,11 +86,11 @@ describe('which routes exist', () => {
 
 describe('what never reaches the Durable Object', () => {
   it('a body over the cap, whether declared or not', async () => {
-    expect((await postJson('/app/message', 'x'.repeat(9_000))).status).toBe(413);
+    expect((await postJson('/app/message', 'x'.repeat(17_000))).status).toBe(413);
 
     const streamed = new ReadableStream<Uint8Array>({
       start(controller) {
-        for (let i = 0; i < 20; i++) controller.enqueue(new Uint8Array(1_000));
+        for (let i = 0; i < 40; i++) controller.enqueue(new Uint8Array(1_000));
         controller.close();
       },
     });

@@ -412,8 +412,13 @@ async function respondToText(
 ): Promise<PipelineOutcome> {
   const { repo, log, principal } = deps;
 
+  // Someone else's words (a forwarded message, or text shared into the app,
+  // 2026-10-06) take none of the deterministic shortcuts below: they must not
+  // run a command, confirm what is pending, or answer the open question.
+  const foreign = event.forwarded;
+
   // 1. System commands. Fixed patterns, never the LLM (PLAN §6.4).
-  const command = matchCommand(text);
+  const command = foreign ? null : matchCommand(text);
   if (command) {
     log.info('command', { wamid: event.wamid, intent: command.kind, stale, source: source.kind });
     repo.markInboundOutcome(event.wamid, { intent: command.kind, decision: 'ALLOW' });
@@ -433,13 +438,13 @@ async function respondToText(
 
   // 2a. A plain "כן" or "אישור" answering a pending question. Also never the LLM: a
   //    confirmation that could be re-parsed is not a confirmation (§6.5).
-  const plain = deps.services.pending.resolvePlainText(text, principal);
-  if (plain.ok) {
+  const plain = foreign ? null : deps.services.pending.resolvePlainText(text, principal);
+  if (plain?.ok) {
     const reply = await runPlainConfirmation(plain.id, turnOf(deps, event, now, source, 'he'));
     repo.markInboundOutcome(event.wamid, { decision: 'CONFIRMED' });
     return asOutcome(reply);
   }
-  if (!plain.ok && plain.reason === 'ambiguous') {
+  if (plain && !plain.ok && plain.reason === 'ambiguous') {
     repo.markInboundOutcome(event.wamid, { decision: 'CLARIFY' });
     return { action: 'reply', text: statusText.confirmAmbiguous };
   }
@@ -447,7 +452,7 @@ async function respondToText(
   // 2b. An answer to the one open question (PLAN §6.11). Before the parser,
   //     because "8" means nothing to a parser and everything to a question —
   //     and because answering costs no tokens at all.
-  const open = deps.services.questions.peek(principal);
+  const open = foreign ? null : deps.services.questions.peek(principal);
   if (open) {
     const answered = await answerOpenQuestion(open, text, source, event, deps, now);
     if (answered) return answered;
@@ -514,6 +519,12 @@ async function respondToText(
     }),
   );
   repo.markInboundOutcome(event.wamid, { intent: checked.draft.intent, decision: 'ALLOW' });
+  // A tainted turn's answer stays off the lock screen, as on the agent path,
+  // and a question it asks is answered under the same taint.
+  if (foreign) {
+    const question = reply.question ? { ...reply.question, tainted: true } : undefined;
+    return { ...replyOutcome({ ...reply, ...(question ? { question } : {}) }, deps), private: true } as PipelineOutcome;
+  }
   return replyOutcome(reply, deps);
 }
 
@@ -1157,6 +1168,8 @@ function turnOf(
     deferred: services.deferred,
     messageSentAtMs: event.sentAtMs,
     forwarded: event.forwarded,
+    // Text someone else wrote taints the turn (invariant 2).
+    ...(event.forwarded ? { tainted: true } : {}),
     paused: deps.repo.isPaused(),
     source: source.kind,
     ...(source.kind === 'voice' ? { voiceConfidence: source.confidence } : {}),

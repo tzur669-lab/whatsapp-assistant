@@ -17,6 +17,11 @@ export const MESSAGE_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9
 /** The inbound cap on text, the same as a typed WhatsApp message would get. */
 export const MAX_TEXT_CHARS = 2_000;
 export const MAX_ACK_SEQS = 200;
+/**
+ * Text shared into the app from another one (block F, 2026-10-06). Someone
+ * else wrote it: the turn is tainted. Capped for the agent's token budget.
+ */
+export const MAX_SHARED_CHARS = 1_200;
 
 const messageId = z
   .string()
@@ -58,16 +63,19 @@ export const locationSchema = z
   })
   .strict();
 
-const messageSchema = z.discriminatedUnion('kind', [
+const messageSchema = z.union([
   z
     .object({
       id: messageId,
       kind: z.literal('text'),
       text: z.string().min(1).max(MAX_TEXT_CHARS),
+      shared: z.string().min(1).max(MAX_SHARED_CHARS).optional(),
       conversationId,
       location: locationSchema.optional(),
     })
-    .strict(),
+    .strict()
+    // A command is the user's alone: none can carry someone else's text.
+    .refine((message) => message.shared === undefined || !message.text.trimStart().startsWith('/')),
   z.object({ id: messageId, kind: z.literal('button'), buttonId: buttonIdSchema, conversationId }).strict(),
 ]);
 
