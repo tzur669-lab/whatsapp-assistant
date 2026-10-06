@@ -80,8 +80,8 @@ pnpm dev           # wrangler dev, staging config
 ```
 
 Production deploys, secrets and rollbacks are done by the owner only
-(`ops/runbook.md`). Secrets never live in the repo; the CI gitleaks scan
-enforces it (a local gitleaks pre-commit hook is optional, see SETUP.md).
+(`ops/runbook.md`). Secrets never live in the repo; a pre-commit hook
+(`.githooks/`, enabled per clone, see SETUP.md) and the CI gitleaks scan enforce it.
 
 ## Documentation
 

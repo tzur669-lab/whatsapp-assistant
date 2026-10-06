@@ -36,6 +36,7 @@ alternative.
 ```bash
 git clone <repo url> bot
 cd bot
+git config core.hooksPath .githooks   # the repo's secret-scan pre-commit hook
 pnpm install
 pnpm typecheck && pnpm lint && pnpm test
 ```
@@ -282,9 +283,10 @@ If something fails: `ops/runbook.md` → *Diagnosing* has a symptom table.
    if `src/agent/` changed → update `PLAN.md` §14 / `HANDOFF.md` when behavior
    or architecture changed → commit → `pnpm deploy:staging` → smoke test.
 6. CI (`.github/workflows/ci.yml`) runs gitleaks, typecheck, lint, test and
-   `pnpm audit` on every push. Optionally install
-   [gitleaks](https://github.com/gitleaks/gitleaks) locally as a pre-commit
-   hook, using the repo's `.gitleaks.toml`.
+   `pnpm audit` on every push. Locally, `.githooks/pre-commit` (enabled in
+   Step 1) scans every commit for secrets; install
+   [gitleaks](https://github.com/gitleaks/gitleaks) too and the hook uses its
+   full rule set.
 
 ## Step 11 — Production (later, human only)
 

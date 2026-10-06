@@ -103,7 +103,7 @@ Network on the hotspot: `NODE_OPTIONS=--dns-result-order=ipv4first` for wrangler
   digest, Spotify, Waze to a contact or event). Migration 0020, app 0.10.0.
 
 - 2026-10-06: SETUP.md — every step from zero for a newcomer (and their AI).
-  README: Contacts, migration 0020, honest gitleaks note. No code changed.
+  README: Contacts, migration 0020, pre-commit hook note. No code changed.
 
 **Update rule:** when a session changes architecture, a version, the next
 block, or a doc's role, update §1/§6/§7 here (and ARCHITECTURE.md if modules,
