@@ -16,6 +16,13 @@ const TIMEOUT_MS = 12_000;
 /** Reasoning tokens count against this too on the gpt-oss models. */
 const MAX_COMPLETION_TOKENS = 1_024;
 
+/**
+ * Bumped by hand whenever what this adapter puts on the wire changes. It is
+ * part of the eval fingerprint (§8): a model judged on one translation is not
+ * silently trusted with another.
+ */
+export const ADAPTER_VERSION = 'openai-compatible/1';
+
 export type ToolCall = { id: string; name: string; arguments: string };
 
 export type AgentMessage =
@@ -30,7 +37,8 @@ export type WireTool = {
   function: { name: string; description: string; parameters: Record<string, unknown> };
 };
 
-export type AgentUsage = { promptTokens: number; completionTokens: number };
+/** Zero for both when the answer carried no usage: the budget then charges the reservation. */
+export type AgentUsage = { promptTokens: number; completionTokens: number; cachedTokens?: number };
 
 export type AgentResponse =
   | { ok: true; text: string | null; toolCalls: ToolCall[]; usage: AgentUsage }
@@ -38,38 +46,58 @@ export type AgentResponse =
 
 export interface AgentProvider {
   readonly model: string;
+  /**
+   * `primary` or `backup`, from the model table. A provider without one is
+   * treated as a backup: its writes always confirm (§6).
+   */
+  readonly role?: 'primary' | 'backup';
+  /** What the request asks for, and so what is reserved before it is sent. */
+  readonly maxCompletionTokens?: number;
+  /** An empty tool list means a text-only call: no `tools`, no `tool_choice` on the wire. */
   complete(messages: readonly AgentMessage[], tools: readonly WireTool[]): Promise<AgentResponse>;
 }
 
 export type AgentProviderConfig = {
   apiKey: string;
   model: string;
+  role?: 'primary' | 'backup';
+  maxCompletionTokens?: number;
+  /** Sent only when present. Defaults to today's `reasoning_effort: low`. */
+  params?: { reasoningEffort?: 'low' };
   /** Injected so tests never reach the network. */
   fetchImpl?: typeof fetch;
   timeoutMs?: number;
 };
 
-export function createGroqAgentProvider(config: AgentProviderConfig): AgentProvider {
+/** An OpenAI-compatible chat endpoint: a transport, nothing about how a model behaves. */
+export function createOpenAiCompatibleAgentProvider(
+  config: AgentProviderConfig & { endpoint: string },
+): AgentProvider {
   const doFetch = config.fetchImpl ?? fetch;
+  const maxCompletionTokens = config.maxCompletionTokens ?? MAX_COMPLETION_TOKENS;
+  const params = config.params ?? { reasoningEffort: 'low' };
 
   return {
     model: config.model,
+    ...(config.role ? { role: config.role } : {}),
+    maxCompletionTokens,
 
     async complete(messages, tools): Promise<AgentResponse> {
       if (!config.apiKey) return { ok: false, error: { code: 'not_configured' } };
 
       let response: Response;
       try {
-        response = await doFetch(ENDPOINT, {
+        response = await doFetch(config.endpoint, {
           method: 'POST',
           headers: { authorization: `Bearer ${config.apiKey}`, 'content-type': 'application/json' },
           body: JSON.stringify({
             model: config.model,
             temperature: 0,
-            max_completion_tokens: MAX_COMPLETION_TOKENS,
-            reasoning_effort: 'low',
-            tools,
-            tool_choice: 'auto',
+            max_completion_tokens: maxCompletionTokens,
+            ...(params.reasoningEffort ? { reasoning_effort: params.reasoningEffort } : {}),
+            // A text-only call carries neither: an empty list is a 400 on
+            // OpenAI-compatible endpoints.
+            ...(tools.length > 0 ? { tools, tool_choice: 'auto' } : {}),
             messages,
           }),
           signal: AbortSignal.timeout(config.timeoutMs ?? TIMEOUT_MS),
@@ -114,6 +142,10 @@ export function createGroqAgentProvider(config: AgentProviderConfig): AgentProvi
   };
 }
 
+export function createGroqAgentProvider(config: AgentProviderConfig): AgentProvider {
+  return createOpenAiCompatibleAgentProvider({ ...config, endpoint: ENDPOINT });
+}
+
 function messageOf(payload: unknown): { text: string | null; toolCalls: ToolCall[] } | null {
   const choices = (payload as { choices?: unknown }).choices;
   if (!Array.isArray(choices) || choices.length === 0) return null;
@@ -143,10 +175,15 @@ function messageOf(payload: unknown): { text: string | null; toolCalls: ToolCall
 }
 
 function usageOf(payload: unknown): AgentUsage {
-  const usage = (payload as { usage?: { prompt_tokens?: unknown; completion_tokens?: unknown } }).usage;
+  const usage = (payload as {
+    usage?: { prompt_tokens?: unknown; completion_tokens?: unknown; prompt_tokens_details?: { cached_tokens?: unknown } };
+  }).usage;
+  const cached = usage?.prompt_tokens_details?.cached_tokens;
   return {
     promptTokens: typeof usage?.prompt_tokens === 'number' ? usage.prompt_tokens : 0,
     completionTokens: typeof usage?.completion_tokens === 'number' ? usage.completion_tokens : 0,
+    // For the log only: the budget charges the full count (§2).
+    ...(typeof cached === 'number' ? { cachedTokens: cached } : {}),
   };
 }
 

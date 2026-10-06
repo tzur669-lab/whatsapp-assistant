@@ -85,9 +85,10 @@ import { createCallDispatcher } from '../device/calls.js';
 import type { CallDispatcher } from '../device/calls.js';
 import { callText } from '../render/calls.js';
 import { agentEnabled } from '../core/env.js';
-import { PRIMARY_MODEL, SECONDARY_MODEL } from '../nlu/index.js';
 import { createGroqAgentProvider } from '../agent/provider.js';
-import { meterParsers, TokenBudget } from '../agent/budget.js';
+import { TokenBudget } from '../agent/budget.js';
+import { MODELS } from '../agent/models.js';
+import type { ModelEntry } from '../agent/models.js';
 import { TURN_TOKEN_CAP } from '../agent/loop.js';
 import { ConversationHistory } from '../agent/history.js';
 import { QuotaStore, meterGroqFetch } from '../core/quota.js';
@@ -765,13 +766,13 @@ export class AssistantDO implements DurableObject {
    */
   private quotaReport() {
     const models: ModelSpec[] = [
-      { model: PRIMARY_MODEL, role: 'primary', dayTokens: true },
-      { model: SECONDARY_MODEL, role: 'fallback', dayTokens: true },
+      // Backups show as the app's existing 'fallback' role: no app change.
+      ...MODELS.map((entry): ModelSpec => ({ model: entry.id, role: entry.role === 'primary' ? 'primary' : 'fallback', dayTokens: true })),
       { model: WHISPER_MODEL, role: 'voice', dayTokens: false },
     ];
     const voice = { used: this.repo.inboundCountSince('audio', Date.now() - HOUR_MS), limit: VOICE_PER_HOUR };
     const server: ServerLimits = {
-      minute: this.tokenBudget.snapshot([PRIMARY_MODEL, SECONDARY_MODEL]),
+      minute: this.tokenBudget.snapshot(MODELS.map((entry) => entry.id)),
       turnTokenCap: TURN_TOKEN_CAP,
       lastFailure: this.repo.lastError(),
       fallbacksToday: this.repo.counters(Repository.dayKey(Date.now())).fallbacks,
@@ -1585,27 +1586,20 @@ export class AssistantDO implements DurableObject {
       birthdays: this.birthdays,
       fetchImpl: this.fetchImpl,
       deferred: this.deferred,
-      // The parser spends from the same per-model budget as the agent (plan K3).
-      nlu: meterParsers(
-        buildNluChain({ groqApiKey: this.env.GROQ_API_KEY, fetchImpl: this.groqFetch }),
-        this.tokenBudget,
-      ),
+      // The parser spends from the same per-model budget as the agent (plan K3),
+      // metered once per message in the pipeline (§2b). Its chain stays exactly
+      // qwen → gpt-oss → rules: the table's other models are agent-only.
+      nlu: buildNluChain({ groqApiKey: this.env.GROQ_API_KEY, fetchImpl: this.groqFetch }),
+      tokenBudget: this.tokenBudget,
       ...(agentEnabled(this.env) && this.env.GROQ_API_KEY
         ? {
             agent: {
-              // qwen for every turn. gpt-oss-120b invents times as an agent ("when I get
-              // home" → today 21:00; 93% no-invented-slots on the corpus,
-              // 2026-10-01). It stays the parser's fallback, where strict
-              // structured output constrains it (§6.19, §13).
-              providers: [
-                createGroqAgentProvider({ apiKey: this.env.GROQ_API_KEY, model: PRIMARY_MODEL, fetchImpl: this.groqFetch }),
-              ],
-              // Read-only, after qwen could not take the turn and the parser
-              // found no tool (2026-10-05, the user's decision): it answers
-              // questions and reads, and is offered nothing that writes.
-              fallbackProviders: [
-                createGroqAgentProvider({ apiKey: this.env.GROQ_API_KEY, model: SECONDARY_MODEL, fetchImpl: this.groqFetch }),
-              ],
+              // From the model table (2026-10-06), in its order. Models that
+              // passed the write gate take turns; a backup among them always
+              // confirms its writes (§6). The rest are read-only: asked after
+              // no turn could start and the parser found no tool (2026-10-05).
+              providers: MODELS.filter((entry) => entry.canWrite).map((entry) => this.agentProvider(entry)),
+              fallbackProviders: MODELS.filter((entry) => !entry.canWrite).map((entry) => this.agentProvider(entry)),
               budget: this.tokenBudget,
               history: this.history,
               lock: this.agentLock,
@@ -1624,6 +1618,17 @@ export class AssistantDO implements DurableObject {
       ...(this.env.DEVICE_TOKEN_PEPPER ? { devices: this.devices } : {}),
       ...(this.channel() === 'app' ? { outbox: this.outbox } : {}),
     };
+  }
+
+  private agentProvider(entry: ModelEntry) {
+    return createGroqAgentProvider({
+      apiKey: this.env.GROQ_API_KEY,
+      model: entry.id,
+      role: entry.role,
+      maxCompletionTokens: entry.maxCompletionTokens,
+      params: entry.params,
+      fetchImpl: this.groqFetch,
+    });
   }
 
   /** Built once a grant exists, and reused so its access token is not re-fetched. */

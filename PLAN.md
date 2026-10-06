@@ -78,6 +78,8 @@ Priority order (when goals conflict, the higher one wins):
   Limits are per model, so comparing two models means two separate budgets. `pnpm eval` measures the prompt, paces itself from it, and stops with a clear message when `retry-after` shows the daily budget is exhausted instead of grinding through retries.
 - **[V] Prompt caching is partial, not free.** A 156-case run on `gpt-oss-20b` reported 31,488 of 164,719 prompt tokens cached — **19%**. The identical system prefix is not reliably reused, so prompt size must be budgeted as if nothing were cached.
 - No card is needed for the free plan.
+- **[V] 2026-10-06.** Groq enforces its limits at the organization level, with model-specific TPM/RPM/RPD values. The bot models only the per-model token bucket (`src/agent/models.ts`); any other or shared limit surfaces as a 429, handled conservatively (§6.19, "Failover and tokens"). Effective values for a model are the lower of the organization's and the key's Groq project's, read from the console and confirmed with a one-token probe — never discovered at runtime.
+- **Free-only requirement (operational, checked by the human before each production deploy):** the Groq organization behind `GROQ_API_KEY` stays on the **Free** tier. On the Developer tier usage is billed, and these limits would no longer cap spend. There is no technical check for the plan.
 - Groq's contract forbids training on customer inputs and outputs. Inference is not retained by default, except logs kept up to 30 days for troubleshooting or abuse investigation. Zero Data Retention can be enabled in Data Controls.
 - `whisper-large-v3` is free at 2K RPD (for optional voice notes).
 - Gemini's free API tier uses data for training outside the UK/CH/EEA/EU. **Rejected on privacy.**
@@ -1409,8 +1411,85 @@ code rendered it** — a write's confirmation with its Undo, a question recorded
 §6.11's open question, a confirmation, a refusal, a call's silent dispatch. A
 write is therefore never worded by the model. Invalid arguments or an unknown tool
 go back to the model as an error result, and nothing runs. Caps: 3 model calls,
-7,000 tokens, one model per turn (§2's 8K per minute); reply text ≤ 1,500
-characters, markdown removed.
+7,000 tokens (per model, `models.ts`), one model per **agent turn** (§2's 8K per
+minute); reply text ≤ 1,500 characters, markdown removed.
+
+**Failover and tokens (2026-10-06).** Plan of record:
+`~/.claude/plans/concurrent-riding-dream.md` (Part 1), reviewed in many rounds.
+
+- **One message, up to four steps:** (1) model selection before the agent turn;
+  (2) the agent turn, whose calls are always on that one model; (3) the parser
+  fallback, a separate step with its own metering; (4) the read-only try, a
+  separate turn. A rate/budget failure never re-calls the model that refused; a
+  non-rate failure (`provider_error`, `empty_reply`, `schema_invalid`) may reach
+  a second model through steps 3–4. One message makes at most 10 provider
+  requests whatever the table holds (3 + 2×2 + 3), and at most 4 of them can be
+  refused for rate reasons, each on a different model.
+- **The model table** (`src/agent/models.ts`) is static: id, role, minute bucket,
+  `maxCompletionTokens` (sent and reserved), request params, turn cap,
+  `canWrite`. A model not listed is never called. `canWrite` changes only by a
+  reviewed commit after the write gate (below). Models that may write take agent
+  turns, in order; the rest are the read-only try's. The parser chain stays
+  exactly qwen → gpt-oss → rules: new models are agent-only (unit test).
+- **Reservations** (`src/agent/budget.ts`). Every call takes its estimate —
+  prompt at 2.5 characters a token, plus its full `maxCompletionTokens` — out of
+  the model's bucket before it is sent, checked and claimed in one synchronous
+  step. Settled with the measured usage; a reply without usage is charged the
+  reservation, never zero (this fixed an under-count). A call that was sent and
+  failed is charged too; only a call that never left (`not_configured`,
+  connection refused) is released. A 429 replaces the reservation with the
+  existing full fill of the window, blocks the model until the later of its
+  observed reset and the `retry-after` (never earlier), and is not classified by
+  Groq dimension. The local view may count a call twice — an open reservation
+  and a header that includes it — which only costs a failover; it never counts a
+  measured call as less. The prompt part is an estimate, not a bound: an error
+  lasts until settle, or ≤ 60 s for a charged failure; a low estimate in flight
+  can cost one 429, which is handled. Local charges ignore cached tokens; Groq's
+  own header carries that benefit.
+  Implementation note: `observe(header)` runs in the fetch wrapper and `settle`
+  after the body is parsed, so an `await` sits between them. In that gap the
+  call is counted twice (header and open reservation) — conservative, never
+  optimistic.
+- **The message scope** (§2b of the plan). One per message, in memory, shared by
+  the agent, the parser (metered per message in the pipeline) and the read-only
+  try. A model that answered 429, or that this server could not reserve for, is
+  not asked again for that message, though its `retry-after` may have passed.
+- **Tool selection by code** (`src/agent/tool-groups.ts`). Groups: time,
+  records (notes + tasks + expenses, merged so a near miss cannot hide the right
+  tool), info, mail, drive, phone. **Exactly one group hit → that group; none, or
+  two or more → the full catalog.** A group with no more than half its tools
+  offered here keeps the full catalog too ("wake me at 6" without cards needs a
+  reminder). Code only narrows `agentToolNames`. Tested on a Hebrew selection
+  fixture and the whole corpus, at zero tokens: a single wrong group fails.
+- **Text-only calls.** A call gets no tools once a Tier 0 read has completed in
+  the turn, or when it is the last allowed call; `tools` and `tool_choice` are
+  then left off the wire.
+- **A backup model's writes always confirm.** `TurnContext.backupModel` → the
+  policy reason `backup_model` (`src/policy/engine.ts`): a Tier 1 write
+  confirms, a card never auto-runs, a phone-confirmed tool still confirms on the
+  phone. A provider with no role counts as a backup. A backup's open question is
+  stored tainted, so its answered write confirms too. **Exception, kept:** a
+  gpt-oss *parser* draft is not flagged — strict structured output and
+  `pnpm eval` guard it, as before; the flag is set only on the agent path.
+- **The write gate.** `pnpm eval:agent --model <id> --select-tools` on the full
+  corpus meets every §11.2 threshold; a human reads the report and records
+  `canWrite` and `evaluated.fingerprint` (`test/evals/fingerprint.ts`: the
+  prompt, the full wire catalog, the entry's request params, `ADAPTER_VERSION`,
+  and what selection offers on every corpus and fixture phrase). A unit test
+  fails a backup that may write with a stale fingerprint; for the primary it
+  reports until its `--select-tools` run is recorded.
+- **Measured** (`tsx scripts/bench-tokens.ts`, estimates over 321 corpus and
+  fixture phrases): 68% narrowed; first call median **6,220 → 2,834** tokens; a
+  read turn (two calls) median **12,631 → 4,117**. Real calls (smoke run,
+  qwen): a narrowed call ≈ 2,250 prompt tokens, the full catalog ≈ 4,850; the
+  estimator ran ~3.2 characters a token, so 2.5 errs high. The whole-turn benchmark is
+  `test/evals/run-turn-evals.ts` (OLD vs NEW, real provider, one acceptance
+  rule). Evals share a daily ledger with a lock (`test/evals/ledger.ts`): they
+  stop at 100K tokens on any one model or 300 requests in total per UTC day, so
+  the live bot keeps headroom.
+- **Rollback:** a phone-read turn waiting at the moment of a rollback is
+  dropped (`turns.ts` is `.strict()`, and the new state carries `offered`).
+  Such states live for minutes.
 
 **Measured** (spike, 2026-10-01, `scripts/spike-agent.ts`, synthetic messages):
 both candidate models call tools correctly on Hebrew, fill `DateSpec`/`TimeSpec`
@@ -2442,6 +2521,11 @@ measured on the app channel. To finish with `--resume`.
 - [x] **Groq Zero Data Retention is a precondition for `AGENT=on`** (2026-10-01): the agent sends calendar titles and history. **Enabled by the user, 2026-10-01.**
 - [x] **The agent runs on `qwen3.8-27b`; gpt-oss-120b only read-only** (2026-10-01, measured, §11.11; amended 2026-10-05, the user's decision). gpt-oss-120b invented times and titles in tool calls (93.3% / 66.7% on the two hard gates), so it is never offered a write. When qwen is out of budget the turn falls back to the parser chain, gpt-oss-120b included, under strict structured output; when the parser finds no tool, gpt-oss-120b answers read-only (§6.19).
 - [ ] A full qwen agent run (all 166 + 5) before `AGENT=on`.
+- [x] **A backup model may write once it passes the same gate as qwen; its writes always need confirmation** (2026-10-06, the user's decision). New capacity only from more Groq models and Cloudflare Workers AI (§6.19, "Failover and tokens").
+- [ ] **qwen `--select-tools` run** (the write gate with selection) and its fingerprint in `models.ts`. Owed; the fingerprint test reports it until then.
+- [ ] **More Groq backups**: list `/openai/v1/models`, read each candidate's effective limits for this key's project in the console, confirm with a one-token probe, then gate each with `--select-tools`. Not started: the console step is the human's.
+- [ ] **Phase B**: a ≤ 5 s wait when a bucket frees soon, and Workers AI (Free account only, `WORKERS_AI_FREE_ACCOUNT` declared by the human, a local Neuron cap). After the turn benchmark passes.
+- [ ] Token calibration: record `chars`/`promptTokens` pairs from a real run into `test/fixtures/token-calibration.json`, then the 99% test (§6.19).
 - [x] **`app_outbox` text stays plaintext for its 24 h TTL** (2026-10-01, accepted risk): Durable Object storage is encrypted at rest by Cloudflare, and the rows are deleted on ack.
 - [ ] Phase C: on Android 13+ a sideloaded app needs "Allow restricted settings" before notification access can be granted. Built with a note on the settings screen (§6.21); **verify on the device**. Play policy on `READ_SMS` does not apply to a sideloaded app.
 - [ ] Phase D: can an unverified production OAuth app hold `gmail.readonly` for its owner? If not, Testing mode with weekly re-consent.
@@ -2641,6 +2725,7 @@ measured on the app channel. To finish with `--resume`.
 
 | 2026-10-05 | **The richer digest, the week ahead, and scheduled reads** (ROADMAP block C: #6, #7, #8). The digest gains context lines (Hebrew date, weather; a candle-lighting line was built and taken out the same day at the user's request), Google Tasks due, and on Sunday the week ahead as counts per day (§6.12). New agent-only tool `reminders.scheduled_read` (Tier 1): a recurring reminder carrying a closed Tier 0 lookup that code runs and sends at the due time, with no model on that path; migration 0018 (`reminders.action`) (§6.4, §6.7). Reviewed in two rounds before building; what the review changed: the migration is registered in `src/platform/migrations.ts`; the digest leaves scheduled reads out (`plainOnly`), or a daily weather read would make every day send; the week walks recurring rules, so a daily reminder counts every day; a read re-checks its claim before the send, so a cancel during the fetch stops it; plain reminders go before reads, each read capped at 10 s; the agent prompt names the new tool. **Taint decision:** none needed — no model sees a scheduled read's result. Agent prompt **a7** (one sentence: a lookup on a schedule → `reminders.scheduled_read`); seven eval cases `sc-*`. `eval:agent --filter sc-` on qwen: 7/7, every quality gate passing (p95 latency failed on hotspot network errors). `--filter rm-` on qwen ran out of daily budget before starting; on gpt-oss-120b it scored 10/15, the five misses in alarm, move, monthly-slot and chag cases that the new sentence does not touch, none choosing the new tool — but there is no a6 gpt-oss baseline for these cases to compare. The `rm-` run on qwen and a full a7 run are owed |
 | 2026-10-05 | **Notes and expenses** (ROADMAP block D: #9, #10; app 0.9.0). The user's decisions: notes are never sent to the model; expenses stay on the server with an export to Excel as CSV through the app; a missing expense day is today (an explicit exception to invariant 4, asked and approved). Six agent-only tools (§6.4, §6.22): `notes.save` (1), `notes.find` (0), `notes.delete` (2), `expenses.add` (1), `expenses.summary` (0, terminal), `expenses.export` (card, cap `file`). Migration 0019. New registry flags `private`, `terminal`, `needsCap`; new `file` card. Reviewed in two rounds before building; what the review changed: privacy is a property of the tool, stamped on every reply path, not a flag on `execute` (the confirmation, the choice list and the Undo reply would otherwise carry a note into the history); expense days needed their own past-looking resolver, because `resolveWhen` only looks forward and its `relative_days` cannot say yesterday; the app's caps enum in `parse.ts` must accept `file`, and the server ships before the APK; notes are not encrypted at rest, since a key rotation would delete them; the export is capped at 2,000 rows and 150 KB and measured. Agent prompt **a8** (two sentences). Twelve eval cases `nx-*`, `xp-*`. qwen's daily budget was spent before they could run (1/6 answered, correct). On gpt-oss-120b the first run found two real faults, both fixed: "yesterday" sent as a DateSpec (`relative_days` offset 1, which is tomorrow there — the expense day became flat slots), and "all my notes" sent as an empty `query_variants` (now accepted). After the fix: `nx-` 6/6 with every quality gate passing; `xp-` 5 of 6 answered (one rate-limited; it answered correctly in the first run), one slot miss — "תדלקתי" filed under `other` rather than `fuel`, which the reply shows. p95 latency failed on hotspot network errors. qwen runs of `nx-`/`xp-`/`rm-` and a full a8 run are owed |
+| 2026-10-06 | **Real rate/budget failover, and fewer tokens per minute** (§6.19, "Failover and tokens"). The problem, measured: every agent call was about 6.2K tokens, so a read turn's second call failed the 7K turn cap and the backup was never tried; and one failed message spent both buckets — the parser re-asked qwen (metered only for the day) and then gpt-oss twice. Built: the static model table; reservations before every call (a missing usage is no longer charged as zero); the per-message refused set shared by agent, parser and read-only try; tool selection by code (one group or the full catalog); text-only calls after a read and on the last call; backup writes always confirm (`backup_model`); the write gate's fingerprint; evals `--select-tools`, a shared daily ledger, `run-turn-evals.ts` and `bench-tokens.ts`. A 429 now blocks until the later of the observed reset and its `retry-after` (an early unblock, found by a test, is fixed). Estimated by `bench-tokens`: first call median 6,220 → 2,834 tokens, read turn 12,631 → 4,118. Owed: qwen's `--select-tools` run and fingerprint, the turn benchmark, the calibration fixture, the Groq candidates, and Phase B. The user declined Gemini, Mistral and OpenRouter for this; Groq stays on the Free tier |
 ---
 
 ## 15. Sources (checked 2026-09-24)

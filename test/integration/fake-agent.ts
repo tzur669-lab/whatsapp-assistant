@@ -19,13 +19,19 @@ export type FakeAgent = AgentProvider & {
   tools: WireTool[][];
 };
 
-export function createFakeAgent(script: FakeStep[], model = 'fake-model', tokensPerCall = 500): FakeAgent {
+export function createFakeAgent(
+  script: FakeStep[],
+  model = 'fake-model',
+  tokensPerCall = 500,
+  role: 'primary' | 'backup' = 'primary',
+): FakeAgent {
   const calls: AgentMessage[][] = [];
   const tools: WireTool[][] = [];
   let index = 0;
 
   return {
     model,
+    role,
     calls,
     tools,
     async complete(messages, offered): Promise<AgentResponse> {

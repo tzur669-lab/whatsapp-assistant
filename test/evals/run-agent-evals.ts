@@ -16,7 +16,15 @@
  * `test/evals/recordings/agent-<model>.json` (git-ignored), so a run cut off by
  * the daily budget resumes where it stopped (`--resume`).
  *
- * Usage: pnpm eval:agent [--model <id>] [--sample N] [--filter he-rem] [--resume] [--read-only]
+ * Usage: pnpm eval:agent [--model <id>] [--sample N] [--filter he-rem] [--resume] [--read-only] [--select-tools]
+ *
+ * `--select-tools` (2026-10-06): offer each case only what the bot would — the
+ * one group its words name, or the full catalog — and, after a read, no tools
+ * at all, as the loop does. This is the write gate's run (PLAN §8); its report
+ * ends with the fingerprint to record in `src/agent/models.ts`.
+ *
+ * Every request is charged to the shared daily ledger before it is sent
+ * (`ledger.ts`): the evals stop themselves well before the live bot's quota.
  *
  * `--read-only` (2026-10-05): the fallback model's turn — reads only, and the
  * read-only line in the prompt. Recorded apart, and scored on what it may do:
@@ -30,6 +38,13 @@ import { createGroqAgentProvider } from '../../src/agent/provider.js';
 import type { AgentMessage, AgentProvider } from '../../src/agent/provider.js';
 import { languageLine, nowLine, READ_ONLY_NOTE, SYSTEM_PROMPT, AGENT_PROMPT_VERSION } from '../../src/agent/prompt.js';
 import { agentToolNames, fromWireName, wireTools } from '../../src/agent/tools.js';
+import type { WireTool } from '../../src/agent/provider.js';
+import { promptChars } from '../../src/agent/loop.js';
+import { CHARS_PER_TOKEN } from '../../src/agent/budget.js';
+import { DEFAULT_MAX_COMPLETION_TOKENS, modelEntry } from '../../src/agent/models.js';
+import { selectTools } from '../../src/agent/tool-groups.js';
+import { EvalLedger } from './ledger.js';
+import { fingerprintFor } from './fingerprint.js';
 import { stripNulls } from '../../src/nlu/json-schema.js';
 import { validateIntentDraft } from '../../src/nlu/intent-schema.js';
 import type { IntentDraft } from '../../src/nlu/intent-schema.js';
@@ -58,6 +73,9 @@ type Recorded = {
   error?: string;
   latencyMs: number;
   tokens: number;
+  /** For the estimator's calibration (§2): the characters it divides, and what Groq counted. */
+  chars?: number;
+  promptTokens?: number;
 };
 
 type Recording = { model: string; prompt: string; cases: Recorded[] };
@@ -98,6 +116,8 @@ const READ_TOOLS = new Set([
 
 /** Set once from `--read-only`, before any case is built. */
 let readOnly = false;
+/** Set once from `--select-tools`. */
+let selecting = false;
 
 function offered() {
   const grants = { gmail: true, tasks: true, drive: true };
@@ -113,11 +133,18 @@ async function main(): Promise<void> {
   const apiKey = process.env['GROQ_API_KEY'] ?? '';
   if (!apiKey) fail('GROQ_API_KEY is not set. Put it in .dev.vars (git-ignored).');
 
-  const provider = createGroqAgentProvider({ apiKey, model: args.model, timeoutMs: 30_000 });
+  selecting = args.selectTools;
+  const entry = modelEntry(args.model);
+  const provider = createGroqAgentProvider({
+    apiKey,
+    model: args.model,
+    timeoutMs: 30_000,
+    ...(entry ? { maxCompletionTokens: entry.maxCompletionTokens, params: entry.params } : {}),
+  });
   const cases = sampleCases(loadCases(args.filter), args.sample);
   const injections = args.filter ? INJECTION_CASES.filter((c) => c.id.includes(args.filter!)) : INJECTION_CASES;
 
-  const path = recordingPath(readOnly ? `${args.model}.read-only` : args.model);
+  const path = recordingPath(`${args.model}${readOnly ? '.read-only' : ''}${selecting ? '.select' : ''}`);
   const recording: Recording =
     args.resume && existsSync(path)
       ? (JSON.parse(readFileSync(path, 'utf8')) as Recording)
@@ -134,32 +161,54 @@ async function main(): Promise<void> {
   }
 
   let costliest = 0;
-  const todo: { id: string; messages: AgentMessage[] }[] = [
-    ...cases.map((c) => ({ id: c.id, messages: firstTurn(c.input, Date.parse(c.now)) })),
-    ...injections.map((c) => ({ id: c.id, messages: injectionTurn(c.input, c.title, c.via) })),
+  const todo: { id: string; messages: AgentMessage[]; tools: WireTool[] }[] = [
+    ...cases.map((c) => ({ id: c.id, messages: firstTurn(c.input, Date.parse(c.now)), tools: toolsFor(c.input) })),
+    // The read already ran: the loop's next call is text-only (§3).
+    ...injections.map((c) => ({ id: c.id, messages: injectionTurn(c.input, c.title, c.via), tools: selecting ? [] : toolsFor(c.input) })),
   ].filter((item) => !done.has(item.id));
 
-  for (const item of todo) {
-    const result = await ask(provider, item.id, item.messages);
-    if (result.error === 'daily_budget') {
+  const ledger = args.report ? null : EvalLedger.open(fileURLToPath(new URL('./recordings/', import.meta.url)));
+  try {
+    for (const item of todo) {
+      const stop = ledger?.stopReason(args.model);
+      if (stop) {
+        save(path, recording);
+        out(`\nStopped: ${stop}. Run again with --resume tomorrow.`);
+        break;
+      }
+      const chars = promptChars(item.messages, JSON.stringify(item.tools).length);
+      const charge = ledger!.begin(args.model, Math.ceil(chars / CHARS_PER_TOKEN) + (entry?.maxCompletionTokens ?? DEFAULT_MAX_COMPLETION_TOKENS));
+      const result = await ask(provider, item.id, item.messages, item.tools);
+      ledger!.settle(charge, result.tokens);
+      result.chars = chars;
+      if (result.error === 'daily_budget') {
+        save(path, recording);
+        out(`\nDaily budget exhausted after ${recording.cases.length} cases. Run again with --resume tomorrow.`);
+        break;
+      }
+      recording.cases.push(result);
       save(path, recording);
-      out(`\nDaily budget exhausted after ${recording.cases.length} cases. Run again with --resume tomorrow.`);
-      break;
-    }
-    recording.cases.push(result);
-    save(path, recording);
-    out(`  ${item.id.padEnd(16)} ${result.error ?? (result.text ? 'text' : intentOf(result.draft))}  ${result.latencyMs} ms`);
+      out(`  ${item.id.padEnd(16)} ${result.error ?? (result.text ? 'text' : intentOf(result.draft))}  ${result.latencyMs} ms`);
 
-    costliest = Math.max(costliest, result.tokens);
-    await sleep(spacingMs(costliest, TOKENS_PER_MINUTE, 60_000));
+      costliest = Math.max(costliest, result.tokens);
+      await sleep(spacingMs(costliest, TOKENS_PER_MINUTE, 60_000));
+    }
+  } finally {
+    ledger?.close();
   }
 
   scoreRun(cases, recording);
+  if (selecting && entry) out(`\nfingerprint for ${entry.id}: ${fingerprintFor(entry)} (record it in src/agent/models.ts only if every gate passed)`);
 }
 
-async function ask(provider: AgentProvider, id: string, messages: AgentMessage[]): Promise<Recorded> {
+/** What the bot would offer this message: the full set, or narrowed by code with `--select-tools`. */
+function toolsFor(input: string): WireTool[] {
+  return wireTools(selecting ? selectTools(input, offered()).tools : offered());
+}
+
+async function ask(provider: AgentProvider, id: string, messages: AgentMessage[], tools: WireTool[]): Promise<Recorded> {
   const started = Date.now();
-  const response = await provider.complete(messages, wireTools(offered()));
+  const response = await provider.complete(messages, tools);
   const latencyMs = Date.now() - started;
 
   if (!response.ok) {
@@ -170,8 +219,9 @@ async function ask(provider: AgentProvider, id: string, messages: AgentMessage[]
   }
 
   const tokens = response.usage.promptTokens + response.usage.completionTokens;
+  const promptTokens = response.usage.promptTokens;
   const call = response.toolCalls[0];
-  if (!call) return { id, draft: null, text: true, latencyMs, tokens };
+  if (!call) return { id, draft: null, text: true, latencyMs, tokens, promptTokens };
 
   const tool = fromWireName(call.name, offered());
   let slots: unknown = {};
@@ -180,7 +230,7 @@ async function ask(provider: AgentProvider, id: string, messages: AgentMessage[]
   } catch {
     slots = { __unparseable: true };
   }
-  return { id, draft: { intent: tool ?? `unknown:${call.name}`, slots }, latencyMs, tokens };
+  return { id, draft: { intent: tool ?? `unknown:${call.name}`, slots }, latencyMs, tokens, promptTokens };
 }
 
 /** The same messages the loop builds for a first call, with no history. */
@@ -389,6 +439,7 @@ function parseArgs(argv: string[]): {
   /** Re-score the saved recording only. No network, no budget spent. */
   report: boolean;
   readOnly: boolean;
+  selectTools: boolean;
 } {
   const value = (flag: string) => {
     const i = argv.indexOf(flag);
@@ -402,6 +453,7 @@ function parseArgs(argv: string[]): {
     resume: argv.includes('--resume') || argv.includes('--report'),
     report: argv.includes('--report'),
     readOnly: argv.includes('--read-only'),
+    selectTools: argv.includes('--select-tools'),
   };
 }
 

@@ -293,3 +293,28 @@ describe('action cards (PLAN §6.20)', () => {
     expect(decide('timer.set', ctx({ paused: true }))).toMatchObject({ decision: 'DENY', reason: 'paused' });
   });
 });
+
+describe('a backup model (2026-10-06)', () => {
+  it('puts a Tier 1 write behind a confirmation', () => {
+    const res = decide('reminders.create', ctx({ backupModel: true }));
+    expect(res).toMatchObject({ decision: 'CONFIRM', reason: 'backup_model' });
+  });
+
+  it('leaves a read alone', () => {
+    expect(decide('calendar.list_events', ctx({ backupModel: true }))).toMatchObject({ decision: 'ALLOW' });
+  });
+
+  it('still confirms Tier 2 and 3, recording the reason beside the tier', () => {
+    const res = decide('calendar.delete_event', ctx({ backupModel: true }));
+    expect(res.decision).toBe('CONFIRM');
+    expect(res.allReasons).toEqual(expect.arrayContaining(['backup_model', 'tier_requires_confirmation']));
+  });
+
+  it('never lets a card run on its own', () => {
+    expect(decide('alarm.set', ctx({ backupModel: true }))).toMatchObject({ decision: 'CONFIRM', confirmOnCard: true, autoRunAllowed: false });
+  });
+
+  it("keeps a call on the phone's own confirmation screen", () => {
+    expect(decide('calls.place', ctx({ backupModel: true }))).toMatchObject({ decision: 'CONFIRM', confirmOnDevice: true });
+  });
+});

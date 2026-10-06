@@ -23,6 +23,7 @@ export type PolicyReason =
   | 'far_future'
   | 'voice_uncertain'
   | 'tainted'
+  | 'backup_model'
   | 'tier_requires_confirmation'
   | 'card_confirmation'
   | 'allowed';
@@ -58,6 +59,12 @@ export type PolicyContext = {
    * instruction hidden in that text cannot act on its own (PLAN §6.19).
    */
   tainted?: boolean;
+  /**
+   * The draft came from a backup agent model (2026-10-06). It passed the same
+   * evals as the primary, but its writes are always confirmed: the user sees,
+   * rendered by code, exactly what will happen before it does.
+   */
+  backupModel?: boolean;
 };
 
 export type PolicyExtras = {
@@ -125,6 +132,7 @@ export function decide(tool: ToolName, ctx: PolicyContext, extras: PolicyExtras 
     reasons.push('voice_uncertain');
   }
   if (isWrite && ctx.tainted) reasons.push('tainted');
+  if (isWrite && ctx.backupModel) reasons.push('backup_model');
   if (tier >= 2) reasons.push('tier_requires_confirmation');
 
   // A card is always a confirmation: the claim that consumes it is the tap, or,

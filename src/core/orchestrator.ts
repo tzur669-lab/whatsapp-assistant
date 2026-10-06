@@ -126,6 +126,12 @@ export type TurnContext = {
   voiceConfidence?: 'high' | 'uncertain';
   /** The turn read text someone else wrote, or builds on one that did (§6.19). */
   tainted?: boolean;
+  /**
+   * The draft came from a backup agent model (2026-10-06): every write it
+   * proposes is put behind a confirmation. Set per call by the agent loop,
+   * never stored, never set by the parser path.
+   */
+  backupModel?: boolean;
 };
 
 /** The tools with an executable body. The rest parse but cannot yet run. */
@@ -238,6 +244,8 @@ async function runIntentInner(
     source: turn.source,
     ...(turn.voiceConfidence ? { voiceConfidence: turn.voiceConfidence } : {}),
     ...(turn.tainted ? { tainted: true } : {}),
+    // Without this line the flag would be silently dropped (§6).
+    ...(turn.backupModel ? { backupModel: true } : {}),
   }, { hasAttendees: hasAttendees(resolved.input) });
 
   ctx.log.info('policy_decision', {

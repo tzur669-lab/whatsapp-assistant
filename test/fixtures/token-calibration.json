@@ -1,0 +1,69 @@
+{
+ "source": "eval recordings (synthetic corpus)",
+ "pairs": [
+  {
+   "chars": 15557,
+   "promptTokens": 4843
+  },
+  {
+   "chars": 7076,
+   "promptTokens": 2248
+  },
+  {
+   "chars": 7067,
+   "promptTokens": 2240
+  },
+  {
+   "chars": 7072,
+   "promptTokens": 2244
+  },
+  {
+   "chars": 7097,
+   "promptTokens": 2255
+  },
+  {
+   "chars": 7064,
+   "promptTokens": 2238
+  },
+  {
+   "chars": 7082,
+   "promptTokens": 2247
+  },
+  {
+   "chars": 15549,
+   "promptTokens": 4849
+  },
+  {
+   "chars": 15549,
+   "promptTokens": 4849
+  },
+  {
+   "chars": 15538,
+   "promptTokens": 4841
+  },
+  {
+   "chars": 2910,
+   "promptTokens": 801
+  },
+  {
+   "chars": 2876,
+   "promptTokens": 799
+  },
+  {
+   "chars": 2913,
+   "promptTokens": 796
+  },
+  {
+   "chars": 2878,
+   "promptTokens": 802
+  },
+  {
+   "chars": 2896,
+   "promptTokens": 793
+  },
+  {
+   "chars": 2898,
+   "promptTokens": 813
+  }
+ ]
+}

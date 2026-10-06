@@ -64,7 +64,8 @@ import { eventText } from '../render/events.js';
 import { localPartsOf, offsetMinutesAt, ZONE } from '../time/tz.js';
 import { STALE_MESSAGE_MS } from '../channels/limits.js';
 import type { AgentProvider } from '../agent/provider.js';
-import type { TokenBudget } from '../agent/budget.js';
+import type { MessageScope, TokenBudget } from '../agent/budget.js';
+import { meterParsers, newMessageScope } from '../agent/budget.js';
 import type { ConversationHistory } from '../agent/history.js';
 import type { AgentLock } from '../agent/lock.js';
 import { resumeAgentTurn, runAgentTurn } from '../agent/loop.js';
@@ -86,6 +87,8 @@ export type AgentServices = {
   lock: AgentLock;
   /** Turns waiting for the phone (§6.21). Absent: phone reads are never offered. */
   turns?: SuspendedTurns;
+  /** The turn benchmark's OLD config only (`test/evals/run-turn-evals.ts`). Never set in production. */
+  legacyCatalog?: boolean;
 };
 
 /** The stateful collaborators the Durable Object owns and hands in. */
@@ -100,6 +103,11 @@ export type Services = {
   deferred: UndoActions;
   /** The fallback chain, in order. Empty means no parsing is available. */
   nlu: NluProvider[];
+  /**
+   * The per-model budget the parser spends from (plan K3). Present: the chain is
+   * metered once per message, with that message's refused models (§2b).
+   */
+  tokenBudget?: TokenBudget;
   /** Google's integration state. Absent only in tests that predate Phase 5. */
   google?: GoogleStore;
   /** The other Google grants — gmail, tasks, drive — each its own store (2026-10-01). */
@@ -448,15 +456,20 @@ async function respondToText(
 
   // 3. The agent (§6.19). It falls back to the parser below only when nothing
   //    ran — a fallback after a tool had run would run the message twice.
+  //    One scope for the whole message: a model that refused it for rate or
+  //    budget is not asked again by the agent, the parser, or the read-only try.
+  const scope = newMessageScope();
   let agentFailure: string | null = null;
   if (deps.services.agent) {
-    const answered = await respondWithAgent(deps.services.agent, text, source, event, deps, now);
+    const answered = await respondWithAgent(deps.services.agent, text, source, event, deps, now, { scope });
     if ('fellBack' in answered) agentFailure = answered.fellBack;
     else return answered;
   }
 
   // 3b. The LLM as a parser: the path before the agent, and its fallback.
-  const nlu = deps.services.nlu;
+  const nlu = deps.services.tokenBudget
+    ? meterParsers(deps.services.nlu, deps.services.tokenBudget, scope)
+    : deps.services.nlu;
   const parsed = await timed(deps, 'nlu', () =>
     parseWithFallback(nlu, promptInputFor(text, now), log),
   );
@@ -475,7 +488,7 @@ async function respondToText(
     // itself was the problem: it would be as long on the other model.
     const agent = deps.services.agent;
     if (agent?.fallbackProviders?.length && !TURN_SHAPE_FAILURES.has(agentFailure)) {
-      const answered = await respondWithAgent(agent, text, source, event, deps, now, { readOnly: true });
+      const answered = await respondWithAgent(agent, text, source, event, deps, now, { readOnly: true, scope });
       if (!('fellBack' in answered)) return answered;
     }
     repo.markInboundOutcome(event.wamid, { decision: 'CLARIFY', errorCode: `E_AGENT_${agentFailure.toUpperCase()}` });
@@ -520,8 +533,8 @@ async function respondWithAgent(
   event: Extract<InboundEvent, { kind: 'text' | 'audio' }>,
   deps: PipelineDeps,
   now: number,
-  /** The fallback model's read-only second try (2026-10-05). */
-  options: { readOnly?: boolean } = {},
+  /** The fallback model's read-only second try (2026-10-05), and the message's scope (§2b). */
+  options: { readOnly?: boolean; scope?: MessageScope } = {},
 ): Promise<PipelineOutcome | { fellBack: string }> {
   const { repo, log, principal } = deps;
   const turnId = event.wamid;
@@ -578,7 +591,13 @@ async function respondWithAgent(
             deps.channel === 'app' &&
             (deps.deviceCaps ?? []).includes('device_query'),
         },
-        { providers: readOnly ? (agent.fallbackProviders ?? []) : agent.providers, budget: agent.budget, log },
+        {
+          providers: readOnly ? (agent.fallbackProviders ?? []) : agent.providers,
+          budget: agent.budget,
+          log,
+          ...(options.scope ? { scope: options.scope } : {}),
+          ...(agent.legacyCatalog ? { legacyCatalog: true } : {}),
+        },
       ),
     );
 

@@ -86,6 +86,8 @@ const stateSchema = z
     toolCallId: z.string().min(1).max(200),
     tool: z.enum(TOOL_NAMES),
     query: phoneReadInputSchema,
+    // The narrowed tool set (2026-10-06); absent in states stored before it.
+    offered: z.array(z.enum(TOOL_NAMES)).max(TOOL_NAMES.length).optional(),
   })
   .strict();
 
