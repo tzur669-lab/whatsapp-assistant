@@ -148,4 +148,20 @@
     <string name="no_call_permission">אין הרשאה לחייג. יש לפתוח את האפליקציה ולאשר.</string>
     <string name="no_contacts_permission_title">אין גישה לאנשי קשר</string>
     <string name="no_contacts_permission_text">יש לפתוח את האפליקציה ולאשר גישה לאנשי קשר.</string>
+    <!-- Sharing into the app, the default assistant, the widget (0.11) -->
+    <string name="share_hint">מה לעשות עם הטקסט? למשל: תזכיר לי מחר ב־9</string>
+    <string name="share_banner">📎 טקסט ששותף: %1$s  ✕</string>
+    <string name="share_cancel_description">הקשה מבטלת את השיתוף</string>
+    <string name="share_empty">לא התקבל טקסט לשיתוף.</string>
+    <string name="share_no_command">אי אפשר לשלוח פקודה עם טקסט ששותף. יש לכתוב בקשה רגילה.</string>
+    <string name="chat_tap_to_talk">הקשה על 🎤 מתחילה הקלטה, והקשה נוספת שולחת אותה.</string>
+    <string name="chat_recording_tap">ההקלטה פועלת. הקשה נוספת על 🎤 שולחת אותה.</string>
+    <string name="assistant_default">🤖 עוזר ברירת המחדל</string>
+    <string name="assistant_default_hint">בהגדרות יש לפתוח את \"אפליקציית עוזר דיגיטלי\" ולבחור בה את \"העוזר\".</string>
+    <string name="widget_description">התזכורת האחרונה, וכפתורים לכתיבה ולהקלטה</string>
+    <string name="widget_title">העוזר</string>
+    <string name="widget_no_reminders">אין תזכורות חדשות</string>
+    <string name="widget_private_reminder">🔔 הגיעה תזכורת. אפשר לפתוח כדי לראות.</string>
+    <string name="widget_type">✏️ לכתוב</string>
+    <string name="widget_talk">🎤 לדבר</string>
 </resources>

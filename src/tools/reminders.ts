@@ -710,7 +710,7 @@ export const remindersLeave: ToolDefinition = {
   async resolveAsync(rawSlots, ctx): Promise<ResolveOutcome> {
     const parsed = remindersLeaveSlots.safeParse(rawSlots);
     if (!parsed.success) return clarifyMissing('target');
-    const slots = parsed.data;
+    const slots = { ...parsed.data, event: parsed.data.event?.length ? parsed.data.event : undefined };
     if (!slots.event && slots.next_event !== true) return clarifyMissing('target');
     if (!ctx.calendar) return { kind: 'clarify', clarify: { code: 'not_connected' } };
 

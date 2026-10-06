@@ -157,7 +157,9 @@ export const remindersAtRestSlots = z
  */
 export const remindersLeaveSlots = z
   .object({
-    event: queryVariantsSchema.optional(),
+    // Empty is accepted, as in notes.find: measured, a model sends [] for an
+    // event it did not name. Code reads it as no event, and asks.
+    event: z.array(z.string().min(1).max(MAX_QUERY_CHARS)).max(MAX_QUERY_VARIANTS).optional(),
     next_event: z.boolean().optional(),
     minutes: z.number().int().min(5).max(240).optional(),
   })

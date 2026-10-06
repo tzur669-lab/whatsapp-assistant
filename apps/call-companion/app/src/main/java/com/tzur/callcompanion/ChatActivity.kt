@@ -4,6 +4,7 @@ import android.Manifest
 import android.annotation.SuppressLint
 import android.app.Activity
 import android.app.AlertDialog
+import android.content.ActivityNotFoundException
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
@@ -25,6 +26,7 @@ import android.view.Gravity
 import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
+import android.view.inputmethod.InputMethodManager
 import android.widget.ArrayAdapter
 import android.widget.BaseAdapter
 import android.widget.Button
@@ -76,6 +78,15 @@ class ChatActivity : Activity(), ChatEvents.Listener {
     private var slashItems: List<ChatLogic.Command> = emptyList()
     /** The text a chosen command put in the field: not offered again for itself. */
     private var slashChosen: String? = null
+    /** Text shared from another app (0.11), waiting for the user to say what to do with it. */
+    private var pendingShared: String? = null
+    private lateinit var shareBanner: TextView
+    /**
+     * 🎤 works by taps rather than by holding (0.11): armed when the chat is
+     * opened as the assistant or from the widget. A tap starts the recording,
+     * the next one sends it. Nothing records before the user's tap.
+     */
+    private var tapMode = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -99,6 +110,7 @@ class ChatActivity : Activity(), ChatEvents.Listener {
 
         window.decorView.layoutDirection = View.LAYOUT_DIRECTION_RTL
         setContentView(buildLayout())
+        if (savedInstanceState == null) openFrom(intent)
 
         // Once, the first time: the weather where the phone is (0.8). A no keeps /city.
         if (PhoneLocation.shouldAsk(this)) {
@@ -111,6 +123,7 @@ class ChatActivity : Activity(), ChatEvents.Listener {
         setIntent(intent)
         if (::store.isInitialized) {
             openFromNotification(intent)
+            openFrom(intent)
             refresh()
         }
     }
@@ -120,6 +133,79 @@ class ChatActivity : Activity(), ChatEvents.Listener {
         val seq = intent?.getLongExtra(EXTRA_SEQ, 0L) ?: 0L
         if (seq <= 0) return
         store.conversationOfSeq(seq)?.let { switchTo(it, refreshNow = false) }
+    }
+
+    /**
+     * The chat opened as something more than the chat (0.11): text shared from
+     * another app, the default assistant (long press on home), or a widget
+     * button. None of them sends or records anything by itself.
+     */
+    private fun openFrom(intent: Intent?) {
+        intent ?: return
+        when {
+            intent.action == Intent.ACTION_SEND -> {
+                val shared = ChatLogic.sharedOf(
+                    intent.getStringExtra(Intent.EXTRA_TEXT),
+                    intent.getStringExtra(Intent.EXTRA_SUBJECT),
+                )
+                if (shared == null) {
+                    Toast.makeText(this, R.string.share_empty, Toast.LENGTH_LONG).show()
+                } else {
+                    // Its own conversation: someone else's words do not join an ongoing one.
+                    startNew()
+                    pendingShared = shared
+                    showShare()
+                    focusInput()
+                }
+            }
+            intent.action == Intent.ACTION_ASSIST -> {
+                leaveReminders()
+                armTapMode()
+            }
+            intent.getStringExtra(EXTRA_START) == START_VOICE -> {
+                leaveReminders()
+                armTapMode()
+            }
+            intent.getStringExtra(EXTRA_START) == START_TYPE -> {
+                leaveReminders()
+                focusInput()
+            }
+            intent.getStringExtra(EXTRA_START) == START_REMINDERS -> switchTo(ChatLogic.REMINDERS)
+            else -> return
+        }
+        // Handled once: a rotation or a return to the app does not repeat it.
+        setIntent(Intent(this, ChatActivity::class.java))
+    }
+
+    /** Nothing is written in the reminders conversation. */
+    private fun leaveReminders() {
+        if (current == ChatLogic.REMINDERS) startNew()
+    }
+
+    private fun focusInput() {
+        input.requestFocus()
+        input.post {
+            (getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager)
+                .showSoftInput(input, InputMethodManager.SHOW_IMPLICIT)
+        }
+    }
+
+    private fun armTapMode() {
+        tapMode = true
+        refresh()
+    }
+
+    private fun showShare() {
+        val shared = pendingShared
+        shareBanner.visibility = if (shared == null) View.GONE else View.VISIBLE
+        input.hint = getString(if (shared == null) R.string.chat_hint else R.string.share_hint)
+        if (shared != null) shareBanner.text = getString(R.string.share_banner, Ui.isolate(WidgetLogic.clip(shared)))
+    }
+
+    private fun cancelShare() {
+        pendingShared = null
+        showShare()
+        refresh()
     }
 
     private fun prefs() = getSharedPreferences(PREFS, Context.MODE_PRIVATE)
@@ -149,6 +235,7 @@ class ChatActivity : Activity(), ChatEvents.Listener {
         ChatEvents.foreground = false
         if (ChatEvents.listener === this) ChatEvents.listener = null
         if (::recorder.isInitialized && recorder.isRecording) recorder.cancel()
+        tapMode = false
     }
 
     override fun changed() = refresh()
@@ -241,6 +328,20 @@ class ChatActivity : Activity(), ChatEvents.Listener {
             setOnClickListener { openDrawer() }
         }
         root.addView(readonlyNote)
+
+        // Text shared from another app (0.11): shown above the field until sent; a tap drops it.
+        shareBanner = TextView(this).apply {
+            textSize = 13f
+            setTextColor(TEXT)
+            setBackgroundColor(NOTICE)
+            maxLines = 3
+            ellipsize = android.text.TextUtils.TruncateAt.END
+            setPadding(dp(16), dp(8), dp(16), dp(8))
+            visibility = View.GONE
+            contentDescription = getString(R.string.share_cancel_description)
+            setOnClickListener { cancelShare() }
+        }
+        root.addView(shareBanner)
 
         // In RTL the first child sits on the right: the field, then send, then the microphone.
         inputRow = LinearLayout(this).apply {
@@ -363,6 +464,14 @@ class ChatActivity : Activity(), ChatEvents.Listener {
             }
         })
         panel.addView(Button(this).apply {
+            text = getString(R.string.assistant_default)
+            isAllCaps = false
+            setOnClickListener {
+                closeDrawer()
+                openDefaultAppsSettings()
+            }
+        })
+        panel.addView(Button(this).apply {
             text = getString(R.string.guide_open)
             isAllCaps = false
             setOnClickListener {
@@ -371,6 +480,19 @@ class ChatActivity : Activity(), ChatEvents.Listener {
             }
         })
         return panel
+    }
+
+    /**
+     * Where the user picks the default digital assistant (0.11). The role
+     * cannot be requested by an app; the system settings are the only way.
+     */
+    private fun openDefaultAppsSettings() {
+        Toast.makeText(this, R.string.assistant_default_hint, Toast.LENGTH_LONG).show()
+        try {
+            startActivity(Intent(Settings.ACTION_MANAGE_DEFAULT_APPS_SETTINGS))
+        } catch (_: ActivityNotFoundException) {
+            startActivity(Intent(Settings.ACTION_SETTINGS))
+        }
     }
 
     /** On shows the town the phone was last found in, once it is known. */
@@ -519,12 +641,32 @@ class ChatActivity : Activity(), ChatEvents.Listener {
     private fun sendTyped() {
         val text = input.text.toString().trim()
         if (text.isEmpty() || Turns.busy || current == ChatLogic.REMINDERS) return
-        Turns.sendText(this, text, current)
+        val shared = pendingShared
+        if (shared != null && !ChatLogic.canSendWithShared(text)) {
+            Toast.makeText(this, R.string.share_no_command, Toast.LENGTH_LONG).show()
+            return
+        }
+        Turns.sendText(this, text, current, shared)
         input.text.clear()
+        pendingShared = null
+        showShare()
         refresh()
     }
 
     private fun onMicTouch(view: View, event: MotionEvent): Boolean {
+        if (tapMode) {
+            // A tap starts, the next tap sends (0.11).
+            if (event.actionMasked == MotionEvent.ACTION_UP) {
+                if (recorder.isRecording) {
+                    tapMode = false
+                    finishRecording()
+                } else {
+                    startRecording()
+                }
+                view.performClick()
+            }
+            return true
+        }
         when (event.actionMasked) {
             MotionEvent.ACTION_DOWN -> startRecording()
             MotionEvent.ACTION_UP -> {
@@ -610,9 +752,18 @@ class ChatActivity : Activity(), ChatEvents.Listener {
 
         val busy = Turns.busy
         sendButton.isEnabled = !busy
-        micButton.isEnabled = !busy || recorder.isRecording
-        status.visibility = if (busy || recorder.isRecording) View.VISIBLE else View.GONE
-        status.text = getString(if (recorder.isRecording) R.string.chat_recording else R.string.chat_busy)
+        // Shared text goes with a typed request only: a recording carries no second field.
+        micButton.isEnabled = (!busy && pendingShared == null) || recorder.isRecording
+        val armed = tapMode && !reminders && !busy
+        status.visibility = if (busy || recorder.isRecording || armed) View.VISIBLE else View.GONE
+        status.text = getString(
+            when {
+                recorder.isRecording && tapMode -> R.string.chat_recording_tap
+                recorder.isRecording -> R.string.chat_recording
+                busy -> R.string.chat_busy
+                else -> R.string.chat_tap_to_talk
+            },
+        )
         banner.visibility = if (Notifier.areEnabled(this)) View.GONE else View.VISIBLE
 
         // A card the server allows to run alone does, while the chat is on screen
@@ -627,6 +778,8 @@ class ChatActivity : Activity(), ChatEvents.Listener {
     }
 
     private fun toPairing(unpairedByServer: Boolean) {
+        // Nothing this phone showed stays on the home screen once it is unpaired.
+        if (unpairedByServer) AssistantWidget.clear(this)
         startActivity(
             Intent(this, PairActivity::class.java)
                 .putExtra(PairActivity.EXTRA_UNPAIRED, unpairedByServer)
@@ -773,6 +926,11 @@ class ChatActivity : Activity(), ChatEvents.Listener {
     companion object {
         /** On a notification's intent: the row it shows, to open its conversation. */
         const val EXTRA_SEQ = "seq"
+        /** On a widget button's intent (0.11): what to open the chat ready for. */
+        const val EXTRA_START = "start"
+        const val START_TYPE = "type"
+        const val START_VOICE = "voice"
+        const val START_REMINDERS = "reminders"
 
         private const val PREFS = "chat"
         private const val PREF_CONVERSATION = "conversation"

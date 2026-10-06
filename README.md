@@ -61,7 +61,7 @@ Details: [ARCHITECTURE.md](ARCHITECTURE.md) (code map) and
 
 ```
 src/               server source — see ARCHITECTURE.md §3 for each folder
-migrations/        SQLite schema, 0001…0020
+migrations/        SQLite schema, 0001…0021
 test/              unit · integration · security · evals
 apps/call-companion/  Android app (own Gradle build and README)
 ops/               runbook, secret rotation, token revoke, restore

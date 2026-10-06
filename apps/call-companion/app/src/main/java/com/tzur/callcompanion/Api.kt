@@ -116,8 +116,11 @@ object Api {
         text: String,
         conversation: String?,
         location: LocationLogic.Coarse? = null,
+        /** Text shared from another app (0.11): someone else's words, sent apart from the request. */
+        shared: String? = null,
     ): Pair<Result, Answer?> {
         val body = JSONObject().put("id", messageId).put("kind", "text").put("text", text)
+        shared?.let { body.put("shared", it) }
         ChatLogic.wireConversation(conversation)?.let { body.put("conversationId", it) }
         location?.let {
             val place = JSONObject().put("latitude", it.latitude).put("longitude", it.longitude)

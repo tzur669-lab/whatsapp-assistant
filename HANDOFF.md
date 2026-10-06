@@ -5,7 +5,7 @@ system is, where things live, and what breaks easily, then links out. It does
 **not** repeat the rules in `CLAUDE.md` (always loaded) or the spec in
 `PLAN.md` (read by section, never whole).
 
-_Last updated: 2026-10-06 · server at migration 0021 · agent prompt a8 · parser prompt v6 · app 0.10.0_
+_Last updated: 2026-10-06 · server at migration 0021 · agent prompt a9 · parser prompt v6 · app 0.11.0_
 
 ## 1. What this is
 
@@ -69,17 +69,15 @@ Network on the hotspot: `NODE_OPTIONS=--dns-result-order=ipv4first` for wrangler
 
 ## 6. Where the current work is
 
-- **Next work:** [ROADMAP.md](ROADMAP.md) (Hebrew) — block F, part 11 (share
-  to the bot) and part 12 (`reminders.leave`, the simple version with no
-  traffic API) are done **server-side** (migration 0021, `pnpm eval:agent`
-  not yet run on either — no new parser slot, so no gate blocks it, but it's
-  still owed). The Android half of part 11 (an `ACTION_SEND` share target
-  sending `shared` in `/app/message`) and all of part 12's widget are not
-  built — `Protocol.kt` has no matching field yet. Block E still needs a
-  deploy, `/connect contacts`, and the 0.10.0 APK with the call-log permission
-  granted.
-- **Owed / open decisions:** PLAN §13 (unchecked items) — e.g. a full qwen
-  `eval:agent` run on a8, qwen `--select-tools` fingerprint, token calibration.
+- **Next work:** [ROADMAP.md](ROADMAP.md) (Hebrew) — first unchecked block
+  (block G as of 2026-10-06: a reminder by place, an invitation from a photo,
+  then infrastructure). Block F is done (share to the bot, default assistant,
+  widget, "time to leave"); it needs a deploy and the 0.11.0 APK — **server
+  first**: an older server refuses the `shared` field. Block E still needs
+  `/connect contacts` and the call-log permission on the phone.
+- **Owed / open decisions:** PLAN §13 (unchecked items) — e.g. `lv-` and a
+  full `eval:agent` run on a9 for qwen, qwen `--select-tools` fingerprint,
+  token calibration.
 - **Latest decisions:** last rows of PLAN §14.
 
 ## 7. Docs map — what to read when
@@ -101,11 +99,11 @@ Network on the hotspot: `NODE_OPTIONS=--dns-result-order=ipv4first` for wrangler
 - 2026-10-06: Block F, server side of part 11 and 12: `reminders.leave`
   ("time to leave" for a calendar event, a Waze card on delivery) and text
   shared into the app (`channels/app/shared.ts`, tainted, skips the
-  deterministic shortcuts in `pipeline.ts`). Migration 0021. typecheck, lint
-  and 1892 server tests passed. `pnpm eval:agent` not run (no new parser
-  slot, so no threshold gates it, but it's still owed before the block is
-  called done). The Android app was not touched — still needed: an
-  `ACTION_SEND` share target and the widget.
+  deterministic shortcuts in `pipeline.ts`). Migration 0021.
+- 2026-10-06: Block F finished: agent prompt a9 (one sentence for
+  `reminders.leave`); `lv-` evals 4/4 on gpt-oss-120b; app 0.11.0 — share
+  target, default assistant (`ACTION_ASSIST`), tap-to-talk, home-screen
+  widget.
 
 - 2026-10-06: Added HANDOFF.md (imported by CLAUDE.md), ARCHITECTURE.md,
   README.md. PLAN §8 now points to ARCHITECTURE.md. No code changed.

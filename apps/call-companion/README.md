@@ -155,6 +155,31 @@ calls missed in the last day — names or none, and times. Nothing is shown.
 Voice messages never trigger a phone read (the server does not offer it), and
 the app declares `caps: ["cards", "device_query", "file", "calls_report"]`.
 
+## Sharing, the assistant and the widget (0.11)
+
+**Share to the assistant.** Any app's Share → העוזר. The text (and its subject,
+capped at 1,200 characters) opens a new conversation and waits above the field;
+the user writes what to do with it ("תזכיר לי מחר ב־9") and sends. A tap on the
+banner drops it. It is never sent on its own, and never with a `/` command or a
+recording. On the wire it is a separate `shared` field of the text message, and
+the server treats it as someone else's words: every write it leads to asks for
+confirmation and the answer stays off the lock screen. Needs the server from
+2026-10-06 (migration 0021): an older one refuses the field.
+
+**The default assistant.** ☰ → 🤖 עוזר ברירת המחדל opens the system's default
+apps; choosing העוזר as the digital assistant app makes a long press on home
+open the chat (`ACTION_ASSIST`). 🎤 then works by taps: one starts the recording,
+the next sends it. The activity is exported, so nothing records before that tap.
+
+**The widget.** The newest reminder the phone already has, its time, and two
+buttons: ✏️ לכתוב (the keyboard) and 🎤 לדבר (tap-to-talk). Redrawn when a
+reminder is fetched, never on a timer. A private reminder (one carrying text
+someone else wrote, like a "time to leave" with a calendar title) shows only
+that a reminder came. Cleared when the server unpairs the phone.
+
+**Time to leave.** A reminder set with "תזכיר לי מתי לצאת…" arrives with a Waze
+card to the event's place, if it has one. The card can be claimed for two hours.
+
 ## Setup
 
 1. **Firebase**: project `tzur-call-companion`, Android app

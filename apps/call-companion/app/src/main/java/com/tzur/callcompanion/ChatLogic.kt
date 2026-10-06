@@ -81,4 +81,30 @@ object ChatLogic {
     /** Only a real conversation id goes to the server; [REMINDERS] never does. */
     fun wireConversation(conversation: String?): String? =
         conversation?.takeIf { Protocol.MESSAGE_ID.matches(it) }
+
+    /**
+     * Text shared from another app (2026-10-06): the subject, when there is one
+     * and the text does not already start with it, then the text. Capped at the
+     * server's limit, on a whole character. Null when nothing is left.
+     */
+    fun sharedOf(text: String?, subject: String?): String? {
+        val body = text?.trim().orEmpty()
+        val title = subject?.trim().orEmpty()
+        val joined = when {
+            title.isEmpty() -> body
+            body.isEmpty() || body.startsWith(title) -> body.ifEmpty { title }
+            else -> "$title\n$body"
+        }
+        if (joined.isEmpty()) return null
+        if (joined.length <= Protocol.MAX_SHARED_CHARS) return joined
+        var end = Protocol.MAX_SHARED_CHARS
+        if (Character.isHighSurrogate(joined[end - 1])) end--
+        return joined.substring(0, end)
+    }
+
+    /** What the chat shows for a message sent with shared text: the request, then the text quoted. */
+    fun sharedDisplay(text: String, shared: String): String = "$text\n\n«$shared»"
+
+    /** A request sent with shared text may not be a command: the server refuses one. */
+    fun canSendWithShared(text: String): Boolean = !text.trimStart().startsWith("/")
 }

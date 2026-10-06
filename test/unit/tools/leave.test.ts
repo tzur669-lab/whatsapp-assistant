@@ -97,6 +97,10 @@ describe('reminders.leave', () => {
   it('asks rather than guesses', async () => {
     const calendar = calendarWith([event('ישיבה', NOW + 20 * 60_000)]);
     expect(await remindersLeave.resolveAsync!({}, ctx(calendar))).toEqual({ kind: 'clarify', clarify: { code: 'missing_slot', slot: 'target' } });
+    expect(await remindersLeave.resolveAsync!({ event: [], minutes: 60 }, ctx(calendar))).toEqual({
+      kind: 'clarify',
+      clarify: { code: 'missing_slot', slot: 'target' },
+    });
     expect(await remindersLeave.resolveAsync!({ event: ['טיסה'] }, ctx(calendar))).toEqual({ kind: 'clarify', clarify: { code: 'not_found' } });
     expect(await remindersLeave.resolveAsync!({ next_event: true }, ctx())).toEqual({ kind: 'clarify', clarify: { code: 'not_connected' } });
     // Twenty minutes away and half an hour to travel: too late.

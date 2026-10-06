@@ -81,6 +81,15 @@ Special shapes:
   under a header (`composeShared`), marks the inbound event `forwarded`, and
   skips every deterministic shortcut in `pipeline.ts` (commands, plain "כן",
   the open question) — those are the user's alone, never someone else's text.
+  `forwarded` also sets `TurnContext.tainted`, and a parser-path reply to it
+  is `private`. In the app (0.11) the share lands in `ChatActivity`
+  (`ACTION_SEND`, text only) and waits above the field for the user's request.
+- **The app as the default assistant and the widget** (0.11, ROADMAP #19,
+  #22): `ChatActivity` also answers `ACTION_ASSIST`; it and the widget's 🎤
+  button arm a tap-to-talk mode, but nothing records before the user's tap
+  (the activity is exported). `AssistantWidget` shows the newest reminder,
+  kept in its own preferences by `Sync` (`WidgetLogic`; a private row shows
+  no text).
 
 ## 3. Modules (`src/`)
 
@@ -91,7 +100,7 @@ Special shapes:
 | `channels/app/` | App ingress checks, request schemas, signature/pairing verify, outbox | §6.18 |
 | `channels/whatsapp/` | Frozen channel: HMAC verify, parse, send, media/voice download | §6.1 |
 | `core/` | `pipeline` (inbound order), `router` (commands), `orchestrator` (resolve→policy→act), `repo`/`sql` (data access), `digest`, `birthdays`, `missed-calls`, `scheduled-read`, `quota`, `timing`, `env` | §6.4, §6.12 |
-| `agent/` | Bounded tool loop, prompt (a8), compact catalog, tool groups, model table, token budget, history, lock, suspended turns | §6.19 |
+| `agent/` | Bounded tool loop, prompt (a9), compact catalog, tool groups, model table, token budget, history, lock, suspended turns | §6.19 |
 | `nlu/` | Fallback parser: prompt (v6), `IntentDraft` schema, slot schemas, Groq provider, rules fallback, weekday check, clarification answers | §6.2, §6.11 |
 | `tools/` | `registry.ts` (single source of truth: name, tier, slots, scopes, flags) + one file per area; `*-store.ts` hold SQL; `match.ts` finds targets | §6.4 |
 | `policy/` | Pure tier decision; WhatsApp 24 h window/budget | §6.4 |
@@ -113,7 +122,7 @@ Special shapes:
 
 ## 4. Storage
 
-One SQLite DB inside the DO. Schema = `migrations/0001…0020` (registered in
+One SQLite DB inside the DO. Schema = `migrations/0001…0021` (registered in
 `platform/migrations.ts`). Tables by area:
 
 | Area | Tables |

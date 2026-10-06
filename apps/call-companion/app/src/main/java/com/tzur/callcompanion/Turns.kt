@@ -31,13 +31,14 @@ object Turns {
 
     val busy: Boolean get() = queued.get() > 0
 
-    fun sendText(context: Context, text: String, conversation: String) {
+    fun sendText(context: Context, text: String, conversation: String, shared: String? = null) {
         val app = context.applicationContext
         val id = Protocol.newMessageId()
-        ChatStore.get(app).addOutgoing(id, "text", text, conversation)
+        val shown = if (shared == null) text else ChatLogic.sharedDisplay(text, shared)
+        ChatStore.get(app).addOutgoing(id, "text", shown, conversation)
         submit(app, id, null) {
             val here = PhoneLocation.now(app)
-            run(app, id, cheapResend = true) { Api.sendText(app, id, text, conversation, here) }
+            run(app, id, cheapResend = true) { Api.sendText(app, id, text, conversation, here, shared) }
         }
     }
 

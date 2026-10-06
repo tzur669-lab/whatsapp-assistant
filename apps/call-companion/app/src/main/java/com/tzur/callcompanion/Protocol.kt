@@ -29,6 +29,8 @@ object Protocol {
 
     /** The server's inbound cap on a typed message. */
     const val MAX_TEXT_CHARS = 2_000
+    /** The server's cap on text shared from another app (`parse.ts`, 2026-10-06). */
+    const val MAX_SHARED_CHARS = 1_200
 
     private const val CROCKFORD = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
     private const val CODE_LENGTH = 20

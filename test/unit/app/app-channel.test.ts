@@ -467,8 +467,12 @@ describe('the app channel', () => {
       buildWithAgent();
       const phone = await pair();
 
+      // A minute apart: three full-catalog turns in one minute would overflow
+      // a model's 8K bucket, and this test is about memory, not rate.
       await sayIn(phone, A, 'אני בשיחה א');
+      vi.advanceTimersByTime(61_000);
       await sayIn(phone, B, 'אני בשיחה ב');
+      vi.advanceTimersByTime(61_000);
       await sayIn(phone, A, 'ומה אמרתי?');
 
       // The third call, in A, sees A's earlier words and not B's.

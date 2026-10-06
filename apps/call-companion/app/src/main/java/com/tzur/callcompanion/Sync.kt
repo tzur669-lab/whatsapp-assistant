@@ -24,8 +24,11 @@ object Sync {
             if (result is Api.Result.Unpaired) ChatEvents.unpaired()
             if (page == null) return Outcome(false, fresh)
 
-            fresh += store.saveRows(page.rows)
+            val saved = store.saveRows(page.rows)
+            fresh += saved
             if (fresh.isNotEmpty()) ChatEvents.changed()
+            // The home-screen widget shows the newest reminder (0.11).
+            AssistantWidget.record(context, saved)
 
             val acked = Api.ack(context, page.rows.map { it.seq }.filter { it > 0 }, timeoutMs)
             // Unacked rows come back first on the next page; stop rather than re-read them.
