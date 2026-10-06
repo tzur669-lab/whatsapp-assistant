@@ -71,7 +71,34 @@ export function phoneReadText(query: PhoneReadInput, items: readonly PhoneItem[]
       }
       return [he ? 'הודעות SMS:' : 'SMS messages:', ...lines].join('\n');
     }
+
+    case 'calls': {
+      const lines = items.map((item) => {
+        const caller = cleanItemText(item.sender) || (he ? 'מספר לא מזוהה' : 'Unknown number');
+        const label = callLabel(cleanItemText(item.title), lang);
+        return `• ${when(item.at, lang)}${isolate(caller)}${label ? ` · ${label}` : ''}`;
+      });
+      if (lines.length === 0) {
+        if (query.missed) return he ? 'אין שיחות שלא נענו.' : 'No missed calls.';
+        return he ? 'אין שיחות שמתאימות לבקשה.' : 'No calls match that.';
+      }
+      const title = query.missed ? (he ? 'שיחות שלא נענו:' : 'Missed calls:') : he ? 'שיחות אחרונות:' : 'Recent calls:';
+      return [title, ...lines].join('\n');
+    }
   }
+}
+
+const CALL_LABELS: Readonly<Record<string, { he: string; en: string }>> = {
+  missed: { he: 'לא נענתה', en: 'missed' },
+  incoming: { he: 'נכנסת', en: 'incoming' },
+  outgoing: { he: 'יוצאת', en: 'outgoing' },
+  rejected: { he: 'נדחתה', en: 'declined' },
+};
+
+/** A call's direction, from the closed list the phone sends; anything else is left out. */
+function callLabel(title: string, lang: Lang): string {
+  const label = CALL_LABELS[title];
+  return label ? label[lang] : '';
 }
 
 /** The phone could not read: the permission is off, or this build cannot. */
@@ -95,5 +122,9 @@ export function phoneReadRefused(kind: PhoneReadKind, status: 'denied' | 'unsupp
       return he
         ? 'לאפליקציה אין הרשאה לקרוא SMS. אפשר לאשר אותה במסך ההגדרות של האפליקציה.'
         : 'The app has no permission to read SMS. It can be granted in the app settings.';
+    case 'calls':
+      return he
+        ? 'לאפליקציה אין הרשאה לקרוא את יומן השיחות. אפשר לאשר אותה במסך ההגדרות של האפליקציה.'
+        : 'The app has no permission to read the call log. It can be granted in the app settings.';
   }
 }

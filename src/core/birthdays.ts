@@ -4,11 +4,10 @@
  * `/birthday דנה 14.3` adds one, `/birthday` lists them, `/birthday מחק דנה`
  * removes one. On the day, the daily digest leads with it.
  *
- * **Local, not from Google Contacts.** Contacts would mean a third OAuth scope —
- * a §14 security decision — and would hand this assistant every address the
- * user owns in order to answer a question about eight of them. A list the user
- * types is a worse feature and a far better trade, and it is stated here rather
- * than left as an omission somebody later "fixes".
+ * Since 2026-10-06 (ROADMAP #11) Google Contacts' birthdays join it when the
+ * user connects the separate `contacts` grant (`src/google/contacts.ts`, names
+ * and birthdays only). The local list stays: it works without the grant, and
+ * it holds the people who are not in Contacts.
  *
  * Names are message content: stored, never logged.
  */
@@ -93,21 +92,45 @@ export class BirthdayStore {
    * not a moment, and it is the same day whatever the clock does.
    */
   on(principal: string, atMs: number, zone: string = ZONE): Birthday[] {
-    const local = localPartsOf(atMs, zone);
-
-    // 29 February, in a year that has no 29 February, is marked on the 28th.
-    // That is the commoner practice and the only reading that happens every
-    // year; skipping it three years in four would be the feature quietly not
-    // working for exactly the person most likely to notice.
-    const leaplingToday =
-      local.month === 2 && local.day === 28 && !isLeapYear(local.year);
-
-    return this.list(principal).filter(
-      (entry) =>
-        (entry.month === local.month && entry.day === local.day) ||
-        (leaplingToday && entry.month === 2 && entry.day === 29),
-    );
+    return birthdaysOn(this.list(principal), atMs, zone);
   }
+}
+
+/**
+ * Whose birthday falls on the local day containing `atMs`, from any list.
+ *
+ * 29 February, in a year that has no 29 February, is marked on the 28th.
+ * That is the commoner practice and the only reading that happens every
+ * year; skipping it three years in four would be the feature quietly not
+ * working for exactly the person most likely to notice.
+ */
+export function birthdaysOn<T extends { day: number; month: number }>(list: readonly T[], atMs: number, zone: string = ZONE): T[] {
+  const local = localPartsOf(atMs, zone);
+  const leaplingToday = local.month === 2 && local.day === 28 && !isLeapYear(local.year);
+  return list.filter(
+    (entry) =>
+      (entry.month === local.month && entry.day === local.day) ||
+      (leaplingToday && entry.month === 2 && entry.day === 29),
+  );
+}
+
+/** A name as compared across lists: spacing and case do not make two people. */
+const nameKey = (name: string) => name.replace(/\s+/g, ' ').trim().toLowerCase();
+
+/**
+ * The local list and Google's, as one. Someone on both on the same day is
+ * listed once; the local entry wins, because the user typed it.
+ */
+export function mergeBirthdays<T extends { name: string; day: number; month: number }>(local: readonly T[], google: readonly T[]): T[] {
+  const seen = new Set(local.map((entry) => `${nameKey(entry.name)}|${entry.day}|${entry.month}`));
+  const out = [...local];
+  for (const entry of google) {
+    const key = `${nameKey(entry.name)}|${entry.day}|${entry.month}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(entry);
+  }
+  return out;
 }
 
 function isLeapYear(year: number): boolean {

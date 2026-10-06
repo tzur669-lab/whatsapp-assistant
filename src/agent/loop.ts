@@ -426,14 +426,18 @@ async function drive(loop: Loop, deps: AgentDeps): Promise<AgentResult> {
 
     loop.toolRan = true;
     if (!reply.read) {
+      // A reply that ends the turn still carries what it read: a terminal read
+      // of mail, or a card built from an event, is someone else's words in the
+      // history the model sees next time (2026-10-06).
+      const tainted = loop.tainted || TAINTING_TOOLS.has(outcome.tool) || reply.tainting === true;
       // A backup's question is stored tainted, so the answered write still confirms (§6).
       const question = reply.question
-        ? { ...reply.question, tainted: loop.tainted || loop.provider.role !== 'primary' }
+        ? { ...reply.question, tainted: tainted || loop.provider.role !== 'primary' }
         : undefined;
       return {
         kind: 'reply',
         reply: { ...reply, ...(question ? { question } : {}) },
-        tainted: loop.tainted,
+        tainted,
         byModel: false,
       };
     }

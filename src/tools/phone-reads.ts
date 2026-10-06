@@ -1,5 +1,6 @@
 /**
- * Phone reads: contacts, notifications, SMS (PLAN §6.21).
+ * Phone reads: contacts, notifications, SMS, and since 2026-10-06 the call log
+ * (PLAN §6.21).
  *
  * The server cannot read these; the paired phone can. So a phone read never
  * executes here. `resolve` turns the agent's slots into one exact, validated
@@ -24,6 +25,8 @@ import {
   MAX_QUERY_VARIANTS,
   MAX_SENDER_CHARS,
   MAX_SMS_HOURS,
+  MAX_CALL_HOURS,
+  phoneCallsSlots,
   phoneContactsSlots,
   phoneNotificationsSlots,
   phoneSmsSlots,
@@ -52,6 +55,14 @@ export const phoneReadInputSchema = z.discriminatedUnion('kind', [
       kind: z.literal('sms'),
       sender: z.string().min(1).max(MAX_SENDER_CHARS).optional(),
       hours: z.number().int().min(1).max(MAX_SMS_HOURS),
+    })
+    .strict(),
+  z
+    .object({
+      kind: z.literal('calls'),
+      name: z.string().min(1).max(MAX_SENDER_CHARS).optional(),
+      missed: z.boolean(),
+      hours: z.number().int().min(1).max(MAX_CALL_HOURS),
     })
     .strict(),
 ]);
@@ -133,8 +144,19 @@ export const phoneSms = readTool('phone.sms', (raw) => {
   });
 });
 
+export const phoneCalls = readTool('phone.calls', (raw) => {
+  const slots = phoneCallsSlots.parse(raw);
+  return ready({
+    kind: 'calls',
+    ...(slots.name ? { name: slots.name } : {}),
+    missed: slots.missed === true,
+    hours: slots.hours ?? DEFAULT_HOURS,
+  });
+});
+
 export const PHONE_READ_TOOLS: Readonly<Partial<Record<ToolName, ToolDefinition>>> = {
   'phone.contacts': phoneContacts,
   'phone.notifications': phoneNotifications,
   'phone.sms': phoneSms,
+  'phone.calls': phoneCalls,
 };

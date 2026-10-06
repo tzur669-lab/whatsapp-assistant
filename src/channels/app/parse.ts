@@ -89,15 +89,44 @@ const pairSchema = z
 export type PairRequest = z.infer<typeof pairSchema>;
 
 /**
- * The push address, and what this build of the app can do (PLAN §6.20). An
- * unknown capability is a refusal, like any unknown field: the list is closed.
+ * What this build of the app can do. `cards`: runs action cards (§6.20).
+ * `device_query`: answers phone reads (§6.21). `file`: saves the file a card
+ * carries (2026-10-05). `calls_report`: answers the digest's ask for missed
+ * calls (2026-10-06).
+ */
+export const KNOWN_CAPS = ['cards', 'device_query', 'file', 'calls_report'] as const;
+export type Cap = (typeof KNOWN_CAPS)[number];
+
+/**
+ * The push address and the caps (PLAN §6.20). A cap this server does not know
+ * is dropped, not refused (2026-10-06): a newer app on an older server — or
+ * after a rollback — must still get its pushes. Only known caps are kept, so
+ * nothing the phone made up is stored; the length caps stay.
  */
 const pushTokenSchema = z
   .object({
     pushToken: z.string().min(1).max(4_096),
-    // `cards`: runs action cards (§6.20). `device_query`: answers phone reads (§6.21).
-    // `file`: saves the file a card carries (2026-10-05, the expenses export).
-    caps: z.array(z.enum(['cards', 'device_query', 'file'])).max(8).optional(),
+    caps: z
+      .array(z.string().min(1).max(32))
+      .max(16)
+      .transform((caps) => caps.filter((cap): cap is Cap => (KNOWN_CAPS as readonly string[]).includes(cap)))
+      .optional(),
+  })
+  .strict();
+
+/** The phone's answer to the digest's ask (2026-10-06): names or none, and times. Never a number. */
+const callsReportSchema = z
+  .object({
+    calls: z
+      .array(
+        z
+          .object({
+            name: z.string().min(1).max(60).optional(),
+            at: z.number().int().nonnegative(),
+          })
+          .strict(),
+      )
+      .max(20),
   })
   .strict();
 
@@ -193,6 +222,10 @@ export function parsePair(body: Uint8Array): PairRequest | null {
 
 export function parsePushToken(body: Uint8Array): z.infer<typeof pushTokenSchema> | null {
   return parseWith(pushTokenSchema, body);
+}
+
+export function parseCallsReport(body: Uint8Array): z.infer<typeof callsReportSchema> | null {
+  return parseWith(callsReportSchema, body);
 }
 
 export function parseReport(body: Uint8Array): z.infer<typeof reportSchema> | null {

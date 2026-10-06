@@ -30,6 +30,7 @@ import {
   timerSetSlots,
 } from '../nlu/slot-schemas.js';
 import { applyMeridiem } from '../time/resolve.js';
+import { matchByText } from './match.js';
 import type { TimeSpec } from '../time/resolve.js';
 import { cardPreview } from '../render/phone.js';
 import type { CardInput } from '../render/phone.js';
@@ -47,6 +48,10 @@ export const cardInputSchema = z.discriminatedUnion('type', [
       app: z.enum(['waze', 'maps']),
       destination: z.string().min(1).max(MAX_DESTINATION_CHARS).optional(),
       favorite: z.enum(['home', 'work']).optional(),
+      // A contact's address, looked up on the phone (2026-10-06); it never reaches here.
+      contact: queries.optional(),
+      // The destination is a calendar event's location: someone else's words.
+      source: z.literal('event').optional(),
     })
     .strict(),
   z.object({ type: z.literal('app'), queries }).strict(),
@@ -68,14 +73,20 @@ export const cardInputSchema = z.discriminatedUnion('type', [
   z
     .object({
       type: z.literal('media'),
-      app: z.enum(['youtube', 'youtube_music']),
+      app: z.enum(['youtube', 'youtube_music', 'spotify']),
       query: z.string().min(1).max(MAX_QUERY_CHARS),
       mode: z.enum(['background', 'fullscreen']),
     })
     .strict(),
 ])
-  // A navigation names a place or a saved favorite, exactly one of the two.
-  .refine((value) => value.type !== 'nav' || (value.destination === undefined) !== (value.favorite === undefined));
+  // A navigation names a place, a saved favorite or a contact, exactly one; and
+  // only a place can come from an event.
+  .refine(
+    (value) =>
+      value.type !== 'nav' ||
+      ([value.destination, value.favorite, value.contact].filter((target) => target !== undefined).length === 1 &&
+        (value.source === undefined || value.destination !== undefined)),
+  );
 
 function ready(input: CardInput): ResolveOutcome {
   const parsed = cardInputSchema.safeParse(input);
@@ -153,16 +164,56 @@ export const timerSet = cardTool('timer.set', (raw) => {
   return ready({ type: 'timer', seconds: slots.duration_minutes * 60, ...(slots.label ? { label: slots.label } : {}) });
 });
 
-export const navGo = cardTool('nav.go', (raw) => {
-  const slots = navGoSlots.parse(raw);
-  const destination = slots.destination?.trim();
-  if (!destination) return missing('destination');
-  const app = slots.app ?? 'waze';
-  const key = destination.toLowerCase();
-  if (HOME.has(key)) return ready({ type: 'nav', app, favorite: 'home' });
-  if (WORK.has(key)) return ready({ type: 'nav', app, favorite: 'work' });
-  return ready({ type: 'nav', app, destination });
-});
+const navGoSync = cardTool(
+  'nav.go',
+  (raw) => {
+    const slots = navGoSlots.parse(raw);
+    const app = slots.app ?? 'waze';
+    if (slots.contact) return ready({ type: 'nav', app, contact: slots.contact });
+    const destination = slots.destination?.trim();
+    if (!destination) return missing('destination');
+    const key = destination.toLowerCase();
+    if (HOME.has(key)) return ready({ type: 'nav', app, favorite: 'home' });
+    if (WORK.has(key)) return ready({ type: 'nav', app, favorite: 'work' });
+    return ready({ type: 'nav', app, destination });
+  },
+  // A place taken from an event waits for the tap: someone else chose those words.
+  (input) => input.type !== 'nav' || input.source !== 'event',
+);
+
+/** How far ahead an event to navigate to is looked for. */
+const NAV_EVENT_DAYS = 7;
+
+/**
+ * Navigation to a calendar event (#21, 2026-10-06): the event is found in code,
+ * by its title's words or as the next one with a place, and its location is the
+ * destination. An event with no location is asked about, never guessed.
+ */
+export const navGo: ToolDefinition = {
+  ...navGoSync,
+  async resolveAsync(rawSlots, ctx): Promise<ResolveOutcome> {
+    const parsed = navGoSlots.safeParse(rawSlots);
+    if (!parsed.success || (!parsed.data.event && parsed.data.next_event !== true)) return navGoSync.resolve(rawSlots, ctx);
+    const slots = parsed.data;
+    if (!ctx.calendar) return { kind: 'clarify', clarify: { code: 'not_connected' } };
+    const listed = await ctx.calendar.listAllEvents({
+      startUtc: ctx.nowMs,
+      endUtc: ctx.nowMs + NAV_EVENT_DAYS * 86_400_000,
+      limit: 50,
+    });
+    if (!listed.ok) {
+      return listed.error.code === 'not_connected' || listed.error.code === 'disconnected'
+        ? { kind: 'clarify', clarify: { code: 'not_connected' } }
+        : { kind: 'clarify', clarify: { code: 'not_found' } };
+    }
+    const candidates = slots.event ? matchByText(listed.value, slots.event, (event) => event.title) : listed.value;
+    if (candidates.length === 0) return { kind: 'clarify', clarify: { code: 'not_found' } };
+    // The soonest match with a place. A match without one is a question, not a guess.
+    const target = candidates.find((event) => event.location) ?? null;
+    if (!target?.location) return missing('destination');
+    return ready({ type: 'nav', app: slots.app ?? 'waze', destination: target.location.slice(0, MAX_DESTINATION_CHARS), source: 'event' });
+  },
+};
 
 export const appOpen = cardTool('app.open', (raw) => {
   const slots = appOpenSlots.parse(raw);
@@ -181,6 +232,8 @@ export const mediaPlay = cardTool('media.play', (raw) => {
   const slots = mediaPlaySlots.parse(raw);
   const query = slots.query?.trim();
   if (!query) return missing('media');
+  // Spotify plays in its own app (2026-10-06): there is no mode to choose.
+  if (slots.app === 'spotify') return ready({ type: 'media', app: 'spotify', query, mode: 'fullscreen' });
   if (!slots.app && !slots.mode) return missing('media_app_mode');
   if (!slots.app) return missing('media_app');
   if (!slots.mode) return missing('play_mode');

@@ -22,6 +22,11 @@
     -->
     <uses-permission android:name="android.permission.READ_SMS" />
     <!--
+      The call log (2026-10-06): "who called me", and the missed calls in the
+      morning digest. Read on the phone; names and times leave it, never a number.
+    -->
+    <uses-permission android:name="android.permission.READ_CALL_LOG" />
+    <!--
       The weather and the Shabbat times where the phone is (0.8): approximate
       location only, read when a message is sent, rounded to about a kilometre.
       Asked for once; off in the menu at any time.

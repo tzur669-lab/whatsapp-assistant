@@ -19,6 +19,7 @@
 import type { NoteStore } from '../tools/note-store.js';
 import type { ExpenseStore } from '../tools/expense-store.js';
 import type { DriveClient } from '../google/drive.js';
+import type { ContactsClient } from '../google/contacts.js';
 import type { GmailClient } from '../google/gmail.js';
 import type { TasksClient } from '../google/tasks.js';
 import type { GrantName } from '../google/grants.js';
@@ -118,6 +119,8 @@ export type Services = {
   gmail?: GmailClient;
   /** Google Drive's file search, once its grant is connected. */
   drive?: DriveClient;
+  /** Google Contacts' birthdays, once its grant is connected (2026-10-06). */
+  contacts?: ContactsClient;
   /** Present once a grant exists; calendar tools answer "not connected" without it. */
   calendar?: CalendarClient;
   /** Where the one-time connect link points. */
@@ -1145,6 +1148,8 @@ function turnOf(
       ...(services.tasks ? { tasks: services.tasks } : {}),
       ...(services.gmail ? { gmail: services.gmail } : {}),
       ...(services.drive ? { drive: services.drive } : {}),
+      ...(services.contacts ? { contacts: services.contacts } : {}),
+      ...(services.birthdays ? { birthdays: services.birthdays } : {}),
       ...(services.notes ? { notes: services.notes } : {}),
       ...(services.expenses ? { expenses: services.expenses } : {}),
     },

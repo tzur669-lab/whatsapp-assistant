@@ -224,11 +224,21 @@ export const timerSetSlots = z
   })
   .strict();
 
-/** "נווט הביתה". The destination is the user's words; Waze or Maps finds it. */
+/**
+ * "נווט הביתה". The destination is the user's words; Waze or Maps finds it.
+ * Since 2026-10-06 (#21) it can instead be a contact, whose address the phone
+ * looks up, or a calendar event, whose location code reads: exactly one.
+ */
 export const navGoSlots = z
   .object({
     destination: z.string().min(1).max(MAX_DESTINATION_CHARS).optional(),
     app: z.enum(['waze', 'maps']).optional(),
+    /** A contact's name, matched on the phone; the address never leaves it. */
+    contact: queryVariantsSchema.optional(),
+    /** A calendar event's title, matched in code. */
+    event: queryVariantsSchema.optional(),
+    /** The next event that has a location. */
+    next_event: z.boolean().optional(),
   })
   .strict();
 
@@ -246,7 +256,7 @@ export const appOpenSlots = z
  */
 export const mediaPlaySlots = z
   .object({
-    app: z.enum(['youtube', 'youtube_music']).optional(),
+    app: z.enum(['youtube', 'youtube_music', 'spotify']).optional(),
     query: z.string().min(1).max(MAX_QUERY_CHARS).optional(),
     mode: z.enum(['background', 'fullscreen']).optional(),
   })
@@ -303,6 +313,18 @@ export const phoneSmsSlots = z
   .object({
     sender: z.string().min(1).max(MAX_SENDER_CHARS).optional(),
     hours: z.number().int().min(1).max(MAX_SMS_HOURS).optional(),
+  })
+  .strict();
+
+/** "מי התקשר אליי היום?", "פספסתי שיחות?" (#20, 2026-10-06). */
+export const MAX_CALL_HOURS = 7 * 24;
+export const phoneCallsSlots = z
+  .object({
+    /** A caller's name, as said. */
+    name: z.string().min(1).max(MAX_SENDER_CHARS).optional(),
+    /** Missed calls only. */
+    missed: z.boolean().optional(),
+    hours: z.number().int().min(1).max(MAX_CALL_HOURS).optional(),
   })
   .strict();
 
@@ -530,6 +552,29 @@ export const driveSearchSlots = z
     kind: z.enum(['any', 'document', 'spreadsheet', 'presentation', 'pdf', 'image', 'folder']).optional(),
     /** Changed within this many days. */
     days: z.number().int().min(1).max(365).optional(),
+  })
+  .strict();
+
+// -- block E (2026-10-06) ---------------------------------------------------------
+
+export const MAX_BIRTHDAY_DAYS = 90;
+
+/** "של מי יום הולדת השבוע?", "מתי יום ההולדת של דנה?" (#11). */
+export const birthdaysUpcomingSlots = z
+  .object({
+    /** A person's name: that person's birthday, whenever it is. */
+    query_variants: queryVariantsSchema.optional(),
+    /** How many days ahead. Default 30. */
+    days: z.number().int().min(1).max(MAX_BIRTHDAY_DAYS).optional(),
+  })
+  .strict();
+
+export const MAX_BILL_DAYS = 120;
+
+/** "אילו חשבונות יש לי לשלם?" (#24). The query is code's; the model says how far back. */
+export const mailBillsSlots = z
+  .object({
+    days: z.number().int().min(1).max(MAX_BILL_DAYS).optional(),
   })
   .strict();
 

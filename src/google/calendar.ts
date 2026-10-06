@@ -45,6 +45,11 @@ export type CalendarEvent = {
   /** Set on events this assistant created (PLAN §6.6, event tagging). */
   createdByAssistant: boolean;
   etag: string | null;
+  /**
+   * Where it is, as the event says (2026-10-06): only for navigating there
+   * (`nav.go`), never rendered in a list. Someone else's words for an invitation.
+   */
+  location?: string;
 };
 
 /** `changed`: the event changed since it was previewed. `not_found`: deleted elsewhere. */
@@ -294,7 +299,19 @@ function toEvent(raw: unknown): CalendarEvent | null {
     allDay: start.allDay,
     createdByAssistant: privateProps?.['assistant'] === '1',
     etag: typeof record.etag === 'string' ? record.etag : null,
+    ...(locationOf(record.location) ? { location: locationOf(record.location)! } : {}),
   };
+}
+
+/** The longest place a navigation card carries (`MAX_DESTINATION_CHARS`). */
+const MAX_LOCATION_CHARS = 100;
+
+function locationOf(value: unknown): string | null {
+  if (typeof value !== 'string') return null;
+  // One line, no control characters: it is shown on a card and searched for in Waze.
+  // eslint-disable-next-line no-control-regex -- removing control characters is the point
+  const clean = value.replace(/[\u0000-\u001f\u007f-\u009f‎‏‪-‮⁦-⁩]/g, ' ').replace(/\s+/g, ' ').trim();
+  return clean ? clean.slice(0, MAX_LOCATION_CHARS) : null;
 }
 
 function timeOf(value: unknown): { utcMs: number; allDay: boolean } | null {

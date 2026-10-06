@@ -462,6 +462,9 @@ interface ToolDefinition<I, R> {
 | `notes.delete` (agent-only) | query_variants | 2 | Private. Matched in code like a cancel; several → numbered choice; the confirmation shows the note. Gone by the tap → "already gone" |
 | `expenses.add` (agent-only, 2026-10-05) | amount (shekels), category? (closed list), description? (≤60), days_ago? (0–366), weekday? (0–6), on_date? (day, month, year?) | 1 | ROADMAP #10, §6.22. Whole agorot. The day is flat slots, not a DateSpec: measured, a model wrote "yesterday" as `relative_days` offset 1, which is tomorrow there. It looks **back** (`src/time/past-day.ts`); a date wins over a weekday, a weekday over days ago; `weekday` joins the weekday check (§6.2); a day to come, one more than a year back, or one that does not exist → CLARIFY. **No day said = today** (the user's decision, 2026-10-05). Category absent → `other`. Undo deletes it |
 | `expenses.summary` (agent-only) | period? (today · this_week · last_week · this_month · last_month · this_year · all; default this_month), category? | 0 | Summed in SQL; total, count, per category. **Terminal** (`ToolSpec.terminal`): code's text ends the turn — sums are numbers the model-bound scrub would blank. Weeks run Sunday to Saturday. Not private |
+| `birthdays.upcoming` (agent-only, 2026-10-06) | query_variants?, days? (1–90, default 30) | 0 | ROADMAP #11. The local list (§6.16) and, with the `contacts` grant, Google Contacts' birthdays, merged in code (same name and day once; the local entry wins). A name → that person's next birthday, matched in code. **Terminal** (dates would be scrubbed). Always offered: the local list works without the grant. **Taints** only when a Google name is in the answer |
+| `mail.bills` (agent-only, 2026-10-06) | days? (1–120, default 45) | 0 | ROADMAP #24. `gmail` grant, no new scope. Code builds the query from a fixed list of bill words (`חשבונית`, `"לתשלום עד"`, `invoice`, `"payment due"`…), no promotions or social; ≤8 mails, one per thread (the newest), each body read. Code extracts the amount (a number next to ₪/ש"ח/NIS, the one after a "total" word first) and the due date (after "pay by" words, day first; a missing year is the next such day from the mail's date) — `src/tools/bill-extract.ts`; what is not found is left out, never guessed. Sorted by due date, past ones marked. **Terminal**, **taints** |
+| `phone.calls` (agent-only, 2026-10-06) | name?, missed?, hours? (1–168, default 24) | 0 | ROADMAP #20. A phone read (§6.21), `READ_CALL_LOG`. Names, directions (missed · incoming · outgoing · rejected) and times — never a number. **Taints** |
 | `expenses.export` (agent-only) | period? (default all) | 1 (card) | A `file` card (§6.20), auto-run, offered only to an app that reports cap `file`. CSV built at resolve: UTF-8 BOM, CRLF, RFC 4180, formula-injection guard, ≤2,000 rows and ≤150,000 bytes (newest kept, the preview says when cut). The file sits in the card's pending row and reaches the phone only from the signed claim; the preview never carries it |
 
 **Deterministic commands (never go to the LLM):** `/help`, `/status`, `/pause`, `/resume`, `/connect google`, `/budget`, `/city`, plus button replies (confirm, cancel, undo, snooze, numbered choice).
@@ -553,7 +556,7 @@ Policy is code plus static config. **Nothing in chat can change it.**
   - Normal events go to `primary`.
   - Reminder fallbacks go to an app-created secondary calendar, "Assistant Reminders".
 - **Event tagging:** `extendedProperties.private = { assistant: "1", intent_id }` on everything the assistant creates.
-- **Separate grants** (built 2026-10-01, `src/google/grants.ts`): one consent, refresh token and `integrations` row per area — `calendar` (account `primary`: `calendar.events.owned`, `calendar.app.created`, `calendar.readonly`), `gmail` (`gmail.readonly`, `gmail.compose` — drafts, never sending), `tasks` (`tasks`), `drive` (`drive.metadata.readonly` — names and dates, never contents). `/connect google|gmail|tasks|drive`; the link and the authorization attempt carry the grant (migration 0016), and the token's AES-GCM associated data is bound to it. One `GoogleApi` client (`src/google/api.ts`) does token refresh and the 401 retry for all of them.
+- **Separate grants** (built 2026-10-01, `src/google/grants.ts`): one consent, refresh token and `integrations` row per area — `calendar` (account `primary`: `calendar.events.owned`, `calendar.app.created`, `calendar.readonly`), `gmail` (`gmail.readonly`, `gmail.compose` — drafts, never sending), `tasks` (`tasks`), `drive` (`drive.metadata.readonly` — names and dates, never contents), and since 2026-10-06 `contacts` (`contacts.readonly`; `src/google/contacts.ts` asks the People API for `names,birthdays` only, ≤2 pages of 1,000). `/connect google|gmail|tasks|drive|contacts`; the link and the authorization attempt carry the grant (migration 0016), and the token's AES-GCM associated data is bound to it. One `GoogleApi` client (`src/google/api.ts`) does token refresh and the 401 retry for all of them.
 
 ### 6.7 Reminders and scheduler
 
@@ -845,6 +848,24 @@ here become conversation memory: one question, one tool, ten minutes.
 
 ### 6.12 The daily digest
 
+**Since 2026-10-06 (block E):** birthdays include Google Contacts' when the
+`contacts` grant is connected (§6.16), and on the app channel the digest
+carries **missed calls**: after the digest is marked done, an empty FCM push
+(`kind: calls_report`, TTL 60 s) asks a device that declared cap
+`calls_report`; the app answers `POST /app/calls-report` (signed, 8 KB, ≤20
+`{name?, at}`, never a number) with the calls missed in the last day. The DO
+waits up to 20 s, reading SQL each second (the report is another request; timers
+leave the input gate open). Table `missed_calls` (migration 0020) holds the
+names for that wait only: a report is accepted only within 60 s of an open
+ask, replaces any earlier one in one transaction, and **every row and the ask
+are deleted in a `finally` right after the digest is built** — so a late
+report gets 409; maintenance drops anything older than 36 h. The line —
+`שיחות שלא נענו:` one line per caller with a count and the latest time,
+unknown numbers together — comes before overdue reminders, and missed calls
+alone make a digest worth sending. No answer in time: no line. The hourly cron
+now awaits the DO (`src/index.ts`), so the wait is never cut off after the
+digest was marked done.
+
 One message, once a day, at an hour the user sets: what is on the calendar for
 the rest of today, which reminders are still coming, and anything that was due
 and did not get through. Field reports on comparable assistants rate a daily
@@ -1099,11 +1120,15 @@ the first one has been used in anger.
 removes one. On the day itself the digest leads with it — the one line in a
 morning brief that is about a person rather than a task.
 
-**Local, not from Google Contacts.** Contacts would mean a third OAuth scope, a
-§14 security decision, and would hand this assistant every address the user owns
-in order to answer a question about eight of them. A list the user types is a
-worse feature and a far better trade, and it is written down here rather than
-left as an omission somebody later "fixes".
+**Local, not from Google Contacts** — superseded 2026-10-06 (§14): the user
+approved a separate `contacts` grant (`contacts.readonly`) for ROADMAP #11. The
+local list stays and works without it; with it, Google's birthdays join the
+digest (today, and the week ahead on Sunday) and `birthdays.upcoming`. The
+scope can read every address the user owns, so the code asks for two fields —
+names and birthdays — and keeps nothing else. A Google failure leaves the
+local list; it never stops the digest. The original reasoning, kept for the
+record: a third scope to answer a question about eight people was the wrong
+trade then, before the user asked for it.
 
 **The year is optional**, because most people know the date and not the year, and
 a field that has to be filled is a feature that mostly goes unused.
@@ -1234,8 +1259,10 @@ displays anything.
 
 **Deliberately not built:** the assistant speaking on the call, listening to it,
 recording it, or reading the call log. Speaking to a third party on my behalf is
-data forwarding — Tier 4, no code path (invariant 6). The call log is a second
-sensitive permission for no feature.
+data forwarding — Tier 4, no code path (invariant 6). The call log was "a second
+sensitive permission for no feature" until 2026-10-06, when the user asked for
+it (ROADMAP #20): it is now read on request (`phone.calls`, §6.21) and for the
+digest's missed calls (§6.12), names and times only.
 
 **Not in the registry yet.** `calls.place` needs **no new slot** — it reuses
 `query_variants`, so unlike B6 and B8 it leaves the slot schemas alone. It still
@@ -1394,6 +1421,15 @@ send queue in the app (it says "no connection" instead); certificate pinning
 (it would simply fail on the home network).
 
 ### 6.19 The agent [R]
+
+**A reply that ends the turn keeps its taint (2026-10-06, found by the block E
+plan review).** The loop returned a non-read reply (terminal reads, cards,
+questions) with only the taint the turn had *before* it, so a terminal read of
+mail would have stored someone else's words untainted in the history the model
+reads next time. Now `TAINTING_TOOLS` and `Reply.tainting` are applied on that
+path too (`src/agent/loop.ts`), and a card built from a calendar event carries
+`tainting`. A tainted answer is then `private` in the outbox (generic
+notification), like a `mail.search` answer. Test: `test/unit/agent/terminal-taint.test.ts`.
 
 The user's verdict on the parser-only chat was that it was worth nothing: anything
 outside eight tools got "לא הבנתי". The agent (2026-10-01) is a bounded tool-calling
@@ -1587,11 +1623,11 @@ wire schema (`PARSER_TOOL_NAMES`), so the parser and its eval are unchanged:
 |---|---|---|---|
 | `alarm.set` {time, label?} | 1 | yes | `AlarmClock.ACTION_SET_ALARM`, skip UI. A bare hour stays as said ("ב-6" is 06:00) |
 | `timer.set` {duration_minutes, label?} | 1 | yes | `ACTION_SET_TIMER` |
-| `nav.go` {destination, app?} | 1 | yes | Waze (`favorite=home/work` for "הביתה"/"לעבודה"), else Google Maps; the other one if the first is missing |
+| `nav.go` {destination \| contact \| event \| next_event, app?} | 1 | yes (not from an event) | Waze (`favorite=home/work` for "הביתה"/"לעבודה"), else Google Maps; the other one if the first is missing. Since 2026-10-06 (#21): **a contact** — the card carries `contact: [words]`, the phone matches the name and reads its postal address (`ContactsReader.addresses`), several → a choice, none → `no_match`; the address never leaves the phone. **An event** — `resolveAsync` finds it in code among the next 7 days (`query_variants` on titles, or the next one with a location) and its `location` (read from Google, one line, ≤100 chars, never rendered in a list) becomes the destination with `source: 'event'`: someone else's words, so the card **never runs alone** and the reply **taints**. No location → asked, never guessed |
 | `app.open` {query_variants} | 1 | yes | launcher apps matched by label **on the phone** (`CardLogic.matchApps`) |
 | `settings.set` {setting, state} | 1 | flashlight only | torch; DND and ringer need notification-policy access; Wi-Fi/Bluetooth open the panel (Android lets no app flip them) |
 | `message.compose` {channel?, query_variants, text} | 3 | never | contact matched on the phone; SMS app or WhatsApp opens **prefilled**, the user presses send there |
-| `media.play` {app?, query, mode} (2026-10-01) | 1 | yes | a song on YouTube Music, a video on YouTube — **asked when unclear**; the app's own search opens with the words (YouTube: `ACTION_SEARCH`; YouTube Music: its `music.youtube.com/search` link), and playing is one tap (0.8.2). `mode` background/fullscreen is **asked when missing**, never assumed. Background: a toast says to come back after the tap; only YouTube Premium keeps playing |
+| `media.play` {app?, query, mode} (2026-10-01; `spotify` 2026-10-06) | 1 | yes | **Spotify** only when the user says so: no mode is asked; `MEDIA_PLAY_FROM_SEARCH` to `com.spotify.music`, else its `spotify:search:` link, else `no_match`. Otherwise: a song on YouTube Music, a video on YouTube — **asked when unclear**; the app's own search opens with the words (YouTube: `ACTION_SEARCH`; YouTube Music: its `music.youtube.com/search` link), and playing is one tap (0.8.2). `mode` background/fullscreen is **asked when missing**, never assumed. Background: a toast says to come back after the tap; only YouTube Premium keeps playing |
 
 **The card.** Policy answers every card tool with CONFIRM and `confirmOnCard`
 (reason `card_confirmation` when nothing else escalated). The orchestrator
@@ -1619,7 +1655,9 @@ a compare-and-set before claiming, and a claim that could not reach the server
 puts it back to open.
 
 **Who gets cards.** The app declares `caps: ["cards"]` with its signed
-push-token update (re-sent at once when the build's capabilities change); the
+push-token update (since 2026-10-06 a cap the server does not know is **dropped,
+not refused** — ≤16 caps of ≤32 chars, filtered to `KNOWN_CAPS` — so a newer app
+on an older server, or after a rollback, still gets its pushes) (re-sent at once when the build's capabilities change); the
 server stores it on the device (`devices.caps`) and the agent offers the card
 tools only on the app channel, to a device that declared them. An older build
 is never sent a card it cannot run. Voice turns get them the same way.
@@ -1646,6 +1684,7 @@ and the paired phone can. Never in the parser's catalog (`PARSER_TOOL_NAMES`).
 |---|---|---|
 | `phone.contacts` | query_variants | contact **names** that match (whole name first, else every word), ≤ 20. No numbers |
 | `phone.notifications` | app_name?, hours? (1–24, default 24) | app, title, text, time — from the phone's own one-day buffer |
+| `phone.calls` (2026-10-06) | name?, missed?, hours? (1–168, default 24) | caller **name** (the contact's, else the log's cached name if it has letters, else nothing → "מספר לא מזוהה"), direction (closed list; voicemail and blocked left out), time. `READ_CALL_LOG` |
 | `phone.sms` | sender?, hours? (1–168, default 24) | sender **name** (contact name, an alphanumeric sender id, or "מספר לא שמור" — never a number), text, time |
 
 **Offered** only on the app channel, to a device that declared
@@ -2693,6 +2732,7 @@ measured on the app channel. To finish with `--resume`.
 | 2026-10-05 | **The richer digest, the week ahead, and scheduled reads** (ROADMAP block C: #6, #7, #8). The digest gains context lines (Hebrew date, weather; a candle-lighting line was built and taken out the same day at the user's request), Google Tasks due, and on Sunday the week ahead as counts per day (§6.12). New agent-only tool `reminders.scheduled_read` (Tier 1): a recurring reminder carrying a closed Tier 0 lookup that code runs and sends at the due time, with no model on that path; migration 0018 (`reminders.action`) (§6.4, §6.7). Reviewed in two rounds before building; what the review changed: the migration is registered in `src/platform/migrations.ts`; the digest leaves scheduled reads out (`plainOnly`), or a daily weather read would make every day send; the week walks recurring rules, so a daily reminder counts every day; a read re-checks its claim before the send, so a cancel during the fetch stops it; plain reminders go before reads, each read capped at 10 s; the agent prompt names the new tool. **Taint decision:** none needed — no model sees a scheduled read's result. Agent prompt **a7** (one sentence: a lookup on a schedule → `reminders.scheduled_read`); seven eval cases `sc-*`. `eval:agent --filter sc-` on qwen: 7/7, every quality gate passing (p95 latency failed on hotspot network errors). `--filter rm-` on qwen ran out of daily budget before starting; on gpt-oss-120b it scored 10/15, the five misses in alarm, move, monthly-slot and chag cases that the new sentence does not touch, none choosing the new tool — but there is no a6 gpt-oss baseline for these cases to compare. The `rm-` run on qwen and a full a7 run are owed |
 | 2026-10-05 | **Notes and expenses** (ROADMAP block D: #9, #10; app 0.9.0). The user's decisions: notes are never sent to the model; expenses stay on the server with an export to Excel as CSV through the app; a missing expense day is today (an explicit exception to invariant 4, asked and approved). Six agent-only tools (§6.4, §6.22): `notes.save` (1), `notes.find` (0), `notes.delete` (2), `expenses.add` (1), `expenses.summary` (0, terminal), `expenses.export` (card, cap `file`). Migration 0019. New registry flags `private`, `terminal`, `needsCap`; new `file` card. Reviewed in two rounds before building; what the review changed: privacy is a property of the tool, stamped on every reply path, not a flag on `execute` (the confirmation, the choice list and the Undo reply would otherwise carry a note into the history); expense days needed their own past-looking resolver, because `resolveWhen` only looks forward and its `relative_days` cannot say yesterday; the app's caps enum in `parse.ts` must accept `file`, and the server ships before the APK; notes are not encrypted at rest, since a key rotation would delete them; the export is capped at 2,000 rows and 150 KB and measured. Agent prompt **a8** (two sentences). Twelve eval cases `nx-*`, `xp-*`. qwen's daily budget was spent before they could run (1/6 answered, correct). On gpt-oss-120b the first run found two real faults, both fixed: "yesterday" sent as a DateSpec (`relative_days` offset 1, which is tomorrow there — the expense day became flat slots), and "all my notes" sent as an empty `query_variants` (now accepted). After the fix: `nx-` 6/6 with every quality gate passing; `xp-` 5 of 6 answered (one rate-limited; it answered correctly in the first run), one slot miss — "תדלקתי" filed under `other` rather than `fuel`, which the reply shows. p95 latency failed on hotspot network errors. qwen runs of `nx-`/`xp-`/`rm-` and a full a8 run are owed |
 | 2026-10-06 | **Real rate/budget failover, and fewer tokens per minute** (§6.19, "Failover and tokens"). The problem, measured: every agent call was about 6.2K tokens, so a read turn's second call failed the 7K turn cap and the backup was never tried; and one failed message spent both buckets — the parser re-asked qwen (metered only for the day) and then gpt-oss twice. Built: the static model table; reservations before every call (a missing usage is no longer charged as zero); the per-message refused set shared by agent, parser and read-only try; tool selection by code (one group or the full catalog); text-only calls after a read and on the last call; backup writes always confirm (`backup_model`); the write gate's fingerprint; evals `--select-tools`, a shared daily ledger, `run-turn-evals.ts` and `bench-tokens.ts`. A 429 now blocks until the later of the observed reset and its `retry-after` (an early unblock, found by a test, is fixed). Estimated by `bench-tokens`: first call median 6,220 → 2,834 tokens, read turn 12,631 → 4,118. Owed: qwen's `--select-tools` run and fingerprint, the turn benchmark, the calibration fixture, the Groq candidates, and Phase B. The user declined Gemini, Mistral and OpenRouter for this; Groq stays on the Free tier |
+| 2026-10-06 | **Block E: Google Contacts birthdays, bills in Gmail, the call log, missed calls in the digest, Spotify, Waze to a contact or an event** (ROADMAP #11, #20, #21, #24; app 0.10.0; migration 0020). **The user's decisions, reversing two earlier ones:** a new, separate Google grant `contacts` with **`contacts.readonly`** (reverses 2026-09-25 "local list, not Contacts"; the code requests only names and birthdays); and **the call log** is read (`READ_CALL_LOG`) — on request (`phone.calls`) and for **missed calls in the morning digest**, which the user chose knowing it stores names on the server briefly (reverses §6.17 "no feature"). #21 was defined by the user as Spotify in `media.play`, Waze to a calendar event, and Waze to a contact. New agent-only tools: `birthdays.upcoming` (0, terminal), `mail.bills` (0, terminal, taints), `phone.calls` (0, phone read, taints); `nav.go` gains `contact`, `event`, `next_event`; `media.play` gains `spotify` (§6.4, §6.12, §6.16, §6.20, §6.21). Reviewed in two rounds before building; what the review changed: **a terminal read lost its taint** (the loop's non-read return ignored the tool's taint — fixed for every such reply, §6.19); a card from an event never runs alone and taints; the missed-calls ask goes after `markDigestDone`, rows and ask are cleared in a `finally`, late reports are refused, maintenance purges; the cron awaits the DO; an unknown cap is dropped instead of refusing the push token (a newer APK must not lose its pushes on an older server); the calls render needs explicit cases. Found while testing and fixed: **`mail.draft` threaded a reply to the oldest mail of a conversation** (a `Map` built from a newest-first list keeps the last value) — `newestPerThread` now keeps the newest, for `mail.bills` too. No prompt change (a8); the full catalog grew 5,251 → 5,649 tokens (40 tools). Twelve eval cases `be-*`: on qwen 10 of 12 scored before its daily eval guard, every quality gate passing (p95 latency failed, 11.2 s); the three `be-nav-*` on gpt-oss-120b 3/3, every gate passing. Owed: `be-nav-002/003` on qwen |
 | 2026-10-06 | **Docs entry point** (no code change): `HANDOFF.md` is imported by `CLAUDE.md` and read first in every session; `ARCHITECTURE.md` replaces §8's stale tree; `README.md` is the GitHub page and docs index. `CLAUDE.md` no longer asks a session to read this file whole |
 ---
 

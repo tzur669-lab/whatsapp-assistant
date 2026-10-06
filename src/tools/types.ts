@@ -36,6 +36,8 @@ import type { GrantName } from '../google/grants.js';
 import type { TasksClient } from '../google/tasks.js';
 import type { GmailClient } from '../google/gmail.js';
 import type { DriveClient } from '../google/drive.js';
+import type { ContactsClient } from '../google/contacts.js';
+import type { BirthdayStore } from '../core/birthdays.js';
 
 /** One candidate when a description matched more than one thing. */
 export type TargetChoice = { id: string; label: string };
@@ -128,6 +130,10 @@ export type ToolContext = {
   gmail?: GmailClient;
   /** Google Drive's file search, once its grant is connected (2026-10-01). */
   drive?: DriveClient;
+  /** Google Contacts' birthdays, once its grant is connected (2026-10-06). */
+  contacts?: ContactsClient;
+  /** The local birthday list (§6.16), for `birthdays.upcoming`. */
+  birthdays?: BirthdayStore;
   /** Notes (§6.22). Absent only in tests that predate them. */
   notes?: NoteStore;
   /** Expenses (§6.22). Absent only in tests that predate them. */

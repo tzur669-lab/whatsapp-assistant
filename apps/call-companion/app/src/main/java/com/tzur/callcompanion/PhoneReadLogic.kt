@@ -22,19 +22,30 @@ object PhoneReadLogic {
         class Contacts(val queries: List<String>) : Query()
         class Notifications(val app: String?, val hours: Int) : Query()
         class Sms(val sender: String?, val hours: Int) : Query()
+        /** The call log (2026-10-06): a caller's name, missed only, how far back. */
+        class Calls(val name: String?, val missed: Boolean, val hours: Int) : Query()
 
         companion object {
             /**
              * The query from its fields, as [PhoneReads] took them off the wire.
              * Null for anything off-shape: the phone then answers `unsupported`.
              */
-            fun of(kind: String?, queries: List<String>?, app: String?, sender: String?, hours: Int?): Query? =
+            fun of(
+                kind: String?,
+                queries: List<String>?,
+                app: String?,
+                sender: String?,
+                hours: Int?,
+                name: String? = null,
+                missed: Boolean? = null,
+            ): Query? =
                 when (kind) {
                     "contacts" -> queries
                         ?.takeIf { list -> list.size in 1..MAX_QUERIES && list.all { it.isNotBlank() && it.length <= MAX_QUERY } }
                         ?.let { Contacts(it) }
                     "notifications" -> if (hours in 1..24 && fits(app)) Notifications(app, hours!!) else null
                     "sms" -> if (hours in 1..7 * 24 && fits(sender)) Sms(sender, hours!!) else null
+                    "calls" -> if (hours in 1..7 * 24 && fits(name) && missed != null) Calls(name, missed, hours!!) else null
                     else -> null
                 }
 
@@ -98,6 +109,34 @@ object PhoneReadLogic {
         // Letters in the address: an alphanumeric sender id ("Leumi"), not a person's number.
         val hasLetters = address.any { it.isLetter() }
         return if (hasLetters) cut(address, MAX_NAME) else unknown
+    }
+
+    // -- the call log (2026-10-06) ----------------------------------------------
+
+    /** `CallLog.Calls.TYPE` values, as numbers so this stays free of Android. */
+    const val CALL_INCOMING = 1
+    const val CALL_OUTGOING = 2
+    const val CALL_MISSED = 3
+    const val CALL_REJECTED = 5
+
+    /** A call's direction from the closed list the server knows; anything else (voicemail, blocked) is left out. */
+    fun callDirection(type: Int): String? = when (type) {
+        CALL_INCOMING -> "incoming"
+        CALL_OUTGOING -> "outgoing"
+        CALL_MISSED -> "missed"
+        CALL_REJECTED -> "rejected"
+        else -> null
+    }
+
+    /**
+     * Who called, as it may leave the phone: the contact's name, else the name
+     * the call log cached, else nothing — the server then says "unknown
+     * number". A number never leaves, not even one the log stored as a name.
+     */
+    fun callerName(contactName: String?, cachedName: String?): String? {
+        val name = listOf(contactName, cachedName).firstOrNull { !it.isNullOrBlank() } ?: return null
+        val cleaned = cut(name, MAX_NAME)
+        return cleaned.takeUnless { it.none(Char::isLetter) }
     }
 
     fun cut(text: String, max: Int): String {

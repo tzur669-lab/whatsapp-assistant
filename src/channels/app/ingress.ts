@@ -53,6 +53,8 @@ export const APP_ROUTES: readonly AppRoute[] = [
   // Phone reads (§6.21): the phone's answer to a suspended turn. Twenty items of
   // at most a few hundred characters each, as UTF-8 Hebrew, with room for JSON.
   { method: 'POST', pattern: /^\/app\/device-result$/, maxBytes: 32_768, contentType: JSON_TYPE, channels: ['app'] },
+  // Missed calls for the digest (2026-10-06): twenty names and times at most.
+  { method: 'POST', pattern: /^\/app\/calls-report$/, maxBytes: 8_192, contentType: JSON_TYPE, channels: ['app'] },
 ];
 
 export type Checked =

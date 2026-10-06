@@ -26,6 +26,8 @@ const PUSH_TTL = '120s';
  * anyway, so a stale signal is not kept forever.
  */
 const SIGNAL_TTL = '14400s';
+/** The digest's ask for missed calls: worthless after the digest has gone. */
+const ASK_TTL = '60s';
 const TIMEOUT_MS = 8_000;
 
 export type PushResult =
@@ -69,6 +71,15 @@ export class FcmClient {
    */
   signal(pushToken: string): Promise<PushResult> {
     return this.post(pushToken, { kind: 'outbox' }, SIGNAL_TTL);
+  }
+
+  /**
+   * Ask the app for the calls it missed, for the digest (2026-10-06). Like the
+   * outbox signal, only a kind: the answer comes back signed, over HTTPS. A
+   * minute's TTL — the digest does not wait longer than that.
+   */
+  askCalls(pushToken: string): Promise<PushResult> {
+    return this.post(pushToken, { kind: 'calls_report' }, ASK_TTL);
   }
 
   private async post(pushToken: string, data: Record<string, string>, ttl: string): Promise<PushResult> {

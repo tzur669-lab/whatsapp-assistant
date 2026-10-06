@@ -37,6 +37,8 @@ import type { ReminderStore, Reminder } from '../tools/reminder-store.js';
 import type { ReminderView } from '../render/reminders.js';
 import type { IcalStore } from '../ical/store.js';
 import type { BirthdayStore } from './birthdays.js';
+import { birthdaysOn, mergeBirthdays } from './birthdays.js';
+import type { ContactsClient } from '../google/contacts.js';
 import { asCalendarEvents } from '../ical/merge.js';
 import type { Logger } from '../security/redact.js';
 import type { Lang } from '../render/format-time.js';
@@ -72,6 +74,8 @@ export type DigestContext = {
   ical?: IcalStore;
   /** The local birthday list (§6.16). */
   birthdays?: BirthdayStore;
+  /** Google Contacts' birthdays, when that grant is connected (#11, 2026-10-06). */
+  contacts?: ContactsClient;
   /** Absent when Google Tasks is not connected (#6). */
   tasks?: TasksClient;
   /**
@@ -81,6 +85,8 @@ export type DigestContext = {
   place?: Place;
   /** For the weather. Absent: no weather line. */
   fetchImpl?: typeof fetch;
+  /** Missed calls the phone reported for this digest (#20, 2026-10-06). */
+  missedCalls?: readonly { name: string | null; at: number }[];
   log: Logger;
 };
 
@@ -93,11 +99,12 @@ export async function buildDigest(ctx: DigestContext): Promise<string | null> {
   const upcoming = ctx.reminders.listUpcoming(ctx.principal, MAX_REMINDERS, { plainOnly: true });
   const today = upcoming.filter((reminder) => reminder.dueAtUtc <= endOfDay);
   const overdue = ctx.reminders.listOverdue(ctx.principal, MAX_REMINDERS, { plainOnly: true });
-  const birthdays = ctx.birthdays?.on(ctx.principal, ctx.nowMs) ?? [];
+  const everyone = await allBirthdays(ctx);
+  const birthdays = birthdaysOn(everyone, ctx.nowMs);
   const events = await todaysEvents(ctx, endOfDay);
   const tasks = await dueTasks(ctx);
   const week =
-    localPartsOf(ctx.nowMs, ZONE).weekday === WEEK_DIGEST_DAY ? await weekAhead(ctx, endOfDay) : null;
+    localPartsOf(ctx.nowMs, ZONE).weekday === WEEK_DIGEST_DAY ? await weekAhead(ctx, endOfDay, everyone) : null;
 
   if (
     events.length === 0 &&
@@ -105,6 +112,7 @@ export async function buildDigest(ctx: DigestContext): Promise<string | null> {
     overdue.length === 0 &&
     birthdays.length === 0 &&
     tasks.length === 0 &&
+    (ctx.missedCalls?.length ?? 0) === 0 &&
     (week === null || week.days.length === 0)
   ) {
     // Silence is the feature. A digest that says "nothing today" every day is
@@ -119,6 +127,7 @@ export async function buildDigest(ctx: DigestContext): Promise<string | null> {
     overdue: overdue.length,
     birthdays: birthdays.length,
     tasks: tasks.length,
+    missedCalls: ctx.missedCalls?.length ?? 0,
     weekDays: week?.days.length ?? -1,
   });
 
@@ -132,6 +141,7 @@ export async function buildDigest(ctx: DigestContext): Promise<string | null> {
       birthdays: birthdays.map((entry) => entry.name),
       tasks,
       week,
+      ...(ctx.missedCalls && ctx.missedCalls.length > 0 ? { missedCalls: ctx.missedCalls } : {}),
     },
     ctx.lang,
   );
@@ -231,7 +241,7 @@ async function dueTasks(ctx: DigestContext): Promise<DigestTask[]> {
  * number at all, never a "0" that is not true. A recurring reminder has one
  * stored occurrence, so its rule is walked across the week to count the rest.
  */
-async function weekAhead(ctx: DigestContext, endOfToday: number): Promise<DigestWeek> {
+async function weekAhead(ctx: DigestContext, endOfToday: number, everyone: readonly Named[]): Promise<DigestWeek> {
   const bounds: { start: number; end: number }[] = [];
   let start = endOfToday + 1;
   for (let i = 0; i < WEEK_DAYS_AHEAD; i++) {
@@ -283,11 +293,30 @@ async function weekAhead(ctx: DigestContext, endOfToday: number): Promise<Digest
     const within = (t: number) => t >= day.start && t <= day.end;
     const events = eventsKnown ? eventStarts.filter(within).length : null;
     const reminders = reminderTimes.filter(within).length;
-    const birthdays = (ctx.birthdays?.on(ctx.principal, day.start) ?? []).map((entry) => entry.name);
+    const birthdays = birthdaysOn(everyone, day.start).map((entry) => entry.name);
     if ((events ?? 0) === 0 && reminders === 0 && birthdays.length === 0) continue;
     days.push({ local: localPartsOf(day.start, ZONE), events, reminders, birthdays });
   }
   return { days, partial };
+}
+
+type Named = { name: string; day: number; month: number };
+
+/**
+ * The local list and Google Contacts' birthdays, read once for the whole
+ * digest. Google failing is never fatal: the local list still counts.
+ */
+async function allBirthdays(ctx: DigestContext): Promise<Named[]> {
+  const local = ctx.birthdays?.list(ctx.principal) ?? [];
+  if (!ctx.contacts) return local;
+  const google = await ctx.contacts.birthdays();
+  if (!google.ok) {
+    if (google.error.code !== 'not_connected' && google.error.code !== 'disconnected') {
+      ctx.log.warn('digest_contacts_failed', { errorCode: google.error.code });
+    }
+    return local;
+  }
+  return mergeBirthdays<Named>(local, google.value);
 }
 
 function view(reminder: Reminder): ReminderView {

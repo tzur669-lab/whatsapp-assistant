@@ -25,7 +25,14 @@ export type PhoneQuestion =
 export type CardInput =
   | { type: 'alarm'; hour: number; minute: number; label?: string | undefined }
   | { type: 'timer'; seconds: number; label?: string | undefined }
-  | { type: 'nav'; app: 'waze' | 'maps'; destination?: string | undefined; favorite?: 'home' | 'work' | undefined }
+  | {
+      type: 'nav';
+      app: 'waze' | 'maps';
+      destination?: string | undefined;
+      favorite?: 'home' | 'work' | undefined;
+      contact?: string[] | undefined;
+      source?: 'event' | undefined;
+    }
   | { type: 'app'; queries: string[] }
   | {
       type: 'settings';
@@ -33,7 +40,7 @@ export type CardInput =
       state?: 'on' | 'off' | 'silent' | 'vibrate' | 'normal' | undefined;
     }
   | { type: 'message'; channel: 'sms' | 'whatsapp'; queries: string[]; text: string }
-  | { type: 'media'; app: 'youtube' | 'youtube_music'; query: string; mode: 'background' | 'fullscreen' }
+  | { type: 'media'; app: 'youtube' | 'youtube_music' | 'spotify'; query: string; mode: 'background' | 'fullscreen' }
   /** The expenses export (2026-10-05). `preview` is rendered by its tool; never the content. */
   | { type: 'file'; name: string; mime: 'text/csv'; content: string; preview: string };
 
@@ -60,6 +67,10 @@ export function cardPreview(input: CardInput, lang: Lang): string {
       const app = isolate(input.app === 'waze' ? 'Waze' : 'Google Maps');
       if (input.favorite === 'home') return he ? `🧭 ניווט הביתה ב-${app}` : `🧭 Navigate home with ${app}`;
       if (input.favorite === 'work') return he ? `🧭 ניווט לעבודה ב-${app}` : `🧭 Navigate to work with ${app}`;
+      if (input.contact) {
+        const who = input.contact[0] ?? '';
+        return he ? `🧭 ניווט ב-${app} לכתובת של ${who}` : `🧭 Navigate with ${app} to ${who}'s address`;
+      }
       return he ? `🧭 ניווט ב-${app} אל: ${input.destination ?? ''}` : `🧭 Navigate with ${app} to: ${input.destination ?? ''}`;
     }
 
@@ -70,6 +81,7 @@ export function cardPreview(input: CardInput, lang: Lang): string {
       return settingText(input.setting, input.state, lang);
 
     case 'media': {
+      if (input.app === 'spotify') return `🎵 ${isolate('Spotify')}: ${input.query}`;
       const music = input.app === 'youtube_music';
       const app = isolate(music ? 'YouTube Music' : 'YouTube');
       const how = he

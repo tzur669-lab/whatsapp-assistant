@@ -96,6 +96,7 @@
     <!-- Phone reads (PLAN §6.21) -->
     <string name="perm_reads_title">קריאה מהטלפון</string>
     <string name="perm_sms">&#x2068;SMS&#x2069;: כדי לענות על שאלות כמו \"מה כתבו לי היום\"</string>
+    <string name="perm_call_log">יומן שיחות: כדי לענות על שאלות כמו \"מי התקשר אליי\", ולהוסיף שיחות שלא נענו לסיכום הבוקר</string>
     <string name="perm_notification_access">גישה להתראות: כדי לענות על שאלות כמו \"מה ההתראות האחרונות\"</string>
     <string name="perm_restricted_note">אם ההפעלה חסומה: בהגדרות הטלפון, בפרטי האפליקציה, יש לפתוח את התפריט ⋮ ולבחור \"לאפשר הגדרות מוגבלות\". זה נדרש באפליקציה שלא הותקנה מהחנות.</string>
     <string name="perm_hide_apps">הסתרת אפליקציות: התראות מהן לא נשמרות ולא נשלחות לעוזר</string>
@@ -126,6 +127,9 @@
     <string name="card_failed">הפעולה לא הצליחה.</string>
     <string name="card_file_saved">הקובץ נשמר בתיקיית ההורדות.</string>
     <string name="card_media_background">התוצאות פתוחות. יש ללחוץ על התוצאה הרצויה ואז לחזור לעוזר. הנגינה ממשיכה ברקע רק עם YouTube Premium.</string>
+    <string name="card_no_address">לאיש הקשר הזה אין כתובת שמורה בטלפון.</string>
+    <string name="card_choose_address">לאיזו כתובת לנווט?</string>
+    <string name="card_no_spotify">&#x2068;Spotify&#x2069; לא מותקן בטלפון.</string>
     <string name="card_media_tap">התוצאות פתוחות. יש ללחוץ על התוצאה הרצויה כדי לנגן.</string>
 
     <!-- A call request -->

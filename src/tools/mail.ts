@@ -50,6 +50,17 @@ export function buildQuery(slots: {
   return parts.join(' ');
 }
 
+/**
+ * One message per conversation, the newest — Gmail lists newest first. A Map
+ * built from the list would keep the *last* value per key, the oldest one
+ * (fixed 2026-10-06: a reply was threaded to the conversation's first mail).
+ */
+export function newestPerThread<T extends { threadId: string }>(mails: readonly T[]): T[] {
+  const seen = new Map<string, T>();
+  for (const mail of mails) if (!seen.has(mail.threadId)) seen.set(mail.threadId, mail);
+  return [...seen.values()];
+}
+
 const failure = (error: GoogleFailure, ctx: ToolContext): ExecuteResult => {
   if (error.code === 'not_connected' || error.code === 'disconnected') return { text: eventText.grantNotConnected('gmail', ctx.lang) };
   ctx.log.warn('mail_failed', { errorCode: error.code });
@@ -160,7 +171,7 @@ export const mailDraft: ToolDefinition = {
         : { kind: 'clarify', clarify: { code: 'not_found' } };
     }
     // One message per conversation: replying to a thread is replying to its newest.
-    const threads = [...new Map(found.value.map((m) => [m.threadId, m])).values()];
+    const threads = newestPerThread(found.value);
     if (threads.length === 0) return { kind: 'clarify', clarify: { code: 'not_found' } };
     if (threads.length > 1) {
       return {

@@ -33,6 +33,7 @@ export const GROUPS: Readonly<Record<GroupName, readonly ToolName[]>> = {
     'calendar.move_event',
     'calendar.delete_event',
     'calendar.free_time',
+    'birthdays.upcoming',
   ],
   records: [
     'notes.save',
@@ -46,7 +47,7 @@ export const GROUPS: Readonly<Record<GroupName, readonly ToolName[]>> = {
     'expenses.export',
   ],
   info: ['info.lookup', 'calc.compute'],
-  mail: ['mail.search', 'mail.draft'],
+  mail: ['mail.search', 'mail.draft', 'mail.bills'],
   drive: ['drive.search'],
   phone: [
     'calls.place',
@@ -60,6 +61,7 @@ export const GROUPS: Readonly<Record<GroupName, readonly ToolName[]>> = {
     'phone.contacts',
     'phone.notifications',
     'phone.sms',
+    'phone.calls',
   ],
 };
 
@@ -85,6 +87,7 @@ const PATTERNS: Readonly<Record<GroupName, readonly RegExp[]>> = {
     /\b(?:remind|reminders?|calendar|meetings?|events?|appointments?|agenda|schedule|tomorrow|free time)\b/i,
     // Stems, for typos ("reminde me tomorow").
     /\bremind/i, /\btomm?or/i,
+    /יום הולדת/, /יום ההולדת/, /ימי הולדת/, /ימי ההולדת/, /יומולדת/, /\bbirthdays?\b/i,
   ],
   records: [
     /פתק/, word('הערה|הערות'), /רשום/, /רשמ/, /סיסמ/,
@@ -102,16 +105,19 @@ const PATTERNS: Readonly<Record<GroupName, readonly RegExp[]>> = {
     /\d\s*[-+*/x×÷]\s*\d/, /%/,
     /\b(?:weather|rain|temperature|uv|air quality|wikipedia|calculate|percent|sunset|sunrise|shabbat|news|headlines)\b/i,
   ],
-  mail: [/מייל/, /דואר/, /ג'ימייל/, /\b(?:e-?mails?|mail|gmail|inbox)\b/i],
+  mail: [
+    /מייל/, /דואר/, /ג'ימייל/, /חשבונות לתשלום/, /חשבון לתשלום/, /חשבוני/, /דרישת תשלום/,
+    /\b(?:e-?mails?|mail|gmail|inbox|bills?|invoices?)\b/i,
+  ],
   drive: [/דרייב/, /קובץ/, /קבצים/, /מסמך/, /מסמכים/, /\b(?:drive|files?|documents?)\b/i],
   phone: [
     // Not להתקשר: "תזכיר לי להתקשר" is a reminder; a call is asked as תתקשר.
     /תתקשר/, /תחייג/, /חייג/, /תצלצל/, /שיחה ל/, /איש קשר/, /אנשי קשר/, /מספר של/, /טלפון של/,
-    /התראות/, /נוטיפיקציות/, word('הודעה|הודעות'), /תשלח/, /סמס/, /וואטסאפ/, /ווטסאפ/, /שעון מעורר/,
+    /התראות/, /נוטיפיקציות/, /התקשר אלי/, /שיחות/, /שיחה שלא נענתה/, /פספסתי/, word('הודעה|הודעות'), /תשלח/, /סמס/, /וואטסאפ/, /ווטסאפ/, /שעון מעורר/,
     /תעיר/, /להעיר/, /השכמה/, /טיימר/, /שעון עצר/, /תנווט/, /ניווט/, /וויז/, /איך מגיעים/, /תפתח/,
     /אפליקצי/, /הגדרות/, /בהירות/, /מצב טיסה/, /בלוטות/, /ווליום/, /עוצמת/, /תנגן/, word('נגן'), /מוזיקה/,
     word('שיר|שירים'), /ספוטיפיי/,
-    /\b(?:call|dial|contacts?|notifications?|sms|text|whatsapp|alarm|wake me|timer|navigate|waze|open|app|settings|volume|play|music|song|spotify)\b/i,
+    /\b(?:call|dial|contacts?|notifications?|sms|text|whatsapp|missed calls?|who called|alarm|wake me|timer|navigate|waze|open|app|settings|volume|play|music|song|spotify)\b/i,
   ],
 };
 

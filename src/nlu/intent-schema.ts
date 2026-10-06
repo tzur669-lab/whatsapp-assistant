@@ -15,6 +15,9 @@ import {
   alarmSetSlots,
   appOpenSlots,
   mediaPlaySlots,
+  birthdaysUpcomingSlots,
+  mailBillsSlots,
+  phoneCallsSlots,
   calendarCreateEventSlots,
   calendarDeleteEventSlots,
   calendarListEventsSlots,
@@ -168,6 +171,10 @@ export const intentDraftSchema = z.discriminatedUnion('intent', [
   z.object({ intent: z.literal('mail.draft'), slots: mailDraftSlots, ...common }).strict(),
   // Google Drive (2026-10-01). Agent-only.
   z.object({ intent: z.literal('drive.search'), slots: driveSearchSlots, ...common }).strict(),
+  // ROADMAP block E (2026-10-06). Agent-only.
+  z.object({ intent: z.literal('birthdays.upcoming'), slots: birthdaysUpcomingSlots, ...common }).strict(),
+  z.object({ intent: z.literal('mail.bills'), slots: mailBillsSlots, ...common }).strict(),
+  z.object({ intent: z.literal('phone.calls'), slots: phoneCallsSlots, ...common }).strict(),
   // Anything outside the tool list, including prompt-injection attempts.
   z.object({ intent: z.literal('unsupported'), slots: ignoredSlots, ...common }).strict(),
 ]);

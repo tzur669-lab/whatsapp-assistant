@@ -86,8 +86,50 @@ object DeviceActions {
         val app = a.getString("app").also { require(it == "waze" || it == "maps") }
         val favorite = a.optString("favorite").takeIf { it == "home" || it == "work" }
         val destination = a.optString("destination").takeIf { it.isNotBlank() && it.length <= 100 }
-        require((favorite == null) != (destination == null))
+        val contact = if (a.has("contact")) strings(a, "contact") else null
+        require(listOfNotNull(favorite, destination, contact).size == 1)
 
+        if (contact != null) return navToContact(activity, app, contact, done)
+        navigate(activity, app, favorite, destination)
+        done("done")
+    }
+
+    /**
+     * A contact's address (2026-10-06): matched here by name, the address read
+     * here, and handed to the navigator. The server never sees it, and the
+     * report says only whether it worked.
+     */
+    private fun navToContact(activity: Activity, app: String, queries: List<String>, done: (String) -> Unit) {
+        if (activity.checkSelfPermission(Manifest.permission.READ_CONTACTS) != PackageManager.PERMISSION_GRANTED) {
+            toast(activity, R.string.card_no_contacts_permission)
+            return done("failed")
+        }
+        val addresses = ContactsReader.addresses(activity)
+        val names = PhoneReadLogic.contactNames(queries, addresses.map { it.first })
+        val found = addresses.filter { it.first in names }.distinct()
+        when (found.size) {
+            0 -> {
+                toast(activity, R.string.card_no_address)
+                done("no_match")
+            }
+            1 -> {
+                navigate(activity, app, null, found[0].second)
+                done("done")
+            }
+            else -> choose(
+                activity,
+                R.string.card_choose_address,
+                found.map { "${it.first} — ${it.second}" },
+                {
+                    navigate(activity, app, null, found[it].second)
+                    done("done")
+                },
+                { done("failed") },
+            )
+        }
+    }
+
+    private fun navigate(activity: Activity, app: String, favorite: String?, destination: String?) {
         val waze = when {
             favorite != null -> "waze://?favorite=$favorite&navigate=yes"
             else -> "https://waze.com/ul?q=${Uri.encode(destination)}&navigate=yes"
@@ -102,7 +144,6 @@ object DeviceActions {
             // The other navigator, rather than nothing.
             activity.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(second)))
         }
-        done("done")
     }
 
     private fun openApp(activity: Activity, a: JSONObject, done: (String) -> Unit) {
@@ -253,9 +294,10 @@ object DeviceActions {
      * come back after it. Android keeps it playing only for YouTube Premium.
      */
     private fun media(activity: Activity, a: JSONObject, done: (String) -> Unit) {
-        val app = a.getString("app").also { require(it == "youtube" || it == "youtube_music") }
+        val app = a.getString("app").also { require(it == "youtube" || it == "youtube_music" || it == "spotify") }
         val mode = a.getString("mode").also { require(it == "background" || it == "fullscreen") }
         val query = a.getString("query").also { require(it.isNotBlank() && it.length <= 100) }
+        if (app == "spotify") return spotify(activity, query, done)
         val music = app == "youtube_music"
         val pkg = if (music) YOUTUBE_MUSIC else YOUTUBE
 
@@ -283,6 +325,31 @@ object DeviceActions {
         }
 
         toast(activity, if (mode == "background") R.string.card_media_background else R.string.card_media_tap)
+        done("done")
+    }
+
+    /**
+     * Spotify (2026-10-06): play-from-search, which Spotify honours and plays
+     * the best match; else its own search opens with the words. Not installed:
+     * said so, and reported as no_match.
+     */
+    private fun spotify(activity: Activity, query: String, done: (String) -> Unit) {
+        val play = Intent(MediaStore.INTENT_ACTION_MEDIA_PLAY_FROM_SEARCH)
+            .setPackage(SPOTIFY)
+            .putExtra(SearchManager.QUERY, query)
+        val search = Intent(Intent.ACTION_VIEW, Uri.parse("spotify:search:${Uri.encode(query)}")).setPackage(SPOTIFY)
+        val started = listOf(play, search).any { intent ->
+            try {
+                activity.startActivity(intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                true
+            } catch (_: ActivityNotFoundException) {
+                false
+            }
+        }
+        if (!started) {
+            toast(activity, R.string.card_no_spotify)
+            return done("no_match")
+        }
         done("done")
     }
 
@@ -366,4 +433,5 @@ object DeviceActions {
     private const val MAX_CHOICES = 10
     private const val YOUTUBE = "com.google.android.youtube"
     private const val YOUTUBE_MUSIC = "com.google.android.apps.youtube.music"
+    private const val SPOTIFY = "com.spotify.music"
 }

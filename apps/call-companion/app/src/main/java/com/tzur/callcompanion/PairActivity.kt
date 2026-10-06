@@ -133,6 +133,9 @@ class PairActivity : Activity() {
         permissionRow(column, R.string.perm_sms, { granted(Manifest.permission.READ_SMS) }) {
             requestPermissions(arrayOf(Manifest.permission.READ_SMS), 5)
         }
+        permissionRow(column, R.string.perm_call_log, { granted(Manifest.permission.READ_CALL_LOG) }) {
+            requestPermissions(arrayOf(Manifest.permission.READ_CALL_LOG), 7)
+        }
         permissionRow(column, R.string.perm_notification_access, { NotificationBuffer.isEnabled(this) }) {
             startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS))
         }

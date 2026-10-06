@@ -126,6 +126,9 @@ export const TAINTING_TOOLS: ReadonlySet<ToolName> = new Set<ToolName>([
   'tasks.list',
   // Mail is the plainest case of text someone else wrote.
   'mail.search',
+  'mail.bills',
+  // Callers' names come from the phone's contacts, like an SMS sender's (2026-10-06).
+  'phone.calls',
   // A shared file's name was chosen by whoever shared it.
   'drive.search',
 ]);

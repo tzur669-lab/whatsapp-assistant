@@ -2,7 +2,7 @@
 
 How the code is laid out and how the parts talk. The *why* behind each piece
 is in `PLAN.md` (section numbers given); the rules are in `CLAUDE.md`.
-Current as of 2026-10-06 (migration 0019).
+Current as of 2026-10-06 (migration 0020).
 
 ## 1. System diagram
 
@@ -57,9 +57,13 @@ Current as of 2026-10-06 (migration 0019).
    `bidi.ts`), defanged, written to the outbox and returned in the response.
 
 Special shapes:
-- **Phone reads** (contacts, notifications, SMS): the turn is suspended,
+- **Phone reads** (contacts, notifications, SMS, call log): the turn is suspended,
   encrypted, in `agent_turns` (`agent/turns.ts`); the phone's signed
   `/app/device-result` resumes it once.
+- **Missed calls for the digest** (2026-10-06): at the digest hour an empty
+  FCM push (`calls_report`) asks the phone; its signed `/app/calls-report`
+  lands in `missed_calls` (`core/missed-calls.ts`) for at most the digest's
+  20-second wait, and is deleted right after the digest is built.
 - **Action cards** (alarm, timer, nav, app, media, settings, compose, file
   export): a pending row with `channel='card'`; the app claims it once
   (`/app/action/claim`) and runs it on the phone.
@@ -74,14 +78,14 @@ Special shapes:
 | `platform/` | **Only** Cloudflare code: the DO, SQL adapter, inlined migrations | §3.3–3.4 |
 | `channels/app/` | App ingress checks, request schemas, signature/pairing verify, outbox | §6.18 |
 | `channels/whatsapp/` | Frozen channel: HMAC verify, parse, send, media/voice download | §6.1 |
-| `core/` | `pipeline` (inbound order), `router` (commands), `orchestrator` (resolve→policy→act), `repo`/`sql` (data access), `digest`, `birthdays`, `scheduled-read`, `quota`, `timing`, `env` | §6.4, §6.12 |
+| `core/` | `pipeline` (inbound order), `router` (commands), `orchestrator` (resolve→policy→act), `repo`/`sql` (data access), `digest`, `birthdays`, `missed-calls`, `scheduled-read`, `quota`, `timing`, `env` | §6.4, §6.12 |
 | `agent/` | Bounded tool loop, prompt (a8), compact catalog, tool groups, model table, token budget, history, lock, suspended turns | §6.19 |
 | `nlu/` | Fallback parser: prompt (v6), `IntentDraft` schema, slot schemas, Groq provider, rules fallback, weekday check, clarification answers | §6.2, §6.11 |
 | `tools/` | `registry.ts` (single source of truth: name, tier, slots, scopes, flags) + one file per area; `*-store.ts` hold SQL; `match.ts` finds targets | §6.4 |
 | `policy/` | Pure tier decision; WhatsApp 24 h window/budget | §6.4 |
 | `confirm/` | Pending confirmations, Undo offers, open questions | §6.5, §6.11 |
 | `time/` | `resolve` (R1–R12), `tz`, Hebrew lexicon, ranges, recurrence, past days, sunset, Shabbat/chag | §6.3, §6.13 |
-| `google/` | OAuth (PKCE), per-area grants with encrypted refresh tokens, Calendar/Tasks/Gmail/Drive clients | §6.6 |
+| `google/` | OAuth (PKCE), per-area grants with encrypted refresh tokens, Calendar/Tasks/Gmail/Drive/Contacts (birthdays only) clients | §6.6 |
 | `ical/` | Subscribed calendar feeds: URL guard, fetch, parse, cache, merge | §6.15 |
 | `lookup/` | Public keyless data for `info.lookup` + calculator grammar | §6.4 |
 | `device/` | Paired-phone state, FCM v1 (no SDK), call dispatch | §6.17 |
@@ -90,14 +94,14 @@ Special shapes:
 | `render/` | Every user-facing string (Hebrew/English templates, time format, bidi) | §6.3 |
 
 **Tools by tier** (from `tools/registry.ts`; parser sees only the first 8 marked *):
-- Tier 0 (read): `reminders.list`*, `calendar.list_events`*, `calendar.free_time`, `phone.contacts|notifications|sms`, `info.lookup`, `tasks.list`, `mail.search`, `drive.search`, `notes.find`, `expenses.summary`, `calc.compute`
+- Tier 0 (read): `reminders.list`*, `calendar.list_events`*, `calendar.free_time`, `phone.contacts|notifications|sms|calls`, `info.lookup`, `tasks.list`, `mail.search|bills`, `drive.search`, `notes.find`, `expenses.summary`, `calc.compute`, `birthdays.upcoming`
 - Tier 1 (runs now; Undo where reversible; cards run on the phone): `reminders.create`*, `reminders.repeat|at_rest|scheduled_read`, `calendar.create_event`* (Tier 3 with attendees), `tasks.add|complete`, `notes.save`, `expenses.add|export`, cards `alarm.set`, `timer.set`, `nav.go`, `app.open`, `media.play`, `settings.set`
 - Tier 2 (confirm): `reminders.cancel`*, `reminders.move`, `calendar.move_event`*, `calendar.delete_event`*, `mail.draft`, `notes.delete`
 - Tier 3 (confirm on phone): `calls.place`*, `message.compose`
 
 ## 4. Storage
 
-One SQLite DB inside the DO. Schema = `migrations/0001…0019` (registered in
+One SQLite DB inside the DO. Schema = `migrations/0001…0020` (registered in
 `platform/migrations.ts`). Tables by area:
 
 | Area | Tables |
@@ -109,7 +113,7 @@ One SQLite DB inside the DO. Schema = `migrations/0001…0019` (registered in
 | App & phone | `devices`, `device_pairings`, `app_outbox`, `app_nonces`, `call_dispatches` |
 | Agent | `conversation_turns` (encrypted history), `agent_turns` (suspended), `agent_lock` |
 | Quota | `groq_limits`, `groq_token_spend`, `worker_requests` |
-| Data | `ical_feeds`, `ical_events`, `birthdays`, `notes`, `expenses` |
+| Data | `ical_feeds`, `ical_events`, `birthdays`, `notes`, `expenses`, `missed_calls` (minutes only) |
 
 Access goes through `core/sql.ts` (`SqlDriver`) so tests run
 the same code on Node SQLite (`test/integration/sqlite-driver.ts`).

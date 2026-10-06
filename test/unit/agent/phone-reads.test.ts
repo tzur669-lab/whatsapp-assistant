@@ -145,6 +145,7 @@ describe('phone reads', () => {
         'phone__contacts',
         'phone__notifications',
         'phone__sms',
+        'phone__calls',
       ]);
 
       await handleInbound(text('שלום'), deps([{ text: 'היי' }], { deviceCaps: ['cards'] }));

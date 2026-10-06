@@ -36,6 +36,7 @@ import { GoogleApi } from '../google/api.js';
 import { TasksClient } from '../google/tasks.js';
 import { GmailClient } from '../google/gmail.js';
 import { DriveClient } from '../google/drive.js';
+import { ContactsClient } from '../google/contacts.js';
 import { parseKeyring } from '../security/crypto.js';
 import { eventText } from '../render/events.js';
 import { budgetState, isWindowOpen, RECHECK_BEFORE_MS } from '../policy/window.js';
@@ -45,6 +46,9 @@ import { localPartsOf, ZONE } from '../time/tz.js';
 import { buildDigest } from '../core/digest.js';
 import { scheduledReadMessage } from '../core/scheduled-read.js';
 import { NoteStore } from '../tools/note-store.js';
+import { MissedCallStore } from '../core/missed-calls.js';
+import type { MissedCall } from '../core/missed-calls.js';
+import { parseCallsReport } from '../channels/app/parse.js';
 import { ExpenseStore } from '../tools/expense-store.js';
 import { DEFAULT_PLACE, findPlace, HOME_CITY_KEY } from '../lookup/place.js';
 import type { Place } from '../lookup/place.js';
@@ -124,6 +128,9 @@ const VOICE_PER_HOUR = 60;
 const AUDIO_TYPES: ReadonlySet<string> = new Set(['audio/mp4', 'audio/aac', 'audio/ogg', 'audio/webm']);
 
 const HOUR_MS = 60 * 60 * 1000;
+/** How long the digest waits for the phone's missed calls, and how often it looks (#20). */
+const MISSED_CALLS_WAIT_MS = 20_000;
+const MISSED_CALLS_POLL_MS = 1_000;
 
 /** What `send` knows afterwards: the id, or why it did not go (PLAN §6.8). */
 type SendOutcome = { ok: true; wamid: string } | { ok: false; failure: WaFailure };
@@ -137,6 +144,7 @@ export class AssistantDO implements DurableObject {
   private readonly ical: IcalStore;
   private readonly birthdays: BirthdayStore;
   private readonly notes: NoteStore;
+  private readonly missedCalls: MissedCallStore;
   private readonly expenses: ExpenseStore;
   private readonly deferred: UndoActions;
   private readonly google: GoogleStore;
@@ -196,6 +204,7 @@ export class AssistantDO implements DurableObject {
     this.ical = new IcalStore(this.sql, now);
     this.birthdays = new BirthdayStore(this.sql, now);
     this.notes = new NoteStore(this.sql, now);
+    this.missedCalls = new MissedCallStore(this.sql, now);
     this.expenses = new ExpenseStore(this.sql, now);
     this.deferred = new UndoActions(this.sql, now);
     this.google = new GoogleStore(this.sql, now, () =>
@@ -491,6 +500,7 @@ export class AssistantDO implements DurableObject {
     this.deferred.expireStale();
     this.google.purgeExpired();
     this.devices.purge();
+    this.missedCalls.purge();
     await this.refreshFeeds();
     await this.armAlarm();
     this.log.info('maintenance_done', {});
@@ -567,24 +577,79 @@ export class AssistantDO implements DurableObject {
 
     // Marked before the send, not after. A digest is worth exactly one attempt:
     // it is about today, and a retry an hour later is a different message.
+    // Also before the ask below: a second tick during the wait finds it done.
     this.repo.markDigestDone(dayKey);
 
-    const text = await buildDigest({
-      nowMs: now,
-      principal,
-      lang: 'he',
-      reminders: this.reminders,
-      ical: this.ical,
-      birthdays: this.birthdays,
-      log: this.log,
-      fetchImpl: this.fetchImpl,
-      ...(await this.digestPlace()),
-      ...(this.googleApi('tasks') ? { tasks: new TasksClient(this.googleApi('tasks')!) } : {}),
-      ...(this.calendarClient() ? { calendar: this.calendarClient()! } : {}),
-    });
+    let text: string | null;
+    try {
+      const missedCalls = await this.askMissedCalls(principal);
+      text = await buildDigest({
+        nowMs: now,
+        ...(missedCalls.length > 0 ? { missedCalls } : {}),
+        principal,
+        lang: 'he',
+        reminders: this.reminders,
+        ical: this.ical,
+        birthdays: this.birthdays,
+        log: this.log,
+        fetchImpl: this.fetchImpl,
+        ...(await this.digestPlace()),
+        ...(this.googleApi('tasks') ? { tasks: new TasksClient(this.googleApi('tasks')!) } : {}),
+        ...(this.googleApi('contacts') ? { contacts: new ContactsClient(this.googleApi('contacts')!) } : {}),
+        ...(this.calendarClient() ? { calendar: this.calendarClient()! } : {}),
+      });
+    } finally {
+      // Whatever the digest decided, the reported names go now, and the ask
+      // with them: a report that comes later is refused, not kept.
+      this.missedCalls.clear();
+    }
     if (text === null) return;
 
     await this.send({ to: this.selfWaId(), text }, { kind: 'digest', principal });
+  }
+
+  /**
+   * Ask the phone for the calls it missed (#20, 2026-10-06), and wait for its
+   * answer a little: an empty push, a signed report back (`/app/calls-report`).
+   * Only an app that declared `calls_report`; nothing on WhatsApp. No answer in
+   * time — the phone is off, or asleep — is a digest without the line.
+   */
+  private async askMissedCalls(principal: string): Promise<MissedCall[]> {
+    if (this.channel() !== 'app') return [];
+    const device = this.devices.activeDevice(principal);
+    if (!device || !this.devices.capsOf(device.id).includes('calls_report')) return [];
+    const token = await this.devices.pushTokenOf(device.id);
+    const fcm = this.fcmClient();
+    if (!token || !fcm) return [];
+
+    const askedAt = this.missedCalls.ask();
+    const pushed = await fcm.askCalls(token);
+    if (!pushed.ok) {
+      this.log.warn('calls_ask_failed', { errorCode: `E_PUSH_${pushed.reason.toUpperCase()}` });
+      return [];
+    }
+    for (let waited = 0; waited < MISSED_CALLS_WAIT_MS; waited += MISSED_CALLS_POLL_MS) {
+      // Read from SQL each time: the report is handled by another request while this one sleeps.
+      if (this.missedCalls.answered(askedAt)) break;
+      await this.sleep(MISSED_CALLS_POLL_MS);
+    }
+    const calls = this.missedCalls.since(principal, askedAt);
+    this.log.info('calls_ask_done', { answered: this.missedCalls.answered(askedAt), calls: calls.length });
+    return calls;
+  }
+
+  /** A pause between looks at SQL. Timers leave the input gate open, so the report gets in. */
+  private sleep(ms: number): Promise<void> {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+  }
+
+  /** The phone's answer to the digest's ask. Refused (409) when no ask is open. */
+  private appCallsReport(body: Uint8Array, principal: string): Response {
+    const parsed = parseCallsReport(body);
+    if (!parsed) return appError(400, 'bad_request');
+    const calls = parsed.calls.map((call) => ({ name: call.name ?? null, at: call.at }));
+    if (!this.missedCalls.accept(principal, calls)) return appError(409, 'not_asked');
+    return json({ ok: true });
   }
 
   /**
@@ -749,6 +814,7 @@ export class AssistantDO implements DurableObject {
     if (app && method === 'POST' && path === '/app/action/claim') return this.appClaim(body, principal);
     if (app && method === 'POST' && path === '/app/action/report') return this.appActionReport(body, principal);
     if (app && method === 'POST' && path === '/app/device-result') return this.appDeviceResult(body, device, principal);
+    if (app && method === 'POST' && path === '/app/calls-report') return this.appCallsReport(body, principal);
 
     const dispatch = /^\/device\/dispatch\/([0-9a-f]{32})$/.exec(path);
     if (method === 'GET' && dispatch) {
@@ -1612,6 +1678,7 @@ export class AssistantDO implements DurableObject {
       ...(this.googleApi('tasks') ? { tasks: new TasksClient(this.googleApi('tasks')!) } : {}),
       ...(this.googleApi('gmail') ? { gmail: new GmailClient(this.googleApi('gmail')!) } : {}),
       ...(this.googleApi('drive') ? { drive: new DriveClient(this.googleApi('drive')!) } : {}),
+      ...(this.googleApi('contacts') ? { contacts: new ContactsClient(this.googleApi('contacts')!) } : {}),
       publicBaseUrl: this.env.PUBLIC_BASE_URL,
       ...(this.calendarClient() ? { calendar: this.calendarClient()! } : {}),
       ...(this.callDispatcher() ? { calls: this.callDispatcher()! } : {}),

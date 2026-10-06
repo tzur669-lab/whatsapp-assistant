@@ -13,13 +13,19 @@ import com.google.firebase.messaging.RemoteMessage
  *   fetch failed, so a reminder never rings silently.
  * - `dispatch_id` — a call request. The words to match are fetched over HTTPS,
  *   signed, so the name never passes through Google.
+ * - `kind: calls_report` — the digest asks for the calls missed in the last
+ *   day (2026-10-06). Answered signed, with names only; nothing is shown.
  */
 class CompanionMessagingService : FirebaseMessagingService() {
+    private companion object {
+        const val DAY_MS = 24 * 60 * 60 * 1000L
+    }
 
     /** Runs on a background thread, with about ten seconds: the network calls here are fine. */
     override fun onMessageReceived(message: RemoteMessage) {
         if (!Signer(this).isPaired) return
         if (message.data["kind"] == "outbox") return onOutbox()
+        if (message.data["kind"] == "calls_report") return onCallsReport()
         val dispatchId = message.data["dispatch_id"] ?: return
         onDispatch(dispatchId)
     }
@@ -31,6 +37,13 @@ class CompanionMessagingService : FirebaseMessagingService() {
             return
         }
         Notifier.announce(this, outcome.fresh)
+    }
+
+    /** Without the permission the phone does not answer, and the digest goes out without the line. */
+    private fun onCallsReport() {
+        if (checkSelfPermission(Manifest.permission.READ_CALL_LOG) != PackageManager.PERMISSION_GRANTED) return
+        val since = System.currentTimeMillis() - DAY_MS
+        Api.callsReport(this, PhoneReads.callLog(this, since, missedOnly = true))
     }
 
     private fun onDispatch(dispatchId: String) {

@@ -47,6 +47,9 @@ import {
   remindersMoveSlots,
   remindersRepeatSlots,
   settingsSetSlots,
+  birthdaysUpcomingSlots,
+  mailBillsSlots,
+  phoneCallsSlots,
   timerSetSlots,
 } from '../nlu/slot-schemas.js';
 
@@ -100,6 +103,11 @@ export const TOOL_NAMES = [
   'expenses.add',
   'expenses.summary',
   'expenses.export',
+  // ROADMAP block E (2026-10-06): birthdays with Google Contacts, bills in
+  // Gmail, and the phone's call log.
+  'birthdays.upcoming',
+  'mail.bills',
+  'phone.calls',
 ] as const;
 
 export type ToolName = (typeof TOOL_NAMES)[number];
@@ -323,7 +331,8 @@ export const REGISTRY: Readonly<Record<ToolName, ToolSpec>> = {
   },
   'nav.go': {
     name: 'nav.go',
-    llmDescription: 'Navigate to a place with Waze or Google Maps.',
+    llmDescription:
+      "Navigate with Waze or Google Maps to a place (destination), a contact's address (contact), or a calendar event's location (event, or next_event for the next one).",
     draftSchema: navGoSlots,
     tier: 1,
     scopes: [],
@@ -346,7 +355,7 @@ export const REGISTRY: Readonly<Record<ToolName, ToolSpec>> = {
   'media.play': {
     name: 'media.play',
     llmDescription:
-      'Play on the phone. app: youtube_music for a song or music, youtube for a video; leave it out when unclear. mode: background or fullscreen, only if the user said.',
+      'Play on the phone. app: youtube_music for a song or music, youtube for a video, spotify only if the user said Spotify; leave it out when unclear. mode: background or fullscreen, only if the user said.',
     draftSchema: mediaPlaySlots,
     // Opens a player on the phone with words to search for; nothing leaves it.
     tier: 1,
@@ -563,6 +572,42 @@ export const REGISTRY: Readonly<Record<ToolName, ToolSpec>> = {
     scopes: [],
     rateLimit: { perHour: 60, perDay: 300 },
     implementedIn: 6,
+  },
+  'birthdays.upcoming': {
+    name: 'birthdays.upcoming',
+    llmDescription:
+      "Upcoming birthdays (the user's list and Google Contacts), or one person's birthday by name. days: how far ahead (default 30). The answer is shown to the user directly.",
+    draftSchema: birthdaysUpcomingSlots,
+    // A read. Dates are numbers the model-bound scrub would blank, so code's
+    // text is the answer. A name from Google Contacts taints the turn.
+    tier: 0,
+    scopes: [],
+    rateLimit: { perHour: 30, perDay: 150 },
+    implementedIn: 6,
+    terminal: true,
+  },
+  'mail.bills': {
+    name: 'mail.bills',
+    llmDescription:
+      'Bills and invoices to pay, found in Gmail, with the amount and the due date when the mail says them. days: how far back (default 45). The answer is shown to the user directly.',
+    draftSchema: mailBillsSlots,
+    // Read only. Code builds the query and reads amounts and dates; mail is
+    // someone else's words, so the result taints the turn.
+    tier: 0,
+    scopes: [],
+    rateLimit: { perHour: 20, perDay: 100 },
+    implementedIn: 6,
+    terminal: true,
+  },
+  'phone.calls': {
+    name: 'phone.calls',
+    llmDescription: "Read the phone's recent calls (names, no numbers): who called, missed calls, or calls with one person.",
+    draftSchema: phoneCallsSlots,
+    tier: 0,
+    scopes: [],
+    rateLimit: { perHour: 20, perDay: 100 },
+    implementedIn: 6,
+    phoneRead: true,
   },
   'calendar.free_time': {
     name: 'calendar.free_time',

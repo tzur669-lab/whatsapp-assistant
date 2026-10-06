@@ -5,9 +5,9 @@
  *
  * New scopes are a security decision (CLAUDE.md); these were approved by the
  * user on 2026-10-01 and recorded in PLAN §14. Nothing here sends mail, and
- * nothing writes to Drive.
+ * nothing writes to Drive. `contacts` was approved on 2026-10-06.
  */
-export const GRANT_NAMES = ['calendar', 'gmail', 'tasks', 'drive'] as const;
+export const GRANT_NAMES = ['calendar', 'gmail', 'tasks', 'drive', 'contacts'] as const;
 export type GrantName = (typeof GRANT_NAMES)[number];
 
 export type GrantSpec = {
@@ -45,6 +45,14 @@ export const GRANTS: Readonly<Record<GrantName, GrantSpec>> = {
     // File names and dates only, never contents.
     scopes: ['https://www.googleapis.com/auth/drive.metadata.readonly'],
     command: 'drive',
+  },
+  contacts: {
+    account: 'contacts',
+    // Approved by the user on 2026-10-06 (ROADMAP #11), reversing §14 of
+    // 2026-09-25. Read only; `src/google/contacts.ts` asks for names and
+    // birthdays and nothing else.
+    scopes: ['https://www.googleapis.com/auth/contacts.readonly'],
+    command: 'contacts',
   },
 };
 

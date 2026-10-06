@@ -33,6 +33,8 @@ import { calendarFreeTime } from '../tools/free-time.js';
 import { TASK_TOOLS } from '../tools/tasks.js';
 import { MAIL_TOOLS } from '../tools/mail.js';
 import { driveSearch } from '../tools/drive.js';
+import { birthdaysUpcoming } from '../tools/birthdays.js';
+import { mailBills } from '../tools/bills.js';
 import { CALENDAR_WRITE_TOOLS } from '../tools/calendar-write.js';
 import { callsPlace } from '../tools/calls.js';
 import { PHONE_ACTION_TOOLS } from '../tools/phone-actions.js';
@@ -148,6 +150,8 @@ const IMPLEMENTED: Partial<Record<ToolName, ToolDefinition>> = {
   ...TASK_TOOLS,
   ...MAIL_TOOLS,
   'drive.search': driveSearch,
+  'birthdays.upcoming': birthdaysUpcoming,
+  'mail.bills': mailBills,
   ...NOTE_TOOLS,
   ...EXPENSE_TOOLS,
 };
@@ -404,9 +408,12 @@ function offerCard(
   const autoRun = decision.autoRunAllowed && (tool.autoRunnable?.(input) ?? false);
   audit(turn, tool.name, decision, 'CARD', autoRun ? 'card_issued_auto' : 'card_issued', action.id);
 
+  // A destination taken from a calendar event is someone else's words (2026-10-06).
+  const fromEvent = (input as { source?: unknown }).source === 'event';
   return {
     text: cardReply(preview, autoRun, type, ctx.lang),
     card: { actionId: action.id, nonce: action.nonce, type, preview, autoRun },
+    ...(fromEvent ? { tainting: true as const } : {}),
   };
 }
 

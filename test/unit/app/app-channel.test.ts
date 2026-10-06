@@ -761,9 +761,13 @@ describe('the app channel', () => {
       expect(devices.capsOf(phone.deviceId!)).toEqual([]);
     });
 
-    it('refuses a capability it does not know', async () => {
+    it('drops a capability it does not know, and keeps the push address (2026-10-06)', async () => {
+      // A newer app on an older server must still get its pushes; only known caps are stored.
       const phone = await pair();
-      expect((await send(await phone.toDo('POST', '/app/push-token', { pushToken: 'tok', caps: ['root'] }))).status).toBe(400);
+      const devices = new DeviceStore(fake.driver, () => Date.now(), () => 'x', () => parseKeyring({ TOKEN_ENC_KEY_V1: KEY }));
+      expect((await send(await phone.toDo('POST', '/app/push-token', { pushToken: 'tok', caps: ['root', 'cards', 'a,b'] }))).status).toBe(200);
+      expect(devices.capsOf(phone.deviceId!)).toEqual(['cards']);
+      expect((await send(await phone.toDo('POST', '/app/push-token', { pushToken: 'tok', caps: ['x'.repeat(33)] }))).status).toBe(400);
     });
 
     it('hands the parameters over once, to a signed claim with the nonce', async () => {
@@ -921,6 +925,74 @@ describe('the app channel', () => {
       expect(fake.driver.exec('SELECT COUNT(*) AS n FROM agent_turns')[0]?.['n']).toBe(1);
       await say(phone, '/pair off');
       expect(fake.driver.exec('SELECT COUNT(*) AS n FROM agent_turns')[0]?.['n']).toBe(0);
+    });
+  });
+
+  // -- missed calls in the digest (ROADMAP #20, 2026-10-06) ---------------------
+
+  describe('missed calls in the digest', () => {
+    const askPushes = () => google.pushes.filter((push) => push['kind'] === 'calls_report');
+    const report = async (phone: FakePhone, calls: { name?: string; at: number }[]) =>
+      send(await phone.toDo('POST', '/app/calls-report', { calls }));
+
+    const readyPhone = async () => {
+      const phone = await pair();
+      await send(await phone.toDo('POST', '/app/push-token', { pushToken: 'tok', caps: ['calls_report'] }));
+      repo.setDigestHour(12);
+      return phone;
+    };
+
+    /** Run the digest until it has asked the phone, and hand back the running promise. */
+    const startDigest = async () => {
+      const running = assistant.maybeSendDigest();
+      // Real time passes too: signing the push's token is real crypto.
+      await vi.waitFor(() => expect(askPushes()).toHaveLength(1), { timeout: 4_000, interval: 10 });
+      // Wrapped: an async function returning a promise would wait for it.
+      return { running };
+    };
+
+    it('refuses a report nobody asked for, and keeps nothing', async () => {
+      const phone = await readyPhone();
+      expect((await report(phone, [{ name: 'דנה', at: NOW - 60_000 }])).status).toBe(409);
+      expect(fake.driver.exec('SELECT COUNT(*) AS n FROM missed_calls')[0]?.['n']).toBe(0);
+    });
+
+    it('asks with an empty push, puts the answer in the digest, and keeps no name afterwards', async () => {
+      const phone = await readyPhone();
+      const { running } = await startDigest();
+      expect(askPushes()).toEqual([{ kind: 'calls_report' }]);
+
+      expect((await report(phone, [{ name: 'דנה', at: NOW - 3_600_000 }, { at: NOW - 7_200_000 }])).status).toBe(200);
+      await vi.advanceTimersByTimeAsync(1_000);
+      await running;
+
+      const digest = (await outbox(phone)).rows.find((row) => row.kind === 'digest');
+      expect(stripIsolates(digest!.text)).toContain('שיחות שלא נענו:');
+      expect(stripIsolates(digest!.text)).toContain('• דנה · ');
+      expect(stripIsolates(digest!.text)).toContain('• מספר לא מזוהה · ');
+      expect(fake.driver.exec('SELECT COUNT(*) AS n FROM missed_calls')[0]?.['n']).toBe(0);
+      // A late report is refused: the ask closed with the digest.
+      expect((await report(phone, [{ name: 'דנה', at: NOW }])).status).toBe(409);
+    });
+
+    it('waits twenty seconds at most for a phone that does not answer', async () => {
+      const phone = await readyPhone();
+      reminders.schedule({ principal, text: 'לקנות חלב', dueAtUtc: NOW + 3_600_000, localWallTime: '', tz: 'Asia/Jerusalem' });
+      const { running } = await startDigest();
+      await vi.advanceTimersByTimeAsync(21_000);
+      await running;
+      const rows = (await outbox(phone)).rows;
+      const digest = rows.find((row) => row.kind === 'digest');
+      expect(stripIsolates(digest!.text)).toContain('לקנות חלב');
+      expect(stripIsolates(digest!.text)).not.toContain('שיחות שלא נענו');
+    });
+
+    it('does not ask an app that did not say it can answer', async () => {
+      const phone = await pair();
+      await send(await phone.toDo('POST', '/app/push-token', { pushToken: 'tok', caps: ['cards'] }));
+      repo.setDigestHour(12);
+      await assistant.maybeSendDigest();
+      expect(askPushes()).toEqual([]);
     });
   });
 });

@@ -824,3 +824,96 @@
   expect:
     intent: expenses.export
     missing: []
+
+# ROADMAP block E (2026-10-06): birthdays with Google Contacts, bills in Gmail,
+# the call log, Spotify, and navigating to a contact or an event. Agent-only.
+
+- id: be-bday-001
+  now: "2026-10-06T09:00:00+03:00"
+  input: "של מי יום הולדת השבוע?"
+  expect:
+    intent: birthdays.upcoming
+    missing: [query_variants]
+
+- id: be-bday-002
+  now: "2026-10-06T09:00:00+03:00"
+  input: "מתי יום ההולדת של דנה?"
+  expect:
+    intent: birthdays.upcoming
+    missing: []
+
+- id: be-bday-003
+  now: "2026-10-06T09:00:00+03:00"
+  input: "any birthdays coming up this month?"
+  expect:
+    intent: birthdays.upcoming
+    missing: [query_variants]
+
+- id: be-bill-001
+  now: "2026-10-06T09:00:00+03:00"
+  input: "אילו חשבונות יש לי לשלם?"
+  expect:
+    intent: mail.bills
+    missing: []
+
+- id: be-bill-002
+  now: "2026-10-06T09:00:00+03:00"
+  input: "הגיעו לי חשבוניות במייל החודש?"
+  expect:
+    intent: mail.bills
+    missing: []
+
+- id: be-call-001
+  now: "2026-10-06T09:00:00+03:00"
+  input: "מי התקשר אליי היום?"
+  expect:
+    intent: phone.calls
+    missing: [name]
+
+- id: be-call-002
+  now: "2026-10-06T09:00:00+03:00"
+  input: "פספסתי שיחות?"
+  expect:
+    intent: phone.calls
+    slots:
+      missed: true
+    missing: [name]
+
+- id: be-call-003
+  now: "2026-10-06T09:00:00+03:00"
+  input: "did Dana call me yesterday?"
+  expect:
+    intent: phone.calls
+    missing: []
+
+- id: be-spot-001
+  now: "2026-10-06T09:00:00+03:00"
+  input: "תנגן אריק איינשטיין בספוטיפיי"
+  expect:
+    intent: media.play
+    slots:
+      app: spotify
+    missing: []
+
+- id: be-nav-001
+  now: "2026-10-06T09:00:00+03:00"
+  input: "תנווט לפגישה הבאה שלי"
+  expect:
+    intent: nav.go
+    slots:
+      next_event: true
+    missing: [destination]
+
+- id: be-nav-002
+  now: "2026-10-06T09:00:00+03:00"
+  input: "תנווט בוויז לבית של סבתא רחל"
+  expect:
+    intent: nav.go
+    missing: []
+
+- id: be-nav-003
+  now: "2026-10-06T09:00:00+03:00"
+  input: "navigate to my dentist appointment"
+  expect:
+    intent: nav.go
+    missing: [destination]

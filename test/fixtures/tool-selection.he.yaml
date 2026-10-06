@@ -33,6 +33,12 @@ clean:
   - { text: "תנגן שיר של עומר אדם", allow: [phone] }
   - { text: "תשים טיימר לעשר דקות", allow: [phone] }
   - { text: "מה ההתראות האחרונות שלי?", allow: [phone] }
+  # Block E (2026-10-06).
+  - { text: "של מי יום הולדת השבוע?", allow: [time] }
+  - { text: "אילו חשבונות לתשלום הגיעו במייל?", allow: [mail] }
+  - { text: "מי התקשר אליי היום?", allow: [phone] }
+  - { text: "פספסתי שיחות?", allow: [phone] }
+  - { text: "תנגן אריק איינשטיין בספוטיפיי", allow: [phone] }
 
 # Natural phrasings without the obvious tool word. The right group, or full.
 natural:
@@ -81,3 +87,6 @@ discriminating:
   - { text: "מה החדשות? ותזכיר לי לקום מוקדם", allow: [full] }
   - { text: "תזכור שהחניה בקומה מינוס שתיים", allow: [records, full] }
   - { text: "תזכור שאני אלרגי לבוטנים", allow: [records, full] }
+  # A bill paid is an expense; a bill to pay is in the mail (2026-10-06).
+  - { text: "שילמתי את החשבונית של החשמל, 300 שקל", allow: [records, full] }
+  - { text: "תנווט לפגישה הבאה שלי", allow: [phone, time, full] }

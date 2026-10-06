@@ -184,7 +184,11 @@ describe('every card', () => {
     expect(cardInputSchema.safeParse({ type: 'alarm', hour: 7, minute: 0, extra: 1 }).success).toBe(false);
     expect(cardInputSchema.safeParse({ type: 'nav', app: 'waze', destination: 'x', favorite: 'home' }).success).toBe(false);
     expect(cardInputSchema.safeParse({ type: 'message', channel: 'sms', queries: ['a'], text: 'x'.repeat(501) }).success).toBe(false);
-    expect(cardInputSchema.safeParse({ type: 'media', app: 'spotify', query: 'x', mode: 'background' }).success).toBe(false);
+    expect(cardInputSchema.safeParse({ type: 'media', app: 'deezer', query: 'x', mode: 'background' }).success).toBe(false);
+    // A navigation names one target, and only a place can come from an event (2026-10-06).
+    expect(cardInputSchema.safeParse({ type: 'nav', app: 'waze', destination: 'x', contact: ['דנה'] }).success).toBe(false);
+    expect(cardInputSchema.safeParse({ type: 'nav', app: 'waze', contact: ['דנה'], source: 'event' }).success).toBe(false);
+    expect(cardInputSchema.safeParse({ type: 'nav', app: 'waze' }).success).toBe(false);
     expect(cardInputSchema.safeParse({ type: 'media', app: 'youtube', query: 'x', mode: 'pip' }).success).toBe(false);
     expect(cardInputSchema.safeParse({ type: 'media', app: 'youtube', query: 'x'.repeat(101), mode: 'background' }).success).toBe(false);
   });

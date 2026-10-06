@@ -106,6 +106,12 @@ parameters.
 4. The app reports `done`, `failed`, `no_match` or `unsupported`, never what it
    matched.
 
+Since 0.10: navigation can go to **a contact's address** — the card carries the
+name's words, the address is read and matched here (`ContactsReader.addresses`)
+and never leaves — or to a calendar event's place, which the server put on the
+card and which always waits for the tap. Music can play on **Spotify**
+(play-from-search, else its own search).
+
 Messages, do-not-disturb and the ringer never run on their own. Card buttons
 never appear in a notification. The app declares `caps: ["cards"]` with its push
 address; a build that does not is never sent a card.
@@ -137,8 +143,17 @@ hidden app's kept rows are deleted at once.
 A reply built on something read from the phone is marked `private`: its
 notification says only that there is an answer. The text stays in the chat.
 
+Since 0.10 the **call log** is a fourth read (`calls`, `READ_CALL_LOG`): the
+caller's contact name, or the name the log cached if it has letters, else
+nothing — never a number — with the direction and the time.
+
+**Missed calls for the morning digest (0.10).** At the digest hour the server
+sends an empty push (`kind: calls_report`). Without the call-log permission the
+app does nothing; with it, it sends a signed `POST /app/calls-report` with the
+calls missed in the last day — names or none, and times. Nothing is shown.
+
 Voice messages never trigger a phone read (the server does not offer it), and
-the app declares `caps: ["cards", "device_query"]`.
+the app declares `caps: ["cards", "device_query", "file", "calls_report"]`.
 
 ## Setup
 
@@ -161,7 +176,7 @@ the app declares `caps: ["cards", "device_query"]`.
    "unrestricted", and allow the microphone (and contacts and phone for calls).
    For ringer and do-not-disturb cards, Android asks once for notification-policy
    access; the first such card opens that screen.
-6. Phone reads, each optional: SMS, and notification access. On Android 13+ a
+6. Phone reads, each optional: SMS, the call log, and notification access. On Android 13+ a
    sideloaded app may need **App info → ⋮ → Allow restricted settings** before
    notification access can be turned on.
 
@@ -175,8 +190,10 @@ the app declares `caps: ["cards", "device_query"]`.
 - **The signing key:** in the Keystore.
 - **Recordings:** live in `noBackupFilesDir` only while recording. They are
   deleted after reading, and any leftovers are removed at startup.
-- **Contacts:** numbers never leave the phone. A name leaves only as the answer
-  to a phone read the user asked for (PLAN §6.21).
+- **Contacts:** numbers and addresses never leave the phone. A name leaves only
+  as the answer to a phone read the user asked for (PLAN §6.21), or in the
+  missed-calls report the digest asks for.
+- **Call log:** read when asked, never copied. Numbers never leave.
 - **Notifications:** the last day, in `notifications.db`, private and excluded
   from backup, until a phone read asks for some of them.
 

@@ -2,6 +2,7 @@ package com.tzur.callcompanion
 
 import android.content.Context
 import android.provider.ContactsContract.CommonDataKinds.Phone
+import android.provider.ContactsContract.CommonDataKinds.StructuredPostal
 
 /** Every contact that has a phone number, read on the device and kept in memory for one match. */
 object ContactsReader {
@@ -32,5 +33,27 @@ object ContactsReader {
             }
         }
         return byId.map { (id, entry) -> Contact(id, entry.first, entry.second) }
+    }
+
+    /**
+     * Every contact's postal address, as name and one-line address (2026-10-06,
+     * navigating to a contact). Read here and kept in memory for one match.
+     */
+    fun addresses(context: Context): List<Pair<String, String>> {
+        val out = mutableListOf<Pair<String, String>>()
+        context.contentResolver.query(
+            StructuredPostal.CONTENT_URI,
+            arrayOf(StructuredPostal.DISPLAY_NAME_PRIMARY, StructuredPostal.FORMATTED_ADDRESS),
+            null,
+            null,
+            null,
+        )?.use { cursor ->
+            while (cursor.moveToNext()) {
+                val name = cursor.getString(0) ?: continue
+                val address = cursor.getString(1)?.replace(Regex("\\s+"), " ")?.trim() ?: continue
+                if (address.isNotEmpty()) out += name to address
+            }
+        }
+        return out
     }
 }

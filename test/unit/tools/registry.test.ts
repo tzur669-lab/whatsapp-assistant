@@ -19,6 +19,8 @@ import { MAIL_TOOLS } from '../../../src/tools/mail.js';
 import { driveSearch } from '../../../src/tools/drive.js';
 import { calcCompute } from '../../../src/tools/calc.js';
 import { calendarFreeTime } from '../../../src/tools/free-time.js';
+import { birthdaysUpcoming } from '../../../src/tools/birthdays.js';
+import { mailBills } from '../../../src/tools/bills.js';
 import type { ToolDefinition } from '../../../src/tools/types.js';
 import { INTENT_NAMES } from '../../../src/nlu/intent-schema.js';
 
@@ -37,6 +39,8 @@ const IMPLEMENTATIONS: Record<string, ToolDefinition> = {
   'calendar.free_time': calendarFreeTime,
   ...NOTE_TOOLS,
   ...EXPENSE_TOOLS,
+  'birthdays.upcoming': birthdaysUpcoming,
+  'mail.bills': mailBills,
 };
 
 describe('every registered tool is real', () => {
@@ -88,7 +92,7 @@ describe('every registered tool is real', () => {
 
   it('keeps every phone read a Tier 0 read the server never runs (§6.21)', async () => {
     const reads = TOOL_NAMES.filter((name) => REGISTRY[name].phoneRead);
-    expect(reads).toEqual(['phone.contacts', 'phone.notifications', 'phone.sms']);
+    expect(reads).toEqual(['phone.contacts', 'phone.notifications', 'phone.sms', 'phone.calls']);
     for (const name of reads) {
       expect(REGISTRY[name].tier, name).toBe(0);
       expect(REGISTRY[name].confirmation, name).toBeUndefined();

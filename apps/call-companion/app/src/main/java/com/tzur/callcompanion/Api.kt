@@ -219,7 +219,7 @@ object Api {
     }
 
     /** What this build can do, sent with the push address (PLAN §6.20, §6.21). */
-    val CAPS = listOf("cards", "device_query", "file")
+    val CAPS = listOf("cards", "device_query", "file", "calls_report")
 
     fun updatePushToken(context: Context, pushToken: String): Boolean {
         val body = JSONObject().put("pushToken", pushToken).put("caps", JSONArray(CAPS))
@@ -248,6 +248,21 @@ object Api {
     fun reportAction(context: Context, actionId: String, outcome: String): Boolean {
         val body = JSONObject().put("actionId", actionId).put("outcome", outcome)
         return signed(context, "POST", "/app/action/report", JSON_TYPE, utf8(body), SHORT_TIMEOUT_MS) is Result.Ok
+    }
+
+    /**
+     * The calls missed in the last day, for the digest (2026-10-06): names, or
+     * none for a number not in the contacts, and times. Never a number.
+     */
+    fun callsReport(context: Context, calls: List<PhoneReads.Call>): Boolean {
+        val array = JSONArray()
+        for (call in calls.take(PhoneReadLogic.MAX_ITEMS)) {
+            val json = JSONObject().put("at", call.at)
+            call.name?.let { json.put("name", it) }
+            array.put(json)
+        }
+        val body = JSONObject().put("calls", array)
+        return signed(context, "POST", "/app/calls-report", JSON_TYPE, utf8(body), SHORT_TIMEOUT_MS) is Result.Ok
     }
 
     // -- phone reads (PLAN §6.21) ---------------------------------------------

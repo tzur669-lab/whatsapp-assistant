@@ -14,6 +14,7 @@ import type { Lang } from './format-time.js';
 import type { ReminderView } from './reminders.js';
 import type { CalendarEvent } from '../google/calendar.js';
 import type { LocalParts } from '../time/tz.js';
+import { localPartsOf, ZONE } from '../time/tz.js';
 import { eventText } from './events.js';
 
 /** Lines that set the scene (#6). Shown only in a digest that is sent anyway. */
@@ -55,6 +56,8 @@ export type DigestParts = {
   tasks?: readonly DigestTask[];
   /** Sunday's look at the week ahead; null on other days (#8). */
   week?: DigestWeek | null;
+  /** Calls missed in the last day, as the phone reported them (#20). Null name: not in the contacts. */
+  missedCalls?: readonly { name: string | null; at: number }[];
 };
 
 export const digestText = {
@@ -80,6 +83,11 @@ export const digestText = {
 
     if (parts.tasks && parts.tasks.length > 0) {
       sections.push(taskSection(parts.tasks, lang));
+    }
+
+    if (parts.missedCalls && parts.missedCalls.length > 0) {
+      // Someone tried to reach the user: something to act on, like an overdue reminder.
+      sections.push(missedCallSection(parts.missedCalls, lang));
     }
 
     if (parts.overdue.length > 0) {
@@ -110,6 +118,36 @@ function taskSection(tasks: readonly DigestTask[], lang: Lang): string {
   const late = lang === 'en' ? ' (overdue)' : ' (באיחור)';
   const lines = tasks.map((task) => `• ${isolate(task.title)}${task.overdue ? late : ''}`);
   return [header, '', ...lines].join('\n');
+}
+
+/**
+ * One line per caller, the latest call's time, and how many times when more
+ * than once: `• דנה (פעמיים) · יום ג׳ 6.10 · 08:12`. Unknown numbers are one line.
+ */
+function missedCallSection(calls: readonly { name: string | null; at: number }[], lang: Lang): string {
+  const he = lang === 'he';
+  const byCaller = new Map<string, { label: string; count: number; last: number }>();
+  for (const call of calls) {
+    const key = call.name ?? '';
+    const label = call.name ?? (he ? 'מספר לא מזוהה' : 'Unknown number');
+    const entry = byCaller.get(key) ?? { label, count: 0, last: 0 };
+    entry.count += 1;
+    entry.last = Math.max(entry.last, call.at);
+    byCaller.set(key, entry);
+  }
+  const lines = [...byCaller.values()]
+    .sort((a, b) => b.last - a.last)
+    .map((entry) => {
+      const times = entry.count > 1 ? ` (${timesOf(entry.count, lang)})` : '';
+      return `• ${isolate(entry.label)}${times} · ${formatWhen(localPartsOf(entry.last, ZONE), lang)}`;
+    });
+  return [he ? 'שיחות שלא נענו:' : 'Missed calls:', '', ...lines].join('\n');
+}
+
+/** `פעמיים` · `3 פעמים` / `twice` · `3 times`. */
+function timesOf(count: number, lang: Lang): string {
+  if (lang === 'en') return count === 2 ? 'twice' : `${isolateLtr(String(count))} times`;
+  return count === 2 ? 'פעמיים' : `${isolateLtr(String(count))} פעמים`;
 }
 
 function weekSection(week: DigestWeek, lang: Lang): string {

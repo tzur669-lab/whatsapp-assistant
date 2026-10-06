@@ -9,7 +9,10 @@ import org.junit.Test
 class PhoneReadLogicTest {
     @Test
     fun parsesTheThreeQueriesAndNothingElse() {
-        val of = PhoneReadLogic.Query.Companion::of
+        // A lambda, not a reference: `of` has defaulted parameters since the call log (2026-10-06).
+        val of = { kind: String?, queries: List<String>?, app: String?, sender: String?, hours: Int? ->
+            PhoneReadLogic.Query.of(kind, queries, app, sender, hours)
+        }
         assertTrue(of("contacts", listOf("דני"), null, null, null) is PhoneReadLogic.Query.Contacts)
         assertEquals("אמא", (of("sms", null, null, "אמא", 24) as PhoneReadLogic.Query.Sms).sender)
         assertNull((of("notifications", null, null, null, 2) as PhoneReadLogic.Query.Notifications).app)
@@ -61,5 +64,35 @@ class PhoneReadLogicTest {
         assertNull(items[0].sender)
         assertEquals(PhoneReadLogic.MAX_TEXT, items[0].text!!.length)
         assertEquals(1L, items[0].at)
+    }
+
+    @Test
+    fun parsesTheCallLogQuery() {
+        val calls = PhoneReadLogic.Query.of("calls", null, null, null, 24, name = "דנה", missed = true) as PhoneReadLogic.Query.Calls
+        assertEquals("דנה", calls.name)
+        assertTrue(calls.missed)
+        assertTrue(PhoneReadLogic.Query.of("calls", null, null, null, 168, missed = false) is PhoneReadLogic.Query.Calls)
+        assertNull(PhoneReadLogic.Query.of("calls", null, null, null, 169, missed = false))
+        assertNull(PhoneReadLogic.Query.of("calls", null, null, null, 24))
+        assertNull(PhoneReadLogic.Query.of("calls", null, null, null, 24, name = "", missed = false))
+    }
+
+    @Test
+    fun namesACallDirectionFromTheClosedListOnly() {
+        assertEquals("missed", PhoneReadLogic.callDirection(PhoneReadLogic.CALL_MISSED))
+        assertEquals("incoming", PhoneReadLogic.callDirection(PhoneReadLogic.CALL_INCOMING))
+        assertEquals("outgoing", PhoneReadLogic.callDirection(PhoneReadLogic.CALL_OUTGOING))
+        assertEquals("rejected", PhoneReadLogic.callDirection(PhoneReadLogic.CALL_REJECTED))
+        // Voicemail and blocked are left out.
+        assertNull(PhoneReadLogic.callDirection(4))
+        assertNull(PhoneReadLogic.callDirection(6))
+    }
+
+    @Test
+    fun aCallerIsANameAndNeverANumber() {
+        assertEquals("דנה כהן", PhoneReadLogic.callerName("דנה כהן", "Dana"))
+        assertEquals("Dana", PhoneReadLogic.callerName(null, "Dana"))
+        assertNull(PhoneReadLogic.callerName(null, "+972 50-000-0000"))
+        assertNull(PhoneReadLogic.callerName("", null))
     }
 }

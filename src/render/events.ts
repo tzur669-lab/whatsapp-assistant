@@ -28,6 +28,7 @@ export const GRANT_LABELS: Readonly<Record<GrantName, string>> = {
   gmail: 'Gmail',
   tasks: 'Google Tasks',
   drive: 'Google Drive',
+  contacts: 'Google Contacts',
 };
 
 const GRANT_LABELS_EN: Readonly<Record<GrantName, string>> = {
@@ -35,6 +36,7 @@ const GRANT_LABELS_EN: Readonly<Record<GrantName, string>> = {
   gmail: 'Gmail',
   tasks: 'Google Tasks',
   drive: 'Google Drive',
+  contacts: 'Google Contacts',
 };
 
 export const eventText = {

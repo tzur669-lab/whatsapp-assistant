@@ -258,9 +258,16 @@ export default {
    * whether this is the hour. Anything unrecognised runs maintenance, so a cron
    * added to the config and forgotten here still does something sane.
    */
-  async scheduled(event: ScheduledController, env: Bindings, ctx: ExecutionContext): Promise<void> {
+  async scheduled(event: ScheduledController, env: Bindings, _ctx: ExecutionContext): Promise<void> {
     const stub = env.ASSISTANT.get(env.ASSISTANT.idFromName('singleton'));
     const path = event.cron === HOURLY_CRON ? '/do/tick' : '/do/maintenance';
-    ctx.waitUntil(stub.fetch(`https://do${path}`, { method: 'POST' }));
+    // Awaited, not left to `waitUntil` (2026-10-06): the digest may wait up to
+    // twenty seconds for the phone's missed calls, after it is marked done, and
+    // a cut-off there would lose the day's digest. A cron is never retried.
+    try {
+      await stub.fetch(`https://do${path}`, { method: 'POST' });
+    } catch (error) {
+      log.error('cron_do_failed', { errorCode: error instanceof Error ? error.name : 'E_UNKNOWN' });
+    }
   },
 };
