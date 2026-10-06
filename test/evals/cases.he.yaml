@@ -346,6 +346,21 @@
     intent: reminders.cancel
     missing: []
 
+# Reminders the user calls "alerts" (2026-10-06): not the phone's notifications.
+- id: he-alert-001
+  now: "2026-09-24T21:00:00+03:00"
+  input: "איזה התראות פעילות יש לי?"
+  expect:
+    intent: reminders.list
+    missing: []
+
+- id: he-alert-002
+  now: "2026-09-24T21:00:00+03:00"
+  input: "תבטל את ההתראה לכבות את האש"
+  expect:
+    intent: reminders.cancel
+    missing: []
+
 # ---------------------------------------------------------------- calendar: list
 - id: he-cal-001
   now: "2026-09-24T21:00:00+03:00"

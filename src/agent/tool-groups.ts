@@ -89,6 +89,10 @@ const PATTERNS: Readonly<Record<GroupName, readonly RegExp[]>> = {
     // Stems, for typos ("reminde me tomorow").
     /\bremind/i, /\btomm?or/i,
     /יום הולדת/, /יום ההולדת/, /ימי הולדת/, /ימי ההולדת/, /יומולדת/, /\bbirthdays?\b/i,
+    // "Which alerts are active?" asks about reminders the user set, and the
+    // phone claims the same word for its notifications: both groups, so the
+    // full catalog (2026-10-06).
+    /התרא/, /\balerts?\b/i,
   ],
   records: [
     /פתק/, word('הערה|הערות'), /רשום/, /רשמ/, /סיסמ/,
@@ -118,7 +122,7 @@ const PATTERNS: Readonly<Record<GroupName, readonly RegExp[]>> = {
     /תעיר/, /להעיר/, /השכמה/, /טיימר/, /שעון עצר/, /תנווט/, /ניווט/, /וויז/, /איך מגיעים/, /תפתח/,
     /אפליקצי/, /הגדרות/, /בהירות/, /מצב טיסה/, /בלוטות/, /ווליום/, /עוצמת/, /תנגן/, word('נגן'), /מוזיקה/,
     word('שיר|שירים'), /ספוטיפיי/,
-    /\b(?:call|dial|contacts?|notifications?|sms|text|whatsapp|missed calls?|who called|alarm|wake me|timer|navigate|waze|open|app|settings|volume|play|music|song|spotify)\b/i,
+    /\b(?:call|dial|contacts?|notifications?|alerts?|sms|text|whatsapp|missed calls?|who called|alarm|wake me|timer|navigate|waze|open|app|settings|volume|play|music|song|spotify)\b/i,
   ],
 };
 

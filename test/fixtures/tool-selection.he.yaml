@@ -33,7 +33,12 @@ clean:
   - { text: "תנווט לעבודה", allow: [phone] }
   - { text: "תנגן שיר של עומר אדם", allow: [phone] }
   - { text: "תשים טיימר לעשר דקות", allow: [phone] }
-  - { text: "מה ההתראות האחרונות שלי?", allow: [phone] }
+  - { text: "מה ההתראות האחרונות שלי?", allow: [phone, full] }
+  # Reminders called "alerts" (2026-10-06): never the phone group alone.
+  - { text: "איזה התראות פעילות יש לי?", allow: [full, time] }
+  - { text: "תבטל את ההתראה לכבות את האש", allow: [full, time] }
+  - { text: "תכבה את כל ההתראות שקבעתי", allow: [full, time] }
+  - { text: "set an alert for 7am", allow: [full, phone] }
   # Block E (2026-10-06).
   - { text: "של מי יום הולדת השבוע?", allow: [time] }
   - { text: "אילו חשבונות לתשלום הגיעו במייל?", allow: [mail] }

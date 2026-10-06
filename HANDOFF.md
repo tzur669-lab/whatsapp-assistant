@@ -96,6 +96,10 @@ Network on the hotspot: `NODE_OPTIONS=--dns-result-order=ipv4first` for wrangler
 
 ## 8. Session log (docs)
 
+- 2026-10-06: "התראות" also selects the time group (`agent/tool-groups.ts`), so asking
+  for active alerts offers `reminders.list`/`cancel` again; sharper
+  `phone.notifications` description. Evals owed (PLAN §13).
+
 - 2026-10-06: CI was red since 14:48 on `pnpm audit` only (new advisories in
   tinypool, source-map-js, sharp, vitest). vitest 3 → 4.1.11 (drops tinypool),
   pnpm overrides for `source-map-js` and `sharp`. No source code changed.

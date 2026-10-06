@@ -417,7 +417,8 @@ export const REGISTRY: Readonly<Record<ToolName, ToolSpec>> = {
   },
   'phone.notifications': {
     name: 'phone.notifications',
-    llmDescription: "Read the phone's recent notifications, optionally from one app.",
+    llmDescription:
+      "Read notifications that arrived on the phone from other apps, optionally from one app. Not the reminders the user set: those are reminders.list.",
     draftSchema: phoneNotificationsSlots,
     tier: 0,
     scopes: [],
