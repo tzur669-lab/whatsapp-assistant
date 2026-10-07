@@ -26,6 +26,7 @@ import type { ToolName } from '../tools/registry.js';
 import { MAX_DESTINATION_CHARS } from '../nlu/slot-schemas.js';
 import { REMINDER_TOOLS } from '../tools/reminders.js';
 import { NOTE_TOOLS } from '../tools/notes.js';
+import { LIST_TOOLS } from '../tools/lists.js';
 import { EXPENSE_TOOLS } from '../tools/expenses.js';
 import { calendarListEvents } from '../tools/calendar-read.js';
 import { infoLookup } from '../tools/lookup.js';
@@ -155,6 +156,7 @@ const IMPLEMENTED: Partial<Record<ToolName, ToolDefinition>> = {
   'mail.bills': mailBills,
   ...NOTE_TOOLS,
   ...EXPENSE_TOOLS,
+  ...LIST_TOOLS,
 };
 
 export type RunOptions = {
@@ -341,6 +343,10 @@ function askedSlotOf(clarify: Clarify): AskedSlot | null {
 
     case 'not_found':
       // "לא מצאתי משהו שמתאים" — a different description is the answer.
+      return 'target';
+
+    case 'which_list':
+      // "לאיזו רשימה?" — the answer names it (block H, 2026-10-07).
       return 'target';
 
     case 'time':

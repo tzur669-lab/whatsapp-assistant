@@ -17,6 +17,7 @@
  * Object supplies the services and the clock.
  */
 import type { NoteStore } from '../tools/note-store.js';
+import type { ListStore } from '../tools/list-store.js';
 import type { ExpenseStore } from '../tools/expense-store.js';
 import type { DriveClient } from '../google/drive.js';
 import type { ContactsClient } from '../google/contacts.js';
@@ -100,6 +101,8 @@ export type Services = {
   reminders: ReminderStore;
   /** Notes and expenses (§6.22). Absent only in tests that predate them. */
   notes?: NoteStore;
+  /** Named lists (§6.25). */
+  lists?: ListStore;
   expenses?: ExpenseStore;
   pending: PendingActions;
   /** The one clarifying question a sender may have open (§6.11). */
@@ -1271,6 +1274,7 @@ function turnOf(
       ...(services.contacts ? { contacts: services.contacts } : {}),
       ...(services.birthdays ? { birthdays: services.birthdays } : {}),
       ...(services.notes ? { notes: services.notes } : {}),
+      ...(services.lists ? { lists: services.lists } : {}),
       ...(services.expenses ? { expenses: services.expenses } : {}),
     },
     pending: services.pending,

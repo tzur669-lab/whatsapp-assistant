@@ -294,13 +294,13 @@
 
 # Google Tasks (2026-10-01, prompt a4).
 
+# Since 2026-10-07 (block H, the user's decision) a named list such as
+# shopping lives in the bot: lists.*. Google Tasks only when the user says tasks.
 - id: tk-add-001
   now: "2026-10-01T08:00:00+03:00"
   input: "תוסיף חלב לרשימת הקניות"
   expect:
-    intent: tasks.add
-    slots:
-      text: "חלב"
+    intent: lists.add
     missing: []
 
 - id: tk-add-002
@@ -314,14 +314,14 @@
   now: "2026-10-01T08:00:00+03:00"
   input: "מה יש ברשימת הקניות?"
   expect:
-    intent: tasks.list
+    intent: lists.show
     missing: []
 
 - id: tk-done-001
   now: "2026-10-01T08:00:00+03:00"
   input: "קניתי חלב, תסמן"
   expect:
-    intent: tasks.complete
+    intent: lists.remove
     missing: []
 
 - id: tk-reminder-not-task-001
@@ -329,6 +329,64 @@
   input: "תזכיר לי מחר ב-9 לקנות חלב"
   expect:
     intent: reminders.create
+    missing: []
+
+# Named lists in the bot (2026-10-07, block H part 17, prompt a10). Private.
+
+- id: li-add-001
+  now: "2026-10-07T10:00:00+03:00"
+  input: "תוסיף חלב וביצים לרשימת קניות"
+  expect:
+    intent: lists.add
+    missing: []
+
+- id: li-add-002
+  now: "2026-10-07T10:00:00+03:00"
+  input: "תשמור לי רשימת מניות: אפל, טבע, נבידיה"
+  expect:
+    intent: lists.add
+    missing: []
+
+- id: li-add-003
+  now: "2026-10-07T10:00:00+03:00"
+  input: "add apples and bread to my shopping list"
+  expect:
+    intent: lists.add
+    missing: []
+
+- id: li-show-001
+  now: "2026-10-07T10:00:00+03:00"
+  input: "מה יש ברשימת המניות שלי?"
+  expect:
+    intent: lists.show
+    missing: []
+
+- id: li-show-002
+  now: "2026-10-07T10:00:00+03:00"
+  input: "אילו רשימות יש לי?"
+  expect:
+    intent: lists.show
+    missing: []
+
+- id: li-remove-001
+  now: "2026-10-07T10:00:00+03:00"
+  input: "תוריד את החלב מרשימת הקניות"
+  expect:
+    intent: lists.remove
+    missing: []
+
+- id: li-delete-001
+  now: "2026-10-07T10:00:00+03:00"
+  input: "תמחק את רשימת הרעיונות"
+  expect:
+    intent: lists.delete
+    missing: []
+
+- id: li-task-001
+  now: "2026-10-07T10:00:00+03:00"
+  input: "תוסיף משימה לקבוע תור לרופא"
+  expect:
+    intent: tasks.add
     missing: []
 
 # Gmail (2026-10-01, prompt a4).

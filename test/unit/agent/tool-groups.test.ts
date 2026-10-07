@@ -3,29 +3,34 @@
  * and the eval corpus run through the selector, and a single wrong group — one
  * that would hide the tool a request needs — is a failure.
  */
-import { readFileSync } from 'node:fs';
+import { readdirSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { parse as parseYaml } from 'yaml';
-import { GROUPS, groupOf, matchGroups, selectTools } from '../../../src/agent/tool-groups.js';
+import { GROUPS, groupOf, matchGroups, selectionLabel, selectTools } from '../../../src/agent/tool-groups.js';
 import type { GroupName } from '../../../src/agent/tool-groups.js';
 import { agentToolNames } from '../../../src/agent/tools.js';
 import { TOOL_NAMES } from '../../../src/tools/registry.js';
 import type { ToolName } from '../../../src/tools/registry.js';
 
-type Case = { text: string; allow: Array<GroupName | 'full'> };
+/** `allow`: a group, a union written `a+b` in group order, or `full`. */
+type Case = { text: string; allow: string[] };
 type CorpusCase = { id: string; input: string; expect: { intent: string } };
 
 const root = resolve(__dirname, '../../..');
 const fixture = parseYaml(readFileSync(resolve(root, 'test/fixtures/tool-selection.he.yaml'), 'utf8')) as Record<string, Case[]>;
-const corpus = ['cases.he.yaml', 'cases.en.yaml'].flatMap(
+// The whole corpus, phone and personal cases included (block H's 100% gate).
+const corpus = readdirSync(resolve(root, 'test/evals'))
+  .filter((file) => /^cases\..+\.yaml$/.test(file))
+  .flatMap(
   (file) => parseYaml(readFileSync(resolve(root, 'test/evals', file), 'utf8')) as CorpusCase[],
 );
 
 const everything = agentToolNames({ cards: true, fileCards: true, phoneReads: true, grants: { gmail: true, tasks: true, drive: true } });
 
-function selected(text: string): GroupName | 'full' {
-  return selectTools(text, everything).group ?? 'full';
+/** `time`, `mail+time` (fixed group order), or `full`. */
+function selected(text: string): string {
+  return selectionLabel(selectTools(text, everything));
 }
 
 describe('groups', () => {
@@ -48,7 +53,7 @@ describe('groups', () => {
   it('keeps the full set when the one group would leave nothing offered', () => {
     const noMail = agentToolNames({ cards: false });
     const selection = selectTools('יש מייל חדש מהבנק?', noMail);
-    expect(selection.group).toBeNull();
+    expect(selection.groups).toEqual([]);
     expect(selection.tools).toEqual(noMail);
   });
 
@@ -56,6 +61,31 @@ describe('groups', () => {
     const { tools } = selectTools('מה יש לי ביומן מחר?', everything);
     const order = (tool: ToolName) => TOOL_NAMES.indexOf(tool);
     expect([...tools].sort((a, b) => order(a) - order(b))).toEqual(tools);
+  });
+});
+
+describe('unions (2026-10-07)', () => {
+  it('offers the union of two named groups, nothing else', () => {
+    const selection = selectTools('תשלח לדני מייל שאני מאחר לפגישה', everything);
+    expect(selection.groups).toEqual(['time', 'mail', 'phone']);
+    expect(selection.tools).toContain('mail.draft');
+    expect(selection.tools).toContain('reminders.create');
+    expect(selection.tools).not.toContain('notes.save');
+  });
+
+  it('keeps the full set when any matched group is mostly unavailable', () => {
+    const noCards = agentToolNames({ cards: false, grants: { gmail: true } });
+    // "תעיר אותי" is phone (alarm, a card) and "מייל" is mail: phone has too
+    // little here, so the reminder that can wake the user stays offered.
+    const selection = selectTools('תעיר אותי מחר ותבדוק מייל', noCards);
+    expect(selection.groups).toEqual([]);
+    expect(selection.tools).toEqual(noCards);
+  });
+
+  it('keeps the full set for four groups or more', () => {
+    const selection = selectTools('תזכיר לי מחר לשלוח מייל עם הקובץ ולרשום את ההוצאה', everything);
+    expect(matchGroups('תזכיר לי מחר לשלוח מייל עם הקובץ ולרשום את ההוצאה').length).toBeGreaterThanOrEqual(4);
+    expect(selection.groups).toEqual([]);
   });
 });
 
@@ -70,12 +100,14 @@ describe('the selection fixture', () => {
 });
 
 describe('the eval corpus', () => {
-  it("never narrows a case to a group without its expected tool", () => {
+  // The 100% gate (block H): every tool a case expects is offered.
+  it("never narrows a case to groups without its expected tool", () => {
     const wrong = corpus.filter((testCase) => {
       const tool = testCase.expect.intent as ToolName;
       if (!TOOL_NAMES.includes(tool)) return false;
-      const choice = selected(testCase.input);
-      return choice !== 'full' && choice !== groupOf(tool);
+      const { groups } = selectTools(testCase.input, everything);
+      const owner = groupOf(tool);
+      return groups.length > 0 && (owner === null || !groups.includes(owner));
     });
     expect(wrong.map((c) => `${c.id}: ${matchGroups(c.input).join(',')}`)).toEqual([]);
   });

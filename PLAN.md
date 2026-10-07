@@ -1473,7 +1473,7 @@ minute); reply text ≤ 1,500 characters, markdown removed.
   turns, in order; the rest are the read-only try's. The parser chain stays
   exactly qwen → gpt-oss → rules: new models are agent-only (unit test).
 - **Reservations** (`src/agent/budget.ts`). Every call takes its estimate —
-  prompt at 2.5 characters a token, plus its full `maxCompletionTokens` — out of
+  prompt at 3.0 characters a token (2.5 until 2026-10-07; measured, see below), plus its full `maxCompletionTokens` — out of
   the model's bucket before it is sent, checked and claimed in one synchronous
   step. Settled with the measured usage; a reply without usage is charged the
   reservation, never zero (this fixed an under-count). A call that was sent and
@@ -1497,11 +1497,28 @@ minute); reply text ≤ 1,500 characters, markdown removed.
   not asked again for that message, though its `retry-after` may have passed.
 - **Tool selection by code** (`src/agent/tool-groups.ts`). Groups: time,
   records (notes + tasks + expenses, merged so a near miss cannot hide the right
-  tool), info, mail, drive, phone. **Exactly one group hit → that group; none, or
-  two or more → the full catalog.** A group with no more than half its tools
-  offered here keeps the full catalog too ("wake me at 6" without cards needs a
-  reminder). Code only narrows `agentToolNames`. Tested on a Hebrew selection
-  fixture and the whole corpus, at zero tokens: a single wrong group fails.
+  tool; lists joined them 2026-10-07), info, mail, drive, phone. **One to three
+  group hits → their union; none, or four and more → the full catalog**
+  (2026-10-07; before, two hits meant the full catalog). If any matched group has
+  no more than half its tools offered here, the full catalog ("wake me at 6"
+  without cards needs a reminder). Code only narrows `agentToolNames`. Tested at
+  zero tokens on a Hebrew selection fixture (every union in it checked by hand)
+  and on the **whole** corpus, phone and personal cases included: every case's
+  expected tool must be offered, 100%. Widening that gate found six cases the
+  selection hid ("send me the weather every morning", "a draft reply"); "כל
+  בוקר/יום", "every day" and "טיוטה" now name their groups.
+- **The budget fitter and the estimator** (2026-10-07). Measured on 24 real calls
+  (`test/fixtures/token-calibration.json`): qwen runs 3.15–3.66 characters a
+  token, gpt-oss about 4.95, so the estimator divides by **3.0**, under every
+  measured call (the calibration test holds 99%). At 2.5 the full catalog alone
+  estimated past the 7,000 turn cap, so a message that named no group — and,
+  before the unions, any message naming two — failed `turn_token_cap` before a
+  model was asked. Prompt a10 dropped the system prompt's list of what the tools
+  cover (the descriptions say it): about 280 tokens less on every call. The
+  fitter runs once per turn, before the estimate and the reservation: if the
+  first call would exceed `turnCap − 400 − 1,000`, the oldest history goes
+  first, never the last exchange. With all 45 tools and every grant the first
+  call estimates about 5,980 and the worst read turn about 6,860 (cap 7,000).
 - **Text-only calls.** A call gets no tools once a Tier 0 read has completed in
   the turn, or when it is the last allowed call; `tools` and `tool_choice` are
   then left off the wire.
@@ -1775,6 +1792,16 @@ ROADMAP block H part 16. The bot had no way to learn from its real misses: messa
 **The commands.** "לא הבנת", "לא הבנת אותי" or `/missed` — the whole message, after punctuation and spaces; a longer message is a correction for the agent. A command, so step 1, before confirmations and open questions, and skipped for forwarded or shared text. It copies the row into `misses` (encrypted, 30 days, newest 50) and echoes the first 40 characters of what it kept, because a button flow or a placeholder may mean it is not the exchange the user meant. While a turn is still running it says so instead. `/misses` shows the newest 10 with their outcome codes. Both replies are private. `/forget` and `/pair off` delete `last_exchange`, not the misses the user kept.
 
 **Isolation.** `ExchangeLog` (`core/exchanges.ts`) is a pipeline dependency only; the agent's services never carry it, and nothing in it is logged or sent to a model. `scripts/misses-to-evals.ts` turns a pasted `/misses` reply into draft cases under `evals-private/` (gitignored): real words, rewritten by a human with fake values before any case is committed.
+
+### 6.25 Named lists (2026-10-07)
+
+ROADMAP block H part 17. The user's decision: lists live in the bot, private like notes, not in Google Tasks. Four agent-only tools, all `private`: `lists.add` (1, Undo), `lists.show` (0), `lists.remove` (1, Undo), `lists.delete` (2). Migration 0023: `lists`, `list_items`.
+
+**Finding a list.** By `name_key`: the name folded (`foldForMatch`) with generic words ("רשימה", "רשימת", "list") taken out, compared with and without one leading ה. "רשימת קניות", "קניות" and "הקניות" are one list; a partial unique index on the active key keeps it so. An exact key wins over a substring. No list named: the one list there is, else "לאיזו רשימה?" with the names — a `which_list` clarify recorded as an open question (asked slot `target`), so the next message ("קניות") is merged in code with no model. A name with nothing but generic words asks what to call the list. A new list while others exist names them ("התכוונת…?"), because "קנייה" beside "קניות" is more likely a slip than a second list. Items: `item_key` (folded text), no duplicate active items; an add skips what is there and says so.
+
+**Caps and Undo.** 30 lists, 100 items a list, 200 characters an item, 40 a name; an add over a cap lands nothing. Removals are soft (`removed_at`) and every change bumps `version`; an Undo carries ids and expected versions, never text, and is refused whole if any row changed, if the same item or name is back, or if the list is full. Undoing an add that made a list removes the list only when nothing else is on it. **Deviation from the reviewed plan:** `lists.delete` has no Undo — Tier 2 is confirmed first, and the registry test holds every tool above Tier 1 to that. The deleted rows are purged with the rest after the Undo window (10 minutes).
+
+**Routing.** A named list ("add milk to the shopping list") is `lists.add`; Google Tasks only when the user says tasks (prompt a10, `tasks.add`'s description). A shopping list the user already keeps in Google Tasks stays there.
 
 ## 7. Security
 
@@ -2555,7 +2582,8 @@ measured on the app channel. To finish with `--resume`.
 - [x] **"Time to leave" is on request, with a default travel time of 30 minutes** (2026-10-06, the user's decision; §6.4). Not an automatic scan of the calendar.
 - [ ] `eval:agent --filter lv-` on qwen (its daily eval budget was spent on 2026-10-06), and a full run on prompt a9.
 - [ ] `eval:agent --select-tools --filter he-alert-` on qwen, `he-alert-002` on gpt-oss-120b, and `ph-read-003` / `inj-sms-003` with `--select-tools`; `pnpm eval --filter he-alert-002` (all four blocked by the daily budget on 2026-10-06; `he-alert-001` passed on gpt-oss-120b, agent and parser).
-- [ ] Token calibration: record `chars`/`promptTokens` pairs from a real run into `test/fixtures/token-calibration.json`, then the 99% test (§6.19).
+- [x] Token calibration: record `chars`/`promptTokens` pairs from a real run into `test/fixtures/token-calibration.json`, then the 99% test (§6.19). Done 2026-10-07: 24 pairs, divisor 3.0.
+- [ ] Block H part 17 evals on prompt a10: `eval:agent --filter li-` and `--filter tk-` on qwen and gpt-oss-120b (both models hit the 100K eval guard on 2026-10-07), then a wider regression slice (`he-`, `rm-`, `sc-`) on a10.
 - [x] **`app_outbox` text stays plaintext for its 24 h TTL** (2026-10-01, accepted risk): Durable Object storage is encrypted at rest by Cloudflare, and the rows are deleted on ack.
 - [ ] Phase C: on Android 13+ a sideloaded app needs "Allow restricted settings" before notification access can be granted. Built with a note on the settings screen (§6.21); **verify on the device**. Play policy on `READ_SMS` does not apply to a sideloaded app.
 - [ ] Phase D: can an unverified production OAuth app hold `gmail.readonly` for its owner? If not, Testing mode with weekly re-consent.
@@ -2763,6 +2791,7 @@ measured on the app channel. To finish with `--resume`.
 | 2026-10-06 | **"Alerts" are reminders, not only phone notifications** (the user's report: "which alerts are active, so I can turn them off" found nothing in a new session). Cause: `/התראות/` was a phone-group word only, so `selectTools` offered the phone group alone and `reminders.list`/`reminders.cancel` were hidden; in the same session it worked only because the history said "תזכורת". Fix: `/התרא/` and `alerts?` match the time group too (and `alerts?` the phone group), so the word now gives the full catalog; `phone.notifications`' description says it is not the reminders the user set (agent-only; the reminder descriptions are left alone because the parser reads them). Reviewed before building (`plan-review`): the review caught that `llmDescription` reaches the parser. Eval fingerprint changed; evals owed in §13 |
 | 2026-10-07 | **Block H planned, part 15 built: notes that can be found** (§6.22). The plan for block H (notes, "לא הבנת" capture, lists, facts memory, a stock portfolio, stronger models) went through seven review rounds before any code; its decisions are recorded per part as each ships. Part 15: generic words stripped from `notes.find` variants, no dead end on no match, 15 per list with a count of the rest, a whole-message rules-fallback pattern, and a sharper tool description. `eval:agent --filter nx-` 8/8 on qwen; `nx-find-003/004` on gpt-oss-120b. |
 | 2026-10-07 | **"לא הבנת" capture** (§6.23; ROADMAP block H part 16; migration 0022). The user's decision: the latest exchange that reached a model is kept encrypted for an hour, and "לא הבנת" copies it into encrypted misses for 30 days, shown by `/misses`. Ordered by a durable inbound sequence, not the clock or the rowid; only model turns write it (not commands, confirmations, answers or the busy reply); a resumed turn keeps its original number. One deviation from the reviewed plan: the resumed turn finds its number through `inbound_messages.seq` by wamid rather than inside the suspended state — the same guarantee, and no change to the encrypted payload. |
+| 2026-10-07 | **Unions, a calibrated estimator, and named lists** (§6.19, §6.25; ROADMAP block H part 17; migration 0023; prompt a10). Tool selection offers the union of one to three matched groups; the corpus gate now covers every case file, which found six hidden cases. The estimator divides by 3.0 (measured 3.15+ on qwen): at 2.5 any message that named no group failed the turn cap with the full catalog — a direct cause of "it doesn't understand". A history fitter keeps the first call under the cap. Lists per §6.25; `lists.delete` has no Undo (Tier 2), a deviation from the reviewed plan. Evals on a10 owed (§13): both models hit the daily eval guard. |
 ---
 
 ## 15. Sources (checked 2026-09-24)

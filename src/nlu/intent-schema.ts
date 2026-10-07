@@ -43,6 +43,10 @@ import {
   notesSaveSlots,
   notesFindSlots,
   notesDeleteSlots,
+  listsAddSlots,
+  listsShowSlots,
+  listsRemoveSlots,
+  listsDeleteSlots,
   expensesAddSlots,
   expensesSummarySlots,
   expensesExportSlots,
@@ -162,6 +166,11 @@ export const intentDraftSchema = z.discriminatedUnion('intent', [
   z.object({ intent: z.literal('notes.find'), slots: notesFindSlots, ...common }).strict(),
   z.object({ intent: z.literal('notes.delete'), slots: notesDeleteSlots, ...common }).strict(),
   z.object({ intent: z.literal('expenses.add'), slots: expensesAddSlots, ...common }).strict(),
+  // ROADMAP block H (2026-10-07). Agent-only, private.
+  z.object({ intent: z.literal('lists.add'), slots: listsAddSlots, ...common }).strict(),
+  z.object({ intent: z.literal('lists.show'), slots: listsShowSlots, ...common }).strict(),
+  z.object({ intent: z.literal('lists.remove'), slots: listsRemoveSlots, ...common }).strict(),
+  z.object({ intent: z.literal('lists.delete'), slots: listsDeleteSlots, ...common }).strict(),
   z.object({ intent: z.literal('expenses.summary'), slots: expensesSummarySlots, ...common }).strict(),
   z.object({ intent: z.literal('expenses.export'), slots: expensesExportSlots, ...common }).strict(),
   // Google Tasks (2026-10-01). Agent-only.

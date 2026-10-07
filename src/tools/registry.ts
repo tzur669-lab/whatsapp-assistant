@@ -39,6 +39,10 @@ import {
   notesSaveSlots,
   notesFindSlots,
   notesDeleteSlots,
+  listsAddSlots,
+  listsShowSlots,
+  listsRemoveSlots,
+  listsDeleteSlots,
   expensesAddSlots,
   expensesSummarySlots,
   expensesExportSlots,
@@ -111,6 +115,11 @@ export const TOOL_NAMES = [
   'birthdays.upcoming',
   'mail.bills',
   'phone.calls',
+  // ROADMAP block H (2026-10-07): named lists, private like notes.
+  'lists.add',
+  'lists.show',
+  'lists.remove',
+  'lists.delete',
 ] as const;
 
 export type ToolName = (typeof TOOL_NAMES)[number];
@@ -460,7 +469,7 @@ export const REGISTRY: Readonly<Record<ToolName, ToolSpec>> = {
   },
   'tasks.add': {
     name: 'tasks.add',
-    llmDescription: 'Add an item to a Google Tasks list (e.g. shopping); not for timed reminders.',
+    llmDescription: 'Add an item to a Google Tasks list, only when the user says tasks (משימות). A named list like shopping is lists.add.',
     draftSchema: tasksAddSlots,
     // Reversible: the Undo deletes it.
     tier: 1,
@@ -505,7 +514,7 @@ export const REGISTRY: Readonly<Record<ToolName, ToolSpec>> = {
   'notes.find': {
     name: 'notes.find',
     llmDescription:
-      'Show anything the user saved or asked you to remember: notes, a saved list, what they wrote down ("show my stock list", "what did I save"). Leave query_variants empty for all of them. They are shown to the user directly; you will not see them, so always call this rather than answer.',
+      "Show the user's notes, or those about what they describe (\"what did I save\", \"my notes\"). Empty query_variants: all. Shown to the user directly: always call it, never answer yourself.",
     draftSchema: notesFindSlots,
     tier: 0,
     scopes: [],
@@ -615,6 +624,50 @@ export const REGISTRY: Readonly<Record<ToolName, ToolSpec>> = {
     rateLimit: { perHour: 20, perDay: 100 },
     implementedIn: 6,
     terminal: true,
+  },
+  // ROADMAP block H (2026-10-07): named lists. Private: no reply goes back to
+  // the model or into its history. A list is found in code by its name.
+  'lists.add': {
+    name: 'lists.add',
+    llmDescription:
+      "Add items to one of the user's named lists (shopping, stocks, ideas). list: its name as said; items: each item. A new name starts a list. Google Tasks only when the user says tasks.",
+    draftSchema: listsAddSlots,
+    tier: 1,
+    scopes: [],
+    rateLimit: { perHour: 60, perDay: 300 },
+    implementedIn: 6,
+    private: true,
+  },
+  'lists.show': {
+    name: 'lists.show',
+    llmDescription: "Show one of the user's lists, or all of them when none is named. Shown to the user directly: always call it, never answer yourself.",
+    draftSchema: listsShowSlots,
+    tier: 0,
+    scopes: [],
+    rateLimit: { perHour: 60, perDay: 300 },
+    implementedIn: 6,
+    private: true,
+  },
+  'lists.remove': {
+    name: 'lists.remove',
+    llmDescription: 'Remove items from a list. items: the items as said.',
+    draftSchema: listsRemoveSlots,
+    tier: 1,
+    scopes: [],
+    rateLimit: { perHour: 60, perDay: 300 },
+    implementedIn: 6,
+    private: true,
+  },
+  'lists.delete': {
+    name: 'lists.delete',
+    llmDescription: 'Delete a whole list.',
+    draftSchema: listsDeleteSlots,
+    // A whole list in one step: confirmed first, like a note's deletion.
+    tier: 2,
+    scopes: [],
+    rateLimit: { perHour: 20, perDay: 50 },
+    implementedIn: 6,
+    private: true,
   },
   'phone.calls': {
     name: 'phone.calls',

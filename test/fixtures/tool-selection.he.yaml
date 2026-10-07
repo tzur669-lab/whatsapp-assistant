@@ -1,7 +1,9 @@
 # Tool selection fixture (PLAN §6.19 §4, 2026-10-06).
 #
 # Synthetic requests, never real user messages. Each case lists what the
-# selection may be: one group, or `full` (the whole catalog). A selection
+# selection may be: one group, a union written "a+b" in group order (since
+# 2026-10-07: 1-3 matched groups offer their union), or `full` (the whole
+# catalog). Every union listed was checked to hold the tool the request needs. A selection
 # outside `allow` is a failure — above all a single *wrong* group, which would
 # hide the tool the request needs. `full` is always safe; it only costs tokens.
 #
@@ -33,12 +35,12 @@ clean:
   - { text: "תנווט לעבודה", allow: [phone] }
   - { text: "תנגן שיר של עומר אדם", allow: [phone] }
   - { text: "תשים טיימר לעשר דקות", allow: [phone] }
-  - { text: "מה ההתראות האחרונות שלי?", allow: [phone, full] }
+  - { text: "מה ההתראות האחרונות שלי?", allow: [phone, full, "time+phone"] }
   # Reminders called "alerts" (2026-10-06): never the phone group alone.
-  - { text: "איזה התראות פעילות יש לי?", allow: [full, time] }
+  - { text: "איזה התראות פעילות יש לי?", allow: [full, time, "time+phone"] }
   - { text: "תבטל את ההתראה לכבות את האש", allow: [full, time] }
-  - { text: "תכבה את כל ההתראות שקבעתי", allow: [full, time] }
-  - { text: "set an alert for 7am", allow: [full, phone] }
+  - { text: "תכבה את כל ההתראות שקבעתי", allow: [full, time, "time+phone"] }
+  - { text: "set an alert for 7am", allow: [full, phone, "time+phone"] }
   # Block E (2026-10-06).
   - { text: "של מי יום הולדת השבוע?", allow: [time] }
   - { text: "אילו חשבונות לתשלום הגיעו במייל?", allow: [mail] }
@@ -63,36 +65,36 @@ natural:
 # Mixed requests: two domains, so the full catalog.
 mixed:
   - { text: "תזכיר לי מחר להתקשר לאמא", allow: [time, full] }
-  - { text: "תשלח לדני מייל שאני מאחר לפגישה", allow: [full] }
-  - { text: "תזכיר לי לרשום את ההוצאה על הדלק", allow: [full] }
-  - { text: "תבדוק אם יש לי זמן מחר ותשלח לו הודעה", allow: [full] }
-  - { text: "תחשב כמה הוצאתי על אוכל השבוע", allow: [records, full] }
+  - { text: "תשלח לדני מייל שאני מאחר לפגישה", allow: [full, "time+mail+phone"] }
+  - { text: "תזכיר לי לרשום את ההוצאה על הדלק", allow: [full, "time+records"] }
+  - { text: "תבדוק אם יש לי זמן מחר ותשלח לו הודעה", allow: [full, "time+phone"] }
+  - { text: "תחשב כמה הוצאתי על אוכל השבוע", allow: [records, full, "time+records+info"] }
 
 # Words that point at one group while the right action is elsewhere, or is a read.
 discriminating:
-  - { text: "תזכיר לי מה כתבתי על דני", allow: [records, full] }
-  - { text: "מה רשמתי על הפגישה עם המשקיעים?", allow: [records, full] }
-  - { text: "יש לי משימה לקבוע תור לרופא", allow: [records, time, full] }
+  - { text: "תזכיר לי מה כתבתי על דני", allow: [records, full, "time+records"] }
+  - { text: "מה רשמתי על הפגישה עם המשקיעים?", allow: [records, full, "time+records"] }
+  - { text: "יש לי משימה לקבוע תור לרופא", allow: [records, time, full, "time+records"] }
   - { text: "תשמור לי את השעה של הטיסה", allow: [records, time, full] }
-  - { text: "מתי הפגישה עם רונית? תכתוב לי את זה", allow: [time, records, full] }
-  - { text: "כמה עולה פגישה אצל הפסיכולוגית?", allow: [records, info, full] }
+  - { text: "מתי הפגישה עם רונית? תכתוב לי את זה", allow: [time, records, full, "time+records"] }
+  - { text: "כמה עולה פגישה אצל הפסיכולוגית?", allow: [records, info, full, "time+info"] }
   - { text: "מה השעה עכשיו בניו יורק?", allow: [info, full] }
   - { text: "מה שירות הלקוחות של בזק?", allow: [info, full] }
-  - { text: "יש לי קובץ הוצאות, תסכם לי אותו", allow: [records, full] }
-  - { text: "תפתח לי את המסמך מהמייל של אתמול", allow: [mail, drive, full] }
+  - { text: "יש לי קובץ הוצאות, תסכם לי אותו", allow: [records, full, "records+drive"] }
+  - { text: "תפתח לי את המסמך מהמייל של אתמול", allow: [mail, drive, full, "mail+drive+phone"] }
   - { text: "מה ההודעה האחרונה ששלחו לי בווטסאפ?", allow: [phone, full] }
   - { text: "מתי נכנסת שבת?", allow: [info, full] }
   - { text: "כמה ימים נשארו עד החופש?", allow: [info, time, full] }
   - { text: "תמחק את הפתק על החניה", allow: [records] }
   - { text: "סיימתי את המשימה של הכביסה", allow: [records, full] }
-  - { text: "תרשום שהפגישה עם דני עברה ליום שני", allow: [time, records, full] }
-  - { text: "תזכיר לי את הסיסמה של הוויי-פיי", allow: [records, full] }
+  - { text: "תרשום שהפגישה עם דני עברה ליום שני", allow: [time, records, full, "time+records"] }
+  - { text: "תזכיר לי את הסיסמה של הוויי-פיי", allow: [records, full, "time+records"] }
   - { text: "יש מבצע על טיסות? תבדוק לי", allow: [info, full] }
-  - { text: "מה היה בפגישה של אתמול לפי המייל?", allow: [mail, full] }
+  - { text: "מה היה בפגישה של אתמול לפי המייל?", allow: [mail, full, "time+mail"] }
   - { text: "כמה עלה לי החשמל בחודש שעבר?", allow: [records, full] }
-  - { text: "מה החדשות? ותזכיר לי לקום מוקדם", allow: [full] }
-  - { text: "תזכור שהחניה בקומה מינוס שתיים", allow: [records, full] }
-  - { text: "תזכור שאני אלרגי לבוטנים", allow: [records, full] }
+  - { text: "מה החדשות? ותזכיר לי לקום מוקדם", allow: [full, "time+info"] }
+  - { text: "תזכור שהחניה בקומה מינוס שתיים", allow: [records, full, "time+records"] }
+  - { text: "תזכור שאני אלרגי לבוטנים", allow: [records, full, "time+records"] }
   # A bill paid is an expense; a bill to pay is in the mail (2026-10-06).
-  - { text: "שילמתי את החשבונית של החשמל, 300 שקל", allow: [records, full] }
-  - { text: "תנווט לפגישה הבאה שלי", allow: [phone, time, full] }
+  - { text: "שילמתי את החשבונית של החשמל, 300 שקל", allow: [records, full, "records+mail"] }
+  - { text: "תנווט לפגישה הבאה שלי", allow: [phone, time, full, "time+phone"] }

@@ -2,7 +2,7 @@
 
 How the code is laid out and how the parts talk. The *why* behind each piece
 is in `PLAN.md` (section numbers given); the rules are in `CLAUDE.md`.
-Current as of 2026-10-07 (migration 0022).
+Current as of 2026-10-07 (migration 0023).
 
 ## 1. System diagram
 
@@ -100,7 +100,7 @@ Special shapes:
 | `channels/app/` | App ingress checks, request schemas, signature/pairing verify, outbox | §6.18 |
 | `channels/whatsapp/` | Frozen channel: HMAC verify, parse, send, media/voice download | §6.1 |
 | `core/` | `pipeline` (inbound order), `router` (commands), `orchestrator` (resolve→policy→act), `repo`/`sql` (data access), `exchanges` ("לא הבנת" capture, never given to the agent), `digest`, `birthdays`, `missed-calls`, `scheduled-read`, `quota`, `timing`, `env` | §6.4, §6.12 |
-| `agent/` | Bounded tool loop, prompt (a9), compact catalog, tool groups, model table, token budget, history, lock, suspended turns | §6.19 |
+| `agent/` | Bounded tool loop, prompt (a10), compact catalog, tool groups (1–3 → union), history fitter, model table, token budget, history, lock, suspended turns | §6.19 |
 | `nlu/` | Fallback parser: prompt (v6), `IntentDraft` schema, slot schemas, Groq provider, rules fallback, weekday check, clarification answers | §6.2, §6.11 |
 | `tools/` | `registry.ts` (single source of truth: name, tier, slots, scopes, flags) + one file per area; `*-store.ts` hold SQL; `match.ts` finds targets | §6.4 |
 | `policy/` | Pure tier decision; WhatsApp 24 h window/budget | §6.4 |
@@ -115,14 +115,14 @@ Special shapes:
 | `render/` | Every user-facing string (Hebrew/English templates, time format, bidi) | §6.3 |
 
 **Tools by tier** (from `tools/registry.ts`; parser sees only the first 8 marked *):
-- Tier 0 (read): `reminders.list`*, `calendar.list_events`*, `calendar.free_time`, `phone.contacts|notifications|sms|calls`, `info.lookup`, `tasks.list`, `mail.search|bills`, `drive.search`, `notes.find`, `expenses.summary`, `calc.compute`, `birthdays.upcoming`
-- Tier 1 (runs now; Undo where reversible; cards run on the phone): `reminders.create`*, `reminders.repeat|at_rest|scheduled_read|leave`, `calendar.create_event`* (Tier 3 with attendees), `tasks.add|complete`, `notes.save`, `expenses.add|export`, cards `alarm.set`, `timer.set`, `nav.go`, `app.open`, `media.play`, `settings.set`
-- Tier 2 (confirm): `reminders.cancel`*, `reminders.move`, `calendar.move_event`*, `calendar.delete_event`*, `mail.draft`, `notes.delete`
+- Tier 0 (read): `reminders.list`*, `calendar.list_events`*, `calendar.free_time`, `phone.contacts|notifications|sms|calls`, `info.lookup`, `tasks.list`, `mail.search|bills`, `drive.search`, `notes.find`, `lists.show`, `expenses.summary`, `calc.compute`, `birthdays.upcoming`
+- Tier 1 (runs now; Undo where reversible; cards run on the phone): `reminders.create`*, `reminders.repeat|at_rest|scheduled_read|leave`, `calendar.create_event`* (Tier 3 with attendees), `tasks.add|complete`, `notes.save`, `lists.add|remove`, `expenses.add|export`, cards `alarm.set`, `timer.set`, `nav.go`, `app.open`, `media.play`, `settings.set`
+- Tier 2 (confirm): `reminders.cancel`*, `reminders.move`, `calendar.move_event`*, `calendar.delete_event`*, `mail.draft`, `notes.delete`, `lists.delete`
 - Tier 3 (confirm on phone): `calls.place`*, `message.compose`
 
 ## 4. Storage
 
-One SQLite DB inside the DO. Schema = `migrations/0001…0022` (registered in
+One SQLite DB inside the DO. Schema = `migrations/0001…0023` (registered in
 `platform/migrations.ts`). Tables by area:
 
 | Area | Tables |
@@ -135,7 +135,7 @@ One SQLite DB inside the DO. Schema = `migrations/0001…0022` (registered in
 | Agent | `conversation_turns` (encrypted history), `agent_turns` (suspended), `agent_lock` |
 | Misses (§6.23) | `last_exchange` (encrypted, 1 h), `misses` (encrypted, 30 days); `inbound_messages.seq` + `settings.inbound_seq` order arrivals |
 | Quota | `groq_limits`, `groq_token_spend`, `worker_requests` |
-| Data | `ical_feeds`, `ical_events`, `birthdays`, `notes`, `expenses`, `missed_calls` (minutes only) |
+| Data | `ical_feeds`, `ical_events`, `birthdays`, `notes`, `lists`, `list_items`, `expenses`, `missed_calls` (minutes only) |
 
 Access goes through `core/sql.ts` (`SqlDriver`) so tests run
 the same code on Node SQLite (`test/integration/sqlite-driver.ts`).
@@ -144,7 +144,7 @@ the same code on Node SQLite (`test/integration/sqlite-driver.ts`).
 
 **Intentionally isolated**
 - Cloudflare ↔ everything else (`platform/` only; Plan B is Node + SQLite).
-- Model ↔ data: the model never sees ids, numbers, addresses, tokens, notes;
+- Model ↔ data: the model never sees ids, numbers, addresses, tokens, notes, lists;
   reads are scrubbed; ids are found by `tools/match.ts` from `query_variants`.
 - Parser catalog ↔ agent catalog (`PARSER_TOOL_NAMES`): new tools don't touch
   the parser or `pnpm eval`.

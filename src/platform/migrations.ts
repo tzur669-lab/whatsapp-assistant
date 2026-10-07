@@ -25,6 +25,7 @@ import notesExpenses0019 from '../../migrations/0019_notes_expenses.sql';
 import missedCalls0020 from '../../migrations/0020_missed_calls.sql';
 import reminderPlace0021 from '../../migrations/0021_reminder_place.sql';
 import misses0022 from '../../migrations/0022_misses.sql';
+import lists0023 from '../../migrations/0023_lists.sql';
 
 export const MIGRATIONS = [
   { id: 1, sql: init0001 },
@@ -49,4 +50,5 @@ export const MIGRATIONS = [
   { id: 20, sql: missedCalls0020 },
   { id: 21, sql: reminderPlace0021 },
   { id: 22, sql: misses0022 },
+  { id: 23, sql: lists0023 },
 ] as const;

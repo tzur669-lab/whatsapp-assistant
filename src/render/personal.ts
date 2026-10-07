@@ -12,6 +12,7 @@ import type { PersonalQuestion } from '../tools/types.js';
 import type { Note } from '../tools/note-store.js';
 import type { CategoryTotal, ExpenseCategory } from '../tools/expense-store.js';
 import { MAX_NOTES } from '../tools/note-store.js';
+import { MAX_ITEMS_PER_LIST, MAX_LISTS } from '../tools/list-store.js';
 import type { ExpensePeriod } from '../time/past-day.js';
 import { localPartsOf, ZONE } from '../time/tz.js';
 
@@ -42,6 +43,24 @@ export function personalQuestion(what: PersonalQuestion, lang: Lang): string {
         : 'The expense list is full. It can be exported to a file.';
     case 'no_expenses':
       return he ? 'אין הוצאות רשומות בתקופה הזאת.' : 'No expenses recorded for that period.';
+    case 'list_name':
+      return he ? 'איך לקרוא לרשימה?' : 'What should the list be called?';
+    case 'list_items':
+      return he ? 'מה להוסיף לרשימה?' : 'What should go on the list?';
+    case 'no_lists':
+      return he
+        ? 'אין רשימות שמורות. אפשר להתחיל אחת, למשל: "תוסיף חלב לרשימת קניות".'
+        : 'No lists yet. Start one, for example: "add milk to the shopping list".';
+    case 'lists_full':
+      return he
+        ? `יש כבר ${isolateLtr(String(MAX_LISTS))} רשימות, וזה המקסימום. אפשר למחוק רשימה ישנה ולנסות שוב.`
+        : `There are already ${MAX_LISTS} lists, the most kept. Delete an old one and try again.`;
+    case 'list_full':
+      return he
+        ? `ברשימה הזאת יש כבר ${isolateLtr(String(MAX_ITEMS_PER_LIST))} פריטים, וזה המקסימום. אפשר להוריד פריטים ולנסות שוב.`
+        : `That list already holds ${MAX_ITEMS_PER_LIST} items, the most kept. Remove some and try again.`;
+    case 'list_gone':
+      return he ? 'הרשימה הזאת כבר לא קיימת.' : 'That list no longer exists.';
   }
 }
 

@@ -19,6 +19,7 @@
  * honest rather than a cast.
  */
 import type { NoteStore } from './note-store.js';
+import type { ListStore } from './list-store.js';
 import type { ExpenseStore } from './expense-store.js';
 import type { ZodTypeAny } from 'zod';
 import type { Lang } from '../render/format-time.js';
@@ -74,7 +75,12 @@ export type Clarify =
    */
   | { code: 'personal'; what: PersonalQuestion }
   /** "Time to leave" (ROADMAP #5): the time to leave has already gone. */
-  | { code: 'leave_too_late' };
+  | { code: 'leave_too_late' }
+  /**
+   * Lists (block H, 2026-10-07): no list was named and there is more than one.
+   * Recorded as an open question; the answer names the list.
+   */
+  | { code: 'which_list'; names: string[] };
 
 export type PersonalQuestion =
   | 'note_text'
@@ -85,7 +91,13 @@ export type PersonalQuestion =
   | 'expense_too_old'
   | 'expense_invalid_date'
   | 'expenses_full'
-  | 'no_expenses';
+  | 'no_expenses'
+  | 'list_name'
+  | 'list_items'
+  | 'no_lists'
+  | 'lists_full'
+  | 'list_full'
+  | 'list_gone';
 
 export type ResolveOutcome = (
   | {
@@ -146,6 +158,8 @@ export type ToolContext = {
   birthdays?: BirthdayStore;
   /** Notes (§6.22). Absent only in tests that predate them. */
   notes?: NoteStore;
+  /** Named lists (block H, 2026-10-07). */
+  lists?: ListStore;
   /** Expenses (§6.22). Absent only in tests that predate them. */
   expenses?: ExpenseStore;
   /**

@@ -49,6 +49,7 @@ import { localPartsOf, ZONE } from '../time/tz.js';
 import { buildDigest } from '../core/digest.js';
 import { scheduledReadMessage } from '../core/scheduled-read.js';
 import { NoteStore } from '../tools/note-store.js';
+import { ListStore } from '../tools/list-store.js';
 import { MissedCallStore } from '../core/missed-calls.js';
 import type { MissedCall } from '../core/missed-calls.js';
 import { parseCallsReport } from '../channels/app/parse.js';
@@ -151,6 +152,7 @@ export class AssistantDO implements DurableObject {
   private readonly ical: IcalStore;
   private readonly birthdays: BirthdayStore;
   private readonly notes: NoteStore;
+  private readonly lists: ListStore;
   private readonly missedCalls: MissedCallStore;
   private readonly expenses: ExpenseStore;
   private readonly deferred: UndoActions;
@@ -213,6 +215,7 @@ export class AssistantDO implements DurableObject {
     this.ical = new IcalStore(this.sql, now);
     this.birthdays = new BirthdayStore(this.sql, now);
     this.notes = new NoteStore(this.sql, now);
+    this.lists = new ListStore(this.sql, now);
     this.missedCalls = new MissedCallStore(this.sql, now);
     this.expenses = new ExpenseStore(this.sql, now);
     this.deferred = new UndoActions(this.sql, now);
@@ -507,6 +510,7 @@ export class AssistantDO implements DurableObject {
     this.pending.purgeOld();
     this.history.purgeExpired();
     this.exchanges.purgeExpired();
+    this.lists.purgeRemoved();
     this.agentTurns.purgeOld();
     this.questions.purgeExpired();
     this.deferred.expireStale();
@@ -1696,6 +1700,7 @@ export class AssistantDO implements DurableObject {
     return {
       reminders: this.reminders,
       notes: this.notes,
+      lists: this.lists,
       expenses: this.expenses,
       pending: this.pending,
       questions: this.questions,

@@ -404,6 +404,32 @@ export const notesFindSlots = z
 
 export const notesDeleteSlots = z.object({ query_variants: queryVariantsSchema.optional() }).strict();
 
+// ROADMAP block H (2026-10-07). Agent-only, private like notes. A list is named
+// by `list`: the words the user called it, matched in code (invariant 5).
+
+export const MAX_LIST_ITEM_CHARS = 200;
+export const MAX_LIST_ITEMS_PER_CALL = 20;
+
+const listItemsSchema = z.array(z.string().min(1).max(MAX_LIST_ITEM_CHARS)).min(1).max(MAX_LIST_ITEMS_PER_CALL);
+
+/** "תוסיף חלב וביצים לרשימת קניות". */
+export const listsAddSlots = z
+  .object({ list: queryVariantsSchema.optional(), items: listItemsSchema.optional() })
+  .strict();
+
+/** "מה ברשימת הקניות?", "אילו רשימות יש לי?". Absent: every list. */
+export const listsShowSlots = z
+  .object({ list: z.array(z.string().min(1).max(MAX_QUERY_CHARS)).max(MAX_QUERY_VARIANTS).optional() })
+  .strict();
+
+/** "תוריד את החלב מהרשימה". */
+export const listsRemoveSlots = z
+  .object({ list: queryVariantsSchema.optional(), items: listItemsSchema.optional() })
+  .strict();
+
+/** "תמחק את רשימת הקניות". */
+export const listsDeleteSlots = z.object({ list: queryVariantsSchema.optional() }).strict();
+
 export const EXPENSE_CATEGORY_SLOTS = [
   'food',
   'groceries',

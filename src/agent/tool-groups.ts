@@ -4,8 +4,9 @@
  * Every tool offered is prompt tokens on every call: the full catalog is about
  * 5K tokens of a qwen minute's 8K. So the words of the message pick a group,
  * and only that group is offered — but only on a clean signal. **Exactly one
- * group hit → that group; none, or two or more → the full catalog.** A request
- * that mixes domains, or names none ("כן, את זה"), gets every tool, as before.
+ * to three group hits → their union; none, or four and more → the full
+ * catalog** (2026-10-07; before, two groups meant the full catalog). A message
+ * that names no group ("כן, את זה") gets every tool, as before.
  *
  * Code only ever narrows what `agentToolNames` would offer; it never adds a
  * tool. Tools that write similar records (notes, tasks, expenses) share one
@@ -46,6 +47,10 @@ export const GROUPS: Readonly<Record<GroupName, readonly ToolName[]>> = {
     'expenses.add',
     'expenses.summary',
     'expenses.export',
+    'lists.add',
+    'lists.show',
+    'lists.remove',
+    'lists.delete',
   ],
   info: ['info.lookup', 'calc.compute'],
   mail: ['mail.search', 'mail.draft', 'mail.bills'],
@@ -93,6 +98,9 @@ const PATTERNS: Readonly<Record<GroupName, readonly RegExp[]>> = {
     // phone claims the same word for its notifications: both groups, so the
     // full catalog (2026-10-06).
     /התרא/, /\balerts?\b/i,
+    // "Send me the weather every morning" is a scheduled read, a time tool
+    // (2026-10-07: the whole corpus is now gated, and these were hidden).
+    /כל (?:בוקר|ערב|לילה|יום|שבוע|חודש)/, /\bevery (?:day|morning|evening|night|week)\b/i, /\bdaily\b/i,
   ],
   records: [
     /פתק/, word('הערה|הערות'), /רשום/, /רשמ/, /סיסמ/,
@@ -111,8 +119,8 @@ const PATTERNS: Readonly<Record<GroupName, readonly RegExp[]>> = {
     /\b(?:weather|rain|temperature|uv|air quality|wikipedia|calculate|percent|sunset|sunrise|shabbat|news|headlines)\b/i,
   ],
   mail: [
-    /מייל/, /דואר/, /ג'ימייל/, /חשבונות לתשלום/, /חשבון לתשלום/, /חשבוני/, /דרישת תשלום/,
-    /\b(?:e-?mails?|mail|gmail|inbox|bills?|invoices?)\b/i,
+    /מייל/, /דואר/, /ג'ימייל/, /טיוט/, /חשבונות לתשלום/, /חשבון לתשלום/, /חשבוני/, /דרישת תשלום/,
+    /\b(?:e-?mails?|mail|gmail|inbox|bills?|invoices?|drafts?)\b/i,
   ],
   drive: [/דרייב/, /קובץ/, /קבצים/, /מסמך/, /מסמכים/, /\b(?:drive|files?|documents?)\b/i],
   phone: [
@@ -137,26 +145,43 @@ export function matchGroups(text: string): GroupName[] {
 export type Selection = {
   /** The tools to offer, in the order given (registry order). */
   tools: ToolName[];
-  /** The one group narrowed to, or null when the full set is offered. */
-  group: GroupName | null;
+  /** The groups narrowed to, in a fixed order; empty when the full set is offered. */
+  groups: GroupName[];
 };
 
+/** Up to this many groups are offered as their union; more is the full set. */
+export const MAX_UNION_GROUPS = 3;
+
 /**
- * Narrow `offered` to the one group the text names, or keep it whole. Never
+ * Narrow `offered` to the groups the text names, or keep it whole. Never
  * returns a tool `offered` does not contain.
  *
+ * One to three groups: their union (2026-10-07, ROADMAP block H). Before, two
+ * groups meant the full catalog; with more tools that no longer fits a turn.
+ * None, or four and more: the full set — a message that names nothing, or
+ * everything, is not narrowed.
+ *
  * A group mostly unavailable here — no more than half its tools offered — keeps
- * the full set too: "wake me at 6" in an app without cards cannot set an alarm,
- * and the reminder it can set is in another group.
+ * the full set too, whichever of the matched groups it is: "wake me at 6" in an
+ * app without cards cannot set an alarm, and the reminder it can set is in
+ * another group.
  */
 export function selectTools(text: string, offered: readonly ToolName[]): Selection {
   const groups = matchGroups(text);
-  if (groups.length !== 1) return { tools: [...offered], group: null };
-  const group = groups[0]!;
-  const members = new Set<ToolName>(GROUPS[group]);
-  const tools = offered.filter((tool) => members.has(tool));
-  if (tools.length * 2 <= GROUPS[group].length) return { tools: [...offered], group: null };
-  return { tools, group };
+  const full = { tools: [...offered], groups: [] };
+  if (groups.length === 0 || groups.length > MAX_UNION_GROUPS) return full;
+  const members = new Set<ToolName>();
+  for (const group of groups) {
+    const available = GROUPS[group].filter((tool) => offered.includes(tool));
+    if (available.length * 2 <= GROUPS[group].length) return full;
+    for (const tool of available) members.add(tool);
+  }
+  return { tools: offered.filter((tool) => members.has(tool)), groups };
+}
+
+/** A selection as one word, for logs and the benchmark: `time`, `time+mail`, `full`. */
+export function selectionLabel(selection: Selection): string {
+  return selection.groups.length === 0 ? 'full' : selection.groups.join('+');
 }
 
 /** Every registry tool's group. Used by the test that every tool has exactly one. */

@@ -15,7 +15,7 @@
 import { estimateTokens } from '../src/agent/loop.js';
 import type { AgentMessage } from '../src/agent/provider.js';
 import { languageLine, nowLine, SYSTEM_PROMPT } from '../src/agent/prompt.js';
-import { selectTools } from '../src/agent/tool-groups.js';
+import { selectionLabel, selectTools } from '../src/agent/tool-groups.js';
 import { agentToolNames, wireTools } from '../src/agent/tools.js';
 import { fingerprintPhrases } from '../test/evals/fingerprint.js';
 
@@ -55,7 +55,7 @@ const rows = phrases.map((text) => {
   // A read turn: the old loop sent the catalog again; the new one sends none.
   const oldTurn = oldFirst + estimateTokens(afterRead(text), fullChars);
   const newTurn = newFirst + estimateTokens(afterRead(text), 0);
-  return { group: selection.group ?? 'full', oldFirst, newFirst, oldTurn, newTurn };
+  return { group: selectionLabel(selection), oldFirst, newFirst, oldTurn, newTurn };
 });
 
 const narrowed = rows.filter((row) => row.group !== 'full').length;

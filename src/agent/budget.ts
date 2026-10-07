@@ -47,8 +47,15 @@ const UNAVAILABLE_MS = 60 * 60 * 1000;
 /** The parser's own `max_completion_tokens` (`src/nlu/groq.ts`), reserved in full. */
 export const PARSER_MAX_COMPLETION_TOKENS = 2_048;
 
-/** Hebrew-heavy text ran about 2.6 characters a token in the spike. */
-export const CHARS_PER_TOKEN = 2.5;
+/**
+ * Characters per token, for every estimate and reservation. Measured
+ * (2026-10-07, `test/fixtures/token-calibration.json`, 24 real calls): qwen
+ * ran 3.15–3.66, gpt-oss about 4.95. 3.0 stays under every measured call,
+ * which the calibration test holds at 99%. At the spike's 2.5 the full
+ * catalog alone estimated past the 7,000 turn cap, so a message that named no
+ * tool group failed `turn_token_cap` before any model was asked.
+ */
+export const CHARS_PER_TOKEN = 3.0;
 
 type Spend = { at: number; tokens: number };
 

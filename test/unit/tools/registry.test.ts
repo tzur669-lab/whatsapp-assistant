@@ -4,6 +4,7 @@
  * that would otherwise only show up as a bad reply in production.
  */
 import { NOTE_TOOLS } from '../../../src/tools/notes.js';
+import { LIST_TOOLS } from '../../../src/tools/lists.js';
 import { EXPENSE_TOOLS } from '../../../src/tools/expenses.js';
 import { describe, expect, it } from 'vitest';
 import { REGISTRY, TOOL_NAMES, toolCatalog } from '../../../src/tools/registry.js';
@@ -38,6 +39,7 @@ const IMPLEMENTATIONS: Record<string, ToolDefinition> = {
   'calc.compute': calcCompute,
   'calendar.free_time': calendarFreeTime,
   ...NOTE_TOOLS,
+  ...LIST_TOOLS,
   ...EXPENSE_TOOLS,
   'birthdays.upcoming': birthdaysUpcoming,
   'mail.bills': mailBills,

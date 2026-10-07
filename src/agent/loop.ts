@@ -36,7 +36,7 @@ import { phoneReadRefused, phoneReadText } from '../render/phone-reads.js';
 import type { MessageScope, Reservation, TokenBudget } from './budget.js';
 import { CHARS_PER_TOKEN, newMessageScope, wasNeverSent } from './budget.js';
 import { DEFAULT_MAX_COMPLETION_TOKENS, modelEntry } from './models.js';
-import { selectTools } from './tool-groups.js';
+import { selectionLabel, selectTools } from './tool-groups.js';
 import type { HistoryEntry } from './history.js';
 import { languageLine, nowLine, READ_ONLY_NOTE, SYSTEM_PROMPT } from './prompt.js';
 import type { AgentMessage, AgentProvider, AgentResponse, ToolCall, WireTool } from './provider.js';
@@ -70,6 +70,26 @@ export function promptChars(messages: readonly AgentMessage[], toolChars: number
  */
 export function estimateTokens(messages: readonly AgentMessage[], toolChars: number): number {
   return Math.ceil(promptChars(messages, toolChars) / CHARS_PER_TOKEN);
+}
+
+/**
+ * Room a turn keeps above its first call: a read result to come back and a
+ * worded answer (block H, 2026-10-07).
+ */
+export const FIT_HEADROOM = 1_000;
+
+/**
+ * The newest history that fits `limit`, never less than the last exchange.
+ * Pure. `estimate` prices a whole first call with the given history.
+ */
+export function fitHistory(
+  history: readonly HistoryEntry[],
+  estimate: (history: readonly HistoryEntry[]) => number,
+  limit: number,
+): { history: readonly HistoryEntry[]; dropped: number } {
+  let start = 0;
+  while (history.length - start > 1 && estimate(history.slice(start)) > limit) start++;
+  return { history: history.slice(start), dropped: start };
 }
 
 export type AgentTurnInput = {
@@ -191,22 +211,38 @@ export async function runAgentTurn(input: AgentTurnInput, deps: AgentDeps): Prom
     ...(input.grants ? { grants: input.grants } : {}),
     ...(readOnly ? { readOnly } : {}),
   });
-  // Code narrows the catalog to the one group the words name, or keeps it
+  // Code narrows the catalog to the groups the words name, or keeps it
   // whole (§4). It never adds a tool `agentToolNames` would not offer.
-  const selection = deps.legacyCatalog ? { tools: offered, group: null } : selectTools(input.text, offered);
+  const selection = deps.legacyCatalog ? { tools: offered, groups: [] } : selectTools(input.text, offered);
   const tools = wireTools(selection.tools);
   const toolChars = JSON.stringify(tools).length;
   const tainted = input.history.some((entry) => entry.tainted) || input.turn.tainted === true;
-  deps.log.info('agent_tools', { group: selection.group ?? 'full', offered: selection.tools.length });
+  deps.log.info('agent_tools', { group: selectionLabel(selection), offered: selection.tools.length });
 
-  const messages: AgentMessage[] = [
-    { role: 'system', content: readOnly ? `${SYSTEM_PROMPT}\n${READ_ONLY_NOTE}` : SYSTEM_PROMPT },
+  const system = readOnly ? `${SYSTEM_PROMPT}\n${READ_ONLY_NOTE}` : SYSTEM_PROMPT;
+  const userTurn = `${nowLine(input.nowMs)}\n${languageLine(input.lang)}\n\n${input.text}`;
+  const build = (history: readonly HistoryEntry[]): AgentMessage[] => [
+    { role: 'system', content: system },
+    ...history.flatMap((entry): AgentMessage[] => [
+      { role: 'user', content: entry.user },
+      { role: 'assistant', content: entry.reply },
+    ]),
+    { role: 'user', content: userTurn },
   ];
-  for (const entry of input.history) {
-    messages.push({ role: 'user', content: entry.user });
-    messages.push({ role: 'assistant', content: entry.reply });
-  }
-  messages.push({ role: 'user', content: `${nowLine(input.nowMs)}\n${languageLine(input.lang)}\n\n${input.text}` });
+
+  // The budget fitter (block H, 2026-10-07): once, before the estimate and the
+  // reservation, never between calls. Over the line, the oldest exchanges go
+  // first; the last one stays, because "כן, את זה" points at it.
+  const turnCap = Math.min(
+    ...deps.providers.map((candidate) => modelEntry(candidate.model)?.turnCap ?? TURN_TOKEN_CAP),
+  );
+  const fitted = fitHistory(
+    input.history,
+    (history) => estimateTokens(build(history), toolChars),
+    turnCap - COMPLETION_RESERVE - FIT_HEADROOM,
+  );
+  if (fitted.dropped > 0) deps.log.info('agent_fit', { dropped: fitted.dropped });
+  const messages = build(fitted.history);
 
   // One model for the whole turn: the first that can take two calls of this
   // size, else one. Switching mid-turn would spend a second model's budget on a

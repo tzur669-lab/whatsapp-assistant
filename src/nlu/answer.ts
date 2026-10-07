@@ -198,6 +198,9 @@ const SLOT_NAMES: Record<string, Partial<Record<keyof AnswerPatch, string>>> = {
   'reminders.move': { target: 'query_variants', date: 'to_date', time: 'to_time' },
   'reminders.at_rest': { text: 'text' },
   'reminders.scheduled_read': { time: 'time' },
+  // "Which list?" (block H, 2026-10-07): the answer names the list.
+  'lists.add': { target: 'list' },
+  'lists.delete': { target: 'list' },
   // Phone actions (§6.20): the two questions code asks itself. The rest are
   // answered through the agent, which has the turn in history.
   'alarm.set': { time: 'time' },

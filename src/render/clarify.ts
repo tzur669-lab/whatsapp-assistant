@@ -11,7 +11,7 @@
  * guessing is that asking is cheap only when the question is a good one.
  */
 import { eventText } from './events.js';
-import { isolateLtr } from './bidi.js';
+import { isolate, isolateLtr } from './bidi.js';
 import { callText } from './calls.js';
 import { phoneQuestion } from './phone.js';
 import { personalQuestion } from './personal.js';
@@ -49,6 +49,10 @@ export function renderClarify(clarify: Clarify, lang: Lang): string {
       return phoneQuestion(clarify.what, lang);
     case 'personal':
       return personalQuestion(clarify.what, lang);
+    case 'which_list':
+      return lang === 'he'
+        ? `לאיזו רשימה? יש: ${clarify.names.map(isolate).join(', ')}.`
+        : `Which list? There are: ${clarify.names.map(isolate).join(', ')}.`;
     case 'leave_too_late':
       return lang === 'he'
         ? 'כבר מאוחר מדי: הזמן לצאת לאירוע הזה עבר, או שנשארה פחות מדקה.'

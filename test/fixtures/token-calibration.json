@@ -64,6 +64,38 @@
   {
    "chars": 2898,
    "promptTokens": 813
+  },
+  {
+   "chars": 17670,
+   "promptTokens": 3571
+  },
+  {
+   "chars": 17670,
+   "promptTokens": 3569
+  },
+  {
+   "chars": 17682,
+   "promptTokens": 3569
+  },
+  {
+   "chars": 17665,
+   "promptTokens": 3567
+  },
+  {
+   "chars": 17668,
+   "promptTokens": 3568
+  },
+  {
+   "chars": 17672,
+   "promptTokens": 3567
+  },
+  {
+   "chars": 17684,
+   "promptTokens": 3575
+  },
+  {
+   "chars": 17687,
+   "promptTokens": 3568
   }
  ]
 }
