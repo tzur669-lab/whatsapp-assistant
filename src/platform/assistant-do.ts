@@ -50,6 +50,7 @@ import { buildDigest } from '../core/digest.js';
 import { scheduledReadMessage } from '../core/scheduled-read.js';
 import { NoteStore } from '../tools/note-store.js';
 import { ListStore } from '../tools/list-store.js';
+import { FactStore } from '../tools/fact-store.js';
 import { MissedCallStore } from '../core/missed-calls.js';
 import type { MissedCall } from '../core/missed-calls.js';
 import { parseCallsReport } from '../channels/app/parse.js';
@@ -153,6 +154,7 @@ export class AssistantDO implements DurableObject {
   private readonly birthdays: BirthdayStore;
   private readonly notes: NoteStore;
   private readonly lists: ListStore;
+  private readonly facts: FactStore;
   private readonly missedCalls: MissedCallStore;
   private readonly expenses: ExpenseStore;
   private readonly deferred: UndoActions;
@@ -251,6 +253,7 @@ export class AssistantDO implements DurableObject {
     };
     this.history = new ConversationHistory(this.sql, now, keyringOnce);
     this.exchanges = new ExchangeLog(this.sql, now, keyringOnce);
+    this.facts = new FactStore(this.sql, now, keyringOnce);
     this.agentLock = new AgentLock(this.sql, now);
     this.agentTurns = new SuspendedTurns(this.sql, now, keyringOnce);
 
@@ -1701,6 +1704,7 @@ export class AssistantDO implements DurableObject {
       reminders: this.reminders,
       notes: this.notes,
       lists: this.lists,
+      facts: this.facts,
       expenses: this.expenses,
       pending: this.pending,
       questions: this.questions,

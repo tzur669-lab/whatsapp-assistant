@@ -51,6 +51,8 @@ export const GROUPS: Readonly<Record<GroupName, readonly ToolName[]>> = {
     'lists.show',
     'lists.remove',
     'lists.delete',
+    'memory.remember',
+    'memory.forget',
   ],
   info: ['info.lookup', 'calc.compute'],
   mail: ['mail.search', 'mail.draft', 'mail.bills'],

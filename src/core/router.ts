@@ -18,6 +18,10 @@ export type Command =
   | { kind: 'missed' }
   /** `/misses`: show what was kept (§6.23). */
   | { kind: 'misses' }
+  /** `/memory`: the facts kept about the user (§6.26). */
+  | { kind: 'memory' }
+  /** `/forget memory`: forget every fact (§6.26). `/forget` alone keeps them. */
+  | { kind: 'forget_memory' }
   /** `/connect google|gmail|tasks|drive`: one grant each (§6.6, 2026-10-01). */
   | { kind: 'connect_google'; grant: GrantName }
   /** `/pair` issues a code for the phone app; `/pair off` unpairs (PLAN §6.17). */
@@ -52,6 +56,8 @@ const COMMANDS: ReadonlyArray<readonly [RegExp, Command]> = [
   [/^\/resume$/i, { kind: 'resume' }],
   [/^\/budget$/i, { kind: 'budget' }],
   [/^\/forget$/i, { kind: 'forget' }],
+  [/^\/forget\s+memory$/i, { kind: 'forget_memory' }],
+  [/^\/memory$/i, { kind: 'memory' }],
   [/^\/shabbat$/i, { kind: 'shabbat', set: null }],
   [/^\/shabbat\s+on$/i, { kind: 'shabbat', set: true }],
   [/^\/shabbat\s+off$/i, { kind: 'shabbat', set: false }],

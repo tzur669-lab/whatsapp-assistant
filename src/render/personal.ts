@@ -13,6 +13,7 @@ import type { Note } from '../tools/note-store.js';
 import type { CategoryTotal, ExpenseCategory } from '../tools/expense-store.js';
 import { MAX_NOTES } from '../tools/note-store.js';
 import { MAX_ITEMS_PER_LIST, MAX_LISTS } from '../tools/list-store.js';
+import { MAX_FACTS, MAX_FACTS_TOTAL_CHARS } from '../tools/fact-store.js';
 import type { ExpensePeriod } from '../time/past-day.js';
 import { localPartsOf, ZONE } from '../time/tz.js';
 
@@ -61,6 +62,22 @@ export function personalQuestion(what: PersonalQuestion, lang: Lang): string {
         : `That list already holds ${MAX_ITEMS_PER_LIST} items, the most kept. Remove some and try again.`;
     case 'list_gone':
       return he ? 'הרשימה הזאת כבר לא קיימת.' : 'That list no longer exists.';
+    case 'fact_text':
+      return he ? 'מה לזכור עליך?' : 'What should I remember about you?';
+    case 'facts_full':
+      return he
+        ? `הזיכרון מלא (${isolateLtr(String(MAX_FACTS))} עובדות או ${isolateLtr(String(MAX_FACTS_TOTAL_CHARS))} תווים). אפשר למחוק עובדה עם "תשכח ש…".`
+        : `Memory is full (${MAX_FACTS} facts or ${MAX_FACTS_TOTAL_CHARS} characters). Remove one with "forget that…".`;
+    case 'fact_private':
+      return he
+        ? 'את זה לא אשמור כעובדה: יש בזה מספר, קוד, קישור או כתובת מייל, ועובדות נשלחות למודל. אפשר לשמור את זה כפתק: "תזכור ש…".'
+        : 'Not kept as a fact: it holds a number, a code, a link or an email, and facts go to the model. Keep it as a note: "remember that…".';
+    case 'fact_tainted':
+      return he
+        ? 'עובדה נשמרת רק ממה שכתבת בעצמך, לא מטקסט ששותף או הועבר.'
+        : 'A fact is kept only from your own words, not from shared or forwarded text.';
+    case 'no_facts':
+      return he ? 'אין עובדות שמורות עליך.' : 'No facts saved about you.';
   }
 }
 
@@ -111,6 +128,55 @@ export const notesText = {
 
   gone(lang: Lang): string {
     return lang === 'he' ? 'הפתק הזה כבר לא קיים.' : 'That note no longer exists.';
+  },
+};
+
+// -- facts (block H part 18) ---------------------------------------------------------
+
+export const factText = {
+  remembered(text: string, lang: Lang): string {
+    return lang === 'he'
+      ? `נשמר כעובדה עליך:\n${isolate(text)}\nאזכור את זה בכל שיחה.`
+      : `Saved as a fact about you:\n${isolate(text)}\nI will keep it in mind.`;
+  },
+
+  forgetPreview(text: string, lang: Lang): string {
+    return lang === 'he' ? `מחיקת העובדה:\n${isolate(text)}` : `Forget the fact:\n${isolate(text)}`;
+  },
+
+  forgotten(lang: Lang): string {
+    return lang === 'he' ? 'העובדה נמחקה.' : 'Forgotten.';
+  },
+
+  gone(lang: Lang): string {
+    return lang === 'he' ? 'העובדה הזאת כבר לא שמורה.' : 'That fact is no longer kept.';
+  },
+
+  /** `/memory`: every fact, and a pointer to the notes, which are kept apart. */
+  all(facts: readonly string[], noteCount: number, lang: Lang): string {
+    const he = lang === 'he';
+    const lines = facts.map((fact, index) => `${isolateLtr(String(index + 1))}. ${isolate(fact)}`);
+    const head =
+      facts.length === 0
+        ? [he ? 'אין עובדות שמורות עליך.' : 'No facts saved about you.']
+        : [he ? 'מה שאני זוכר עליך:' : 'What I remember about you:', '', ...lines];
+    const tail =
+      noteCount > 0
+        ? [
+            '',
+            he
+              ? `יש גם ${isolateLtr(String(noteCount))} פתקים, בנפרד: "מה הפתקים שלי".`
+              : `There are also ${noteCount} notes, kept apart: "my notes".`,
+          ]
+        : [];
+    return [...head, ...tail].join('\n');
+  },
+
+  /** After a note that reads like a fact about the user (M2). */
+  noteHint(lang: Lang): string {
+    return lang === 'he'
+      ? 'אם זה משהו עליך שכדאי שאזכור תמיד: "תזכור עליי ש…".'
+      : 'If this is about you and worth always keeping in mind: "remember about me that…".';
   },
 };
 

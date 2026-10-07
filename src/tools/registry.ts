@@ -43,6 +43,8 @@ import {
   listsShowSlots,
   listsRemoveSlots,
   listsDeleteSlots,
+  memoryRememberSlots,
+  memoryForgetSlots,
   expensesAddSlots,
   expensesSummarySlots,
   expensesExportSlots,
@@ -120,6 +122,9 @@ export const TOOL_NAMES = [
   'lists.show',
   'lists.remove',
   'lists.delete',
+  // ROADMAP block H part 18 (2026-10-07): facts about the user, which the model sees.
+  'memory.remember',
+  'memory.forget',
 ] as const;
 
 export type ToolName = (typeof TOOL_NAMES)[number];
@@ -668,6 +673,27 @@ export const REGISTRY: Readonly<Record<ToolName, ToolSpec>> = {
     rateLimit: { perHour: 20, perDay: 50 },
     implementedIn: 6,
     private: true,
+  },
+  // Facts about the user (block H part 18). NOT private: the model sees them on
+  // every turn, by the user's decision. Saved only on an explicit signal.
+  'memory.remember': {
+    name: 'memory.remember',
+    llmDescription:
+      'Keep a lasting fact about the user, only when they say to remember it about them ("תזכור עליי", "על עצמי", "תזכור לתמיד", "remember about me"): where they live, preferences, family. Plain "remember that…" is notes.save. text: the fact, in their words.',
+    draftSchema: memoryRememberSlots,
+    tier: 1,
+    scopes: [],
+    rateLimit: { perHour: 20, perDay: 50 },
+    implementedIn: 6,
+  },
+  'memory.forget': {
+    name: 'memory.forget',
+    llmDescription: 'Forget a fact about the user that they describe.',
+    draftSchema: memoryForgetSlots,
+    tier: 2,
+    scopes: [],
+    rateLimit: { perHour: 20, perDay: 50 },
+    implementedIn: 6,
   },
   'phone.calls': {
     name: 'phone.calls',

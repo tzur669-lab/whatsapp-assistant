@@ -47,6 +47,8 @@ import {
   listsShowSlots,
   listsRemoveSlots,
   listsDeleteSlots,
+  memoryRememberSlots,
+  memoryForgetSlots,
   expensesAddSlots,
   expensesSummarySlots,
   expensesExportSlots,
@@ -171,6 +173,8 @@ export const intentDraftSchema = z.discriminatedUnion('intent', [
   z.object({ intent: z.literal('lists.show'), slots: listsShowSlots, ...common }).strict(),
   z.object({ intent: z.literal('lists.remove'), slots: listsRemoveSlots, ...common }).strict(),
   z.object({ intent: z.literal('lists.delete'), slots: listsDeleteSlots, ...common }).strict(),
+  z.object({ intent: z.literal('memory.remember'), slots: memoryRememberSlots, ...common }).strict(),
+  z.object({ intent: z.literal('memory.forget'), slots: memoryForgetSlots, ...common }).strict(),
   z.object({ intent: z.literal('expenses.summary'), slots: expensesSummarySlots, ...common }).strict(),
   z.object({ intent: z.literal('expenses.export'), slots: expensesExportSlots, ...common }).strict(),
   // Google Tasks (2026-10-01). Agent-only.

@@ -52,6 +52,8 @@ any turn still waiting for the phone to read (§6.21); `/pair off` does too.
 "לא הבנת" (or `/missed`) keeps the latest exchange that reached a model, encrypted,
 for review; `/misses` shows the last 10 (PLAN §6.23). `/forget` deletes the latest
 exchange, not the misses the user kept; they expire after 30 days.
+`/memory` lists the facts kept about the user, which the agent sees on every turn
+(PLAN §6.26); `/forget memory` deletes them all, and `/forget` alone keeps them.
 
 ## Deploying to staging
 

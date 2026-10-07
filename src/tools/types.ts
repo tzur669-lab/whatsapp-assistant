@@ -20,6 +20,7 @@
  */
 import type { NoteStore } from './note-store.js';
 import type { ListStore } from './list-store.js';
+import type { FactStore } from './fact-store.js';
 import type { ExpenseStore } from './expense-store.js';
 import type { ZodTypeAny } from 'zod';
 import type { Lang } from '../render/format-time.js';
@@ -97,7 +98,12 @@ export type PersonalQuestion =
   | 'no_lists'
   | 'lists_full'
   | 'list_full'
-  | 'list_gone';
+  | 'list_gone'
+  | 'fact_text'
+  | 'facts_full'
+  | 'fact_private'
+  | 'fact_tainted'
+  | 'no_facts';
 
 export type ResolveOutcome = (
   | {
@@ -160,6 +166,8 @@ export type ToolContext = {
   notes?: NoteStore;
   /** Named lists (block H, 2026-10-07). */
   lists?: ListStore;
+  /** Facts about the user (block H part 18). */
+  facts?: FactStore;
   /** Expenses (§6.22). Absent only in tests that predate them. */
   expenses?: ExpenseStore;
   /**

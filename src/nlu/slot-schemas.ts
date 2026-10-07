@@ -430,6 +430,17 @@ export const listsRemoveSlots = z
 /** "תמחק את רשימת הקניות". */
 export const listsDeleteSlots = z.object({ list: queryVariantsSchema.optional() }).strict();
 
+// ROADMAP block H part 18 (2026-10-07). Agent-only. A fact is about the user and
+// the model sees it on every turn; only an explicit "about me" signal saves one.
+
+export const MAX_FACT_TEXT_CHARS = 200;
+
+/** "תזכור עליי שאני גר ברחובות". */
+export const memoryRememberSlots = z.object({ text: z.string().min(1).max(MAX_FACT_TEXT_CHARS).optional() }).strict();
+
+/** "תשכח שאני צמחוני". */
+export const memoryForgetSlots = z.object({ query_variants: queryVariantsSchema.optional() }).strict();
+
 export const EXPENSE_CATEGORY_SLOTS = [
   'food',
   'groceries',

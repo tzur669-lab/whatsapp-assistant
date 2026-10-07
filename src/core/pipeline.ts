@@ -18,6 +18,7 @@
  */
 import type { NoteStore } from '../tools/note-store.js';
 import type { ListStore } from '../tools/list-store.js';
+import type { FactStore } from '../tools/fact-store.js';
 import type { ExpenseStore } from '../tools/expense-store.js';
 import type { DriveClient } from '../google/drive.js';
 import type { ContactsClient } from '../google/contacts.js';
@@ -62,6 +63,8 @@ import { budgetState } from '../policy/window.js';
 import { classifyMetaError } from '../channels/whatsapp/errors.js';
 import { he } from '../render/he.js';
 import { missText } from '../render/misses.js';
+import { examplesFor } from '../render/fallback.js';
+import { factText, personalQuestion } from '../render/personal.js';
 import type { ExchangeLog } from './exchanges.js';
 import { matchGroups } from '../agent/tool-groups.js';
 import { statusText } from '../render/status.js';
@@ -103,6 +106,8 @@ export type Services = {
   notes?: NoteStore;
   /** Named lists (§6.25). */
   lists?: ListStore;
+  /** Facts about the user (§6.26): the agent sees them on every turn. */
+  facts?: FactStore;
   expenses?: ExpenseStore;
   pending: PendingActions;
   /** The one clarifying question a sender may have open (§6.11). */
@@ -434,6 +439,9 @@ async function respondToText(
     if (command.kind === 'missed' || command.kind === 'misses') {
       return missCommand(command.kind, event.conversationId ?? '', deps);
     }
+    if (command.kind === 'memory' || command.kind === 'forget_memory') {
+      return memoryCommand(command.kind, deps);
+    }
     return {
       action: 'reply',
       text: await renderCommand(command, deps, now),
@@ -476,7 +484,12 @@ async function respondToText(
   // 3. The models. Only here does a turn write the latest exchange that
   //    "לא הבנת" keeps (§6.23): commands, confirmations and answers above never
   //    do, so "לא הבנת" after a "כן" still finds the request it answered.
-  const outcome = await respondWithModels(text, source, event, deps, now, deps.services);
+  const answered = await respondWithModels(text, source, event, deps, now, deps.services);
+  // "לא הבנתי" alone tells the user nothing to try: two phrasings that work.
+  const outcome: PipelineOutcome =
+    answered.action === 'reply' && answered.text === he.notUnderstood
+      ? { ...answered, text: `${answered.text}\n\n${examplesFor(matchGroups(text))}` }
+      : answered;
   if (!BUSY_REPLIES.has(outcome) && outcome.action === 'reply') {
     await keepExchange(deps, event.wamid, event.conversationId ?? '', source.kind === 'voice' ? he.voicePlaceholder : text, text, outcome);
   }
@@ -602,6 +615,19 @@ async function keepExchange(
   }
 }
 
+/** `/memory` and `/forget memory` (§6.26). Private: the user's own words. */
+async function memoryCommand(kind: 'memory' | 'forget_memory', deps: PipelineDeps): Promise<PipelineOutcome> {
+  const facts = deps.services?.facts;
+  if (!facts) return { action: 'reply', text: personalQuestion('no_facts', 'he'), private: true };
+  if (kind === 'forget_memory') {
+    const removed = facts.wipe(deps.principal);
+    return { action: 'reply', text: removed > 0 ? factText.forgotten('he') : personalQuestion('no_facts', 'he'), private: true };
+  }
+  const all = await facts.all(deps.principal);
+  const notes = deps.services?.notes?.all(deps.principal).length ?? 0;
+  return { action: 'reply', text: factText.all(all.map((fact) => fact.text), notes, 'he'), private: true };
+}
+
 /** "לא הבנת" and `/misses` (§6.23). Private: they show the user's own words. */
 async function missCommand(
   kind: 'missed' | 'misses',
@@ -678,6 +704,8 @@ async function respondWithAgent(
     // Each of the app's conversations keeps its own memory (2026-10-01).
     const conversation = event.conversationId ?? '';
     const history = await agent.history.recent(principal, conversation);
+    // Facts about the user (§6.26): the agent's own read; never the misses or notes.
+    const facts = deps.services?.facts ? (await deps.services.facts.all(principal)).map((fact) => fact.text) : [];
     const result = await timed(deps, 'agent', () =>
       runAgentTurn(
         {
@@ -686,6 +714,7 @@ async function respondWithAgent(
           nowMs: now,
           turn: turnOf(deps, event, now, source, lang),
           history,
+          ...(facts.length > 0 ? { facts } : {}),
           // Phone actions only where an app that runs cards will receive them (§6.20).
           cards: deps.channel === 'app' && (deps.deviceCaps ?? []).includes('cards'),
           fileCards: deps.channel === 'app' && (deps.deviceCaps ?? []).includes('file'),
@@ -993,6 +1022,8 @@ async function renderCommand(command: Command, deps: PipelineDeps, now: number):
 
     case 'missed':
     case 'misses':
+    case 'memory':
+    case 'forget_memory':
       // Answered before this, with the conversation it belongs to (§6.23).
       return missText.none;
 
@@ -1275,6 +1306,7 @@ function turnOf(
       ...(services.birthdays ? { birthdays: services.birthdays } : {}),
       ...(services.notes ? { notes: services.notes } : {}),
       ...(services.lists ? { lists: services.lists } : {}),
+      ...(services.facts ? { facts: services.facts } : {}),
       ...(services.expenses ? { expenses: services.expenses } : {}),
     },
     pending: services.pending,

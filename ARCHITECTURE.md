@@ -2,7 +2,7 @@
 
 How the code is laid out and how the parts talk. The *why* behind each piece
 is in `PLAN.md` (section numbers given); the rules are in `CLAUDE.md`.
-Current as of 2026-10-07 (migration 0023).
+Current as of 2026-10-07 (migration 0024).
 
 ## 1. System diagram
 
@@ -116,13 +116,13 @@ Special shapes:
 
 **Tools by tier** (from `tools/registry.ts`; parser sees only the first 8 marked *):
 - Tier 0 (read): `reminders.list`*, `calendar.list_events`*, `calendar.free_time`, `phone.contacts|notifications|sms|calls`, `info.lookup`, `tasks.list`, `mail.search|bills`, `drive.search`, `notes.find`, `lists.show`, `expenses.summary`, `calc.compute`, `birthdays.upcoming`
-- Tier 1 (runs now; Undo where reversible; cards run on the phone): `reminders.create`*, `reminders.repeat|at_rest|scheduled_read|leave`, `calendar.create_event`* (Tier 3 with attendees), `tasks.add|complete`, `notes.save`, `lists.add|remove`, `expenses.add|export`, cards `alarm.set`, `timer.set`, `nav.go`, `app.open`, `media.play`, `settings.set`
-- Tier 2 (confirm): `reminders.cancel`*, `reminders.move`, `calendar.move_event`*, `calendar.delete_event`*, `mail.draft`, `notes.delete`, `lists.delete`
+- Tier 1 (runs now; Undo where reversible; cards run on the phone): `reminders.create`*, `reminders.repeat|at_rest|scheduled_read|leave`, `calendar.create_event`* (Tier 3 with attendees), `tasks.add|complete`, `notes.save`, `lists.add|remove`, `memory.remember`, `expenses.add|export`, cards `alarm.set`, `timer.set`, `nav.go`, `app.open`, `media.play`, `settings.set`
+- Tier 2 (confirm): `reminders.cancel`*, `reminders.move`, `calendar.move_event`*, `calendar.delete_event`*, `mail.draft`, `notes.delete`, `lists.delete`, `memory.forget`
 - Tier 3 (confirm on phone): `calls.place`*, `message.compose`
 
 ## 4. Storage
 
-One SQLite DB inside the DO. Schema = `migrations/0001…0023` (registered in
+One SQLite DB inside the DO. Schema = `migrations/0001…0024` (registered in
 `platform/migrations.ts`). Tables by area:
 
 | Area | Tables |
@@ -135,7 +135,7 @@ One SQLite DB inside the DO. Schema = `migrations/0001…0023` (registered in
 | Agent | `conversation_turns` (encrypted history), `agent_turns` (suspended), `agent_lock` |
 | Misses (§6.23) | `last_exchange` (encrypted, 1 h), `misses` (encrypted, 30 days); `inbound_messages.seq` + `settings.inbound_seq` order arrivals |
 | Quota | `groq_limits`, `groq_token_spend`, `worker_requests` |
-| Data | `ical_feeds`, `ical_events`, `birthdays`, `notes`, `lists`, `list_items`, `expenses`, `missed_calls` (minutes only) |
+| Data | `ical_feeds`, `ical_events`, `birthdays`, `notes`, `lists`, `list_items`, `facts` (encrypted; the model sees them), `expenses`, `missed_calls` (minutes only) |
 
 Access goes through `core/sql.ts` (`SqlDriver`) so tests run
 the same code on Node SQLite (`test/integration/sqlite-driver.ts`).

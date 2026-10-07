@@ -5,6 +5,7 @@
  */
 import { NOTE_TOOLS } from '../../../src/tools/notes.js';
 import { LIST_TOOLS } from '../../../src/tools/lists.js';
+import { MEMORY_TOOLS } from '../../../src/tools/memory.js';
 import { EXPENSE_TOOLS } from '../../../src/tools/expenses.js';
 import { describe, expect, it } from 'vitest';
 import { REGISTRY, TOOL_NAMES, toolCatalog } from '../../../src/tools/registry.js';
@@ -40,6 +41,7 @@ const IMPLEMENTATIONS: Record<string, ToolDefinition> = {
   'calendar.free_time': calendarFreeTime,
   ...NOTE_TOOLS,
   ...LIST_TOOLS,
+  ...MEMORY_TOOLS,
   ...EXPENSE_TOOLS,
   'birthdays.upcoming': birthdaysUpcoming,
   'mail.bills': mailBills,

@@ -389,6 +389,44 @@
     intent: tasks.add
     missing: []
 
+# Facts about the user (2026-10-07, block H part 18). Only an explicit "about me"
+# signal makes a fact; plain "remember that" stays a note.
+
+- id: mem-001
+  now: "2026-10-07T10:00:00+03:00"
+  input: "תזכור עליי שאני גר ברחובות"
+  expect:
+    intent: memory.remember
+    missing: []
+
+- id: mem-002
+  now: "2026-10-07T10:00:00+03:00"
+  input: "תזכור לתמיד שאני צמחוני"
+  expect:
+    intent: memory.remember
+    missing: []
+
+- id: mem-003
+  now: "2026-10-07T10:00:00+03:00"
+  input: "remember about me that I am allergic to peanuts"
+  expect:
+    intent: memory.remember
+    missing: []
+
+- id: mem-004
+  now: "2026-10-07T10:00:00+03:00"
+  input: "תזכור שהחניה בקומה מינוס שתיים"
+  expect:
+    intent: notes.save
+    missing: []
+
+- id: mem-005
+  now: "2026-10-07T10:00:00+03:00"
+  input: "תשכח את מה שאמרתי שאני גר ברחובות"
+  expect:
+    intent: memory.forget
+    missing: []
+
 # Gmail (2026-10-01, prompt a4).
 
 - id: ml-search-001

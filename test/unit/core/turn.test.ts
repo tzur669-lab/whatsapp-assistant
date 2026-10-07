@@ -390,13 +390,17 @@ describe('a turn, end to end', () => {
 
     it('asks again rather than acting when nothing parses', async () => {
       const out = await handleInbound(text('בלה בלה'), deps([{ garbage: true }]));
-      expect(out).toMatchObject({ action: 'reply', text: he.notUnderstood });
+      // "לא הבנתי", then two phrasings that work (block H part 18).
+      expect(out).toMatchObject({ action: 'reply', text: expect.stringContaining(he.notUnderstood) });
+      expect(out).toMatchObject({ text: expect.stringContaining('אפשר לנסות למשל:') });
       expect(repo.counters(Repository.dayKey(NOW)).fallbacks).toBe(1);
     });
 
     it('treats a request outside the tool list as unsupported', async () => {
       const out = await handleInbound(text('מה מזג האוויר'), deps([draft('unsupported', {})]));
-      expect(out).toMatchObject({ action: 'reply', text: he.notUnderstood });
+      // "לא הבנתי", then two phrasings that work (block H part 18).
+      expect(out).toMatchObject({ action: 'reply', text: expect.stringContaining(he.notUnderstood) });
+      expect(out).toMatchObject({ text: expect.stringContaining('אפשר לנסות למשל:') });
     });
   });
 

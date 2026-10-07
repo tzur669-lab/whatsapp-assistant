@@ -52,3 +52,21 @@ export function defangLinks(text: string): string {
     return host.replace(/\./g, '[.]') + (path ?? '');
   });
 }
+
+/**
+ * Whether text holds what the model must never be given (block H, 2026-10-07):
+ * an email, a link, a phone number, a code, or six digits in a row. A fact the
+ * user asks to keep is refused when it does — the model sees facts verbatim, so
+ * the check comes before the save, not after.
+ */
+export function containsPrivateData(text: string): boolean {
+  const patterns = [EMAIL, SCHEME_URL, WWW_URL, BARE_DOMAIN, CODE, PHONE];
+  for (const pattern of patterns) {
+    pattern.lastIndex = 0;
+    if (pattern.test(text)) {
+      pattern.lastIndex = 0;
+      return true;
+    }
+  }
+  return /\d{6,}/.test(text);
+}

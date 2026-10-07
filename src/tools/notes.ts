@@ -14,7 +14,7 @@ import {
   notesFindSlots,
   notesSaveSlots,
 } from '../nlu/slot-schemas.js';
-import { notesText, personalQuestion } from '../render/personal.js';
+import { factText, notesText, personalQuestion } from '../render/personal.js';
 import { isolate } from '../render/bidi.js';
 import { foldForMatch, matchByText } from './match.js';
 import type { Note, NoteStore } from './note-store.js';
@@ -85,7 +85,10 @@ export const notesSave: ToolDefinition = {
     const input = parseInput<SaveInput>(saveInputSchema, rawInput, 'notes.save');
     const note = storeOf(ctx).add(ctx.principal, input.text);
     if (!note) return { text: personalQuestion('notes_full', ctx.lang) };
-    return { text: notesText.saved(note.text, ctx.lang), compensating: { noteId: note.id }, externalRef: note.id };
+    // A note that reads like a fact about the user: say where facts go (§6.26).
+    const aboutMe = /^ש?אני\s/.test(note.text.trim());
+    const text = notesText.saved(note.text, ctx.lang) + (aboutMe ? `\n${factText.noteHint(ctx.lang)}` : '');
+    return { text, compensating: { noteId: note.id }, externalRef: note.id };
   },
 
   async undo(compensating, ctx): Promise<ExecuteResult> {

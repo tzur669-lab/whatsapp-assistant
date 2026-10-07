@@ -1803,6 +1803,18 @@ ROADMAP block H part 17. The user's decision: lists live in the bot, private lik
 
 **Routing.** A named list ("add milk to the shopping list") is `lists.add`; Google Tasks only when the user says tasks (prompt a10, `tasks.add`'s description). A shopping list the user already keeps in Google Tasks stays there.
 
+### 6.26 Facts about the user (2026-10-07)
+
+ROADMAP block H part 18. The user's decision: a lasting memory **the model sees**, so the bot understands them better — an amendment to invariant 2 (CLAUDE.md). Notes stay private; facts are the opposite on purpose.
+
+**What becomes a fact.** `memory.remember` (Tier 1, Undo) runs only on an explicit signal — "תזכור עליי", "על עצמי", "תזכור לתמיד", "remember about me" — said in its description; plain "תזכור ש…" stays `notes.save`, as before. Refused when the text holds an email, a link, a phone number, a code or six digits in a row (`containsPrivateData`, `security/scrub.ts`, the same detectors as `scrubForModel`): the model sees a fact verbatim, so the check comes before the save. Refused in a tainted turn: a fact is the user's own words, never a forwarded or shared text's. (A tainted write confirms first; after that confirmation the user has seen the fact, so it is kept.) A note that starts "אני…" gets a one-line hint that facts exist.
+
+**Storage.** `facts` (migration 0024): AES-GCM per row (`security/crypto.ts`, bound to principal and row), `chars` in the clear for the cap — 25 facts, 800 characters in all. `memory.forget` (Tier 2, no Undo) finds a fact by `query_variants` in `resolveAsync`, after decrypting. `/memory` lists them and points at the notes; `/forget memory` deletes them all; `/forget` alone and `/pair off` keep them (they are about the user, not a conversation or a device). **Deviation from the reviewed plan:** no `version` or soft delete on facts — nothing restores one (Undo of a save deletes its own row; forget is Tier 2), so a version would guard nothing.
+
+**In the turn.** The pipeline reads them (the agent's services never hold the store) and the user turn carries "About the user: a; b". The fitter drops old history first, down to the soft line; facts go only if the first call would not fit the turn cap at all — they are small and worth more than old history.
+
+**"לא הבנתי" with a way forward.** When nothing ran, the reply adds two static phrasings that work, for the tool group the words matched (`render/fallback.ts`).
+
 ## 7. Security
 
 ### 7.1 Threat model
@@ -2583,6 +2595,8 @@ measured on the app channel. To finish with `--resume`.
 - [ ] `eval:agent --filter lv-` on qwen (its daily eval budget was spent on 2026-10-06), and a full run on prompt a9.
 - [ ] `eval:agent --select-tools --filter he-alert-` on qwen, `he-alert-002` on gpt-oss-120b, and `ph-read-003` / `inj-sms-003` with `--select-tools`; `pnpm eval --filter he-alert-002` (all four blocked by the daily budget on 2026-10-06; `he-alert-001` passed on gpt-oss-120b, agent and parser).
 - [x] Token calibration: record `chars`/`promptTokens` pairs from a real run into `test/fixtures/token-calibration.json`, then the 99% test (§6.19). Done 2026-10-07: 24 pairs, divisor 3.0.
+- [ ] Block H part 18 evals: `eval:agent --filter mem-` on qwen and gpt-oss-120b, and `pnpm eval` (the parser's slot schemas changed in parts 17 and 18, though no parser tool did).
+- [ ] Full catalog with every grant: a read turn's second (text-only) call estimates about 7,080 against the 7,000 cap after part 18, so such a read ends with the code-rendered result instead of the model's wording. Options, measured first: shorter descriptions of the largest tools, or a higher `turnCap` for qwen within its 8K bucket.
 - [ ] Block H part 17 evals on prompt a10: `eval:agent --filter li-` and `--filter tk-` on qwen and gpt-oss-120b (both models hit the 100K eval guard on 2026-10-07), then a wider regression slice (`he-`, `rm-`, `sc-`) on a10.
 - [x] **`app_outbox` text stays plaintext for its 24 h TTL** (2026-10-01, accepted risk): Durable Object storage is encrypted at rest by Cloudflare, and the rows are deleted on ack.
 - [ ] Phase C: on Android 13+ a sideloaded app needs "Allow restricted settings" before notification access can be granted. Built with a note on the settings screen (§6.21); **verify on the device**. Play policy on `READ_SMS` does not apply to a sideloaded app.
@@ -2792,6 +2806,7 @@ measured on the app channel. To finish with `--resume`.
 | 2026-10-07 | **Block H planned, part 15 built: notes that can be found** (§6.22). The plan for block H (notes, "לא הבנת" capture, lists, facts memory, a stock portfolio, stronger models) went through seven review rounds before any code; its decisions are recorded per part as each ships. Part 15: generic words stripped from `notes.find` variants, no dead end on no match, 15 per list with a count of the rest, a whole-message rules-fallback pattern, and a sharper tool description. `eval:agent --filter nx-` 8/8 on qwen; `nx-find-003/004` on gpt-oss-120b. |
 | 2026-10-07 | **"לא הבנת" capture** (§6.23; ROADMAP block H part 16; migration 0022). The user's decision: the latest exchange that reached a model is kept encrypted for an hour, and "לא הבנת" copies it into encrypted misses for 30 days, shown by `/misses`. Ordered by a durable inbound sequence, not the clock or the rowid; only model turns write it (not commands, confirmations, answers or the busy reply); a resumed turn keeps its original number. One deviation from the reviewed plan: the resumed turn finds its number through `inbound_messages.seq` by wamid rather than inside the suspended state — the same guarantee, and no change to the encrypted payload. |
 | 2026-10-07 | **Unions, a calibrated estimator, and named lists** (§6.19, §6.25; ROADMAP block H part 17; migration 0023; prompt a10). Tool selection offers the union of one to three matched groups; the corpus gate now covers every case file, which found six hidden cases. The estimator divides by 3.0 (measured 3.15+ on qwen): at 2.5 any message that named no group failed the turn cap with the full catalog — a direct cause of "it doesn't understand". A history fitter keeps the first call under the cap. Lists per §6.25; `lists.delete` has no Undo (Tier 2), a deviation from the reviewed plan. Evals on a10 owed (§13): both models hit the daily eval guard. |
+| 2026-10-07 | **Facts about the user, which the model sees** (§6.26; ROADMAP block H part 18; migration 0024; invariant 2 amended in CLAUDE.md, the user's decision). `memory.remember` (1) on an explicit "about me" signal only, refused with private data or in a tainted turn; `memory.forget` (2); `/memory`, `/forget memory`. Facts ride in the user turn; the fitter drops them only to fit the hard cap. "לא הבנתי" now adds two working phrasings. No versions on facts (nothing restores one) — a deviation from the reviewed plan. Evals owed (§13). |
 ---
 
 ## 15. Sources (checked 2026-09-24)

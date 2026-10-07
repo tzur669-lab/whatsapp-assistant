@@ -98,6 +98,8 @@ export type AgentTurnInput = {
   nowMs: number;
   turn: TurnContext;
   history: readonly HistoryEntry[];
+  /** Facts about the user (§6.26), oldest first. The fitter drops them after the history. */
+  facts?: readonly string[];
   /** The paired app runs action cards, so phone actions may be offered (§6.20). */
   cards?: boolean;
   /**
@@ -220,29 +222,38 @@ export async function runAgentTurn(input: AgentTurnInput, deps: AgentDeps): Prom
   deps.log.info('agent_tools', { group: selectionLabel(selection), offered: selection.tools.length });
 
   const system = readOnly ? `${SYSTEM_PROMPT}\n${READ_ONLY_NOTE}` : SYSTEM_PROMPT;
-  const userTurn = `${nowLine(input.nowMs)}\n${languageLine(input.lang)}\n\n${input.text}`;
-  const build = (history: readonly HistoryEntry[]): AgentMessage[] => [
+  // Facts the user asked to be remembered about them (§6.26): their own words,
+  // checked at save time for anything the model must not see.
+  const aboutLine = (facts: readonly string[]) => (facts.length > 0 ? `\nAbout the user: ${facts.join('; ')}` : '');
+  const build = (history: readonly HistoryEntry[], facts: readonly string[]): AgentMessage[] => [
     { role: 'system', content: system },
     ...history.flatMap((entry): AgentMessage[] => [
       { role: 'user', content: entry.user },
       { role: 'assistant', content: entry.reply },
     ]),
-    { role: 'user', content: userTurn },
+    {
+      role: 'user',
+      content: `${nowLine(input.nowMs)}\n${languageLine(input.lang)}${aboutLine(facts)}\n\n${input.text}`,
+    },
   ];
 
   // The budget fitter (block H, 2026-10-07): once, before the estimate and the
   // reservation, never between calls. Over the line, the oldest exchanges go
-  // first; the last one stays, because "כן, את זה" points at it.
+  // first; the last one stays, because "כן, את זה" points at it. The facts are
+  // small and worth more than old history: they go only if the first call
+  // would not fit the cap at all — not merely the headroom above it.
   const turnCap = Math.min(
     ...deps.providers.map((candidate) => modelEntry(candidate.model)?.turnCap ?? TURN_TOKEN_CAP),
   );
-  const fitted = fitHistory(
-    input.history,
-    (history) => estimateTokens(build(history), toolChars),
-    turnCap - COMPLETION_RESERVE - FIT_HEADROOM,
-  );
-  if (fitted.dropped > 0) deps.log.info('agent_fit', { dropped: fitted.dropped });
-  const messages = build(fitted.history);
+  const limit = turnCap - COMPLETION_RESERVE - FIT_HEADROOM;
+  const allFacts = input.facts ?? [];
+  const fitted = fitHistory(input.history, (history) => estimateTokens(build(history, allFacts), toolChars), limit);
+  const facts =
+    estimateTokens(build(fitted.history, allFacts), toolChars) > turnCap - COMPLETION_RESERVE ? [] : allFacts;
+  if (fitted.dropped > 0 || facts.length < allFacts.length) {
+    deps.log.info('agent_fit', { dropped: fitted.dropped, factsDropped: facts.length < allFacts.length });
+  }
+  const messages = build(fitted.history, facts);
 
   // One model for the whole turn: the first that can take two calls of this
   // size, else one. Switching mid-turn would spend a second model's budget on a
