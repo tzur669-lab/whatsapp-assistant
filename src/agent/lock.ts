@@ -41,6 +41,16 @@ export class AgentLock {
     this.sql.exec('DELETE FROM agent_lock WHERE principal = ? AND turn_id = ?', principal, turnId);
   }
 
+  /** Whether a turn is running for this sender now. Synchronous. */
+  isHeld(principal: string): boolean {
+    const row = this.sql.exec(
+      'SELECT 1 AS held FROM agent_lock WHERE principal = ? AND expires_at > ?',
+      principal,
+      this.now(),
+    )[0];
+    return row !== undefined;
+  }
+
   wipe(principal: string): void {
     this.sql.exec('DELETE FROM agent_lock WHERE principal = ?', principal);
   }

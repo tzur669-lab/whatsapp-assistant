@@ -7,6 +7,12 @@ const MIGRATIONS = [
   { id: 1, sql: readFileSync(new URL('../../../migrations/0001_init.sql', import.meta.url), 'utf8') },
 ];
 
+/** `recordInbound` numbers messages in arrival order: 0022 adds the column (§6.23). */
+const WITH_SEQ = [
+  ...MIGRATIONS,
+  { id: 22, sql: readFileSync(new URL('../../../migrations/0022_misses.sql', import.meta.url), 'utf8') },
+];
+
 const PRINCIPAL = 'p_000000000000';
 
 describe('Repository.migrate', () => {
@@ -63,7 +69,7 @@ describe('Repository dedupe and window state', () => {
   beforeEach(() => {
     driver = new TestSqlDriver();
     repo = new Repository(driver);
-    repo.migrate(MIGRATIONS);
+    repo.migrate(WITH_SEQ);
   });
   afterEach(() => driver.close());
 

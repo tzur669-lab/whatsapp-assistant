@@ -60,6 +60,9 @@ import { toolCatalog } from '../tools/registry.js';
 import { budgetState } from '../policy/window.js';
 import { classifyMetaError } from '../channels/whatsapp/errors.js';
 import { he } from '../render/he.js';
+import { missText } from '../render/misses.js';
+import type { ExchangeLog } from './exchanges.js';
+import { matchGroups } from '../agent/tool-groups.js';
 import { statusText } from '../render/status.js';
 import { eventText } from '../render/events.js';
 import { localPartsOf, offsetMinutesAt, ZONE } from '../time/tz.js';
@@ -151,6 +154,8 @@ export type PipelineDeps = {
   transcribe?: VoiceTranscriber;
   /** Absent only in the Phase 1 tests, which predate the tool layer. */
   services?: Services;
+  /** "לא הבנת" capture (§6.23). Never handed to the agent or a model. */
+  exchanges?: ExchangeLog;
   /** Set by `handleInbound` for the turn it is handling (§6.14). */
   watch?: Stopwatch;
   /** The channel this turn arrived on. WhatsApp when absent (§6.18). */
@@ -423,6 +428,9 @@ async function respondToText(
     log.info('command', { wamid: event.wamid, intent: command.kind, stale, source: source.kind });
     repo.markInboundOutcome(event.wamid, { intent: command.kind, decision: 'ALLOW' });
     repo.audit({ ts: now, principal, tool: command.kind, tier: 0, decision: 'ALLOW', outcome: 'ok' });
+    if (command.kind === 'missed' || command.kind === 'misses') {
+      return missCommand(command.kind, event.conversationId ?? '', deps);
+    }
     return {
       action: 'reply',
       text: await renderCommand(command, deps, now),
@@ -462,22 +470,44 @@ async function respondToText(
     log.info('question_abandoned', { tool: open.tool, asked: open.asked });
   }
 
+  // 3. The models. Only here does a turn write the latest exchange that
+  //    "לא הבנת" keeps (§6.23): commands, confirmations and answers above never
+  //    do, so "לא הבנת" after a "כן" still finds the request it answered.
+  const outcome = await respondWithModels(text, source, event, deps, now, deps.services);
+  if (!BUSY_REPLIES.has(outcome) && outcome.action === 'reply') {
+    await keepExchange(deps, event.wamid, event.conversationId ?? '', source.kind === 'voice' ? he.voicePlaceholder : text, text, outcome);
+  }
+  return outcome;
+}
+
+/** Steps 3 on of `respondToText`: the agent, the parser, the read-only try. */
+async function respondWithModels(
+  text: string,
+  source: TextSource,
+  event: Extract<InboundEvent, { kind: 'text' | 'audio' }>,
+  deps: PipelineDeps,
+  now: number,
+  services: Services,
+): Promise<PipelineOutcome> {
+  const { repo, log } = deps;
+  const foreign = event.forwarded;
+
   // 3. The agent (§6.19). It falls back to the parser below only when nothing
   //    ran — a fallback after a tool had run would run the message twice.
   //    One scope for the whole message: a model that refused it for rate or
   //    budget is not asked again by the agent, the parser, or the read-only try.
   const scope = newMessageScope();
   let agentFailure: string | null = null;
-  if (deps.services.agent) {
-    const answered = await respondWithAgent(deps.services.agent, text, source, event, deps, now, { scope });
+  if (services.agent) {
+    const answered = await respondWithAgent(services.agent, text, source, event, deps, now, { scope });
     if ('fellBack' in answered) agentFailure = answered.fellBack;
     else return answered;
   }
 
   // 3b. The LLM as a parser: the path before the agent, and its fallback.
-  const nlu = deps.services.tokenBudget
-    ? meterParsers(deps.services.nlu, deps.services.tokenBudget, scope)
-    : deps.services.nlu;
+  const nlu = services.tokenBudget
+    ? meterParsers(services.nlu, services.tokenBudget, scope)
+    : services.nlu;
   const parsed = await timed(deps, 'nlu', () =>
     parseWithFallback(nlu, promptInputFor(text, now), log),
   );
@@ -494,7 +524,7 @@ async function respondToText(
     // The fallback model may still answer — a question, or a read — but
     // never act: it is offered reads only (2026-10-05). Not when the turn
     // itself was the problem: it would be as long on the other model.
-    const agent = deps.services.agent;
+    const agent = services.agent;
     if (agent?.fallbackProviders?.length && !TURN_SHAPE_FAILURES.has(agentFailure)) {
       const answered = await respondWithAgent(agent, text, source, event, deps, now, { readOnly: true, scope });
       if (!('fellBack' in answered)) return answered;
@@ -526,6 +556,70 @@ async function respondToText(
     return { ...replyOutcome({ ...reply, ...(question ? { question } : {}) }, deps), private: true } as PipelineOutcome;
   }
   return replyOutcome(reply, deps);
+}
+
+/** The `agentBusy` reply: no model ran, so it is not an exchange (§6.23). */
+const BUSY_REPLIES = new WeakSet<PipelineOutcome>();
+
+/**
+ * Keep this turn as the conversation's latest exchange (§6.23). Never throws
+ * and never logs content: a failure here must not cost the user their answer.
+ */
+async function keepExchange(
+  deps: PipelineDeps,
+  wamid: string,
+  conversation: string,
+  /** What the user's side keeps: the words, or the voice placeholder. */
+  userText: string,
+  /** The words themselves, for the tool groups only. */
+  words: string,
+  outcome: Extract<PipelineOutcome, { action: 'reply' }>,
+): Promise<void> {
+  const exchanges = deps.exchanges;
+  if (!exchanges) return;
+  try {
+    const seq = deps.repo.inboundSeq(wamid);
+    if (seq === null) return;
+    const row = deps.repo.getInbound(wamid);
+    const decision = typeof row?.['decision'] === 'string' ? row['decision'] : 'NONE';
+    const errorCode = typeof row?.['error_code'] === 'string' ? row['error_code'] : null;
+    const intent = typeof row?.['intent'] === 'string' ? row['intent'] : null;
+    // A private reply (notes) or someone else's words keep placeholders only.
+    const kept = outcome.private === true;
+    await exchanges.record(deps.principal, conversation, seq, {
+      user: kept ? he.privatePlaceholder : userText,
+      reply: kept ? he.privatePlaceholder : (outcome.withoutEcho ?? outcome.text),
+      outcome: errorCode ? `${decision}/${errorCode}` : decision,
+      intent,
+      groups: matchGroups(words),
+      at: deps.now(),
+    });
+  } catch {
+    deps.log.warn('exchange_keep_failed', { wamid });
+  }
+}
+
+/** "לא הבנת" and `/misses` (§6.23). Private: they show the user's own words. */
+async function missCommand(
+  kind: 'missed' | 'misses',
+  conversation: string,
+  deps: PipelineDeps,
+): Promise<PipelineOutcome> {
+  const exchanges = deps.exchanges;
+  if (!exchanges) return { action: 'reply', text: missText.none, private: true };
+  if (kind === 'misses') {
+    const misses = await exchanges.list(deps.principal);
+    return { action: 'reply', text: misses.length === 0 ? missText.empty : missText.list(misses), private: true };
+  }
+  if (deps.services?.agent?.lock.isHeld(deps.principal)) {
+    return { action: 'reply', text: missText.stillRunning, private: true };
+  }
+  const captured = await exchanges.capture(deps.principal, conversation);
+  return {
+    action: 'reply',
+    text: captured.kind === 'saved' ? missText.saved(captured.exchange.user) : missText.none,
+    private: true,
+  };
 }
 
 /** Failures of the turn itself, not of the model: another model would hit them too. */
@@ -566,7 +660,10 @@ async function respondWithAgent(
   } else if (!agent.lock.acquire(principal, turnId)) {
     log.info('agent_busy', { wamid: event.wamid });
     repo.markInboundOutcome(event.wamid, { decision: 'CLARIFY', errorCode: 'E_AGENT_BUSY' });
-    return { action: 'reply', text: he.agentBusy };
+    // No model ran: the turn still running writes its own exchange (§6.23).
+    const busy: PipelineOutcome = { action: 'reply', text: he.agentBusy };
+    BUSY_REPLIES.add(busy);
+    return busy;
   }
 
   // A turn left waiting for the phone is not going to be continued now: this
@@ -749,9 +846,15 @@ export async function resumeFromPhone(
     );
     log.info('agent_resumed', { wamid: request.wamid, readStatus: request.result.status, itemCount: request.result.items.length });
 
-    const outcome = await settleAgentResult(result, state.text, request.wamid, deps, now, state.conversation ?? '');
+    const settled = await settleAgentResult(result, state.text, request.wamid, deps, now, state.conversation ?? '');
     // No fallback here: the parser never sees a turn the phone has answered.
-    return outcome ?? { action: 'reply', text: he.agentIncomplete };
+    const outcome: PipelineOutcome = settled ?? { action: 'reply', text: he.agentIncomplete };
+    // Kept under the original message's place in line, so a late resume never
+    // overwrites a newer exchange (§6.23).
+    if (outcome.action === 'reply') {
+      await keepExchange(deps, request.wamid, state.conversation ?? '', state.text, state.text, outcome);
+    }
+    return outcome;
   } finally {
     turns.finish(request.queryId);
     agent.lock.release(principal, request.wamid);
@@ -884,6 +987,11 @@ async function renderCommand(command: Command, deps: PipelineDeps, now: number):
     case 'forget':
       forgetConversation(deps);
       return he.forgotten;
+
+    case 'missed':
+    case 'misses':
+      // Answered before this, with the conversation it belongs to (§6.23).
+      return missText.none;
 
     case 'pair':
       return pairSetting(command.off, deps);
@@ -1114,6 +1222,7 @@ function birthdaySetting(
 
 /** `/forget` and `/pair off`: the agent's history and any lock go (§6.19). */
 function forgetConversation(deps: PipelineDeps): void {
+  deps.exchanges?.forget(deps.principal);
   const agent = deps.services?.agent;
   if (!agent) return;
   agent.history.wipe(deps.principal);

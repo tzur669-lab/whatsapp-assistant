@@ -28,3 +28,6 @@ test/evals/recordings/
 # Voice clips are recordings of a real voice: personal data, never committed.
 test/evals/voice/clips/*
 !test/evals/voice/clips/README.md
+
+# Draft eval cases from /misses: real message text, never committed (PLAN §6.23).
+evals-private/

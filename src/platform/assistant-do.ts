@@ -99,6 +99,7 @@ import { MODELS } from '../agent/models.js';
 import type { ModelEntry } from '../agent/models.js';
 import { TURN_TOKEN_CAP } from '../agent/loop.js';
 import { ConversationHistory } from '../agent/history.js';
+import { ExchangeLog } from '../core/exchanges.js';
 import { QuotaStore, meterGroqFetch } from '../core/quota.js';
 import type { ModelSpec, ServerLimits } from '../core/quota.js';
 import { AgentLock } from '../agent/lock.js';
@@ -157,6 +158,8 @@ export class AssistantDO implements DurableObject {
   private readonly devices: DeviceStore;
   private readonly outbox: AppOutbox;
   private readonly history: ConversationHistory;
+  /** "לא הבנת" capture (§6.23). Given to the pipeline only, never to the agent. */
+  private readonly exchanges: ExchangeLog;
   private readonly agentLock: AgentLock;
   /** Agent turns waiting for the phone to read (§6.21). */
   private readonly agentTurns: SuspendedTurns;
@@ -244,6 +247,7 @@ export class AssistantDO implements DurableObject {
       return keyring;
     };
     this.history = new ConversationHistory(this.sql, now, keyringOnce);
+    this.exchanges = new ExchangeLog(this.sql, now, keyringOnce);
     this.agentLock = new AgentLock(this.sql, now);
     this.agentTurns = new SuspendedTurns(this.sql, now, keyringOnce);
 
@@ -311,6 +315,7 @@ export class AssistantDO implements DurableObject {
     // (plan D4). Cheap, synchronous, and each is a no-op when nothing is due.
     this.pending.purgeOld();
     this.history.purgeExpired();
+    this.exchanges.purgeExpired();
     this.agentTurns.purgeOld();
     // A turn the phone never answered gets its answer now, not on the next read.
     this.settleExpiredTurns();
@@ -501,6 +506,7 @@ export class AssistantDO implements DurableObject {
     this.pending.expireStale();
     this.pending.purgeOld();
     this.history.purgeExpired();
+    this.exchanges.purgeExpired();
     this.agentTurns.purgeOld();
     this.questions.purgeExpired();
     this.deferred.expireStale();
@@ -688,6 +694,7 @@ export class AssistantDO implements DurableObject {
       now: () => Date.now(),
       principal,
       services: this.services(),
+      exchanges: this.exchanges,
       ...(this.env.GROQ_API_KEY ? { transcribe: this.voiceTranscriber() } : {}),
     });
 
@@ -966,6 +973,7 @@ export class AssistantDO implements DurableObject {
         channel: 'app',
         deviceCaps: this.devices.capsOf(deviceId),
         services: this.services(),
+        exchanges: this.exchanges,
         ...(this.env.GROQ_API_KEY ? { transcribe: this.voiceTranscriber() } : {}),
       });
     } catch (error) {
@@ -1219,6 +1227,7 @@ export class AssistantDO implements DurableObject {
           channel: 'app',
           deviceCaps: this.devices.capsOf(device.id),
           services: this.services(),
+          exchanges: this.exchanges,
         },
       );
     } catch (error) {

@@ -49,6 +49,9 @@ says to pair with a code from the script; `/pair off` unpairs this phone.
 `/city` sets the home city for weather and Shabbat times (Jerusalem until set).
 `/forget` deletes the agent's encrypted conversation history (PLAN §6.19) and
 any turn still waiting for the phone to read (§6.21); `/pair off` does too.
+"לא הבנת" (or `/missed`) keeps the latest exchange that reached a model, encrypted,
+for review; `/misses` shows the last 10 (PLAN §6.23). `/forget` deletes the latest
+exchange, not the misses the user kept; they expire after 30 days.
 
 ## Deploying to staging
 

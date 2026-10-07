@@ -2,7 +2,7 @@
 
 How the code is laid out and how the parts talk. The *why* behind each piece
 is in `PLAN.md` (section numbers given); the rules are in `CLAUDE.md`.
-Current as of 2026-10-06 (migration 0021).
+Current as of 2026-10-07 (migration 0022).
 
 ## 1. System diagram
 
@@ -99,7 +99,7 @@ Special shapes:
 | `platform/` | **Only** Cloudflare code: the DO, SQL adapter, inlined migrations | §3.3–3.4 |
 | `channels/app/` | App ingress checks, request schemas, signature/pairing verify, outbox | §6.18 |
 | `channels/whatsapp/` | Frozen channel: HMAC verify, parse, send, media/voice download | §6.1 |
-| `core/` | `pipeline` (inbound order), `router` (commands), `orchestrator` (resolve→policy→act), `repo`/`sql` (data access), `digest`, `birthdays`, `missed-calls`, `scheduled-read`, `quota`, `timing`, `env` | §6.4, §6.12 |
+| `core/` | `pipeline` (inbound order), `router` (commands), `orchestrator` (resolve→policy→act), `repo`/`sql` (data access), `exchanges` ("לא הבנת" capture, never given to the agent), `digest`, `birthdays`, `missed-calls`, `scheduled-read`, `quota`, `timing`, `env` | §6.4, §6.12 |
 | `agent/` | Bounded tool loop, prompt (a9), compact catalog, tool groups, model table, token budget, history, lock, suspended turns | §6.19 |
 | `nlu/` | Fallback parser: prompt (v6), `IntentDraft` schema, slot schemas, Groq provider, rules fallback, weekday check, clarification answers | §6.2, §6.11 |
 | `tools/` | `registry.ts` (single source of truth: name, tier, slots, scopes, flags) + one file per area; `*-store.ts` hold SQL; `match.ts` finds targets | §6.4 |
@@ -122,7 +122,7 @@ Special shapes:
 
 ## 4. Storage
 
-One SQLite DB inside the DO. Schema = `migrations/0001…0021` (registered in
+One SQLite DB inside the DO. Schema = `migrations/0001…0022` (registered in
 `platform/migrations.ts`). Tables by area:
 
 | Area | Tables |
@@ -133,6 +133,7 @@ One SQLite DB inside the DO. Schema = `migrations/0001…0021` (registered in
 | Google | `integrations` (encrypted refresh tokens per grant), `oauth_links`, `oauth_states` |
 | App & phone | `devices`, `device_pairings`, `app_outbox`, `app_nonces`, `call_dispatches` |
 | Agent | `conversation_turns` (encrypted history), `agent_turns` (suspended), `agent_lock` |
+| Misses (§6.23) | `last_exchange` (encrypted, 1 h), `misses` (encrypted, 30 days); `inbound_messages.seq` + `settings.inbound_seq` order arrivals |
 | Quota | `groq_limits`, `groq_token_spend`, `worker_requests` |
 | Data | `ical_feeds`, `ical_events`, `birthdays`, `notes`, `expenses`, `missed_calls` (minutes only) |
 

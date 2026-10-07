@@ -14,6 +14,10 @@ export type Command =
   | { kind: 'budget' }
   /** Wipe the agent's conversation history (PLAN §6.19). */
   | { kind: 'forget' }
+  /** "לא הבנת": keep the latest exchange for review (§6.23). */
+  | { kind: 'missed' }
+  /** `/misses`: show what was kept (§6.23). */
+  | { kind: 'misses' }
   /** `/connect google|gmail|tasks|drive`: one grant each (§6.6, 2026-10-01). */
   | { kind: 'connect_google'; grant: GrantName }
   /** `/pair` issues a code for the phone app; `/pair off` unpairs (PLAN §6.17). */
@@ -94,9 +98,26 @@ function birthdayCommand(text: string): Command | null {
   return { kind: 'birthday', action: { kind: 'malformed' } };
 }
 
+/**
+ * "לא הבנת" as the whole message, after punctuation and spaces (§6.23). A
+ * longer message ("לא הבנת, התכוונתי למחר") is a correction for the agent.
+ */
+const MISSED = /^(?:לא הבנת(?: אותי)?|\/missed)$/i;
+const MISSES = /^\/misses$/i;
+
+function bareCommand(text: string): string {
+  return text
+    .replace(/[^\p{L}\p{N}\s/]+/gu, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
 /** Returns the command for a message, or null if it is free text. */
 export function matchCommand(text: string): Command | null {
   const trimmed = text.trim();
+  const bare = bareCommand(trimmed);
+  if (MISSED.test(bare)) return { kind: 'missed' };
+  if (MISSES.test(bare)) return { kind: 'misses' };
   for (const [pattern, command] of COMMANDS) {
     if (pattern.test(trimmed)) return command;
   }

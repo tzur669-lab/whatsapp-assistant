@@ -20,6 +20,7 @@ import type { VoiceOutcome } from '../../../src/voice/transcribe.js';
 
 const MIGRATIONS = [
   { id: 1, sql: readFileSync(new URL('../../../migrations/0001_init.sql', import.meta.url), 'utf8') },
+  { id: 22, sql: readFileSync(new URL('../../../migrations/0022_misses.sql', import.meta.url), 'utf8') },
 ];
 
 const NOW = Date.UTC(2026, 8, 24, 12, 0, 0);

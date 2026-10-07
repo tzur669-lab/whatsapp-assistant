@@ -8,6 +8,8 @@ const SCHEMA_VERSION_KEY = 'schema_version';
 const DIGEST_HOUR_KEY = 'digest_hour';
 const DIGEST_SENT_KEY = 'digest_sent_on';
 const REST_HOLD_KEY = 'rest_hold';
+/** A durable counter: never reset, unlike the pruned table's rowid (§6.23). */
+const INBOUND_SEQ_KEY = 'inbound_seq';
 
 export type InboundRecord = {
   wamid: string;
@@ -110,18 +112,35 @@ export class Repository {
    * which is how Meta's at-least-once retries are collapsed (PLAN §7.1).
    */
   recordInbound(record: InboundRecord): boolean {
-    const rows = this.sql.exec(
-      `INSERT INTO inbound_messages (wamid, principal, received_at, sent_at, kind)
-       VALUES (?, ?, ?, ?, ?)
-       ON CONFLICT(wamid) DO NOTHING
-       RETURNING wamid`,
-      record.wamid,
-      record.principal,
-      record.receivedAt,
-      record.sentAt,
-      record.kind,
-    );
-    return rows.length > 0;
+    // The insert and its sequence number land together, or neither does: a
+    // duplicate consumes no number, and two messages never share one (§6.23).
+    return this.sql.transaction(() => {
+      const rows = this.sql.exec(
+        `INSERT INTO inbound_messages (wamid, principal, received_at, sent_at, kind)
+         VALUES (?, ?, ?, ?, ?)
+         ON CONFLICT(wamid) DO NOTHING
+         RETURNING wamid`,
+        record.wamid,
+        record.principal,
+        record.receivedAt,
+        record.sentAt,
+        record.kind,
+      );
+      if (rows.length === 0) return false;
+      const next = Number(this.getSetting(INBOUND_SEQ_KEY) ?? '0') + 1;
+      this.setSetting(INBOUND_SEQ_KEY, String(next));
+      this.sql.exec('UPDATE inbound_messages SET seq = ? WHERE wamid = ?', next, record.wamid);
+      return true;
+    });
+  }
+
+  /**
+   * The message's place in arrival order (§6.23). Null for a message recorded
+   * before migration 0022, or already pruned.
+   */
+  inboundSeq(wamid: string): number | null {
+    const value = this.sql.exec('SELECT seq FROM inbound_messages WHERE wamid = ?', wamid)[0]?.['seq'];
+    return typeof value === 'number' ? value : null;
   }
 
   markInboundOutcome(wamid: string, fields: { intent?: string; decision?: string; errorCode?: string }): void {
