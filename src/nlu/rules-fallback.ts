@@ -26,6 +26,22 @@ const CALENDAR_LIST_EN = /\bwhat(?:'s| is| do i have).{0,20}\b(?:calendar|schedu
 const CREATE_EVENT_HE = /תקבע|לקבוע|קבע לי|פגישה עם|תזמן/;
 const CREATE_EVENT_EN = /\b(?:schedule|book|set up|create)\b.{0,20}\b(?:meeting|event|appointment|call)\b/i;
 
+/**
+ * "מה הפתקים שלי": the whole message, and nothing else, so an explanation that
+ * merely mentions notes never triggers it (2026-10-07). Matched after
+ * punctuation and repeated spaces are gone (`bare`).
+ */
+const NOTES_LIST_HE = /^(?:(?:מה|תראה לי|תראי לי|הראה לי|תציג לי|תן לי|תני לי) )?(?:את )?(?:כל )?(?:ה)?(?:פתקים|הערות)(?: שלי| ששמרתי| השמורים)?$/;
+const NOTES_LIST_EN = /^(?:(?:show|list|what are) )?(?:me )?(?:all )?my (?:saved )?notes$/i;
+
+/** Punctuation (including geresh and gershayim) out, spaces collapsed. */
+export function bare(text: string): string {
+  return text
+    .replace(/[^\p{L}\p{N}\s]+/gu, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
 /** Words that mark a request as outside the tool set, whatever else it contains. */
 const OFF_TOPIC = /מה השעה|ספר לי בדיחה|מי אתה|\bjoke\b|\bwho are you\b|\bweather\b|מזג האוויר/i;
 
@@ -49,6 +65,11 @@ export function parseByRules(rawText: string): Draft {
 
   if (OFF_TOPIC.test(text)) {
     return { intent: 'unsupported', slots: {}, ...base };
+  }
+
+  const whole = bare(text);
+  if (NOTES_LIST_HE.test(whole) || NOTES_LIST_EN.test(whole)) {
+    return { intent: 'notes.find', slots: {}, ...base };
   }
 
   if (LIST_REMINDERS_HE.test(text) || LIST_REMINDERS_EN.test(text)) {

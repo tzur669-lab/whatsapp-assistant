@@ -8,7 +8,7 @@ import { ReminderStore } from '../../../src/tools/reminder-store.js';
 import { NoteStore, MAX_NOTES } from '../../../src/tools/note-store.js';
 import { ExpenseStore, expensesCsv, MAX_EXPORT_BYTES, MAX_EXPORT_ROWS } from '../../../src/tools/expense-store.js';
 import type { Expense } from '../../../src/tools/expense-store.js';
-import { notesDelete, notesSave } from '../../../src/tools/notes.js';
+import { LIST_LIMIT, notesDelete, notesFind, notesSave, searchTerms } from '../../../src/tools/notes.js';
 import { expensesAdd, expensesExport, expensesSummary } from '../../../src/tools/expenses.js';
 import type { ToolContext } from '../../../src/tools/types.js';
 import { stripIsolates } from '../../../src/render/bidi.js';
@@ -71,6 +71,44 @@ describe('notes and expenses', () => {
       if (ready.kind !== 'ready') throw new Error('expected ready');
       notes.remove(note.id, PRINCIPAL);
       expect((await notesDelete.execute(ready.input, ctx)).text).toBe('הפתק הזה כבר לא קיים.');
+    });
+  });
+
+  describe('notes.find (2026-10-07)', () => {
+    const find = async (variants: string[]) =>
+      stripIsolates((await notesFind.execute({ variants }, ctx)).text);
+
+    it('drops words that name notes in general', () => {
+      expect(searchTerms(['הפתקים שלי', 'my notes', 'כל הפתקים'])).toEqual([]);
+      expect(searchTerms(['הפתק על החניה'])).toEqual(['על החניה']);
+    });
+
+    it('lists every note for "my notes", which no note contains', async () => {
+      notes.add(PRINCIPAL, 'AAPL 10, MSFT 5');
+      const text = await find(['הפתקים שלי', 'notes']);
+      expect(text).toContain('הפתקים האחרונים:');
+      expect(text).toContain('AAPL 10, MSFT 5');
+    });
+
+    it('answers a search that matched nothing with the latest notes, never a dead end', async () => {
+      notes.add(PRINCIPAL, 'AAPL 10, MSFT 5');
+      const text = await find(['רשימת המניות', 'stocks list']);
+      expect(text).toContain('לא מצאתי התאמה. הנה הפתקים האחרונים:');
+      expect(text).toContain('AAPL 10, MSFT 5');
+    });
+
+    it('still finds by a word in the note', async () => {
+      notes.add(PRINCIPAL, 'קוד השער 1234');
+      notes.add(PRINCIPAL, 'מספר חניה 7');
+      const text = await find(['השער']);
+      expect(text).toContain('מצאתי:');
+      expect(text).toContain('קוד השער');
+      expect(text).not.toContain('חניה');
+    });
+
+    it('says how many more there are past the limit', async () => {
+      for (let i = 0; i < LIST_LIMIT + 3; i++) notes.add(PRINCIPAL, `פתק ${i}`);
+      expect(await find([])).toContain('ועוד 3. אפשר לחפש לפי מילה מהפתק.');
     });
   });
 

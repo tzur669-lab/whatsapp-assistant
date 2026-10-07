@@ -504,7 +504,8 @@ export const REGISTRY: Readonly<Record<ToolName, ToolSpec>> = {
   },
   'notes.find': {
     name: 'notes.find',
-    llmDescription: 'Show the user\'s notes, or those about what they describe. The notes are shown to the user directly; you will not see them.',
+    llmDescription:
+      'Show anything the user saved or asked you to remember: notes, a saved list, what they wrote down ("show my stock list", "what did I save"). Leave query_variants empty for all of them. They are shown to the user directly; you will not see them, so always call this rather than answer.',
     draftSchema: notesFindSlots,
     tier: 0,
     scopes: [],

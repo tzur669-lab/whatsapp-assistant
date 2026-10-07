@@ -761,6 +761,20 @@
     intent: notes.find
     missing: []
 
+- id: nx-find-003
+  now: "2026-10-07T10:00:00+03:00"
+  input: "מה הפתקים שלי?"
+  expect:
+    intent: notes.find
+    missing: []
+
+- id: nx-find-004
+  now: "2026-10-07T10:00:00+03:00"
+  input: "תראה לי את רשימת המניות ששמרתי"
+  expect:
+    intent: notes.find
+    missing: []
+
 - id: nx-delete-001
   now: "2026-10-05T10:00:00+03:00"
   input: "תמחק את הפתק על החניה"

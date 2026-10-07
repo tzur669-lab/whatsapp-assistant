@@ -52,15 +52,33 @@ export const notesText = {
     return lang === 'he' ? `שמרתי פתק:\n${isolate(text)}` : `Note saved:\n${isolate(text)}`;
   },
 
-  /** `matched`: an answer to a search, rather than the newest notes. */
-  list(notes: readonly Note[], matched: boolean, lang: Lang): string {
+  /**
+   * `found`: an answer to a search. `latest`: the newest notes. `no_match`: a
+   * search that matched nothing, answered with the newest notes rather than a
+   * dead end. `more`: how many were left out (≤ 0 for none).
+   */
+  list(notes: readonly Note[], kind: 'found' | 'latest' | 'no_match', more: number, lang: Lang): string {
     const he = lang === 'he';
-    const header = matched ? (he ? 'מצאתי:' : 'Found:') : he ? 'הפתקים האחרונים:' : 'Latest notes:';
+    const header =
+      kind === 'found'
+        ? he ? 'מצאתי:' : 'Found:'
+        : kind === 'no_match'
+          ? he ? 'לא מצאתי התאמה. הנה הפתקים האחרונים:' : 'Nothing matched. Here are the latest notes:'
+          : he ? 'הפתקים האחרונים:' : 'Latest notes:';
     const lines = notes.map(
       (note, index) =>
         `${isolateLtr(String(index + 1))}. ${formatDay(localPartsOf(note.createdAt, ZONE), lang)} — ${isolate(note.text)}`,
     );
-    return [header, '', ...lines].join('\n');
+    const tail =
+      more > 0
+        ? [
+            '',
+            he
+              ? `ועוד ${isolateLtr(String(more))}. אפשר לחפש לפי מילה מהפתק.`
+              : `And ${more} more. Search by a word in the note.`,
+          ]
+        : [];
+    return [header, '', ...lines, ...tail].join('\n');
   },
 
   /** The confirmation shows the whole note: it is what will be deleted. */

@@ -69,9 +69,11 @@ Network on the hotspot: `NODE_OPTIONS=--dns-result-order=ipv4first` for wrangler
 
 ## 6. Where the current work is
 
-- **Next work:** [ROADMAP.md](ROADMAP.md) (Hebrew) — first unchecked block
-  (block G as of 2026-10-06: a reminder by place, an invitation from a photo,
-  then infrastructure). Block F is done (share to the bot, default assistant,
+- **Next work:** [ROADMAP.md](ROADMAP.md) (Hebrew) — block H (2026-10-07):
+  a smarter bot. Part 15 (notes that can be found) is done; next is part 16,
+  "לא הבנת" capture. The full reviewed plan: `docs/plans/block-h.md` (read
+  the part you build). Block G waits behind it.
+- Block F is done (share to the bot, default assistant,
   widget, "time to leave"); it needs a deploy and the 0.11.0 APK — **server
   first**: an older server refuses the `shared` field. Block E still needs
   `/connect contacts` and the call-log permission on the phone.
@@ -88,6 +90,7 @@ Network on the hotspot: `NODE_OPTIONS=--dns-result-order=ipv4first` for wrangler
 | [ARCHITECTURE.md](ARCHITECTURE.md) | Before changing code across modules; to find where something lives. |
 | `PLAN.md` | Only the section you need. §6.x = component spec, §7 = security, §11 = tests/evals, §13 = open, §14 = decisions log. ~2,900 lines: never read whole. |
 | [ROADMAP.md](ROADMAP.md) | Starting the next feature block. |
+| `docs/plans/block-h.md` | Building a block H part: the reviewed plan, by part. |
 | `ops/runbook.md` | Routes, crons, chat commands, deploy, diagnosing. Other `ops/*.md`: secret rotation, token revoke, restore. |
 | `apps/call-companion/README.md` | Anything in the Android app or the app ↔ server protocol. |
 | `.claude/skills/add-tool/SKILL.md` | Adding or changing a tool. |
@@ -95,6 +98,10 @@ Network on the hotspot: `NODE_OPTIONS=--dns-result-order=ipv4first` for wrangler
 | [SETUP.md](SETUP.md) | Setting up a new copy from zero: accounts, Groq key, models, secrets, deploy, app, AI agent. |
 
 ## 8. Session log (docs)
+
+- 2026-10-07: Block H planned (seven review rounds); part 15 built: `notes.find`
+  strips generic words and never dead-ends; rules-fallback pattern for
+  "מה הפתקים שלי". No new modules or tables.
 
 - 2026-10-06: "התראות" also selects the time group (`agent/tool-groups.ts`), so asking
   for active alerts offers `reminders.list`/`cancel` again; sharper

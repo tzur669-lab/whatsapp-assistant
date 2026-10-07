@@ -16,7 +16,7 @@ import {
 } from '../nlu/slot-schemas.js';
 import { notesText, personalQuestion } from '../render/personal.js';
 import { isolate } from '../render/bidi.js';
-import { matchByText } from './match.js';
+import { foldForMatch, matchByText } from './match.js';
 import type { Note, NoteStore } from './note-store.js';
 import { parseInput } from './types.js';
 import type {
@@ -28,7 +28,29 @@ import type {
 } from './types.js';
 
 /** How many notes a list shows. */
-const LIST_LIMIT = 10;
+export const LIST_LIMIT = 15;
+
+/**
+ * Words that name notes in general rather than one note: "הפתקים שלי", "all my
+ * notes". A note never contains them, so matching on them always failed
+ * (2026-10-07). Stripped in code; what is left is the actual search.
+ */
+const GENERIC_WORDS = new Set(
+  ['פתק', 'פתקים', 'הפתק', 'הפתקים', 'פתקיי', 'הערה', 'הערות', 'ההערות', 'שלי', 'כל', 'את', 'שמורים', 'השמורים',
+    'note', 'notes', 'my', 'all', 'the', 'saved'].map(foldForMatch),
+);
+
+/** The variants with the generic words taken out; empty variants are dropped. */
+export function searchTerms(variants: readonly string[]): string[] {
+  return variants
+    .map((variant) =>
+      foldForMatch(variant)
+        .split(' ')
+        .filter((word) => word.length > 0 && !GENERIC_WORDS.has(word))
+        .join(' '),
+    )
+    .filter((term) => term.length > 0);
+}
 /** Above this, "which one?" is a worse question than "say it differently". */
 const MAX_CHOICES = 5;
 
@@ -102,19 +124,16 @@ export const notesFind: ToolDefinition = {
     const all = storeOf(ctx).all(ctx.principal);
     if (all.length === 0) return { text: personalQuestion('no_notes', ctx.lang) };
 
-    if (input.variants.length === 0) {
-      return { text: notesText.list(all.slice(0, LIST_LIMIT), false, ctx.lang) };
+    const terms = searchTerms(input.variants);
+    if (terms.length === 0) {
+      return { text: notesText.list(all.slice(0, LIST_LIMIT), 'latest', all.length - LIST_LIMIT, ctx.lang) };
     }
-    const found = matchByText(all, input.variants, (note) => note.text);
+    const found = matchByText(all, terms, (note) => note.text);
     if (found.length === 0) {
-      return {
-        text:
-          ctx.lang === 'he'
-            ? 'לא מצאתי פתק שמתאים. אפשר לנסח אחרת, או לבקש את כל הפתקים.'
-            : 'No note matches that. Try other words, or ask for all the notes.',
-      };
+      // Never a dead end: the note may not contain the words it was asked by.
+      return { text: notesText.list(all.slice(0, LIST_LIMIT), 'no_match', all.length - LIST_LIMIT, ctx.lang) };
     }
-    return { text: notesText.list(found.slice(0, LIST_LIMIT), true, ctx.lang) };
+    return { text: notesText.list(found.slice(0, LIST_LIMIT), 'found', found.length - LIST_LIMIT, ctx.lang) };
   },
 };
 
