@@ -9,6 +9,7 @@ import {
   createGeminiAgentProvider,
   createGroqAgentProvider,
   GEMINI_ENDPOINT,
+  wireToolCall,
 } from '../../../src/agent/provider.js';
 import type { WireTool } from '../../../src/agent/provider.js';
 import { CHARS_PER_TOKEN } from '../../../src/agent/budget.js';
@@ -84,11 +85,13 @@ describe('Gemini agent provider', () => {
     expect(seen[0]!.body).toMatchObject({ model: GEMINI.id, tools: [tool], tool_choice: 'auto', messages });
   });
 
-  it('sends only what its entry declares: no Groq reasoning effort, and its own completion size', async () => {
+  it('sends only what its entry declares: its own reasoning effort and completion size', async () => {
     const { seen, fetchImpl } = capture();
     await gemini(fetchImpl).complete(messages, []);
     const body = seen[0]!.body;
-    expect(body).not.toHaveProperty('reasoning_effort');
+    // Gemini 3 thinks inside the completion budget: `low` keeps it from
+    // spending all of it (a 256-token probe ended `length`, empty, 2026-10-08).
+    expect(body['reasoning_effort']).toBe('low');
     expect(body).not.toHaveProperty('tools');
     expect(body).not.toHaveProperty('tool_choice');
     expect(body).not.toHaveProperty('max_completion_tokens');
@@ -207,6 +210,117 @@ describe('Gemini agent provider', () => {
   });
 });
 
+/** A Gemini 3 answer: one tool call carrying its thought signature, and one on the message too. */
+function toolCallAnswer(signature: unknown, extra: Record<string, unknown> = {}): () => Response {
+  return () =>
+    new Response(
+      JSON.stringify({
+        choices: [
+          {
+            message: {
+              content: null,
+              tool_calls: [
+                {
+                  id: 'call_g1',
+                  type: 'function',
+                  function: { name: 'calc__compute', arguments: '{"expression":"2+2"}' },
+                  extra_content: { google: { thought_signature: signature } },
+                  ...extra,
+                },
+              ],
+              extra_content: { google: { thought_signature: 'bWVzc2FnZS1sZXZlbA==' } },
+            },
+          },
+        ],
+        usage: { prompt_tokens: 10, completion_tokens: 2 },
+      }),
+      { status: 200, headers: { 'content-type': 'application/json' } },
+    );
+}
+
+const SIGNATURE = 'CiQBjz1rX+abc/def=_-xyz0123456789==';
+
+describe('thought signatures (Gemini 3, 2026-10-08)', () => {
+  it('reads the signature from a Gemini tool call', async () => {
+    const response = await gemini(capture(toolCallAnswer(SIGNATURE)).fetchImpl).complete(messages, [tool]);
+    expect(response.ok && response.toolCalls).toEqual([
+      { id: 'call_g1', name: 'calc__compute', arguments: '{"expression":"2+2"}', signature: SIGNATURE },
+    ]);
+  });
+
+  it('sends it back on that tool call, and only there', () => {
+    expect(wireToolCall({ id: 'call_g1', name: 'calc__compute', arguments: '{}', signature: SIGNATURE })).toEqual({
+      id: 'call_g1',
+      type: 'function',
+      function: { name: 'calc__compute', arguments: '{}' },
+      extra_content: { google: { thought_signature: SIGNATURE } },
+    });
+  });
+
+  it('drops a signature that is not a short base64-like string', async () => {
+    for (const bad of [42, null, '', 'has space', 'quote"', '<script>', 'a'.repeat(16_385), { nested: true }]) {
+      const response = await gemini(capture(toolCallAnswer(bad)).fetchImpl).complete(messages, [tool]);
+      expect(response.ok).toBe(true);
+      expect(response.ok && response.toolCalls[0]).toEqual({ id: 'call_g1', name: 'calc__compute', arguments: '{"expression":"2+2"}' });
+    }
+    const longest = 'a'.repeat(16_384);
+    const kept = await gemini(capture(toolCallAnswer(longest)).fetchImpl).complete(messages, [tool]);
+    expect(kept.ok && kept.toolCalls[0]?.signature).toBe(longest);
+  });
+
+  it('never reads one from Groq, even if Groq were to send it', async () => {
+    const response = await createGroqAgentProvider({ apiKey: 'k', model: 'm', fetchImpl: capture(toolCallAnswer(SIGNATURE)).fetchImpl }).complete(
+      messages,
+      [tool],
+    );
+    expect(response.ok && response.toolCalls[0]).not.toHaveProperty('signature');
+  });
+
+  it('leaves a call without one byte for byte as before (every Groq request)', () => {
+    const call = { id: 'call_1', name: 'calendar__list_events', arguments: '{"a":1}' };
+    expect(JSON.stringify(wireToolCall(call))).toBe(
+      '{"id":"call_1","type":"function","function":{"name":"calendar__list_events","arguments":"{\\"a\\":1}"}}',
+    );
+  });
+
+  it('round-trips through the transport: the next request carries it on the assistant call', async () => {
+    const { seen, fetchImpl } = capture(toolCallAnswer(SIGNATURE));
+    const provider = gemini(fetchImpl);
+    const first = await provider.complete(messages, [tool]);
+    if (!first.ok) throw new Error('expected ok');
+    await provider.complete(
+      [
+        ...messages,
+        { role: 'assistant', content: null, tool_calls: first.toolCalls.map(wireToolCall) },
+        { role: 'tool', tool_call_id: 'call_g1', content: '4' },
+      ],
+      [tool],
+    );
+    const sent = seen[1]!.body['messages'] as Array<{ tool_calls?: unknown[] }>;
+    expect(sent[1]!.tool_calls).toEqual([
+      {
+        id: 'call_g1',
+        type: 'function',
+        function: { name: 'calc__compute', arguments: '{"expression":"2+2"}' },
+        extra_content: { google: { thought_signature: SIGNATURE } },
+      },
+    ]);
+  });
+
+  it('answers a text message that carries a signature with its text alone', async () => {
+    const answer = () =>
+      new Response(
+        JSON.stringify({
+          choices: [{ message: { content: 'שלום', extra_content: { google: { thought_signature: SIGNATURE } } } }],
+          usage: { prompt_tokens: 10, completion_tokens: 2 },
+        }),
+        { status: 200 },
+      );
+    const response = await gemini(capture(answer).fetchImpl).complete(messages, []);
+    expect(response).toEqual({ ok: true, text: 'שלום', toolCalls: [], usage: { promptTokens: 10, completionTokens: 2 } });
+  });
+});
+
 describe('the smart model table', () => {
   it('finds Gemini by id, after the Groq table', () => {
     expect(modelEntry(GEMINI.id)).toBe(GEMINI);
@@ -219,6 +333,10 @@ describe('the smart model table', () => {
     for (const entry of MODELS) expect(entry.role).not.toBe('smart');
   });
 
+  it('is gemini-3.5-flash: 2.5 Flash is closed to new users (404, 2026-10-08)', () => {
+    expect(SMART_MODELS.map((entry) => entry.id)).toEqual(['gemini-3.5-flash']);
+  });
+
   it('pins fully versioned Gemini ids that may not write until a human reads an eval', () => {
     expect(SMART_MODELS.length).toBeGreaterThan(0);
     expect(new Set(SMART_MODELS.map((entry) => entry.id)).size).toBe(SMART_MODELS.length);
@@ -227,7 +345,7 @@ describe('the smart model table', () => {
       expect(entry.provider).toBe('gemini');
       expect(entry.role).toBe('smart');
       expect(entry.canWrite).toBe(false);
-      expect(entry.params).toEqual({});
+      expect(entry.params).toEqual({ reasoningEffort: 'low' });
       expect(entry.minuteRequests).toBeGreaterThan(0);
       expect(entry.dayRequests).toBeGreaterThan(0);
     }

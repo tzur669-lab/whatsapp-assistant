@@ -41,6 +41,8 @@ describe('the eval fingerprint', () => {
     expect(smart).toMatch(/^[0-9a-f]{16}$/);
     expect(smart).not.toBe(fingerprintFor(gemini));
     expect(smartFingerprintFor({ ...gemini, maxCompletionTokens: gemini.maxCompletionTokens + 1 })).not.toBe(smart);
+    // Its reasoning effort is part of the request it was judged on (2026-10-08).
+    expect(smartFingerprintFor({ ...gemini, params: {} })).not.toBe(smart);
   });
 
   it('matches for every smart model that may write', () => {

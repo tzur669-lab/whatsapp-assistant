@@ -75,8 +75,11 @@ type Observation = Bucket & { observedAt: number };
 /** A reading this old is past any reset Groq can report; the bucket is full again. */
 const OBSERVATION_TTL_MS = WINDOW_MS;
 
-/** What a 429 told us, as the provider's adapter reads it. */
-export type RateLimitKind = 'minute' | 'day' | 'unavailable';
+/**
+ * What a 429 told us, as the provider's adapter reads it. `overloaded`
+ * (2026-10-08): a smart model's 503 or 500 — busy, not out of quota.
+ */
+export type RateLimitKind = 'minute' | 'day' | 'unavailable' | 'overloaded';
 
 /**
  * One call's claim on a model's minute, from before it is sent until it
@@ -424,6 +427,11 @@ export class TokenBudget {
     const now = this.now();
     if (kind === 'unavailable') {
       this.exhaustedUntil.set(model, now + UNAVAILABLE_MS);
+      return;
+    }
+    if (kind === 'overloaded') {
+      // The 429 ladder, never the day: it was busy, not out of quota.
+      this.backOff(model, seconds, false);
       return;
     }
     if (modelEntry(model)?.minuteRequests !== undefined) {

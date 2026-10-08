@@ -1672,7 +1672,11 @@ the user allowed its source on a card. Everything else stays exactly as before.
 - **The models.** `SMART_MODELS` in `models.ts`, a table of its own: never in
   `MODELS`, so never in a local conversation's `providers` or
   `fallbackProviders` (unit test: the tables never overlap). One entry,
-  `gemini-2.5-flash`, provider `gemini`, role `smart`, `canWrite: false`; its
+  `gemini-3.5-flash` (2026-10-08: `gemini-2.5-flash` answered 404 "no longer
+  available to new users" in a live probe; 3.7/3.8 Flash often answered 503
+  "high demand" — revisit), provider `gemini`, role `smart`,
+  `reasoningEffort: 'low'` (Gemini 3 thinks inside `max_tokens`; a small
+  budget ended `length` with an empty message), `canWrite: false`; its
   limits (`minuteTokens` 250,000, `minuteRequests` 10, `dayRequests` 250) are
   placeholders until measured, `turnCap` 60,000, `maxModelCalls` 6,
   `maxCompletionTokens` 4,096, and Groq's 3.0 characters a token until a
@@ -1683,6 +1687,17 @@ the user allowed its source on a card. Everything else stays exactly as before.
   `generativelanguage.googleapis.com/v1beta/openai/chat/completions`, `fetch`
   through a closure, no new dependency. The smart providers are built only
   when both `GEMINI_API_KEY` and `GROQ_API_KEY` are set.
+- **Thought signatures** (Gemini 3, 2026-10-08). Each tool call comes back
+  with `extra_content.google.thought_signature`, and the next request must
+  send the call back with it or Gemini answers 400. The Gemini transport keeps
+  it on `ToolCall.signature` only when it matches `^[A-Za-z0-9+/=_-]{1,16384}$`
+  (else dropped), and `wireToolCall` re-emits it only when present, so every
+  Groq request is byte for byte as before (Groq's transport never reads it).
+  A suspended turn's stored calls keep it (`turns.ts` strict schema), so a
+  phone or consent resume sends it back. Opaque: never parsed, never logged
+  (`redact.ts` drops `signature`, `thought_signature`, `extra_content`,
+  `tool_calls`). It counts in the char estimate with the call. In the smart
+  fingerprint as `GEMINI_WIRE_VERSION`; `ADAPTER_VERSION` is unchanged.
 - **The provider chain.** A smart conversation's own words (not shared text)
   go to `[...smartProviders, ...providers]`: Gemini first, then qwen when
   Gemini has no budget. Shared text in a smart conversation, and the read-only
@@ -1773,6 +1788,10 @@ the user allowed its source on a card. Everything else stays exactly as before.
   count is an estimate; Google's 429 decides. **Every 429** on such a model
   backs off 1, 2, 5, then 10 minutes, reset by a success, or until Pacific
   midnight when the body names a daily quota; a longer `retry-after` wins.
+  A **503 or 500 from a smart model** (2026-10-08) is "busy", not broken: the
+  same ladder, never to midnight (`overloaded`), the model joins the message's
+  refused set and the turn goes to the parser, so the next message picks qwen.
+  A local model's 503 is a plain `provider_error`, as before.
   Groq models declare neither, so none of this runs for them. The quota screen
   shows Gemini on its own line once its key is set.
 - **Unavailable.** `GET /app/outbox` carries `smart: true` only when the agent
@@ -1781,7 +1800,7 @@ the user allowed its source on a card. Everything else stays exactly as before.
   smart provider is answered by the local models, with "המצב החכם לא זמין
   כרגע" on its first line — the safe side.
 - **Writes.** A smart model's writes always confirm (role `smart`). Its
-  `canWrite` stays false until `pnpm eval:agent --model gemini-2.5-flash` has
+  `canWrite` stays false until `pnpm eval:agent --model gemini-3.5-flash` has
   run and a human has read the report (§13); note that `canWrite` only sorts
   `MODELS` into agent and read-only lists, so it does not stop a smart model
   from proposing a write — the confirmation does. Writes also go through the consent gate, since a write
@@ -2783,10 +2802,10 @@ measured on the app channel. To finish with `--resume`.
 - [ ] Voice: the uncertain band (`avg_logprob` between -1.0 and -0.5) currently forces CONFIRM on writes. If that fires on most real recordings it is friction, not safety — revisit after two weeks of daily use.
 - [x] **The 8 s NLU timeout stays in production, and the eval uses 30 s** (2026-09-25). The run that settled this reported 50 of 156 cases as parse failures with a p95 of **8,015 ms** against an 8,000 ms timeout — a p95 sitting 15 ms above the cutoff is not a measurement of the model, it is the cutoff being reported back. Production keeps 8 s, because a user waiting longer has already had a bad experience and the fallback chain exists for exactly this; the eval raises it, because a run that cuts the model off is measuring speed, which §11.2 already scores separately. The complete corpus run and its own figures are in §11.9, which is still latency-contaminated for the same reason: it was recorded before the change. Whether `qwen` is fast *enough* becomes a real question only on the next run.
 - [x] **Smart conversations on Gemini's free tier** (2026-10-08, the user's decision; §6.19): Google may train on what a smart conversation sends and human reviewers may read it; accepted for smart conversations only, behind a consent gate per data source. Local stays the default.
-- [ ] **Smart conversations: confirm the Gemini model id in AI Studio** before `GEMINI_API_KEY` is set. `SMART_MODELS` names `gemini-2.5-flash`; Google's model page (2026-10) limits 2.5 Flash to projects that already used it and points new ones at newer Flash ids. A change of id is a reviewed commit to `models.ts` and re-pins the smart fingerprint.
+- [ ] **Smart conversations: confirm the Gemini model id in AI Studio** before `GEMINI_API_KEY` is set. `SMART_MODELS` names `gemini-3.5-flash` since 2026-10-08: a live probe got 404 "no longer available to new users" for `gemini-2.5-flash` and 200 for 3.5 Flash. `gemini-3.7-flash` and `gemini-3.8-flash` exist but often answered 503 "high demand" that day: revisit them. A change of id is a reviewed commit to `models.ts` and re-pins the smart fingerprint.
 - [ ] **Smart conversations: measure the Gemini limits** — `minuteTokens`, `minuteRequests` and `dayRequests` in `SMART_MODELS` are placeholders (250,000 / 10 / 250). Read the key's project limits in AI Studio and confirm with a one-token probe, as for Groq.
 - [ ] **Smart conversations: Gemini `charsPerToken` calibration.** The entry uses Groq's 3.0 until a calibration file from a real Gemini run exists (a separate fixture, like `test/fixtures/token-calibration.json`).
-- [ ] **Smart conversations: `pnpm eval:agent --model gemini-2.5-flash`** (with `GEMINI_API_KEY` in `.dev.vars`; use `--filter` first), scored with "wrong tool calls" as well, and a human reads the report before `canWrite` changes. Note: `canWrite` only sorts `MODELS` into `providers` and `fallbackProviders` (`assistant-do.ts`); a `SMART_MODELS` entry is used whatever it says, so today Gemini may propose writes, and each one confirms because its role is not `primary`.
+- [ ] **Smart conversations: `pnpm eval:agent --model gemini-3.5-flash`** (with `GEMINI_API_KEY` in `.dev.vars`; use `--filter` first), scored with "wrong tool calls" as well, and a human reads the report before `canWrite` changes. Note: `canWrite` only sorts `MODELS` into `providers` and `fallbackProviders` (`assistant-do.ts`); a `SMART_MODELS` entry is used whatever it says, so today Gemini may propose writes, and each one confirms because its role is not `primary`.
 - [ ] **Smart conversations: staging deploy** (approval in the session), then the human sets `GEMINI_API_KEY` with `wrangler secret put GEMINI_API_KEY --env staging`, and only then the 0.12.0 APK: an older server refuses the `mode` field.
 - [ ] **Smart conversations: writes ask consent for their source.** A write tool's `dataSource` is usually a consent source (`reminders.create` is `reminders`), so "remind me tomorrow at 9" in a smart conversation first shows a consent card. Safe, but friction: revisit the UX after real use (e.g. a write whose reply carries only the user's own words). Related: `private` tools (notes, lists, facts, portfolio) are not offered in a smart conversation at all.
 
@@ -3000,6 +3019,7 @@ measured on the app channel. To finish with `--resume`.
 | 2026-10-08 | **A conversation's mode, recorded once** (§6.19; slice 3; migration 0026 `conversation_modes`, `conversation_consents`). Text sends `mode` in the body, voice as a path segment; absent is local. Recorded inside `recordInbound`'s transaction, first writer wins. The other mode later → **422 `mode_mismatch`**, not 409 (the app re-signs on 409), marked in the same transaction so a retry gets the same answer. Buttons carry no mode. `/forget`, `/pair off` and a 30-day purge clear the rows |
 | 2026-10-08 | **The consent gate** (§6.19, §7.1; slice 5; migration 0027 extends `agent_turns` with `kind`, `nonce_hash`, `source`, `conversation`). In a smart conversation a model's call to a source not yet allowed suspends the turn before anything is read, with a card: this time / this conversation / no — mail, SMS, contacts and notifications this time only. Taps are code only (invariant 7): `beginConsent`, the consent row and the lock in one synchronous step; the stored call runs on the same model; at most two suspends a turn. Voice, shared text and the read-only try never suspend. `settleAgentResult` stores `[מידע אישי]` for any reply after a source not allowed, `[טקסט ששותף]` for shared text. `/consents` lists and revokes |
 | 2026-10-08 | **App 0.12.0: smart or local** (§6.18, §6.19; slice 6). `GET /app/outbox` carries `smart: true` only when the agent is on and both keys are set (never the key). The new-conversation button asks smart or local (smart disabled while unavailable), the mode is fixed by the first message and shown as a badge, a 422 `mode_mismatch` is shown and never retried, the app's DB version 4 adds the column (existing conversations local). Shared text, the assistant and the widget open local conversations. **Deploy the server before the APK** |
+| 2026-10-08 | **Gemini 3.5 Flash, thought signatures, a busy smart model** (§6.19). `SMART_MODELS` names `gemini-3.5-flash` with `reasoningEffort: 'low'`: `gemini-2.5-flash` answered 404 "no longer available to new users" in a live probe; 3.7/3.8 Flash often answered 503 (revisit). Gemini 3 tool calls carry a thought signature that must be sent back: kept on `ToolCall.signature` (shape-checked, opaque, never logged), re-emitted only when present, stored with a suspended turn; Groq requests unchanged byte for byte. A smart model's 503/500 rests it on the 429 ladder (not daily) so the next message picks qwen. Eval ledger: a smart model is guarded by its requests per Pacific day (stop at 80% of `dayRequests`, apart from the Groq totals), and a call that failed with a status is recorded at 0 tokens; the eval's synthetic injection call carries Google's placeholder signature on a smart run. Smart fingerprint re-pinned (`params`, `GEMINI_WIRE_VERSION`); the Groq one is unchanged |
 ---
 
 ## 15. Sources (checked 2026-09-24)

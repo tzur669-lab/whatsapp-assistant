@@ -148,4 +148,38 @@ describe('suspended turns', () => {
     const queryId = await turns.suspend(PRINCIPAL, 'app:in:1', state({ tool: 'not.a_tool' as never }));
     expect(await turns.open(queryId, PRINCIPAL, String(ciphertextOf(queryId)))).toBeNull();
   });
+
+  describe("a Gemini 3 call's thought signature (2026-10-08)", () => {
+    const signed = (signature: string): SuspendedState =>
+      state({
+        messages: [
+          { role: 'user', content: 'מה כתבו לי ב-SMS?' },
+          {
+            role: 'assistant',
+            content: null,
+            tool_calls: [
+              {
+                id: 'call_1',
+                type: 'function',
+                function: { name: 'phone__sms', arguments: '{}' },
+                extra_content: { google: { thought_signature: signature } },
+              },
+            ],
+          },
+        ],
+      });
+
+    it('keeps it on the stored call, so the resumed request sends it back', async () => {
+      const queryId = await turns.suspend(PRINCIPAL, 'app:in:1', signed('CiQBjz1rX+abc/def=_-'));
+      expect(String(ciphertextOf(queryId))).not.toContain('CiQBjz1rX');
+      expect(await turns.open(queryId, PRINCIPAL, String(ciphertextOf(queryId)))).toEqual(signed('CiQBjz1rX+abc/def=_-'));
+    });
+
+    it('refuses a stored call whose signature is not the shape a model sends', async () => {
+      for (const bad of ['has space', '', 'a'.repeat(16_385)]) {
+        const queryId = await turns.suspend(PRINCIPAL, `app:in:${bad.length}`, signed(bad));
+        expect(await turns.open(queryId, PRINCIPAL, String(ciphertextOf(queryId)))).toBeNull();
+      }
+    });
+  });
 });

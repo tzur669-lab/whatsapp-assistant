@@ -91,7 +91,7 @@ export const MODELS: readonly ModelEntry[] = [
   },
 ];
 
-export const GEMINI_FLASH = 'gemini-2.5-flash';
+export const GEMINI_FLASH = 'gemini-3.5-flash';
 
 /**
  * Models only a smart conversation may use (2026-10-08). Never in `MODELS`, so
@@ -101,10 +101,11 @@ export const GEMINI_FLASH = 'gemini-2.5-flash';
  */
 export const SMART_MODELS: readonly ModelEntry[] = [
   {
-    // A stable, versioned id with no `-latest`. The human confirms it in AI
-    // Studio before the key is set: Google's model page (2026-10) limits 2.5
-    // Flash to projects that already used it and points new ones at newer
-    // Flash ids.
+    // A stable, versioned id with no `-latest`. `gemini-2.5-flash` closed to
+    // new users (404 "no longer available to new users", live probe
+    // 2026-10-08); 3.5 Flash answered 200. 3.7 and 3.8 Flash exist but often
+    // answered 503 "high demand" that day: revisit them. Gemini 3 sends a
+    // thought signature with each tool call, sent back by the provider.
     id: GEMINI_FLASH,
     provider: 'gemini',
     role: 'smart',
@@ -114,8 +115,10 @@ export const SMART_MODELS: readonly ModelEntry[] = [
     minuteRequests: 10,
     dayRequests: 250,
     maxCompletionTokens: 4_096,
-    // Gemini takes no Groq `reasoning_effort`; nothing is sent it does not declare.
-    params: {},
+    // Gemini's compatible endpoint takes `reasoning_effort`. Gemini 3 thinks
+    // inside `max_tokens`: unbounded, a small budget ended `length` with an
+    // empty message (probe, 2026-10-08). `low` keeps the thinking short.
+    params: { reasoningEffort: 'low' },
     turnCap: 60_000,
     maxModelCalls: 6,
     // Groq's measured rate until a Gemini calibration exists (PLAN §13).

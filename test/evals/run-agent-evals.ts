@@ -66,6 +66,8 @@ import { sampleCases, score, spacingMs } from './run-evals.js';
 import type { CaseResult, EvalCase } from './run-evals.js';
 
 const TOKENS_PER_MINUTE = 8_000;
+/** Gemini's documented placeholder signature for a function call the model did not make. */
+const INJECTED_CALL_SIGNATURE = 'skip_thought_signature_validator';
 const DAILY_SIGNAL_SECONDS = 60;
 
 const THRESHOLDS = {
@@ -89,6 +91,8 @@ type Recorded = {
   /** For the estimator's calibration (§2): the characters it divides, and what Groq counted. */
   chars?: number;
   promptTokens?: number;
+  /** The HTTP status of a failed call that got one (2026-10-08): it used no tokens. */
+  status?: number;
 };
 
 type Recording = { model: string; prompt: string; cases: Recorded[] };
@@ -199,18 +203,26 @@ async function main(): Promise<void> {
   ].filter((item) => !done.has(item.id));
 
   const ledger = args.report ? null : EvalLedger.open(fileURLToPath(new URL('./recordings/', import.meta.url)));
+  // A smart model is guarded by its daily requests, not the Groq token guard (2026-10-08).
+  const guard = smart && entry?.dayRequests !== undefined ? { dayRequests: entry.dayRequests } : undefined;
   try {
     for (const item of todo) {
-      const stop = ledger?.stopReason(args.model);
+      const stop = ledger?.stopReason(args.model, guard);
       if (stop) {
         save(path, recording);
         out(`\nStopped: ${stop}. Run again with --resume tomorrow.`);
         break;
       }
       const chars = promptChars(item.messages, JSON.stringify(item.tools).length);
-      const charge = ledger!.begin(args.model, Math.ceil(chars / charsPerToken) + (entry?.maxCompletionTokens ?? DEFAULT_MAX_COMPLETION_TOKENS));
+      const charge = ledger!.begin(
+        args.model,
+        Math.ceil(chars / charsPerToken) + (entry?.maxCompletionTokens ?? DEFAULT_MAX_COMPLETION_TOKENS),
+        guard,
+      );
       const result = await ask(provider, item.id, item.messages, item.tools);
-      ledger!.settle(charge, result.tokens);
+      // A smart call that failed with a status used nothing; a Groq run keeps today's rule.
+      if (guard && result.error !== undefined && result.status !== undefined) ledger!.settleExact(charge, 0);
+      else ledger!.settle(charge, result.tokens);
       result.chars = chars;
       if (result.error === 'daily_budget') {
         save(path, recording);
@@ -250,10 +262,15 @@ async function ask(provider: AgentProvider, id: string, messages: AgentMessage[]
   const latencyMs = Date.now() - started;
 
   if (!response.ok) {
-    if (response.error.code === 'rate_limited' && (response.error.retryAfterSeconds ?? 0) > DAILY_SIGNAL_SECONDS) {
-      return { id, draft: null, error: 'daily_budget', latencyMs, tokens: 0 };
+    const status = response.error.status === undefined ? {} : { status: response.error.status };
+    // `daily` comes only from a Gemini 429 that named the day; never set for Groq.
+    if (
+      response.error.code === 'rate_limited' &&
+      ((response.error.retryAfterSeconds ?? 0) > DAILY_SIGNAL_SECONDS || response.error.daily === true)
+    ) {
+      return { id, draft: null, error: 'daily_budget', latencyMs, tokens: 0, ...status };
     }
-    return { id, draft: null, error: response.error.code, latencyMs, tokens: 0 };
+    return { id, draft: null, error: response.error.code, latencyMs, tokens: 0, ...status };
   }
 
   const tokens = response.usage.promptTokens + response.usage.completionTokens;
@@ -298,7 +315,18 @@ function injectionTurn(input: string, title: string, via: InjectionCase['via'] =
     {
       role: 'assistant',
       content: null,
-      tool_calls: [{ id: 'call_1', type: 'function', function: { name: call.name, arguments: '{}' } }],
+      tool_calls: [
+        {
+          id: 'call_1',
+          type: 'function',
+          function: { name: call.name, arguments: '{}' },
+          // This call is ours, not the model's, so it has no thought signature;
+          // Gemini 3 refuses a current-turn call without one (400). Google's
+          // documented placeholder for an injected call. Eval only: the bot
+          // sends back only calls a model made, with their own signature.
+          ...(smart ? { extra_content: { google: { thought_signature: INJECTED_CALL_SIGNATURE } } } : {}),
+        },
+      ],
     },
     { role: 'tool', tool_call_id: 'call_1', content: call.result },
   ];

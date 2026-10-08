@@ -322,6 +322,61 @@ describe('smart conversations', () => {
       expect(nlu.inputs).toHaveLength(1);
     });
 
+    it('a Gemini 503 or 500 goes to the parser, and the next message runs on qwen while Gemini rests', async () => {
+      for (const status of [503, 500]) {
+        budget = new TokenBudget(() => NOW);
+        const g = gemini([{ error: 'provider_error', status }]);
+        const q = qwen([{ text: 'מקומי' }]);
+        const first = await handleInbound(smartText('ספר לי משהו'), deps({ qwen: q, gemini: g }));
+        expect(first.action).toBe('reply');
+        expect(g.calls).toHaveLength(1);
+        expect(q.calls).toHaveLength(0);
+        expect(nlu.inputs).toHaveLength(1);
+        // Blocked on the 429 ladder's first step (1 minute), not for the day.
+        const blockedUntil = budget.snapshot([GEMINI])[0]?.blockedUntil;
+        expect(blockedUntil).toBe(NOW + 60_000);
+
+        const second = await handleInbound(smartText('ועוד משהו'), deps({ qwen: q, gemini: g }));
+        expect(second).toMatchObject({ action: 'reply', text: 'מקומי' });
+        expect(g.calls).toHaveLength(1);
+      }
+    });
+
+    it('a Gemini 400 is still a plain failure: nothing is blocked', async () => {
+      const g = gemini([{ error: 'provider_error', status: 400 }, { text: 'שוב חכם' }]);
+      await handleInbound(smartText('ספר לי משהו'), deps({ qwen: qwen([]), gemini: g }));
+      expect(budget.snapshot([GEMINI])[0]?.blockedUntil).toBeNull();
+      const out = await handleInbound(smartText('ועוד משהו'), deps({ qwen: qwen([]), gemini: g }));
+      expect(out).toMatchObject({ action: 'reply', text: 'שוב חכם' });
+    });
+
+    it("a Groq 503 blocks nothing, as today", async () => {
+      const q = qwen([{ error: 'provider_error', status: 503 }]);
+      const out = await handleInbound(text('ספר לי משהו', { conversation: LOCAL, mode: 'local' }), deps({ qwen: q }));
+      expect(out.action).toBe('reply');
+      expect(q.calls).toHaveLength(1);
+      // Charged as an unanswered call, exactly as before: no block, no ladder.
+      expect(budget.snapshot([QWEN])[0]?.blockedUntil).toBeNull();
+      expect(budget.fits(QWEN, 100)).toBe(true);
+    });
+
+    it("sends a call's thought signature back with its result (Gemini 3)", async () => {
+      const g = gemini([{ tool: 'calc.compute', args: { expression: '2+2' }, signature: 'c2lnLW9uZQ==' }, { text: 'התשובה 4' }]);
+      await handleInbound(smartText('כמה זה 2+2?'), deps({ qwen: qwen([]), gemini: g }));
+      expect(g.calls[1]!.at(-2)).toEqual({
+        role: 'assistant',
+        content: null,
+        tool_calls: [
+          {
+            id: 'call_1',
+            type: 'function',
+            function: { name: 'calc__compute', arguments: '{"expression":"2+2"}' },
+            extra_content: { google: { thought_signature: 'c2lnLW9uZQ==' } },
+          },
+        ],
+      });
+    });
+
     it('refuses a tool that was not offered, on Gemini too', async () => {
       const g = gemini([{ tool: 'calendar.list_events', args: { date: { kind: 'relative_days', offset: 0 } } }, { text: 'לא יכול' }]);
       const out = await handleInbound(smartText('מה יש לי היום?'), deps({ qwen: qwen([]), gemini: g }));

@@ -255,3 +255,29 @@ describe('Groq models are untouched', () => {
     expect(budget.snapshot([QWEN])[0]?.blockedUntil).toBe(c.now() + 120_000);
   });
 });
+
+describe('a smart model that is overloaded (503/500, 2026-10-08)', () => {
+  it('rests on the 429 ladder, never until midnight, and starts over after a success', () => {
+    const c = clock();
+    const budget = new TokenBudget(c.now);
+    for (const minutes of [1, 2, 5, 10, 10]) {
+      budget.refused(budget.reserve(GEMINI.id, 100)!, undefined, 'overloaded');
+      expect(budget.snapshot([GEMINI.id])[0]?.blockedUntil).toBe(c.now() + minutes * MINUTE);
+      c.advance(minutes * MINUTE - 1);
+      expect(budget.fits(GEMINI.id, 100)).toBe(false);
+      c.advance(1);
+      expect(budget.fits(GEMINI.id, 100)).toBe(true);
+    }
+    call(budget);
+    budget.rateLimited(GEMINI.id, undefined, 'overloaded');
+    c.advance(MINUTE);
+    expect(budget.fits(GEMINI.id, 100)).toBe(true);
+  });
+
+  it('keeps the request it spent: it was sent', () => {
+    const counter = new MemoryDayRequestCounter();
+    const budget = new TokenBudget(clock().now, undefined, counter);
+    budget.refused(budget.reserve(GEMINI.id, 100)!, undefined, 'overloaded');
+    expect(counter.get(quotaDay(NOON), GEMINI.id)).toBe(1);
+  });
+});

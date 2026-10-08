@@ -269,6 +269,17 @@ describe('the consent gate', () => {
       expect(verbs(again.card)).toEqual(['once', 'conv', 'no']);
     });
 
+    it("keeps the call's thought signature across the card: the resumed request sends it back (Gemini 3)", async () => {
+      const first = gemini([{ tool: 'reminders.list', args: {}, signature: 'c2lnLWNvbnNlbnQ=' }]);
+      const card = asCard(await handleInbound(text('מה התזכורות שלי?', SMART), deps({ gemini: first })));
+      const g = gemini([{ text: 'יש תזכורת' }]);
+      await handleInbound(tap(button(card, 'once')), deps({ gemini: g }));
+      expect(g.calls[0]!.at(-2)).toMatchObject({
+        role: 'assistant',
+        tool_calls: [{ id: 'call_1', extra_content: { google: { thought_signature: 'c2lnLWNvbnNlbnQ=' } } }],
+      });
+    });
+
     it('"this conversation": kept for this conversation, and only this one', async () => {
       const { card } = await ask('reminders.list');
       await handleInbound(tap(button(card, 'conv')), deps({ gemini: gemini([{ text: 'יש תזכורת' }]) }));

@@ -89,6 +89,12 @@ export const BANNED_LOG_FIELDS = [
   'name',
   'ciphertext',
   'state',
+  // Gemini 3's thought signature (2026-10-08): opaque model data, on a tool
+  // call or a message. `signature` is above; these are the wire names.
+  'thought_signature',
+  'thoughtSignature',
+  'extra_content',
+  'tool_calls',
 ] as const;
 
 const BANNED = new Set<string>(BANNED_LOG_FIELDS);

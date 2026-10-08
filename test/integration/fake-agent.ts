@@ -10,8 +10,10 @@ import type { NluErrorCode } from '../../src/nlu/provider.js';
 
 export type FakeStep =
   | { text: string }
-  | { tool: string; args: Record<string, unknown> | string }
-  | { error: NluErrorCode; retryAfterSeconds?: number; daily?: boolean };
+  /** `signature`: a Gemini 3 thought signature on the call (2026-10-08). */
+  | { tool: string; args: Record<string, unknown> | string; signature?: string }
+  /** `status`: the HTTP status; a rate limit is 429 unless given. */
+  | { error: NluErrorCode; status?: number; retryAfterSeconds?: number; daily?: boolean };
 
 export type FakeAgent = AgentProvider & {
   /** The messages the loop sent on each call, for asserting what the model saw. */
@@ -45,7 +47,7 @@ export function createFakeAgent(
           ok: false,
           error: {
             code: step.error,
-            ...(step.error === 'rate_limited' ? { status: 429 } : {}),
+            ...(step.status !== undefined ? { status: step.status } : step.error === 'rate_limited' ? { status: 429 } : {}),
             ...(step.retryAfterSeconds ? { retryAfterSeconds: step.retryAfterSeconds } : {}),
             ...(step.daily === undefined ? {} : { daily: step.daily }),
           },
@@ -63,6 +65,7 @@ export function createFakeAgent(
             id: `call_${index}`,
             name: step.tool.replace('.', '__'),
             arguments: typeof step.args === 'string' ? step.args : JSON.stringify(step.args),
+            ...(step.signature !== undefined ? { signature: step.signature } : {}),
           },
         ],
         usage,

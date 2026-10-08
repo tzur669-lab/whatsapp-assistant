@@ -5,7 +5,7 @@ system is, where things live, and what breaks easily, then links out. It does
 **not** repeat the rules in `CLAUDE.md` (always loaded) or the spec in
 `PLAN.md` (read by section, never whole).
 
-_Last updated: 2026-10-08 · server at migration 0027 · agent prompt a10 + smart note s1 · parser prompt v6 · app 0.12.0_
+_Last updated: 2026-10-08 · server at migration 0027 · agent prompt a10 + smart note s1 · parser prompt v6 · app 0.12.0 · smart model gemini-3.5-flash_
 
 ## 1. What this is
 
@@ -21,8 +21,8 @@ Contacts birthdays, phone actions and reads, public lookups, notes, lists, facts
   the single-shot **parser** as fallback. Models: `qwen3.8-27b` (primary, may
   write) and `gpt-oss-120b` (backup, read-only) — `src/agent/models.ts`.
 - **Smart conversations** (2026-10-08, PLAN §6.19): a conversation opened as
-  smart tries **Gemini's free tier** first (`SMART_MODELS`, `gemini-2.5-flash`,
-  needs `GEMINI_API_KEY`), then qwen. Gemini may train on what it gets, so the
+  smart tries **Gemini's free tier** first (`SMART_MODELS`, `gemini-3.5-flash`,
+  needs `GEMINI_API_KEY`), then qwen (also while Gemini rests after a 503/500). Gemini may train on what it gets, so the
   user's data reaches it only for a source allowed on a consent card. Local
   conversations are unchanged and never reach Gemini.
 
@@ -81,8 +81,10 @@ Network on the hotspot: `NODE_OPTIONS=--dns-result-order=ipv4first` for wrangler
 
 - **Smart conversations** (PLAN §6.19, plan
   `~/.claude/plans/abundant-wobbling-sparkle.md`): built, slices 1–6, server
-  and app 0.12.0. Needs, in order: the human confirms the Gemini model id in AI
-  Studio, `pnpm eval:agent --model gemini-2.5-flash` and a human read of it,
+  and app 0.12.0. Model `gemini-3.5-flash` since 2026-10-08 (2.5 Flash is
+  closed to new users; 3.7/3.8 often 503 — revisit). Needs, in order: the
+  human confirms the Gemini model id in AI Studio,
+  `pnpm eval:agent --model gemini-3.5-flash` and a human read of it,
   a staging deploy (approval), the human sets `GEMINI_API_KEY`
   (`wrangler secret put GEMINI_API_KEY --env staging`), and only then the
   0.12.0 APK — **server first**: an older server refuses the `mode` field.
@@ -121,6 +123,12 @@ Network on the hotspot: `NODE_OPTIONS=--dns-result-order=ipv4first` for wrangler
 | [SETUP.md](SETUP.md) | Setting up a new copy from zero: accounts, Groq key, models, secrets, deploy, app, AI agent. |
 
 ## 8. Session log (docs)
+
+- 2026-10-08: Gemini model `gemini-2.5-flash` → `gemini-3.5-flash`
+  (`reasoningEffort: 'low'`); Gemini 3 thought signatures kept on
+  `ToolCall.signature`, sent back, stored with suspended turns (Groq wire
+  unchanged); a smart model's 503/500 rests it on the 429 ladder; eval ledger
+  guards a smart model by requests per Pacific day. No new modules or tables.
 
 - 2026-10-08: Smart conversations, slice 6: `smart` flag on the outbox
   response; app 0.12.0 (smart/local choice, badge, mode in body and voice

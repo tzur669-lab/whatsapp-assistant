@@ -58,7 +58,7 @@ Details: [ARCHITECTURE.md](ARCHITECTURE.md) (code map) and
 | Part | Technology |
 |---|---|
 | Server | TypeScript, Hono, Cloudflare Workers + SQLite Durable Object |
-| LLM | Groq free tier: `qwen3.8-27b` (primary), `gpt-oss-120b` (read-only backup), Whisper for voice; Gemini free tier (`gemini-2.5-flash`) for smart conversations only |
+| LLM | Groq free tier: `qwen3.8-27b` (primary), `gpt-oss-120b` (read-only backup), Whisper for voice; Gemini free tier (`gemini-3.5-flash`) for smart conversations only |
 | Validation | Zod (strict) |
 | Integrations | Google Calendar, Tasks, Gmail (read + drafts), Drive (metadata), Contacts (birthdays), FCM, public keyless APIs |
 | App | Kotlin, Android, Keystore-signed requests (`apps/call-companion/`) |

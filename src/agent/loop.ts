@@ -90,6 +90,11 @@ function isSmart(provider: AgentProvider): boolean {
   return provider.role === 'smart';
 }
 
+/** A provider that is busy, not broken: worth asking again in a while. */
+function isOverloaded(error: { code: string; status?: number }): boolean {
+  return error.code === 'provider_error' && (error.status === 503 || error.status === 500);
+}
+
 /** A smart model's system prompt: today's, then the smart note (versioned apart, `prompt.ts`). */
 const SMART_SYSTEM_PROMPT = `${SYSTEM_PROMPT}\n${SMART_NOTE}`;
 
@@ -618,7 +623,13 @@ export async function resumeAfterConsent(
     loop.messages.push({ role: 'tool', tool_call_id: state.toolCallId, content: declinedResult(source) });
     return drive(loop, deps);
   }
-  return drive(loop, deps, { id: stored.id, name: stored.function.name, arguments: stored.function.arguments });
+  const signature = stored.extra_content?.google.thought_signature;
+  return drive(loop, deps, {
+    id: stored.id,
+    name: stored.function.name,
+    arguments: stored.function.arguments,
+    ...(signature === undefined ? {} : { signature }),
+  });
 }
 
 /** What the model is told when the user declined: the source, and nothing else. */
@@ -825,6 +836,12 @@ async function drive(loop: Loop, deps: AgentDeps, approved?: ToolCall): Promise<
         // message will not ask it again (§2b).
         // `daily` comes only from a Gemini 429 (provider.ts); never set for Groq.
         budget.refused(reservation, response.error.retryAfterSeconds, response.error.daily === true ? 'day' : undefined);
+        scope.refused.add(model);
+      } else if (isSmart(loop.provider) && isOverloaded(response.error)) {
+        // A smart model that is busy (503 "high demand", or a 500) rests on
+        // the 429 ladder, so the next message picks a local model; this one
+        // goes to the parser, as after a 429 (2026-10-08). Groq: as before.
+        budget.refused(reservation, undefined, 'overloaded');
         scope.refused.add(model);
       } else if (wasNeverSent(response.error)) {
         budget.release(reservation);

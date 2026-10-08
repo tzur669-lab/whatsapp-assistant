@@ -79,6 +79,18 @@ describe('createLogger', () => {
     expect(line).toContain('E_CONFLICT');
   });
 
+  it("drops a Gemini thought signature wherever it sits (2026-10-08)", () => {
+    const log = createLogger();
+    log.warn('agent_call_failed', {
+      call: { id: 'call_1', signature: 'CANARY1', extra_content: { google: { thought_signature: 'CANARY2' } } },
+      response: { tool_calls: [{ id: 'x' }], thought_signature: 'CANARY3', thoughtSignature: 'CANARY4' },
+      toolCalls: 1,
+    });
+    const line = written[0]!;
+    expect(line).not.toContain('CANARY');
+    expect(JSON.parse(line).toolCalls).toBe(1);
+  });
+
   it('truncates unexpectedly long string values', () => {
     const log = createLogger();
     log.info('e', { errorCode: 'x'.repeat(500) });

@@ -33,14 +33,37 @@ const MAX_COMPLETION_TOKENS = 1_024;
  */
 export const ADAPTER_VERSION = 'openai-compatible/1';
 
-export type ToolCall = { id: string; name: string; arguments: string };
+/**
+ * What only Gemini's requests carry on top of `ADAPTER_VERSION`, bumped the
+ * same way. In the smart fingerprint only, so the Groq one does not move.
+ * `/1` (2026-10-08): each tool call's thought signature is sent back.
+ */
+export const GEMINI_WIRE_VERSION = 'gemini-thought-signatures/1';
+
+/**
+ * `signature` (Gemini 3, 2026-10-08): the call's thought signature, opaque
+ * model data. Gemini refuses the next request (400) unless the call is sent
+ * back with it. Never parsed, never logged (`redact.ts` drops `signature`,
+ * `thought_signature`, `extra_content`); kept only when it has the shape
+ * `THOUGHT_SIGNATURE` allows, and only from a provider that sends one.
+ */
+export type ToolCall = { id: string; name: string; arguments: string; signature?: string };
 
 export type AgentMessage =
   | { role: 'system' | 'user'; content: string }
   | { role: 'assistant'; content: string | null; tool_calls?: WireToolCall[] }
   | { role: 'tool'; tool_call_id: string; content: string };
 
-type WireToolCall = { id: string; type: 'function'; function: { name: string; arguments: string } };
+export type WireToolCall = {
+  id: string;
+  type: 'function';
+  function: { name: string; arguments: string };
+  /** Only on a call that came with a thought signature: never on a Groq request. */
+  extra_content?: { google: { thought_signature: string } };
+};
+
+/** What a thought signature may look like: base64 (either alphabet), at most 16 KB. Anything else is dropped. */
+export const THOUGHT_SIGNATURE = /^[A-Za-z0-9+/=_-]{1,16384}$/;
 
 export type WireTool = {
   type: 'function';
@@ -86,6 +109,8 @@ type Transport = {
   completionField?: 'max_completion_tokens' | 'max_tokens';
   /** Gemini only: read a 429's body, narrowly (header comment). */
   classifyRateLimitBody?: boolean;
+  /** Gemini only: keep each tool call's thought signature, to send it back. */
+  thoughtSignatures?: boolean;
 };
 
 /** An OpenAI-compatible chat endpoint: a transport, nothing about how a model behaves. */
@@ -156,7 +181,7 @@ export function createOpenAiCompatibleAgentProvider(config: AgentProviderConfig 
         return { ok: false, error: { code: 'invalid_json' } };
       }
 
-      const message = messageOf(payload);
+      const message = messageOf(payload, config.thoughtSignatures === true);
       if (message === null) return { ok: false, error: { code: 'invalid_json' } };
       return { ok: true, ...message, usage: usageOf(payload) };
     },
@@ -179,6 +204,7 @@ export function createGeminiAgentProvider(config: AgentProviderConfig): AgentPro
     endpoint: GEMINI_ENDPOINT,
     completionField: 'max_tokens',
     classifyRateLimitBody: true,
+    thoughtSignatures: true,
   });
 }
 
@@ -245,7 +271,7 @@ export function classifyGeminiRateLimit(payload: unknown): { status?: string; da
   return { ...(status ? { status } : {}), daily };
 }
 
-function messageOf(payload: unknown): { text: string | null; toolCalls: ToolCall[] } | null {
+function messageOf(payload: unknown, keepSignatures: boolean): { text: string | null; toolCalls: ToolCall[] } | null {
   const choices = (payload as { choices?: unknown }).choices;
   if (!Array.isArray(choices) || choices.length === 0) return null;
   const message = (choices[0] as { message?: unknown }).message;
@@ -260,10 +286,12 @@ function messageOf(payload: unknown): { text: string | null; toolCalls: ToolCall
       const id = (raw as { id?: unknown }).id;
       const fn = (raw as { function?: { name?: unknown; arguments?: unknown } }).function;
       if (typeof id !== 'string' || typeof fn?.name !== 'string') continue;
+      const signature = keepSignatures ? thoughtSignatureOf(raw) : undefined;
       toolCalls.push({
         id,
         name: fn.name,
         arguments: typeof fn.arguments === 'string' ? fn.arguments : '{}',
+        ...(signature === undefined ? {} : { signature }),
       });
     }
   }
@@ -286,7 +314,26 @@ function usageOf(payload: unknown): AgentUsage {
   };
 }
 
-/** The wire form of a tool call the loop sends back with its result. */
+/**
+ * A tool call's `extra_content.google.thought_signature`, when it has the
+ * allowed shape. Read as a whole value and passed on untouched: never decoded.
+ */
+function thoughtSignatureOf(raw: unknown): string | undefined {
+  const extra = isFields(raw) ? raw['extra_content'] : undefined;
+  const google = isFields(extra) ? extra['google'] : undefined;
+  const signature = isFields(google) ? google['thought_signature'] : undefined;
+  return typeof signature === 'string' && THOUGHT_SIGNATURE.test(signature) ? signature : undefined;
+}
+
+/**
+ * The wire form of a tool call the loop sends back with its result. A call
+ * without a signature — every Groq call — is exactly what it always was.
+ */
 export function wireToolCall(call: ToolCall): WireToolCall {
-  return { id: call.id, type: 'function', function: { name: call.name, arguments: call.arguments } };
+  return {
+    id: call.id,
+    type: 'function',
+    function: { name: call.name, arguments: call.arguments },
+    ...(call.signature === undefined ? {} : { extra_content: { google: { thought_signature: call.signature } } }),
+  };
 }

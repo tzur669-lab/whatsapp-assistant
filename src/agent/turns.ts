@@ -40,6 +40,7 @@ import type { ConsentSource } from '../tools/registry.js';
 import { phoneReadInputSchema } from '../tools/phone-reads.js';
 import { isConsentSource, mayKeepForConversation } from './consents.js';
 import type { SuspendedState } from './loop.js';
+import { THOUGHT_SIGNATURE } from './provider.js';
 
 /** The app waits three minutes for an answer, then stops (Turns.kt). A consent card lives as long. */
 export const SUSPEND_TTL_MS = 3 * 60_000;
@@ -85,6 +86,12 @@ const wireToolCall = z
     id: z.string().max(200),
     type: z.literal('function'),
     function: z.object({ name: z.string().max(100), arguments: z.string().max(8_000) }).strict(),
+    // A Gemini 3 call's thought signature (2026-10-08): kept, so the resumed
+    // request sends the call back as the model made it.
+    extra_content: z
+      .object({ google: z.object({ thought_signature: z.string().regex(THOUGHT_SIGNATURE) }).strict() })
+      .strict()
+      .optional(),
   })
   .strict();
 
