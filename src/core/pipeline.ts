@@ -93,6 +93,13 @@ export type AgentServices = {
    * parser found no tool in the words (2026-10-05).
    */
   fallbackProviders?: readonly AgentProvider[];
+  /**
+   * The smart conversations' models (`SMART_MODELS`, 2026-10-08), built only
+   * when both the Gemini and Groq keys are set. Never part of `providers` or
+   * `fallbackProviders`. Nothing reads it yet: a later slice routes smart
+   * conversations here.
+   */
+  smartProviders?: readonly AgentProvider[];
   budget: TokenBudget;
   history: ConversationHistory;
   lock: AgentLock;

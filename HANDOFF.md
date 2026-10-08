@@ -106,6 +106,13 @@ Network on the hotspot: `NODE_OPTIONS=--dns-result-order=ipv4first` for wrangler
 
 ## 8. Session log (docs)
 
+- 2026-10-08: Smart conversations, slice 2: `SMART_MODELS` (Gemini Flash, role
+  `smart`, read-only, not used by any turn yet), `createGeminiAgentProvider`,
+  request limits per minute/day in `TokenBudget` (day count in SQLite,
+  `core/quota.ts`, migration 0026 `model_day_requests`, Pacific day), 429
+  backoff 1/2/5/10 min, optional `GEMINI_API_KEY`. The narrow 429-body
+  exception is documented in `agent/provider.ts`.
+
 - 2026-10-08: Smart conversations, slice 1 (plan: Gemini "smart" chats next to
   local Groq ones, a consent gate per data source). Every tool now declares a
   required `dataSource` in the registry; `calendar.move_event`/`delete_event`

@@ -23,6 +23,7 @@ import { stripIsolates } from '../../../src/render/bidi.js';
 import { REMINDER_ROW_TTL_MS, REPUSH_AFTER_MS } from '../../../src/channels/app/outbox.js';
 import { CLOCK_SKEW_MS } from '../../../src/channels/app/verify.js';
 import type { AppEnv } from '../../../src/core/env.js';
+import { SMART_MODELS } from '../../../src/agent/models.js';
 
 const NOW = Date.parse('2026-09-29T09:00:00Z'); // a Tuesday
 const SELF = '972500000000';
@@ -696,11 +697,14 @@ describe('the app channel', () => {
       };
     };
 
-    const buildWithGroq = () => {
-      env = { ...baseEnv(), GROQ_API_KEY: 'test-groq-key', AGENT: 'on' };
+    let modelUrls: string[] = [];
+    const buildWithGroq = (overrides: Partial<AppEnv> = {}) => {
+      env = { ...baseEnv(), GROQ_API_KEY: 'test-groq-key', AGENT: 'on', ...overrides };
+      modelUrls = [];
       const fetchImpl = (async (input: string | URL | Request, init?: RequestInit) => {
         const url = String(input instanceof Request ? input.url : input);
         if (!url.endsWith('/chat/completions')) return google.fetchImpl(input as never, init);
+        modelUrls.push(url);
         return new Response(
           JSON.stringify({ choices: [{ message: { content: 'שלום' } }], usage: { prompt_tokens: 900, completion_tokens: 40 } }),
           {
@@ -760,6 +764,28 @@ describe('the app channel', () => {
       // fresh (2026-10-05); the 500 margin is kept inside fits(), not shown.
       expect(report.server.minute[0]!.limit).toBe(8_000);
       expect(report.server.lastFailure).toEqual({ code: 'E_AGENT_BUDGET_EXHAUSTED', at: null });
+    });
+
+    it('shows Gemini on its own line when its key is set, and no turn calls it yet', async () => {
+      buildWithGroq({ GEMINI_API_KEY: 'fake-gemini-key-not-real' });
+      const phone = await pair();
+      await say(phone, 'מה נשמע?');
+      expect(modelUrls.length).toBeGreaterThan(0);
+      expect(modelUrls.every((url) => url.startsWith('https://api.groq.com/'))).toBe(true);
+
+      const report = await quota(phone);
+      const gemini = SMART_MODELS[0]!.id;
+      expect(report.models.find((m) => m.model === gemini)).toMatchObject({ role: 'fallback', dayTokens: null });
+      expect(report.server.minute.map((m) => m.model)).toContain(gemini);
+    });
+
+    it('shows no Gemini line without its key', async () => {
+      buildWithGroq();
+      const phone = await pair();
+      const report = await quota(phone);
+      const gemini = SMART_MODELS[0]!.id;
+      expect(report.models.map((m) => m.model)).not.toContain(gemini);
+      expect(report.server.minute.map((m) => m.model)).not.toContain(gemini);
     });
 
     it('is only for a paired phone', async () => {

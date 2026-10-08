@@ -11,7 +11,7 @@ import type { NluErrorCode } from '../../src/nlu/provider.js';
 export type FakeStep =
   | { text: string }
   | { tool: string; args: Record<string, unknown> | string }
-  | { error: NluErrorCode; retryAfterSeconds?: number };
+  | { error: NluErrorCode; retryAfterSeconds?: number; daily?: boolean };
 
 export type FakeAgent = AgentProvider & {
   /** The messages the loop sent on each call, for asserting what the model saw. */
@@ -23,7 +23,7 @@ export function createFakeAgent(
   script: FakeStep[],
   model = 'fake-model',
   tokensPerCall = 500,
-  role: 'primary' | 'backup' = 'primary',
+  role: 'primary' | 'backup' | 'smart' = 'primary',
 ): FakeAgent {
   const calls: AgentMessage[][] = [];
   const tools: WireTool[][] = [];
@@ -47,6 +47,7 @@ export function createFakeAgent(
             code: step.error,
             ...(step.error === 'rate_limited' ? { status: 429 } : {}),
             ...(step.retryAfterSeconds ? { retryAfterSeconds: step.retryAfterSeconds } : {}),
+            ...(step.daily === undefined ? {} : { daily: step.daily }),
           },
         };
       }

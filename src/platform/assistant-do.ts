@@ -99,14 +99,14 @@ import { createCallDispatcher } from '../device/calls.js';
 import type { CallDispatcher } from '../device/calls.js';
 import { callText } from '../render/calls.js';
 import { agentEnabled } from '../core/env.js';
-import { createGroqAgentProvider } from '../agent/provider.js';
+import { createGeminiAgentProvider, createGroqAgentProvider } from '../agent/provider.js';
 import { TokenBudget } from '../agent/budget.js';
-import { MODELS } from '../agent/models.js';
+import { MODELS, SMART_MODELS } from '../agent/models.js';
 import type { ModelEntry } from '../agent/models.js';
 import { TURN_TOKEN_CAP } from '../agent/loop.js';
 import { ConversationHistory } from '../agent/history.js';
 import { ExchangeLog } from '../core/exchanges.js';
-import { QuotaStore, meterGroqFetch } from '../core/quota.js';
+import { QuotaStore, SqlDayRequestCounter, meterGroqFetch } from '../core/quota.js';
 import type { ModelSpec, ServerLimits } from '../core/quota.js';
 import { AgentLock } from '../agent/lock.js';
 import { SuspendedTurns } from '../agent/turns.js';
@@ -174,13 +174,11 @@ export class AssistantDO implements DurableObject {
   /** Agent turns waiting for the phone to read (§6.21). */
   private readonly agentTurns: SuspendedTurns;
   /**
-   * Memory only: the last minute of Groq spend per model (§6.19). Each real
-   * spend is also written down, for the quota screen's rolling day.
+   * Memory only: the last minute of spend per model (§6.19). Each real spend is
+   * also written down, for the quota screen's rolling day; a request-limited
+   * model's requests per Pacific day are counted in SQLite (2026-10-08).
    */
-  private readonly tokenBudget = new TokenBudget(
-    () => Date.now(),
-    (model, tokens) => this.quota.recordTokens(model, tokens),
-  );
+  private readonly tokenBudget: TokenBudget;
   /** What Groq reports and what this object counts, for the quota screen (2026-10-01). */
   private readonly quota: QuotaStore;
   /** The fetch every Groq provider gets: it notes the rate-limit headers on the way back. */
@@ -239,6 +237,11 @@ export class AssistantDO implements DurableObject {
 
     this.outbox = new AppOutbox(this.sql, this.repo, now);
     this.quota = new QuotaStore(this.sql, now);
+    this.tokenBudget = new TokenBudget(
+      now,
+      (model, tokens) => this.quota.recordTokens(model, tokens),
+      new SqlDayRequestCounter(this.sql),
+    );
     this.groqFetch = meterGroqFetch(
       this.fetchImpl,
       (model, limits) => {
@@ -864,11 +867,13 @@ export class AssistantDO implements DurableObject {
     const models: ModelSpec[] = [
       // Backups show as the app's existing 'fallback' role: no app change.
       ...MODELS.map((entry): ModelSpec => ({ model: entry.id, role: entry.role === 'primary' ? 'primary' : 'fallback', dayTokens: true })),
+      // Gemini on its own line once its key is set; Groq's daily token limit is not its.
+      ...this.smartModels().map((entry): ModelSpec => ({ model: entry.id, role: 'fallback', dayTokens: false })),
       { model: WHISPER_MODEL, role: 'voice', dayTokens: false },
     ];
     const voice = { used: this.repo.inboundCountSince('audio', Date.now() - HOUR_MS), limit: VOICE_PER_HOUR };
     const server: ServerLimits = {
-      minute: this.tokenBudget.snapshot(MODELS.map((entry) => entry.id)),
+      minute: this.tokenBudget.snapshot([...MODELS, ...this.smartModels()].map((entry) => entry.id)),
       turnTokenCap: TURN_TOKEN_CAP,
       lastFailure: this.repo.lastError(),
       fallbacksToday: this.repo.counters(Repository.dayKey(Date.now())).fallbacks,
@@ -1742,6 +1747,11 @@ export class AssistantDO implements DurableObject {
               // no turn could start and the parser found no tool (2026-10-05).
               providers: MODELS.filter((entry) => entry.canWrite).map((entry) => this.agentProvider(entry)),
               fallbackProviders: MODELS.filter((entry) => !entry.canWrite).map((entry) => this.agentProvider(entry)),
+              // Smart conversations' models: a table of their own, never in
+              // the two lists above. Not used by any turn yet (2026-10-08).
+              ...(this.smartModels().length > 0
+                ? { smartProviders: this.smartModels().map((entry) => this.agentProvider(entry)) }
+                : {}),
               budget: this.tokenBudget,
               history: this.history,
               lock: this.agentLock,
@@ -1764,6 +1774,17 @@ export class AssistantDO implements DurableObject {
   }
 
   private agentProvider(entry: ModelEntry) {
+    if (entry.provider === 'gemini') {
+      // Not through `groqFetch`: Groq's rate-limit headers are not Gemini's.
+      return createGeminiAgentProvider({
+        apiKey: this.env.GEMINI_API_KEY ?? '',
+        model: entry.id,
+        role: entry.role,
+        maxCompletionTokens: entry.maxCompletionTokens,
+        params: entry.params,
+        fetchImpl: this.fetchImpl,
+      });
+    }
     return createGroqAgentProvider({
       apiKey: this.env.GROQ_API_KEY,
       model: entry.id,
@@ -1772,6 +1793,11 @@ export class AssistantDO implements DurableObject {
       params: entry.params,
       fetchImpl: this.groqFetch,
     });
+  }
+
+  /** The smart models this server may build: only when both the Gemini and the Groq keys are set. */
+  private smartModels(): readonly ModelEntry[] {
+    return this.env.GEMINI_API_KEY && this.env.GROQ_API_KEY ? SMART_MODELS : [];
   }
 
   /** Built once a grant exists, and reused so its access token is not re-fetched. */

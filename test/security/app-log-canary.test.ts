@@ -14,6 +14,7 @@ import type { AppEnv } from '../../src/core/env.js';
 const CANARY = 'CANARY-5d1e77b0-do-not-log';
 const SPOKEN = 'עזרה CANARY-VOICE-2b9c';
 const BOOTSTRAP = 'ABCD-EFGH-JKMN-PQRS-TVWX';
+const GEMINI_KEY = 'CANARY-GEMINI-KEY-not-real';
 const NOW = Date.parse('2026-09-29T09:00:00Z');
 
 let serviceAccount: string;
@@ -50,6 +51,7 @@ describe('log canary, app channel', () => {
       WA_ACCESS_TOKEN: '',
       ALLOWLIST_WA_IDS: '972500000000',
       GROQ_API_KEY: 'test-key-not-real',
+      GEMINI_API_KEY: GEMINI_KEY,
       GOOGLE_CLIENT_SECRET: 'x',
       TOKEN_ENC_KEY_V1: Buffer.alloc(32, 9).toString('base64'),
       LOG_HASH_KEY: 'test-key',
@@ -83,7 +85,7 @@ describe('log canary, app channel', () => {
 
     const all = written.join('\n');
     expect(all.length).toBeGreaterThan(0);
-    for (const secret of [CANARY, 'CANARY-VOICE-2b9c', BOOTSTRAP.replace(/-/g, ''), BOOTSTRAP, mac, phone.publicKey, FAKE_PUSH_TOKEN, signature, nonce]) {
+    for (const secret of [CANARY, 'CANARY-VOICE-2b9c', GEMINI_KEY, BOOTSTRAP.replace(/-/g, ''), BOOTSTRAP, mac, phone.publicKey, FAKE_PUSH_TOKEN, signature, nonce]) {
       expect(all).not.toContain(secret);
     }
 

@@ -22,6 +22,15 @@
  * local view may count a call twice — an open reservation and a header that
  * already includes it — which only ever costs an extra failover. It never
  * counts a measured call as less than it was.
+ *
+ * Request limits (2026-10-08). A model whose entry declares `minuteRequests`
+ * or `dayRequests` (Gemini) is also counted in requests: per minute in the
+ * same sliding window, per Pacific day through an injected synchronous
+ * `DayRequestCounter` (SQLite in the Durable Object), taken in `reserve` and
+ * given back in `release`. Every 429 on such a model backs off 1, 2, 5, then
+ * 10 minutes, reset by a success, or until Pacific midnight when the 429 named
+ * the day; a longer `retry-after` wins. Groq models declare neither, so none
+ * of this runs for them: their behaviour is exactly as before.
  */
 
 import type { NluProvider } from '../nlu/provider.js';
@@ -29,7 +38,8 @@ import type { PromptInput } from '../nlu/prompt.js';
 import { buildPrompt } from '../nlu/prompt.js';
 import { buildResponseSchema } from '../nlu/json-schema.js';
 import type { Bucket } from '../core/quota.js';
-import { DEFAULT_MINUTE_TOKENS, modelEntry } from './models.js';
+import { DEFAULT_MINUTE_TOKENS, GROQ_CHARS_PER_TOKEN, modelEntry } from './models.js';
+import { addDays, localPartsOf, wallTimeToUtc } from '../time/tz.js';
 
 /** Below Groq's 8,000, so an estimate that runs a little short still fits. */
 export const MINUTE_TOKEN_LIMIT = DEFAULT_MINUTE_TOKENS - 500;
@@ -55,7 +65,7 @@ export const PARSER_MAX_COMPLETION_TOKENS = 2_048;
  * catalog alone estimated past the 7,000 turn cap, so a message that named no
  * tool group failed `turn_token_cap` before any model was asked.
  */
-export const CHARS_PER_TOKEN = 3.0;
+export const CHARS_PER_TOKEN = GROQ_CHARS_PER_TOKEN;
 
 type Spend = { at: number; tokens: number };
 
@@ -68,8 +78,62 @@ const OBSERVATION_TTL_MS = WINDOW_MS;
 /** What a 429 told us, as the provider's adapter reads it. */
 export type RateLimitKind = 'minute' | 'day' | 'unavailable';
 
-/** One call's claim on a model's minute, from before it is sent until it settles. */
-export type Reservation = { readonly id: number; readonly model: string; readonly tokens: number };
+/**
+ * One call's claim on a model's minute, from before it is sent until it
+ * settles. `day` is set only for a model with a daily request limit: the
+ * Pacific day the request was counted on, so `release` gives it back there.
+ */
+export type Reservation = { readonly id: number; readonly model: string; readonly tokens: number; readonly day?: string };
+
+/** Google resets per-day quotas at midnight Pacific time. */
+export const QUOTA_ZONE = 'America/Los_Angeles';
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+/** The Pacific calendar day of an instant, `YYYY-MM-DD`: the key of the day counter. */
+export function quotaDay(utcMs: number): string {
+  const p = localPartsOf(utcMs, QUOTA_ZONE);
+  return `${p.year}-${String(p.month).padStart(2, '0')}-${String(p.day).padStart(2, '0')}`;
+}
+
+/** The next Pacific midnight after an instant. Never early: a fold takes its later instant. */
+export function nextQuotaMidnight(utcMs: number): number {
+  const p = localPartsOf(utcMs, QUOTA_ZONE);
+  const next = addDays({ year: p.year, month: p.month, day: p.day, hour: 0, minute: 0 }, 1);
+  const resolved = wallTimeToUtc(next, QUOTA_ZONE);
+  if (resolved.kind === 'ok') return resolved.utcMs;
+  if (resolved.kind === 'fold') return resolved.utcMsCandidates[1];
+  // Los Angeles never skips midnight; were it to, a full day is the safe side.
+  return utcMs + DAY_MS;
+}
+
+/**
+ * Requests per model per Pacific day, read and written synchronously inside
+ * `fits`/`reserve`, so nothing awaits between the check and the claim. It
+ * outlives the Durable Object's memory (SQLite, `core/quota.ts`); it is an
+ * estimate all the same, and the provider's 429 has the last word.
+ */
+export interface DayRequestCounter {
+  get(day: string, model: string): number;
+  bump(day: string, model: string, delta: 1 | -1): void;
+}
+
+/** The counter in memory: tests, and anything that has no SQLite. */
+export class MemoryDayRequestCounter implements DayRequestCounter {
+  private readonly counts = new Map<string, number>();
+
+  get(day: string, model: string): number {
+    return this.counts.get(`${day}\0${model}`) ?? 0;
+  }
+
+  bump(day: string, model: string, delta: 1 | -1): void {
+    const key = `${day}\0${model}`;
+    this.counts.set(key, Math.max(0, (this.counts.get(key) ?? 0) + delta));
+  }
+}
+
+/** The backoff after each successive 429 on a request-limited model, in minutes. */
+export const RATE_BACKOFF_MINUTES = [1, 2, 5, 10] as const;
 
 /**
  * One message's memory of which models refused it (§2b). A model in it is not
@@ -102,12 +166,16 @@ export class TokenBudget {
   private readonly open = new Map<number, Reservation>();
   /** After a short 429: no room at all until the provider's `retry-after` has passed. */
   private readonly minuteBlockedUntil = new Map<string, number>();
+  /** Request-limited models only: how many 429s in a row since the last success. */
+  private readonly backoffStep = new Map<string, number>();
   private nextReservation = 0;
 
   constructor(
     private readonly now: () => number,
     /** Told of every real spend, for the quota screen's daily count. Never of a 429's fill. */
     private readonly onSpend?: (model: string, tokens: number) => void,
+    /** Requests per Pacific day, for models that declare `dayRequests`. Never touched for the others. */
+    private readonly dayCounter: DayRequestCounter = new MemoryDayRequestCounter(),
   ) {}
 
   /** Tokens this model has used in the last minute. */
@@ -203,9 +271,34 @@ export class TokenBudget {
     return Math.max(0, room - this.reservedFor(model));
   }
 
-  /** Would a call estimated at `tokens` fit this model's minute bucket now? */
+  /**
+   * Calls this model has sent in the last minute, plus those in flight. Every
+   * sent call leaves one entry in the window (`settle`, `chargeUnanswered`).
+   */
+  requestsInWindow(model: string): number {
+    const cutoff = this.now() - WINDOW_MS;
+    const live = (this.spends.get(model) ?? []).filter((spend) => spend.at > cutoff);
+    this.spends.set(model, live);
+    let inFlight = 0;
+    for (const reservation of this.open.values()) {
+      if (reservation.model === model) inFlight++;
+    }
+    return live.length + inFlight;
+  }
+
+  /** Room for one more request, for a model that declares request limits; always true for the others. */
+  private requestsFit(model: string): boolean {
+    const entry = modelEntry(model);
+    if (entry?.minuteRequests !== undefined && this.requestsInWindow(model) >= entry.minuteRequests) return false;
+    if (entry?.dayRequests !== undefined && this.dayCounter.get(quotaDay(this.now()), model) >= entry.dayRequests) {
+      return false;
+    }
+    return true;
+  }
+
+  /** Would a call estimated at `tokens` fit this model's minute bucket (and request limits) now? */
   fits(model: string, tokens: number): boolean {
-    return !this.isExhausted(model) && tokens <= this.available(model);
+    return !this.isExhausted(model) && tokens <= this.available(model) && this.requestsFit(model);
   }
 
   snapshot(models: readonly string[]): BudgetSnapshot[] {
@@ -246,8 +339,15 @@ export class TokenBudget {
    */
   reserve(model: string, tokens: number): Reservation | null {
     if (!this.fits(model, tokens)) return null;
-    const reservation: Reservation = { id: ++this.nextReservation, model, tokens: Math.max(0, Math.ceil(tokens)) };
+    const day = modelEntry(model)?.dayRequests !== undefined ? quotaDay(this.now()) : undefined;
+    const reservation: Reservation = {
+      id: ++this.nextReservation,
+      model,
+      tokens: Math.max(0, Math.ceil(tokens)),
+      ...(day === undefined ? {} : { day }),
+    };
     this.open.set(reservation.id, reservation);
+    if (day !== undefined) this.dayCounter.bump(day, model, 1);
     return reservation;
   }
 
@@ -263,6 +363,8 @@ export class TokenBudget {
   settle(reservation: Reservation, measuredTokens: number): void {
     if (!this.open.delete(reservation.id)) return;
     this.record(reservation.model, measuredTokens > 0 ? measuredTokens : reservation.tokens);
+    // A success starts a request-limited model's 429 ladder over.
+    this.backoffStep.delete(reservation.model);
   }
 
   /**
@@ -280,9 +382,11 @@ export class TokenBudget {
     }
   }
 
-  /** The call was never sent (no key, connection refused). Nothing to charge. */
+  /** The call was never sent (no key, connection refused). Nothing to charge, and its day request goes back. */
   release(reservation: Reservation): void {
-    this.open.delete(reservation.id);
+    if (this.open.delete(reservation.id) && reservation.day !== undefined) {
+      this.dayCounter.bump(reservation.day, reservation.model, -1);
+    }
   }
 
   /**
@@ -322,6 +426,10 @@ export class TokenBudget {
       this.exhaustedUntil.set(model, now + UNAVAILABLE_MS);
       return;
     }
+    if (modelEntry(model)?.minuteRequests !== undefined) {
+      this.backOff(model, seconds, kind === 'day');
+      return;
+    }
     if (kind === 'day' || seconds > DAILY_SIGNAL_SECONDS) {
       this.exhaustedUntil.set(model, now + seconds * 1000);
       return;
@@ -337,6 +445,21 @@ export class TokenBudget {
     } else {
       this.observations.set(model, { limit: this.configuredLimit(model), remaining: 0, resetAt: retryAt, observedAt: now });
     }
+  }
+
+  /**
+   * A 429 on a request-limited model, whatever its body said: the next step of
+   * the ladder, or until Pacific midnight when it named the day. A longer
+   * `retry-after` wins, and a block already longer is kept.
+   */
+  private backOff(model: string, retryAfterSeconds: number, daily: boolean): void {
+    const now = this.now();
+    const step = this.backoffStep.get(model) ?? 0;
+    this.backoffStep.set(model, step + 1);
+    const minutes = RATE_BACKOFF_MINUTES[Math.min(step, RATE_BACKOFF_MINUTES.length - 1)]!;
+    let until = now + Math.max(minutes * 60_000, retryAfterSeconds * 1000);
+    if (daily) until = Math.max(until, nextQuotaMidnight(now));
+    this.exhaustedUntil.set(model, Math.max(this.exhaustedUntil.get(model) ?? 0, until));
   }
 }
 

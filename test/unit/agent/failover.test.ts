@@ -19,7 +19,7 @@ import { parseKeyring } from '../../../src/security/crypto.js';
 import { MINUTE_TOKEN_LIMIT, TokenBudget } from '../../../src/agent/budget.js';
 import { ConversationHistory } from '../../../src/agent/history.js';
 import { AgentLock } from '../../../src/agent/lock.js';
-import { GPT_OSS_120B, MODELS, QWEN } from '../../../src/agent/models.js';
+import { GPT_OSS_120B, MODELS, QWEN, SMART_MODELS } from '../../../src/agent/models.js';
 import type { AgentProvider, AgentResponse } from '../../../src/agent/provider.js';
 import { buildNluChain } from '../../../src/nlu/index.js';
 import type { NluProvider } from '../../../src/nlu/provider.js';
@@ -233,6 +233,15 @@ describe('rate/budget failover', () => {
       const second = qwen([{ text: 'היי' }]);
       const out = await handleInbound(text('שלום שוב'), deps({ providers: [second] }));
       expect(out).toMatchObject({ action: 'reply', text: 'היי' });
+    });
+
+    it("blocks a request-limited model until California midnight when its 429 named the day", async () => {
+      const gemini = createFakeAgent([{ error: 'rate_limited', daily: true }], SMART_MODELS[0]!.id, 500, 'smart');
+      await handleInbound(text('שלום'), deps({ providers: [gemini] }));
+      expect(gemini.calls).toHaveLength(1);
+      expect(budget.reservedFor(gemini.model)).toBe(0);
+      // NOW is 02:00 PDT on 2026-09-24: the quota day ends at 07:00 UTC the next morning.
+      expect(budget.snapshot([gemini.model])[0]?.blockedUntil).toBe(Date.parse('2026-09-25T07:00:00Z'));
     });
 
     it('leaves no reservation open after a 429', async () => {

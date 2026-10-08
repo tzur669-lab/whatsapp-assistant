@@ -40,6 +40,14 @@ export type NluError = {
    */
   retryAfterSeconds?: number;
   /**
+   * Gemini 429s only (2026-10-08): whether a quota id in the body named a day.
+   * The one value read from an error body, besides `quotaStatus`
+   * (`src/agent/provider.ts`, header). Absent on every other provider.
+   */
+  daily?: boolean;
+  /** Gemini 429s only: the body's `error.status`, when it is an enum-like word. */
+  quotaStatus?: string;
+  /**
    * The connection fault behind a `network_error`, as the runtime's own short
    * code (`ECONNREFUSED`, `SELF_SIGNED_CERT_IN_CHAIN`, …) and nothing else.
    *

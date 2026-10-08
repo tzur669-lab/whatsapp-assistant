@@ -39,6 +39,13 @@ export interface AppEnv {
    * a US quote answers "unavailable"; TASE needs no key.
    */
   QUOTES_API_KEY?: string;
+  /**
+   * Google AI Studio's key, for the smart conversations' Gemini model
+   * (2026-10-08). Optional and server-side only: never sent to the app, never in
+   * a reply, never logged. Without it (or without `GROQ_API_KEY`) no smart
+   * provider is built.
+   */
+  GEMINI_API_KEY?: string;
 
   // Vars
   WA_PHONE_NUMBER_ID: string;

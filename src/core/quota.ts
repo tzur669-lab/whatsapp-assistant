@@ -16,6 +16,7 @@
  * Plain SQL and standard `fetch` only, so this runs on Node too (invariant 11).
  */
 import type { SqlDriver } from './sql.js';
+import type { DayRequestCounter } from '../agent/budget.js';
 
 /** Groq's free tier, per model (PLAN §2): tokens per rolling day. */
 export const DAY_TOKEN_LIMIT = 200_000;
@@ -236,6 +237,36 @@ function bucketFrom(row: Record<string, unknown>, kind: 'requests' | 'tokens', n
   if (limit === null || remaining === null || resetAt === null || seenAt === null) return null;
   const bucket = { limit: Number(limit), remaining: Number(remaining), resetAt: Number(resetAt), observedAt: Number(seenAt) };
   return now >= bucket.resetAt ? { ...bucket, remaining: bucket.limit } : bucket;
+}
+
+/**
+ * Requests per model per Pacific day (migration 0026), for models whose entry
+ * declares `dayRequests` (Gemini). Synchronous, so `TokenBudget.reserve` checks
+ * and claims in one step; in SQLite, so the count survives the object being
+ * evicted. Only the current day is kept: a new day's first request forgets the
+ * earlier ones, and a late give-back to a forgotten day writes nothing.
+ */
+export class SqlDayRequestCounter implements DayRequestCounter {
+  constructor(private readonly sql: SqlDriver) {}
+
+  get(day: string, model: string): number {
+    const row = this.sql.exec('SELECT count FROM model_day_requests WHERE day = ? AND model = ?', day, model)[0];
+    return Number(row?.['count'] ?? 0);
+  }
+
+  bump(day: string, model: string, delta: 1 | -1): void {
+    if (delta === 1) {
+      this.sql.exec('DELETE FROM model_day_requests WHERE day < ?', day);
+      this.sql.exec(
+        `INSERT INTO model_day_requests (day, model, count) VALUES (?, ?, 1)
+         ON CONFLICT(day, model) DO UPDATE SET count = count + 1`,
+        day,
+        model,
+      );
+      return;
+    }
+    this.sql.exec('UPDATE model_day_requests SET count = MAX(0, count - 1) WHERE day = ? AND model = ?', day, model);
+  }
 }
 
 function utcDay(ms: number): string {

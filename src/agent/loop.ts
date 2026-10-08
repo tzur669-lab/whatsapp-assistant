@@ -408,7 +408,8 @@ async function drive(loop: Loop, deps: AgentDeps): Promise<AgentResult> {
       if (response.error.code === 'rate_limited') {
         // One step: the reservation goes, the model is blocked, and this
         // message will not ask it again (§2b).
-        budget.refused(reservation, response.error.retryAfterSeconds);
+        // `daily` comes only from a Gemini 429 (provider.ts); never set for Groq.
+        budget.refused(reservation, response.error.retryAfterSeconds, response.error.daily === true ? 'day' : undefined);
         scope.refused.add(model);
       } else if (wasNeverSent(response.error)) {
         budget.release(reservation);

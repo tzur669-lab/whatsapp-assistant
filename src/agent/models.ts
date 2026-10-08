@@ -13,26 +13,48 @@
  * (PLAN §13).
  */
 
-export type ModelRole = 'primary' | 'backup';
+/**
+ * `smart` (2026-10-08): a model only a smart conversation may use. It is never
+ * `primary`, so every write it proposes confirms (§6), and it lives in
+ * `SMART_MODELS`, never in `MODELS`, so no local conversation reaches it.
+ */
+export type ModelRole = 'primary' | 'backup' | 'smart';
+
+export type ModelProvider = 'groq' | 'gemini';
 
 export type ModelEntry = {
   /** Fully versioned. No `-latest` aliases (unit test). */
   id: string;
-  provider: 'groq';
+  provider: ModelProvider;
   role: ModelRole;
   /** The effective tokens-per-minute bucket for this key's project. */
   minuteTokens: number;
-  /** Sent as `max_completion_tokens`, and reserved in full before each call. */
+  /** Sent as the completion size, and reserved in full before each call. */
   maxCompletionTokens: number;
   /** Request parameters this model accepts. Sent only when present. */
   params: { reasoningEffort?: 'low' };
   /** The most one agent turn may spend on this model. */
   turnCap: number;
+  /** The most model calls one agent turn may make on this model. */
+  maxModelCalls: number;
+  /** Characters per token for this model's estimates (measured; `budget.ts`). */
+  charsPerToken: number;
+  /** Requests per minute, for a provider that limits them. Absent: tokens only. */
+  minuteRequests?: number;
+  /** Requests per quota day (Pacific midnight), for a provider that limits them. */
+  dayRequests?: number;
   /** May run an agent turn that writes. Backups' writes still always confirm (§6). */
   canWrite: boolean;
   /** The environment the write gate was passed in (PLAN §6.19, "Failover and tokens"). */
   evaluated?: { fingerprint: string; date: string };
 };
+
+/**
+ * Groq's measured characters per token (2026-10-07,
+ * `test/fixtures/token-calibration.json`). `budget.ts` explains the number and
+ * re-exports it as `CHARS_PER_TOKEN`.
+ */
+export const GROQ_CHARS_PER_TOKEN = 3.0;
 
 export const QWEN = 'qwen/qwen3.8-27b';
 export const GPT_OSS_120B = 'openai/gpt-oss-120b';
@@ -46,6 +68,8 @@ export const MODELS: readonly ModelEntry[] = [
     maxCompletionTokens: 1_024,
     params: { reasoningEffort: 'low' },
     turnCap: 7_000,
+    maxModelCalls: 3,
+    charsPerToken: GROQ_CHARS_PER_TOKEN,
     // Passed the gate without selection (prompt v5, 2026-09-27). The run with
     // `--select-tools` sets `evaluated`; until then the fingerprint test warns
     // (PLAN §14). The primary must be able to write, or there is no agent.
@@ -59,14 +83,50 @@ export const MODELS: readonly ModelEntry[] = [
     maxCompletionTokens: 1_024,
     params: { reasoningEffort: 'low' },
     turnCap: 7_000,
+    maxModelCalls: 3,
+    charsPerToken: GROQ_CHARS_PER_TOKEN,
     // Invents times as an agent (93% no-invented-slots, 2026-10-01). Read-only
     // until it passes the gate.
     canWrite: false,
   },
 ];
 
+export const GEMINI_FLASH = 'gemini-2.5-flash';
+
+/**
+ * Models only a smart conversation may use (2026-10-08). Never in `MODELS`, so
+ * never in a local conversation's `providers` or `fallbackProviders` (unit
+ * test: the two tables never overlap). Nothing routes a turn here yet.
+ */
+export const SMART_MODELS: readonly ModelEntry[] = [
+  {
+    // A stable, versioned id with no `-latest`. The human confirms it in AI
+    // Studio before the key is set: Google's model page (2026-10) limits 2.5
+    // Flash to projects that already used it and points new ones at newer
+    // Flash ids.
+    id: GEMINI_FLASH,
+    provider: 'gemini',
+    role: 'smart',
+    // Placeholders, not measured: the free tier's real limits are read in AI
+    // Studio and confirmed with a one-token probe (PLAN §13).
+    minuteTokens: 250_000,
+    minuteRequests: 10,
+    dayRequests: 250,
+    maxCompletionTokens: 4_096,
+    // Gemini takes no Groq `reasoning_effort`; nothing is sent it does not declare.
+    params: {},
+    turnCap: 60_000,
+    maxModelCalls: 6,
+    // Groq's measured rate until a Gemini calibration exists (PLAN §13).
+    charsPerToken: GROQ_CHARS_PER_TOKEN,
+    // Read-only until a human has read its eval report (PLAN §6.19).
+    canWrite: false,
+  },
+];
+
+/** Both tables: a smart model found by id gets its own limits, never qwen's defaults. */
 export function modelEntry(id: string): ModelEntry | undefined {
-  return MODELS.find((entry) => entry.id === id);
+  return MODELS.find((entry) => entry.id === id) ?? SMART_MODELS.find((entry) => entry.id === id);
 }
 
 /** The bucket this server assumes for a model it does not know. */
