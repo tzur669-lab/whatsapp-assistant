@@ -54,6 +54,9 @@ for review; `/misses` shows the last 10 (PLAN §6.23). `/forget` deletes the lat
 exchange, not the misses the user kept; they expire after 30 days.
 `/memory` lists the facts kept about the user, which the agent sees on every turn
 (PLAN §6.26); `/forget memory` deletes them all, and `/forget` alone keeps them.
+`/consents` (app, smart conversations, 2026-10-08) lists the data sources the
+conversation allowed, each with a button that revokes it; anywhere else it says
+consents exist only in smart conversations. `/forget` deletes every consent too.
 
 **Portfolio (PLAN §6.24).** US prices come from Finnhub (`QUOTES_API_KEY`, optional
 secret); Tel Aviv prices from Yahoo, no key. "מחיר לא זמין כרגע" for every US

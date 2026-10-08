@@ -17,6 +17,8 @@ import { TokenBudget } from '../../src/agent/budget.js';
 import { ConversationHistory } from '../../src/agent/history.js';
 import { AgentLock } from '../../src/agent/lock.js';
 import { SuspendedTurns } from '../../src/agent/turns.js';
+import { ConversationConsents } from '../../src/agent/consents.js';
+import { SMART_MODELS } from '../../src/agent/models.js';
 import type { CalendarClient } from '../../src/google/calendar.js';
 import { TestSqlDriver } from '../integration/sqlite-driver.js';
 import { createFakeAgent } from '../integration/fake-agent.js';
@@ -150,6 +152,80 @@ describe('agent log canary', () => {
     const tables = driver.exec(`SELECT name FROM sqlite_master WHERE type = 'table'`).map((row) => String(row['name']));
     const dump = tables.map((table) => JSON.stringify(driver.exec(`SELECT * FROM "${table}"`))).join('\n');
     expect(dump).not.toContain(CANARY);
+    expect(driver.exec('SELECT ciphertext FROM agent_turns')[0]?.['ciphertext']).toBeNull();
+  });
+
+  it('keeps a consent flow out of the logs: the card, the tap, the read it allowed (smart conversations)', async () => {
+    const repo = new Repository(driver);
+    repo.migrate(MIGRATIONS);
+    const keyring = () => parseKeyring({ TOKEN_ENC_KEY_V1: KEY });
+    const turns = new SuspendedTurns(driver, () => NOW, keyring);
+    const lock = new AgentLock(driver, () => NOW);
+    const history = new ConversationHistory(driver, () => NOW, keyring);
+    const consents = new ConversationConsents(driver, () => NOW);
+    const budget = new TokenBudget(() => NOW);
+    const conversation = '77777777-7777-4777-8777-777777777777';
+    const calendar = {
+      listAllEvents(...args: unknown[]) {
+        return (this as unknown as { listEvents: (...a: unknown[]) => unknown }).listEvents(...args);
+      },
+      async listEvents() {
+        return {
+          ok: true as const,
+          value: [{ id: 'e1', title: `${CANARY}-title`, startUtc: NOW + 3_600_000, endUtc: NOW + 7_200_000, allDay: false, createdByAssistant: false, etag: null }],
+        };
+      },
+    } as unknown as CalendarClient;
+    const deps = (steps: Parameters<typeof createFakeAgent>[0]) => ({
+      repo,
+      log: createLogger({ component: 'canary' }),
+      now: () => NOW,
+      principal: 'p_canary',
+      channel: 'app' as const,
+      deviceCaps: ['device_query'],
+      services: {
+        reminders: new ReminderStore(driver, () => NOW),
+        pending: new PendingActions(driver, () => NOW),
+        questions: new OpenQuestions(driver, () => NOW),
+        deferred: new UndoActions(driver, () => NOW),
+        nlu: [createFakeNlu([])],
+        calendar,
+        agent: {
+          providers: [],
+          smartProviders: [createFakeAgent(steps, SMART_MODELS[0]!.id, 500, 'smart')],
+          budget,
+          history,
+          lock,
+          turns,
+          consents,
+        },
+      },
+    });
+
+    const card = await handleInbound(
+      { kind: 'text', wamid: 'app:in:CONSENT', from: '972500000000', sentAtMs: NOW, text: `${CANARY}-message`, forwarded: false, conversationId: conversation, mode: 'smart' },
+      deps([{ tool: 'calendar.list_events', args: {} }]),
+    );
+    if (card.action !== 'reply' || !card.buttons) throw new Error('expected a card');
+    const allow = card.buttons.find((button) => button.id.endsWith(':conv'))!.id;
+
+    const done = await handleInbound(
+      { kind: 'button', wamid: 'app:in:CONSENT-TAP', from: '972500000000', sentAtMs: NOW, buttonId: allow, forwarded: false, conversationId: conversation },
+      deps([{ text: `${CANARY}-reply` }]),
+    );
+    expect(done).toMatchObject({ action: 'reply', text: `${CANARY}-reply` });
+
+    const logs = written.join('\n');
+    expect(logs).toContain('agent_consent_asked');
+    expect(logs).toContain('agent_consent_answered');
+    expect(logs).not.toContain(CANARY);
+    // The nonce of the button never reaches a log.
+    expect(logs).not.toContain(allow.split(':')[2]);
+
+    const tables = driver.exec(`SELECT name FROM sqlite_master WHERE type = 'table'`).map((row) => String(row['name']));
+    const dump = tables.map((table) => JSON.stringify(driver.exec(`SELECT * FROM "${table}"`))).join('\n');
+    expect(dump).not.toContain(CANARY);
+    expect(dump).not.toContain(allow.split(':')[2]);
     expect(driver.exec('SELECT ciphertext FROM agent_turns')[0]?.['ciphertext']).toBeNull();
   });
 });

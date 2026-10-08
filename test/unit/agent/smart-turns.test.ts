@@ -6,9 +6,10 @@
  * here: a local conversation never reaches Gemini (the shared thread, a
  * conversation the server never recorded, shared text, a voice note, a missing
  * key, the read-only try); a smart one asks Gemini first and qwen when Gemini
- * has no room; in a smart conversation only public tools are offered, on every
- * model, until the consent gate exists (slice 5); and its history keeps
- * placeholders for anything that is not public and for someone else's words.
+ * has no room; without a consent store (these services have none) a smart
+ * conversation is offered public tools only, on every model; and its history
+ * keeps placeholders for anything that is not public and for someone else's
+ * words. The consent gate itself (slice 5) is `consent-gate.test.ts`.
  */
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { Repository } from '../../../src/core/repo.js';
@@ -63,6 +64,21 @@ describe('smartOfferedTools', () => {
     expect(smart).toEqual(offered.filter((name) => dataSourceOf(name) === 'public'));
     for (const name of ['calendar.list_events', 'reminders.create', 'notes.save', 'phone.sms', 'expenses.add'] as ToolName[]) {
       expect(smart).not.toContain(name);
+    }
+  });
+
+  it('adds the granted sources, and every consent source when the turn may ask; never a private tool (slice 5)', () => {
+    const offered = agentToolNames({ cards: true, fileCards: true, phoneReads: true, grants: { gmail: true, tasks: true, drive: true } });
+    const granted = smartOfferedTools(offered, { granted: ['calendar'], ask: false });
+    expect(granted).toContain('calendar.list_events');
+    expect(granted).toContain('nav.go');
+    expect(granted).not.toContain('reminders.list');
+    expect(granted.every((name) => ['public', 'calendar'].includes(dataSourceOf(name)))).toBe(true);
+
+    const asking = smartOfferedTools(offered, { granted: [], ask: true });
+    expect(asking).toEqual(offered.filter((name) => dataSourceOf(name) !== 'private'));
+    for (const name of ['notes.find', 'lists.show', 'portfolio.show', 'memory.remember'] as ToolName[]) {
+      expect(asking).not.toContain(name);
     }
   });
 

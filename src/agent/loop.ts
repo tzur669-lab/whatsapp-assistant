@@ -19,6 +19,12 @@
  * A phone read (§6.21) is the one outcome that neither returns nor ends: the
  * turn is handed back as `suspend`, stored, and picked up by `resumeAgentTurn`
  * when the phone answers — same model, same caps, calls already spent counted.
+ *
+ * In a smart conversation (2026-10-08) a call to a tool whose data source the
+ * user has not allowed suspends too, before anything is resolved or read: the
+ * user answers a card, and `resumeAfterConsent` runs the stored call through
+ * this same path, or tells the model the user declined. At most two pauses a
+ * turn: the card, then the phone read it allowed.
  */
 import type { Reply, TurnContext } from '../core/orchestrator.js';
 import { runIntent } from '../core/orchestrator.js';
@@ -30,7 +36,7 @@ import type { Lang } from '../render/format-time.js';
 import { scrubForModel } from '../security/scrub.js';
 import type { Logger } from '../security/redact.js';
 import { REGISTRY, TOOL_NAMES } from '../tools/registry.js';
-import type { ToolName } from '../tools/registry.js';
+import type { ConsentSource, ToolName } from '../tools/registry.js';
 import type { PhoneReadInput, PhoneReadResult } from '../tools/phone-reads.js';
 import { phoneReadRefused, phoneReadText } from '../render/phone-reads.js';
 import type { MessageScope, Reservation, TokenBudget } from './budget.js';
@@ -43,6 +49,8 @@ import { languageLine, nowLine, READ_ONLY_NOTE, SMART_NOTE, SYSTEM_PROMPT } from
 import type { AgentMessage, AgentProvider, AgentResponse, ToolCall, WireTool } from './provider.js';
 import { wireToolCall } from './provider.js';
 import { agentToolNames, fromWireName, smartOfferedTools, TAINTING_TOOLS, wireTools } from './tools.js';
+import { consentSourceOf } from './consents.js';
+import { MAX_SUSPENDS } from './turns.js';
 
 export const MAX_MODEL_CALLS = 3;
 /** One model's minute bucket is 8K; a turn has to fit in one (plan K4). The default; `models.ts` sets each. */
@@ -126,8 +134,9 @@ export type AgentTurnInput = {
   /** The paired app runs action cards, so phone actions may be offered (§6.20). */
   cards?: boolean;
   /**
-   * The app also saves a file a card carries (2026-10-05). Not kept in a
-   * suspended turn: a resumed turn is not offered the export.
+   * The app also saves a file a card carries (2026-10-05). Kept in a smart
+   * turn waiting for consent, so an approved export still runs (slice 5); a
+   * local turn's resume is not offered the export, as before.
    */
   fileCards?: boolean;
   /** The paired app answers phone reads, and this is a typed message (§6.21). */
@@ -140,20 +149,49 @@ export type AgentTurnInput = {
    */
   readOnly?: boolean;
   /**
-   * The turn belongs to a smart conversation (2026-10-08): only the public
-   * tools are offered, on every model (`smartOfferedTools`), the facts are
-   * never sent, and a smart model among the providers may take it. Absent: a
-   * smart model is never asked, whatever the providers hold.
+   * The turn belongs to a smart conversation (2026-10-08): it is offered what
+   * `smartOfferedTools` keeps, on every model, the facts are never sent, and a
+   * smart model among the providers may take it. Absent: a smart model is never
+   * asked, whatever the providers hold.
    */
   smart?: boolean;
+  /**
+   * A smart conversation's consents (slice 5). `granted`: the sources it
+   * allowed; their tools are offered and run. `ask`: the tools of every other
+   * consent source are offered too, and a call to one suspends the turn for the
+   * user's answer instead of running. Only on the conversation's own typed
+   * words — never a voice note, the read-only try or shared text. Absent:
+   * public tools only.
+   */
+  consent?: { granted: readonly ConsentSource[]; ask: boolean };
 };
 
+/** The user's answer on a consent card (slice 5). */
+export type ConsentDecision = 'once' | 'conversation' | 'declined';
+
 /**
- * A turn waiting for the phone (§6.21): everything needed to go on from the
- * tool call that asked, and nothing that would let it start over. Stored
- * encrypted for minutes (`turns.ts`); never logged.
+ * A turn waiting for the phone (§6.21) or for the user's consent (slice 5):
+ * everything needed to go on from the tool call that asked, and nothing that
+ * would let it start over. Stored encrypted for minutes (`turns.ts`); never
+ * logged. A phone turn carries its query; a consent turn the source it asks.
  */
-export type SuspendedState = {
+export type SuspendedState = SuspendedCommon &
+  (
+    | {
+        /** Absent in every state stored before consent: the phone. */
+        kind?: 'phone';
+        query: PhoneReadInput;
+        source?: undefined;
+      }
+    | {
+        kind: 'consent';
+        /** The source the card asks for: the stored call's tool's. */
+        source: ConsentSource;
+        query?: undefined;
+      }
+  );
+
+type SuspendedCommon = {
   model: string;
   /** The app's conversation the turn belongs to, for its history (2026-10-01). */
   conversation?: string;
@@ -171,7 +209,6 @@ export type SuspendedState = {
   cards: boolean;
   toolCallId: string;
   tool: ToolName;
-  query: PhoneReadInput;
   /**
    * The tools the turn was offered, narrowed by code (2026-10-06). Intersected
    * with a fresh `agentToolNames` on resume; absent in older states: the full set.
@@ -184,6 +221,12 @@ export type SuspendedState = {
   mode?: 'smart' | 'local';
   /** The message was someone else's words (shared or forwarded). Set by the pipeline. */
   foreign?: boolean;
+  /** Sources the user approved for this turn only (slice 5): the history may keep what they showed. */
+  once?: ConsentSource[];
+  /** The pauses this turn has made, this one included (slice 5). Absent: one. */
+  suspends?: number;
+  /** A smart turn's app saves files (slice 5): an approved export is still offered. */
+  fileCards?: boolean;
 };
 
 export type AgentResult =
@@ -198,6 +241,8 @@ export type AgentResult =
        * may keep. Absent: none ran.
        */
       tools?: ToolName[];
+      /** Sources the user approved for this turn only (slice 5). Absent: none. */
+      once?: ConsentSource[];
     }
   | {
       kind: 'failed';
@@ -208,8 +253,9 @@ export type AgentResult =
       readText?: string;
       tainted: boolean;
       tools?: ToolName[];
+      once?: ConsentSource[];
     }
-  /** A phone read was allowed: the turn waits for the phone's answer. */
+  /** A phone read was allowed, or a source needs the user's consent: the turn waits. */
   | { kind: 'suspend'; state: SuspendedState };
 
 export type AgentDeps = {
@@ -239,8 +285,20 @@ type Loop = {
   tainted: boolean;
   toolRan: boolean;
   readText: string | undefined;
-  /** Set once a phone read has answered: one per turn. */
-  phoneReadDone: boolean;
+  /**
+   * The pauses this turn has made so far (2026-10-08; it replaced a "phone
+   * read done" flag). A model's call may pause the turn only while none has;
+   * the call the user approved may make the second (`MAX_SUSPENDS`).
+   */
+  suspends: number;
+  /** The user declined access (slice 5): the model may only word its answer. */
+  declined: boolean;
+  /** Consent sources the turn may use without asking: allowed in the conversation, or for this turn. */
+  allowed: Set<ConsentSource>;
+  /** Of those, the ones approved for this turn only. */
+  once: ConsentSource[];
+  /** A call to a source not allowed asks the user (true) or is refused (false). */
+  ask: boolean;
   offered: ToolName[];
   tools: WireTool[];
   toolChars: number;
@@ -248,6 +306,7 @@ type Loop = {
   lang: Lang;
   turn: TurnContext;
   cards: boolean;
+  fileCards: boolean;
   grants?: { gmail?: boolean; tasks?: boolean; drive?: boolean };
   /** The conversation's mode, kept in a suspended state. */
   mode: 'smart' | 'local';
@@ -277,9 +336,12 @@ export async function runAgentTurn(input: AgentTurnInput, deps: AgentDeps): Prom
     ...(input.grants ? { grants: input.grants } : {}),
     ...(readOnly ? { readOnly } : {}),
   });
-  // A smart conversation's turn is offered the public tools only, whichever
-  // model takes it: consent belongs to the conversation (2026-10-08).
-  const offered = smartConversation ? smartOfferedTools(base) : base;
+  // A smart conversation's turn is offered the same tools whichever model takes
+  // it: consent belongs to the conversation (2026-10-08). The public ones, the
+  // allowed sources', and — when it may ask — every other consent source's.
+  const granted = smartConversation ? (input.consent?.granted ?? []) : [];
+  const ask = smartConversation && !readOnly && input.consent?.ask === true;
+  const offered = smartConversation ? smartOfferedTools(base, { granted, ask }) : base;
   // A smart model never takes a turn that is not a smart conversation's, even
   // if a caller handed one in: the pipeline's lists are the first lock, this
   // the second.
@@ -388,7 +450,11 @@ export async function runAgentTurn(input: AgentTurnInput, deps: AgentDeps): Prom
       tainted,
       toolRan: false,
       readText: undefined,
-      phoneReadDone: false,
+      suspends: 0,
+      declined: false,
+      allowed: new Set(granted),
+      once: [],
+      ask,
       offered: chosen.selection.tools,
       tools: chosen.tools,
       toolChars: chosen.toolChars,
@@ -396,6 +462,7 @@ export async function runAgentTurn(input: AgentTurnInput, deps: AgentDeps): Prom
       lang: input.lang,
       turn: input.turn,
       cards,
+      fileCards: cards && input.fileCards === true,
       ...(input.grants ? { grants: input.grants } : {}),
       mode: smartConversation ? 'smart' : 'local',
       ran: [],
@@ -411,13 +478,20 @@ export async function runAgentTurn(input: AgentTurnInput, deps: AgentDeps): Prom
  * the same tools, so the conversation the model sees is the one it was having.
  * The answer is rendered by code, scrubbed, and taints the rest of the turn.
  * A phone that could not read ends the turn with code's own words.
+ *
+ * `granted`: a smart conversation's allowed sources now (slice 5).
  */
 export async function resumeAgentTurn(
   state: SuspendedState,
   result: PhoneReadResult,
   turn: TurnContext,
   deps: AgentDeps,
+  granted: readonly ConsentSource[] = [],
 ): Promise<AgentResult> {
+  // A consent turn is never the phone's to answer (`turns.ts` refuses it first).
+  if (state.kind === 'consent') return { kind: 'failed', errorCode: 'state_kind', toolRan: false, tainted: true };
+  const once = state.once ?? [];
+
   if (result.status !== 'ok') {
     return {
       kind: 'reply',
@@ -428,30 +502,27 @@ export async function resumeAgentTurn(
   }
 
   const readText = phoneReadText(state.query, result.items, state.lang);
-  // The stored mode picks who may go on (2026-10-08): a smart model only for a
-  // smart conversation's turn; a state stored before modes is local.
-  const mode = state.mode ?? 'local';
-  const allowed = mode === 'smart' ? deps.providers : deps.providers.filter((candidate) => !isSmart(candidate));
-  const provider = allowed.find((candidate) => candidate.model === state.model);
   // What ran before the phone was asked, the phone read included: from the
   // stored calls, for the history gate.
   const ran = ranIn(state.messages);
-  if (!provider) {
-    return { kind: 'failed', errorCode: 'model_unavailable', toolRan: true, readText, tainted: true, ...(ran.length > 0 ? { tools: ran } : {}) };
+  const resumed = resumeOn(state, deps, [...granted, ...once]);
+  if (!resumed) {
+    return {
+      kind: 'failed',
+      errorCode: 'model_unavailable',
+      toolRan: true,
+      readText,
+      tainted: true,
+      ...(ran.length > 0 ? { tools: ran } : {}),
+      ...(once.length > 0 ? { once: [...once] } : {}),
+    };
   }
 
-  const fresh = agentToolNames({ cards: state.cards, phoneReads: true, ...(state.grants ? { grants: state.grants } : {}) });
-  // The narrowed set the turn started with, but never a tool no longer offered
-  // (a grant revoked while the phone was reading), and in a smart conversation
-  // never more than it may be offered now.
-  const narrowed = state.offered ? fresh.filter((tool) => state.offered!.includes(tool)) : fresh;
-  const offered = mode === 'smart' ? smartOfferedTools(narrowed) : narrowed;
-  const tools = wireTools(offered);
   return drive(
     {
-      provider,
+      ...resumed,
       messages: [
-        { role: 'system', content: isSmart(provider) ? SMART_SYSTEM_PROMPT : SYSTEM_PROMPT },
+        { role: 'system', content: isSmart(resumed.provider) ? SMART_SYSTEM_PROMPT : SYSTEM_PROMPT },
         ...state.messages,
         { role: 'tool', tool_call_id: state.toolCallId, content: resultForModel(readText) },
       ],
@@ -460,20 +531,137 @@ export async function resumeAgentTurn(
       tainted: true,
       toolRan: true,
       readText,
-      phoneReadDone: true,
-      offered,
-      tools,
-      toolChars: JSON.stringify(tools).length,
+      // The phone read was a pause: a second one now would be the model's own.
+      suspends: state.suspends ?? 1,
+      declined: false,
+      once: [...once],
       text: state.text,
       lang: state.lang,
       turn,
       cards: state.cards,
+      fileCards: state.fileCards === true,
       ...(state.grants ? { grants: state.grants } : {}),
-      mode,
       ran,
     },
     deps,
   );
+}
+
+/**
+ * Go on with a turn that waited for the user's consent (slice 5).
+ *
+ * Approved — for this turn or for the conversation — the stored call runs now
+ * through the path every call takes (strict Zod, the weekday check, `resolve`,
+ * policy, confirm), exactly as if the model had just asked; a phone read it
+ * leads to pauses the turn a second time. Declined, nothing runs: the model is
+ * told so, and may only word its answer. Same model, same caps, as after a
+ * phone read.
+ *
+ * `granted`: the conversation's allowed sources now, read after the tap.
+ */
+export async function resumeAfterConsent(
+  state: SuspendedState,
+  decision: ConsentDecision,
+  granted: readonly ConsentSource[],
+  turn: TurnContext,
+  deps: AgentDeps,
+): Promise<AgentResult> {
+  if (state.kind !== 'consent' || state.mode !== 'smart') return { kind: 'failed', errorCode: 'state_kind', toolRan: false, tainted: true };
+  const source = state.source;
+  const once = [...(state.once ?? [])];
+  if (decision === 'once' && !once.includes(source)) once.push(source);
+  const allowed = decision === 'declined' ? [...granted, ...once] : [...granted, ...once, source];
+  // The call waiting for the answer is the last message; it has not run.
+  const ran = ranIn(state.messages.slice(0, -1));
+  const toolRan = state.readText !== undefined;
+
+  const resumed = resumeOn(state, deps, allowed);
+  if (!resumed) {
+    return {
+      kind: 'failed',
+      errorCode: 'model_unavailable',
+      toolRan,
+      ...(state.readText === undefined ? {} : { readText: state.readText }),
+      tainted: state.tainted,
+      ...(ran.length > 0 ? { tools: ran } : {}),
+      ...(once.length > 0 ? { once } : {}),
+    };
+  }
+
+  const last = state.messages.at(-1);
+  const stored = last?.role === 'assistant' ? last.tool_calls?.[0] : undefined;
+  if (!stored || stored.id !== state.toolCallId || fromWireName(stored.function.name, [state.tool]) !== state.tool) {
+    return { kind: 'failed', errorCode: 'state_kind', toolRan, tainted: state.tainted };
+  }
+
+  const loop: Loop = {
+    ...resumed,
+    messages: [{ role: 'system', content: isSmart(resumed.provider) ? SMART_SYSTEM_PROMPT : SYSTEM_PROMPT }, ...state.messages],
+    spent: state.spent,
+    calls: state.calls,
+    tainted: state.tainted,
+    toolRan,
+    readText: state.readText,
+    suspends: state.suspends ?? 1,
+    declined: decision === 'declined',
+    once,
+    text: state.text,
+    lang: state.lang,
+    turn,
+    cards: state.cards,
+    fileCards: state.fileCards === true,
+    ...(state.grants ? { grants: state.grants } : {}),
+    ran,
+  };
+
+  if (decision === 'declined') {
+    loop.messages.push({ role: 'tool', tool_call_id: state.toolCallId, content: declinedResult(source) });
+    return drive(loop, deps);
+  }
+  return drive(loop, deps, { id: stored.id, name: stored.function.name, arguments: stored.function.arguments });
+}
+
+/** What the model is told when the user declined: the source, and nothing else. */
+function declinedResult(source: ConsentSource): string {
+  return JSON.stringify({ error: 'user_declined_access', source });
+}
+
+/**
+ * Who goes on with a stored turn, and with which tools: the same model, if the
+ * stored mode still allows it — a smart model only for a smart conversation's
+ * turn; a state stored before modes is local — and the tools the turn started
+ * with, never one no longer offered (a grant revoked meanwhile) and in a smart
+ * conversation never more than it may be offered now. A resumed turn asks no
+ * one again: a source not allowed by now is refused.
+ */
+function resumeOn(
+  state: SuspendedState,
+  deps: AgentDeps,
+  allowed: readonly ConsentSource[],
+): Pick<Loop, 'provider' | 'offered' | 'tools' | 'toolChars' | 'mode' | 'allowed' | 'ask'> | null {
+  const mode = state.mode ?? 'local';
+  const candidates = mode === 'smart' ? deps.providers : deps.providers.filter((candidate) => !isSmart(candidate));
+  const provider = candidates.find((candidate) => candidate.model === state.model);
+  if (!provider) return null;
+
+  const fresh = agentToolNames({
+    cards: state.cards,
+    fileCards: state.fileCards === true,
+    phoneReads: true,
+    ...(state.grants ? { grants: state.grants } : {}),
+  });
+  const narrowed = state.offered ? fresh.filter((tool) => state.offered!.includes(tool)) : fresh;
+  const offered = mode === 'smart' ? smartOfferedTools(narrowed, { granted: allowed, ask: false }) : narrowed;
+  const tools = wireTools(offered);
+  return {
+    provider,
+    offered,
+    tools,
+    toolChars: JSON.stringify(tools).length,
+    mode,
+    allowed: new Set(mode === 'smart' ? allowed : []),
+    ask: false,
+  };
 }
 
 /** The registry tools a stored conversation called, in order. */
@@ -489,11 +677,20 @@ function ranIn(messages: readonly AgentMessage[]): ToolName[] {
   return ran;
 }
 
-async function drive(loop: Loop, deps: AgentDeps): Promise<AgentResult> {
+/**
+ * Run the turn: the model, its calls, until a reply, a pause or a failure.
+ * `approved`: the call the user just allowed on a consent card (slice 5), run
+ * first — exactly as if the model had just asked for it, without a model call
+ * — and already the last message.
+ */
+async function drive(loop: Loop, deps: AgentDeps, approved?: ToolCall): Promise<AgentResult> {
   const { log, budget } = deps;
   const model = loop.provider.model;
 
-  const ranTools = () => (loop.ran.length > 0 ? { tools: [...loop.ran] } : {});
+  const ranTools = () => ({
+    ...(loop.ran.length > 0 ? { tools: [...loop.ran] } : {}),
+    ...(loop.once.length > 0 ? { once: [...loop.once] } : {}),
+  });
   const failed = (errorCode: string): AgentResult => ({
     kind: 'failed',
     errorCode,
@@ -503,6 +700,92 @@ async function drive(loop: Loop, deps: AgentDeps): Promise<AgentResult> {
     ...ranTools(),
   });
 
+  /** What a pause stores: the conversation up to and including the call that paused it. */
+  const paused = (toolCall: ToolCall, tool: ToolName, callStored: boolean): SuspendedCommon => {
+    const suspends = loop.suspends + 1;
+    return {
+      model,
+      messages: callStored
+        ? loop.messages.slice(1)
+        : [...loop.messages.slice(1), { role: 'assistant', content: null, tool_calls: [wireToolCall(toolCall)] }],
+      spent: loop.spent,
+      calls: loop.calls,
+      tainted: loop.tainted,
+      ...(loop.readText === undefined ? {} : { readText: loop.readText }),
+      text: loop.text,
+      lang: loop.lang,
+      cards: loop.cards,
+      ...(loop.grants ? { grants: loop.grants } : {}),
+      toolCallId: toolCall.id,
+      tool,
+      offered: loop.offered,
+      ...(loop.mode === 'smart' ? { mode: loop.mode } : {}),
+      ...(loop.once.length > 0 ? { once: [...loop.once] } : {}),
+      ...(suspends > 1 ? { suspends } : {}),
+      // Only a smart turn keeps it: a local turn's stored state is as before.
+      ...(loop.mode === 'smart' && loop.fileCards ? { fileCards: true } : {}),
+    };
+  };
+
+  /** Run one call. Null: back to the model. Otherwise the turn ends, or pauses, here. */
+  const act = async (toolCall: ToolCall, isApproved: boolean): Promise<AgentResult | null> => {
+    // The approved call is already the last message; a model's is added here.
+    const addCall = () => {
+      if (!isApproved) loop.messages.push({ role: 'assistant', content: null, tool_calls: [wireToolCall(toolCall)] });
+    };
+    const outcome = await runToolCall(toolCall, loop, log, isApproved);
+    if (outcome.kind === 'retry') {
+      addCall();
+      loop.messages.push({ role: 'tool', tool_call_id: toolCall.id, content: outcome.result });
+      return null;
+    }
+
+    if (outcome.kind === 'consent') {
+      // Nothing was resolved or read: the user answers first (slice 5).
+      return {
+        kind: 'suspend',
+        state: { ...paused(toolCall, outcome.tool, isApproved), kind: 'consent', source: outcome.source },
+      };
+    }
+
+    const reply = outcome.reply;
+    if (reply.deviceQuery) {
+      // Nothing ran: the phone answers this, and the turn waits for it (§6.21).
+      return { kind: 'suspend', state: { ...paused(toolCall, outcome.tool, isApproved), query: reply.deviceQuery } };
+    }
+
+    loop.toolRan = true;
+    loop.ran.push(outcome.tool);
+    if (!reply.read) {
+      // A reply that ends the turn still carries what it read: a terminal read
+      // of mail, or a card built from an event, is someone else's words in the
+      // history the model sees next time (2026-10-06).
+      const tainted = loop.tainted || TAINTING_TOOLS.has(outcome.tool) || reply.tainting === true;
+      // A backup's question is stored tainted, so the answered write still confirms (§6).
+      const question = reply.question
+        ? { ...reply.question, tainted: tainted || loop.provider.role !== 'primary' }
+        : undefined;
+      return {
+        kind: 'reply',
+        reply: { ...reply, ...(question ? { question } : {}) },
+        tainted,
+        byModel: false,
+        ...ranTools(),
+      };
+    }
+
+    if (TAINTING_TOOLS.has(outcome.tool) || reply.tainting) loop.tainted = true;
+    loop.readText = reply.text;
+    addCall();
+    loop.messages.push({ role: 'tool', tool_call_id: toolCall.id, content: resultForModel(reply.text) });
+    return null;
+  };
+
+  if (approved) {
+    const ended = await act(approved, true);
+    if (ended) return ended;
+  }
+
   const scope = deps.scope ?? newMessageScope();
   // The model's own caps (2026-10-08); a Groq model's are today's.
   const { turnCap, maxModelCalls, charsPerToken } = limitsOf(model);
@@ -510,10 +793,11 @@ async function drive(loop: Loop, deps: AgentDeps): Promise<AgentResult> {
 
   while (loop.calls < maxModelCalls) {
     const call = loop.calls;
-    // Text-only once a read has answered, and on the last call: the model can
-    // only word the answer, and the catalog is not paid for again (§3).
+    // Text-only once a read has answered (a phone's included), once the user
+    // declined access, and on the last call: the model can only word the
+    // answer, and the catalog is not paid for again (§3).
     const textOnly =
-      !deps.legacyCatalog && (loop.readText !== undefined || loop.phoneReadDone || call === maxModelCalls - 1);
+      !deps.legacyCatalog && (loop.readText !== undefined || loop.declined || call === maxModelCalls - 1);
     const tools = textOnly ? [] : loop.tools;
     const prompt = estimateTokens(loop.messages, textOnly ? 0 : loop.toolChars, charsPerToken);
     if (loop.spent + prompt + COMPLETION_RESERVE > turnCap) {
@@ -572,65 +856,8 @@ async function drive(loop: Loop, deps: AgentDeps): Promise<AgentResult> {
 
     // One tool call per model call. A second one in the same response is not
     // run: the next call can ask for it once it has seen this one's result.
-    const outcome = await runToolCall(toolCall, loop, log);
-    if (outcome.kind === 'retry') {
-      loop.messages.push({ role: 'assistant', content: null, tool_calls: [wireToolCall(toolCall)] });
-      loop.messages.push({ role: 'tool', tool_call_id: toolCall.id, content: outcome.result });
-      continue;
-    }
-
-    const reply = outcome.reply;
-    if (reply.deviceQuery) {
-      // Nothing ran: the phone answers this, and the turn waits for it (§6.21).
-      return {
-        kind: 'suspend',
-        state: {
-          model,
-          messages: [
-            ...loop.messages.slice(1),
-            { role: 'assistant', content: null, tool_calls: [wireToolCall(toolCall)] },
-          ],
-          spent: loop.spent,
-          calls: loop.calls,
-          tainted: loop.tainted,
-          ...(loop.readText === undefined ? {} : { readText: loop.readText }),
-          text: loop.text,
-          lang: loop.lang,
-          cards: loop.cards,
-          ...(loop.grants ? { grants: loop.grants } : {}),
-          toolCallId: toolCall.id,
-          tool: outcome.tool,
-          query: reply.deviceQuery,
-          offered: loop.offered,
-          ...(loop.mode === 'smart' ? { mode: loop.mode } : {}),
-        },
-      };
-    }
-
-    loop.toolRan = true;
-    loop.ran.push(outcome.tool);
-    if (!reply.read) {
-      // A reply that ends the turn still carries what it read: a terminal read
-      // of mail, or a card built from an event, is someone else's words in the
-      // history the model sees next time (2026-10-06).
-      const tainted = loop.tainted || TAINTING_TOOLS.has(outcome.tool) || reply.tainting === true;
-      // A backup's question is stored tainted, so the answered write still confirms (§6).
-      const question = reply.question
-        ? { ...reply.question, tainted: tainted || loop.provider.role !== 'primary' }
-        : undefined;
-      return {
-        kind: 'reply',
-        reply: { ...reply, ...(question ? { question } : {}) },
-        tainted,
-        byModel: false,
-        ...ranTools(),
-      };
-    }
-
-    if (TAINTING_TOOLS.has(outcome.tool) || reply.tainting) loop.tainted = true;
-    loop.readText = reply.text;
-    loop.messages.push({ role: 'assistant', content: null, tool_calls: [wireToolCall(toolCall)] });
-    loop.messages.push({ role: 'tool', tool_call_id: toolCall.id, content: resultForModel(reply.text) });
+    const ended = await act(toolCall, false);
+    if (ended) return ended;
   }
 
   return failed('max_calls');
@@ -639,16 +866,21 @@ async function drive(loop: Loop, deps: AgentDeps): Promise<AgentResult> {
 type ToolOutcome =
   | { kind: 'ran'; tool: ToolName; reply: Reply }
   /** Nothing ran; this goes back to the model as the tool's result. */
-  | { kind: 'retry'; result: string };
+  | { kind: 'retry'; result: string }
+  /** Nothing ran: the source is not allowed, and the user is asked (slice 5). */
+  | { kind: 'consent'; tool: ToolName; source: ConsentSource };
 
-async function runToolCall(call: ToolCall, loop: Loop, log: Logger): Promise<ToolOutcome> {
+async function runToolCall(call: ToolCall, loop: Loop, log: Logger, approved: boolean): Promise<ToolOutcome> {
   const tool = fromWireName(call.name, loop.offered);
   if (!tool) {
     log.warn('agent_unknown_tool', {});
     return { kind: 'retry', result: '{"error":"unknown_tool"}' };
   }
-  // One phone read per turn: a second would suspend a turn already resumed.
-  if (loop.phoneReadDone && REGISTRY[tool].phoneRead) {
+  // A model's call may pause the turn only while it has not paused; the call
+  // the user approved may make the second pause (2026-10-08). So one phone
+  // read per turn: a second would suspend a turn already resumed.
+  const maySuspend = loop.suspends === 0 || (approved && loop.suspends < MAX_SUSPENDS);
+  if (REGISTRY[tool].phoneRead && !maySuspend) {
     return { kind: 'retry', result: '{"error":"one_phone_read_per_turn"}' };
   }
 
@@ -679,6 +911,20 @@ async function runToolCall(call: ToolCall, loop: Loop, log: Logger): Promise<Too
   const checked = checkNamedWeekdays(validated.draft, loop.text);
   if (checked.mismatched.length > 0) {
     log.info('weekday_mismatch', { intent: tool, slotKeys: checked.mismatched.join(',') });
+  }
+
+  // Consent (smart conversations, slice 5): a source the conversation has not
+  // allowed is never resolved or read. A turn that may ask pauses for the
+  // user's answer; one that may not — a resumed turn, a second ask — is
+  // refused like a tool not offered.
+  const source = loop.mode === 'smart' ? consentSourceOf(tool) : null;
+  if (source !== null && !loop.allowed.has(source)) {
+    if (!loop.ask || !maySuspend) {
+      log.info('agent_consent_refused', { tool, source });
+      return { kind: 'retry', result: '{"error":"access_not_allowed"}' };
+    }
+    log.info('agent_consent_needed', { tool, source });
+    return { kind: 'consent', tool, source };
   }
 
   // A backup model's writes always confirm (§6). A provider with no role is a backup.

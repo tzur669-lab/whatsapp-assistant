@@ -22,6 +22,8 @@ export type Command =
   | { kind: 'memory' }
   /** `/forget memory`: forget every fact (§6.26). `/forget` alone keeps them. */
   | { kind: 'forget_memory' }
+  /** `/consents`: what this smart conversation allowed, each revocable (2026-10-08). */
+  | { kind: 'consents' }
   /** `/connect google|gmail|tasks|drive`: one grant each (§6.6, 2026-10-01). */
   | { kind: 'connect_google'; grant: GrantName }
   /** `/pair` issues a code for the phone app; `/pair off` unpairs (PLAN §6.17). */
@@ -58,6 +60,7 @@ const COMMANDS: ReadonlyArray<readonly [RegExp, Command]> = [
   [/^\/forget$/i, { kind: 'forget' }],
   [/^\/forget\s+memory$/i, { kind: 'forget_memory' }],
   [/^\/memory$/i, { kind: 'memory' }],
+  [/^\/consents$/i, { kind: 'consents' }],
   [/^\/shabbat$/i, { kind: 'shabbat', set: null }],
   [/^\/shabbat\s+on$/i, { kind: 'shabbat', set: true }],
   [/^\/shabbat\s+off$/i, { kind: 'shabbat', set: false }],

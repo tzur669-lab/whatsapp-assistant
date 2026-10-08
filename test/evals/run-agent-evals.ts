@@ -136,7 +136,8 @@ let smart = false;
 
 function offered() {
   const grants = { gmail: true, tasks: true, drive: true };
-  if (smart) return smartOfferedTools(agentToolNames({ cards: true, fileCards: true, phoneReads: true, grants }));
+  // A typed smart turn that may ask for consent: public and every consent source's tools (slice 5).
+  if (smart) return smartOfferedTools(agentToolNames({ cards: true, fileCards: true, phoneReads: true, grants }), { granted: [], ask: true });
   return readOnly
     ? agentToolNames({ cards: false, phoneReads: false, grants, readOnly: true })
     : agentToolNames({ cards: true, fileCards: true, phoneReads: true, grants });

@@ -110,6 +110,7 @@ import { QuotaStore, SqlDayRequestCounter, meterGroqFetch } from '../core/quota.
 import type { ModelSpec, ServerLimits } from '../core/quota.js';
 import { AgentLock } from '../agent/lock.js';
 import { SuspendedTurns } from '../agent/turns.js';
+import { ConversationConsents } from '../agent/consents.js';
 import { defangLinks } from '../security/scrub.js';
 import { DurableObjectSqlDriver } from './sql-repo.js';
 import { MIGRATIONS } from './migrations.js';
@@ -171,8 +172,10 @@ export class AssistantDO implements DurableObject {
   /** "לא הבנת" capture (§6.23). Given to the pipeline only, never to the agent. */
   private readonly exchanges: ExchangeLog;
   private readonly agentLock: AgentLock;
-  /** Agent turns waiting for the phone to read (§6.21). */
+  /** Agent turns waiting for the phone to read (§6.21), or for the user's consent (slice 5). */
   private readonly agentTurns: SuspendedTurns;
+  /** The sources each smart conversation allowed (slice 5, 2026-10-08). */
+  private readonly consents: ConversationConsents;
   /**
    * Memory only: the last minute of spend per model (§6.19). Each real spend is
    * also written down, for the quota screen's rolling day; a request-limited
@@ -268,6 +271,7 @@ export class AssistantDO implements DurableObject {
     this.quotes = createQuoteSources(this.fetchImpl, this.env.QUOTES_API_KEY, now);
     this.agentLock = new AgentLock(this.sql, now);
     this.agentTurns = new SuspendedTurns(this.sql, now, keyringOnce);
+    this.consents = new ConversationConsents(this.sql, now);
 
     // blockConcurrencyWhile keeps requests queued until the schema is ready.
     void this.ctx.blockConcurrencyWhile(async () => {
@@ -1137,10 +1141,13 @@ export class AssistantDO implements DurableObject {
 
     // Still waiting for the phone to read (§6.21): the same query again. The
     // phone's result is idempotent, so answering it twice continues it once.
+    // Waiting for the user's consent (slice 5): its card was the answer, and
+    // the app has it — still waiting, never a device query.
     const suspended = this.agentTurns.byWamid(`${APP_INBOUND_PREFIX}${messageId}`);
+    if (suspended?.status === 'waiting' && suspended.kind === 'consent') return { status: 'pending' };
     if (suspended?.status === 'waiting' && suspended.ciphertext !== null) {
       const state = await this.agentTurns.open(suspended.queryId, suspended.principal, suspended.ciphertext);
-      if (state) return { status: 'device_query', queryId: suspended.queryId, query: state.query };
+      if (state && state.kind !== 'consent') return { status: 'device_query', queryId: suspended.queryId, query: state.query };
     }
     if (suspended?.status === 'running') return { status: 'pending' };
 
@@ -1286,6 +1293,12 @@ export class AssistantDO implements DurableObject {
    */
   private settleExpiredTurns(): void {
     for (const expired of this.agentTurns.expireDue()) {
+      if (expired.kind === 'consent') {
+        // The card was the message's answer; a tap on it now hears "expired".
+        // No phone was asked, so nothing says the phone did not answer.
+        this.repo.markInboundOutcome(expired.wamid, { decision: 'EXPIRED', errorCode: 'E_CONSENT_EXPIRED' });
+        continue;
+      }
       this.repo.markInboundOutcome(expired.wamid, { decision: 'EXPIRED', errorCode: 'E_PHONE_TIMEOUT' });
       if (!expired.wamid.startsWith(APP_INBOUND_PREFIX)) continue;
       const messageId = expired.wamid.slice(APP_INBOUND_PREFIX.length);
@@ -1774,6 +1787,7 @@ export class AssistantDO implements DurableObject {
               history: this.history,
               lock: this.agentLock,
               turns: this.agentTurns,
+              consents: this.consents,
             },
           }
         : {}),

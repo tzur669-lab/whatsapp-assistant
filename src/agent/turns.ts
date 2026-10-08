@@ -21,17 +21,34 @@
  *
  * Voice turns never get here (invariant 13): the phone reads are not offered on
  * them, so a transcript is never in a stored turn.
+ *
+ * A turn may also wait for the user's consent (smart conversations, slice 5,
+ * 2026-10-08): `kind = 'consent'`. Same life, same encryption, same three
+ * minutes; it is taken by a tap on its card (`beginConsent`, which checks the
+ * button's nonce), never by the phone's result (`begin` refuses it), and a
+ * phone turn is never taken by a tap. Neither kind is ever stored for a voice
+ * note, the read-only try or shared text: they are never offered what would
+ * suspend.
  */
 import { z } from 'zod';
 import type { SqlDriver } from '../core/sql.js';
 import type { Keyring } from '../security/crypto.js';
 import { decryptToken, encryptToken } from '../security/crypto.js';
-import { TOOL_NAMES } from '../tools/registry.js';
+import { sha256Hex, timingSafeEqual } from '../confirm/pending.js';
+import { CONSENT_SOURCES, TOOL_NAMES } from '../tools/registry.js';
+import type { ConsentSource } from '../tools/registry.js';
 import { phoneReadInputSchema } from '../tools/phone-reads.js';
+import { isConsentSource, mayKeepForConversation } from './consents.js';
 import type { SuspendedState } from './loop.js';
 
-/** The app waits three minutes for an answer, then stops (Turns.kt). */
+/** The app waits three minutes for an answer, then stops (Turns.kt). A consent card lives as long. */
 export const SUSPEND_TTL_MS = 3 * 60_000;
+/**
+ * At most this many pauses in one turn (2026-10-08): a consent card, then the
+ * phone read it allowed. A model may cause only the first; the second is the
+ * approved call itself.
+ */
+export const MAX_SUSPENDS = 2;
 /** Settled rows answer late results and retries for this long. */
 export const SETTLED_KEEP_MS = 60 * 60_000;
 const MAX_STORED_MESSAGES = 40;
@@ -40,6 +57,9 @@ const AAD_PROVIDER = 'agent-turns';
 
 export type TurnStatus = 'waiting' | 'running' | 'done' | 'superseded' | 'expired';
 
+/** What a suspended turn waits for: the phone's read, or the user's consent. */
+export type TurnKind = 'phone' | 'consent';
+
 export type Begin =
   /** This call owns the turn now: decrypt and go on. */
   | { kind: 'run'; wamid: string; ciphertext: string }
@@ -47,7 +67,18 @@ export type Begin =
   | { kind: 'settled'; wamid: string; status: Exclude<TurnStatus, 'waiting'> }
   | { kind: 'not_found' };
 
-export type WaitingTurn = { queryId: string; principal: string; status: TurnStatus; ciphertext: string | null };
+export type ConsentBegin =
+  /** This tap owns the turn now: decrypt and go on. */
+  | { kind: 'run'; wamid: string; ciphertext: string; source: ConsentSource; conversation: string }
+  /** Someone else got here first, or the turn is over. */
+  | { kind: 'settled'; wamid: string; status: Exclude<TurnStatus, 'waiting'> }
+  /**
+   * No consent turn of this sender with this nonce, or a choice its source does
+   * not offer. Nothing was changed; the real buttons still work.
+   */
+  | { kind: 'refused' };
+
+export type WaitingTurn = { queryId: string; principal: string; status: TurnStatus; ciphertext: string | null; kind: TurnKind };
 
 const wireToolCall = z
   .object({
@@ -85,15 +116,29 @@ const stateSchema = z
     cards: z.boolean(),
     toolCallId: z.string().min(1).max(200),
     tool: z.enum(TOOL_NAMES),
-    query: phoneReadInputSchema,
+    query: phoneReadInputSchema.optional(),
     // The narrowed tool set (2026-10-06); absent in states stored before it.
     offered: z.array(z.enum(TOOL_NAMES)).max(TOOL_NAMES.length).optional(),
     // The conversation's mode and whether the message was someone else's
     // words (2026-10-08); absent in states stored before them: local, own.
     mode: z.enum(['smart', 'local']).optional(),
     foreign: z.boolean().optional(),
+    // What the turn waits for, and for a consent turn the source asked for
+    // (slice 5); absent: the phone. A phone turn has its query, a consent turn
+    // its source, never both.
+    kind: z.enum(['phone', 'consent']).optional(),
+    source: z.enum(CONSENT_SOURCES).optional(),
+    // Sources approved for this turn only, and the pauses it has made.
+    once: z.array(z.enum(CONSENT_SOURCES)).max(CONSENT_SOURCES.length).optional(),
+    suspends: z.number().int().min(1).max(MAX_SUSPENDS).optional(),
+    fileCards: z.boolean().optional(),
   })
-  .strict();
+  .strict()
+  .refine((state) =>
+    state.kind === 'consent'
+      ? state.source !== undefined && state.query === undefined && state.mode === 'smart'
+      : state.query !== undefined && state.source === undefined,
+  );
 
 export class SuspendedTurns {
   constructor(
@@ -102,22 +147,55 @@ export class SuspendedTurns {
     private readonly keyring: () => Keyring,
   ) {}
 
-  /** Write the turn down. Returns the query id the phone answers to. */
+  /** Write a turn waiting for the phone down. Returns the query id the phone answers to. */
   async suspend(principal: string, wamid: string, state: SuspendedState): Promise<string> {
+    if (state.kind === 'consent') throw new Error('E_TURN_KIND');
     const queryId = randomHex(16);
+    await this.insert(queryId, principal, wamid, state, { kind: 'phone' });
+    return queryId;
+  }
+
+  /**
+   * Write a turn waiting for the user's consent down (slice 5). Returns the
+   * query id and the nonce its card's buttons carry; only the nonce's hash is
+   * kept, like a pending action's.
+   */
+  async suspendForConsent(principal: string, wamid: string, state: SuspendedState): Promise<{ queryId: string; nonce: string }> {
+    if (state.kind !== 'consent' || state.conversation === undefined || state.conversation === '') throw new Error('E_TURN_KIND');
+    const queryId = randomHex(16);
+    const nonce = randomHex(16);
+    await this.insert(queryId, principal, wamid, state, {
+      kind: 'consent',
+      nonceHash: digest(nonce),
+      source: state.source,
+      conversation: state.conversation,
+    });
+    return { queryId, nonce };
+  }
+
+  private async insert(
+    queryId: string,
+    principal: string,
+    wamid: string,
+    state: SuspendedState,
+    row: { kind: TurnKind; nonceHash?: string; source?: ConsentSource; conversation?: string },
+  ): Promise<void> {
     const ciphertext = await encryptToken(JSON.stringify(state), this.keyring(), aad(principal, queryId));
     const now = this.now();
     this.sql.exec(
-      `INSERT INTO agent_turns (query_id, principal, wamid, ciphertext, status, created_at, expires_at)
-       VALUES (?, ?, ?, ?, 'waiting', ?, ?)`,
+      `INSERT INTO agent_turns (query_id, principal, wamid, ciphertext, status, created_at, expires_at, kind, nonce_hash, source, conversation)
+       VALUES (?, ?, ?, ?, 'waiting', ?, ?, ?, ?, ?, ?)`,
       queryId,
       principal,
       wamid,
       ciphertext,
       now,
       now + SUSPEND_TTL_MS,
+      row.kind,
+      row.nonceHash ?? null,
+      row.source ?? null,
+      row.conversation ?? null,
     );
-    return queryId;
   }
 
   /** Is a turn of this sender waiting for the phone? Read only (2026-10-05). */
@@ -142,15 +220,18 @@ export class SuspendedTurns {
     );
   }
 
-  /** Take the turn, once. A second result for the same query finds it settled. */
+  /**
+   * Take a turn waiting for the phone, once. A second result for the same query
+   * finds it settled. A consent turn is not the phone's to take: not found.
+   */
   begin(queryId: string, principal: string): Begin {
     const now = this.now();
     return this.sql.transaction((): Begin => {
       const row = this.sql.exec(
-        'SELECT principal, wamid, ciphertext, status, expires_at FROM agent_turns WHERE query_id = ?',
+        'SELECT principal, wamid, ciphertext, status, expires_at, kind FROM agent_turns WHERE query_id = ?',
         queryId,
       )[0];
-      if (!row || row['principal'] !== principal) return { kind: 'not_found' };
+      if (!row || row['principal'] !== principal || row['kind'] !== 'phone') return { kind: 'not_found' };
 
       const wamid = String(row['wamid']);
       const status = String(row['status']) as TurnStatus;
@@ -166,6 +247,44 @@ export class SuspendedTurns {
 
       this.sql.exec(`UPDATE agent_turns SET status = 'running' WHERE query_id = ?`, queryId);
       return { kind: 'run', wamid, ciphertext: row['ciphertext'] };
+    });
+  }
+
+  /**
+   * Take a turn waiting for consent, once, for a tap on its card (slice 5).
+   * Synchronous and atomic, like `begin`; the caller writes a "this
+   * conversation" consent inside the same transaction. Every gate before any
+   * change: a consent turn, this sender, the nonce (constant time), and a
+   * choice the source offers — `persist` ("this conversation") is refused for
+   * mail, SMS, contacts and notifications. Then status and expiry.
+   */
+  beginConsent(queryId: string, principal: string, nonce: string, persist: boolean): ConsentBegin {
+    const now = this.now();
+    return this.sql.transaction((): ConsentBegin => {
+      const row = this.sql.exec(
+        `SELECT principal, wamid, ciphertext, status, expires_at, kind, nonce_hash, source, conversation
+         FROM agent_turns WHERE query_id = ?`,
+        queryId,
+      )[0];
+      if (!row || row['principal'] !== principal || row['kind'] !== 'consent') return { kind: 'refused' };
+      const nonceHash = row['nonce_hash'];
+      if (typeof nonceHash !== 'string' || !timingSafeEqual(digest(nonce), nonceHash)) return { kind: 'refused' };
+      const source = row['source'];
+      const conversation = row['conversation'];
+      if (!isConsentSource(source) || typeof conversation !== 'string' || conversation === '') return { kind: 'refused' };
+      if (persist && !mayKeepForConversation(source)) return { kind: 'refused' };
+
+      const wamid = String(row['wamid']);
+      const status = String(row['status']) as TurnStatus;
+      if (status !== 'waiting') return { kind: 'settled', wamid, status };
+
+      if (Number(row['expires_at']) <= now || typeof row['ciphertext'] !== 'string') {
+        this.sql.exec(`UPDATE agent_turns SET status = 'expired', ciphertext = NULL WHERE query_id = ?`, queryId);
+        return { kind: 'settled', wamid, status: 'expired' };
+      }
+
+      this.sql.exec(`UPDATE agent_turns SET status = 'running' WHERE query_id = ?`, queryId);
+      return { kind: 'run', wamid, ciphertext: row['ciphertext'], source, conversation };
     });
   }
 
@@ -188,7 +307,7 @@ export class SuspendedTurns {
   /** The newest suspended turn a message started — for a retry of that message. */
   byWamid(wamid: string): WaitingTurn | null {
     const row = this.sql.exec(
-      `SELECT query_id, principal, status, ciphertext FROM agent_turns
+      `SELECT query_id, principal, status, ciphertext, kind FROM agent_turns
        WHERE wamid = ? ORDER BY created_at DESC LIMIT 1`,
       wamid,
     )[0];
@@ -198,15 +317,16 @@ export class SuspendedTurns {
       principal: String(row['principal']),
       status: String(row['status']) as TurnStatus,
       ciphertext: typeof row['ciphertext'] === 'string' ? row['ciphertext'] : null,
+      kind: kindOf(row['kind']),
     };
   }
 
-  /** Waiting turns whose time ran out, marked expired. The caller answers each. */
-  expireDue(): { wamid: string; principal: string }[] {
+  /** Waiting turns whose time ran out, marked expired. The caller answers each, by its kind. */
+  expireDue(): { wamid: string; principal: string; kind: TurnKind }[] {
     const now = this.now();
     return this.sql.transaction(() => {
       const rows = this.sql.exec(
-        `SELECT query_id, wamid, principal FROM agent_turns WHERE status = 'waiting' AND expires_at <= ?`,
+        `SELECT query_id, wamid, principal, kind FROM agent_turns WHERE status = 'waiting' AND expires_at <= ?`,
         now,
       );
       for (const row of rows) {
@@ -215,7 +335,7 @@ export class SuspendedTurns {
           row['query_id'],
         );
       }
-      return rows.map((row) => ({ wamid: String(row['wamid']), principal: String(row['principal']) }));
+      return rows.map((row) => ({ wamid: String(row['wamid']), principal: String(row['principal']), kind: kindOf(row['kind']) }));
     });
   }
 
@@ -238,6 +358,14 @@ export class SuspendedTurns {
   purgeOld(): void {
     this.sql.exec('DELETE FROM agent_turns WHERE created_at <= ?', this.now() - SETTLED_KEEP_MS);
   }
+}
+
+function kindOf(value: unknown): TurnKind {
+  return value === 'consent' ? 'consent' : 'phone';
+}
+
+function digest(value: string): string {
+  return sha256Hex(new TextEncoder().encode(value));
 }
 
 function aad(principal: string, queryId: string): { provider: string; account: string } {

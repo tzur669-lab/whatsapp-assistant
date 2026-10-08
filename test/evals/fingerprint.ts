@@ -57,10 +57,11 @@ export function fingerprintFor(entry: ModelEntry): string {
 
 /**
  * The catalog policy of a smart model's turn (smart conversations, 2026-10-08):
- * no selection, and only what `smartOfferedTools` keeps. Bumped by hand when
- * the policy changes (slice 5: consented sources), like `ADAPTER_VERSION`.
+ * no selection, and what `smartOfferedTools` keeps for a typed turn that may
+ * ask for consent — public tools and every consent source's, never a private
+ * one (slice 5). Bumped by hand when the policy changes, like `ADAPTER_VERSION`.
  */
-export const SMART_CATALOG_POLICY = 'smart-catalog/public-only/no-selection/1';
+export const SMART_CATALOG_POLICY = 'smart-catalog/public-and-consent-sources/no-selection/2';
 
 /**
  * The environment a smart model is judged in: the system prompt with the smart
@@ -69,7 +70,7 @@ export const SMART_CATALOG_POLICY = 'smart-catalog/public-only/no-selection/1';
  * move when the smart note does. No selection part: a smart turn has none.
  */
 export function smartFingerprintFor(entry: ModelEntry): string {
-  const offered = smartOfferedTools(agentToolNames(FULL));
+  const offered = smartOfferedTools(agentToolNames(FULL), { granted: [], ask: true });
   const hash = createHash('sha256');
   hash.update('smart\0');
   hash.update(SYSTEM_PROMPT);

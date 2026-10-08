@@ -79,10 +79,14 @@ import type { MessageScope, TokenBudget } from '../agent/budget.js';
 import { meterParsers, newMessageScope } from '../agent/budget.js';
 import type { ConversationHistory } from '../agent/history.js';
 import type { AgentLock } from '../agent/lock.js';
-import { resumeAgentTurn, runAgentTurn } from '../agent/loop.js';
-import type { AgentResult } from '../agent/loop.js';
+import { resumeAfterConsent, resumeAgentTurn, runAgentTurn } from '../agent/loop.js';
+import type { AgentResult, ConsentDecision } from '../agent/loop.js';
 import type { SuspendedTurns } from '../agent/turns.js';
 import type { PhoneReadInput, PhoneReadResult } from '../tools/phone-reads.js';
+import { CONSENT_REVOKE_TOOL, consentSourceOf, isConsentSource, parseConsentButton, revokeButtonId } from '../agent/consents.js';
+import type { ConsentButton, ConversationConsents } from '../agent/consents.js';
+import type { ConsentSource } from '../tools/registry.js';
+import { consentButtons, consentText } from '../render/consent.js';
 
 /** The agent and what it keeps (PLAN §6.19). Absent: the parser answers, as before. */
 export type AgentServices = {
@@ -103,8 +107,14 @@ export type AgentServices = {
   budget: TokenBudget;
   history: ConversationHistory;
   lock: AgentLock;
-  /** Turns waiting for the phone (§6.21). Absent: phone reads are never offered. */
+  /** Turns waiting for the phone (§6.21) or for consent. Absent: phone reads are never offered. */
   turns?: SuspendedTurns;
+  /**
+   * The sources each smart conversation allowed (slice 5, 2026-10-08). Absent,
+   * or without `turns`: a smart conversation never asks, and is offered public
+   * tools only.
+   */
+  consents?: ConversationConsents;
   /** The turn benchmark's OLD config only (`test/evals/run-turn-evals.ts`). Never set in production. */
   legacyCatalog?: boolean;
 };
@@ -385,6 +395,11 @@ async function handleButtonReply(
     return { action: 'none', reason: 'not_implemented' };
   }
 
+  // A consent card's answer, or a `/consents` revoke (slice 5). Deterministic
+  // too, and taken before anything awaits.
+  const consent = parseConsentButton(event.buttonId);
+  if (consent) return consentButton(consent, event, deps, now);
+
   // Deterministic, and never near the LLM (invariant 7).
   const reply = await runButton(event.buttonId, turnOf(deps, event, now, { kind: 'text' }, 'he'));
   repo.markInboundOutcome(event.wamid, { decision: 'BUTTON' });
@@ -472,6 +487,7 @@ async function respondToText(
     if (command.kind === 'memory' || command.kind === 'forget_memory') {
       return memoryCommand(command.kind, deps);
     }
+    if (command.kind === 'consents') return consentsCommand(event, deps);
     return {
       action: 'reply',
       text: await renderCommand(command, deps, now),
@@ -762,6 +778,20 @@ async function respondWithAgent(
     // notes, and never in a smart conversation.
     const facts =
       deps.services?.facts && !smartConversation ? (await deps.services.facts.all(principal)).map((fact) => fact.text) : [];
+    // Consent (slice 5): the sources this smart conversation allowed are
+    // offered to every model in it. Only its own typed words may ask for
+    // another — never a voice note (the turn would store a transcript), the
+    // read-only try, or someone else's text.
+    const consents = agent.consents;
+    const granted = smartConversation && consents ? consents.list(principal, conversation) : [];
+    const ask =
+      smartConversation &&
+      !readOnly &&
+      source.kind === 'text' &&
+      !event.forwarded &&
+      conversation !== '' &&
+      agent.turns !== undefined &&
+      consents !== undefined;
     const result = await timed(deps, 'agent', () =>
       runAgentTurn(
         {
@@ -789,7 +819,7 @@ async function respondWithAgent(
             source.kind === 'text' &&
             deps.channel === 'app' &&
             (deps.deviceCaps ?? []).includes('device_query'),
-          ...(smartConversation ? { smart: true } : {}),
+          ...(smartConversation ? { smart: true, consent: { granted, ask } } : {}),
         },
         {
           providers: readOnly ? (agent.fallbackProviders ?? []) : [...smartModels, ...agent.providers],
@@ -802,14 +832,27 @@ async function respondWithAgent(
     );
 
     if (result.kind === 'suspend' && agent.turns) {
-      const queryId = await agent.turns.suspend(principal, event.wamid, {
+      const stored = {
         ...result.state,
         ...(conversation === '' ? {} : { conversation }),
         ...(event.forwarded ? { foreign: true } : {}),
-      });
+      };
+      if (stored.kind === 'consent') {
+        // The card is this message's answer; the tap's answer is the turn's
+        // (slice 5). Nothing was read, so the card is not private.
+        const { queryId, nonce } = await agent.turns.suspendForConsent(principal, event.wamid, stored);
+        repo.markInboundOutcome(event.wamid, { intent: 'agent', decision: 'CONSENT' });
+        log.info('agent_consent_asked', { wamid: event.wamid, tool: stored.tool, source: stored.source });
+        return {
+          action: 'reply',
+          text: consentText.card(stored.source, stored.lang),
+          buttons: consentButtons(queryId, nonce, stored.source, stored.lang),
+        };
+      }
+      const queryId = await agent.turns.suspend(principal, event.wamid, stored);
       repo.markInboundOutcome(event.wamid, { intent: 'agent', decision: 'DEVICE_QUERY' });
-      log.info('agent_suspended', { wamid: event.wamid, tool: result.state.tool });
-      return { action: 'device_query', queryId, query: result.state.query };
+      log.info('agent_suspended', { wamid: event.wamid, tool: stored.tool });
+      return { action: 'device_query', queryId, query: stored.query };
     }
 
     const settled = await settleAgentResult(
@@ -881,11 +924,26 @@ async function settleAgentResult(
     const kept = outcome.private === true;
     // A smart conversation's history may reach a model that trains on it
     // (2026-10-08). It keeps placeholders for someone else's words, both sides,
-    // and for any reply after a tool whose data is not public — a card, an
-    // Undo, a list of choices built by code included. The consent gate
-    // (slice 5) narrows "not public" to "not public and not consented".
+    // and for any reply after a tool whose data the user did not allow — a
+    // card, an Undo, a list of choices built by code included. Allowed: public,
+    // or a source the conversation allowed, or one approved for this very turn
+    // (its entry only; the next turn asks again). Private never is.
     const shared = gate.smart && gate.foreign;
-    const withheld = gate.smart && (result.tools ?? []).some((tool) => dataSourceOf(tool) !== 'public');
+    const consents = agent.consents;
+    const granted = gate.smart && consents ? consents.list(principal, conversation) : [];
+    const allowed = new Set<ConsentSource>([...granted, ...(result.once ?? [])]);
+    const ran = result.tools ?? [];
+    const withheld =
+      gate.smart &&
+      ran.some((tool) => {
+        const data = dataSourceOf(tool);
+        return data !== 'public' && !(isConsentSource(data) && allowed.has(data));
+      });
+    // A source allowed for the conversation was used: its row stays clear of the purge.
+    if (gate.smart && consents && conversation !== '') {
+      const used = ran.map(consentSourceOf).filter((data): data is ConsentSource => data !== null && granted.includes(data));
+      if (used.length > 0) consents.touch(principal, conversation, used);
+    }
     await agent.history.append(
       principal,
       {
@@ -951,8 +1009,10 @@ export async function resumeFromPhone(
     // turn may have started on its smart model.
     const smart = state.mode === 'smart';
     const providers = smart ? [...(agent.smartProviders ?? []), ...agent.providers] : agent.providers;
+    // What the conversation allows now (slice 5): a resumed turn asks no one.
+    const granted = smart && agent.consents ? agent.consents.list(principal, state.conversation ?? '') : [];
     const result = await timed(deps, 'agent', () =>
-      resumeAgentTurn(state, request.result, turn, { providers, budget: agent.budget, log }),
+      resumeAgentTurn(state, request.result, turn, { providers, budget: agent.budget, log }, granted),
     );
     log.info('agent_resumed', { wamid: request.wamid, readStatus: request.result.status, itemCount: request.result.items.length });
 
@@ -972,6 +1032,161 @@ export async function resumeFromPhone(
     turns.finish(request.queryId);
     agent.lock.release(principal, request.wamid);
   }
+}
+
+// -- consent (smart conversations, slice 5) ----------------------------------
+
+/** A consent card's answer or a `/consents` revoke: code only, never a model (invariant 7). */
+function consentButton(
+  button: ConsentButton,
+  event: Extract<InboundEvent, { kind: 'button' }>,
+  deps: PipelineDeps,
+  now: number,
+): Promise<PipelineOutcome> | PipelineOutcome {
+  return button.kind === 'answer' ? consentAnswer(button, event, deps, now) : consentRevoke(button, event, deps);
+}
+
+/**
+ * A tap on a consent card. Before anything awaits, in one transaction: take
+ * the waiting turn once (`beginConsent`: a consent turn, this sender, the
+ * nonce, a choice its source offers, still waiting, not expired), take the
+ * agent lock, and for "this conversation" write the consent — so a tap that
+ * loses any of these runs nothing and grants nothing. Then the turn goes on
+ * from its stored call, on the same model (`resumeAfterConsent`); a phone read
+ * it allowed pauses it again, under the tap. Every refusal says the same:
+ * expired, ask again — never which gate it was.
+ */
+async function consentAnswer(
+  button: Extract<ConsentButton, { kind: 'answer' }>,
+  event: Extract<InboundEvent, { kind: 'button' }>,
+  deps: PipelineDeps,
+  now: number,
+): Promise<PipelineOutcome> {
+  const { repo, log, principal } = deps;
+  const agent = deps.services?.agent;
+  const turns = agent?.turns;
+  const consents = agent?.consents;
+  const refuse = (reason: string): PipelineOutcome => {
+    log.info('agent_consent_stale', { wamid: event.wamid, reason });
+    repo.markInboundOutcome(event.wamid, { intent: 'consent', decision: 'BUTTON', errorCode: 'E_CONSENT_STALE' });
+    return { action: 'reply', text: consentText.expired('he') };
+  };
+  if (!agent || !turns || !consents) return refuse('unavailable');
+
+  const persist = button.verb === 'conv';
+  const claimed = repo.transaction(() => {
+    const begun = turns.beginConsent(button.queryId, principal, button.nonce, persist);
+    if (begun.kind !== 'run') return begun;
+    // A newer turn holds the lock: this one is cancelled, never interleaved.
+    if (!agent.lock.acquire(principal, begun.wamid)) {
+      turns.finish(button.queryId, 'superseded');
+      return { kind: 'busy' as const };
+    }
+    if (persist) consents.grant(principal, begun.conversation, begun.source);
+    return begun;
+  });
+  if (claimed.kind !== 'run') return refuse(claimed.kind === 'settled' ? claimed.status : claimed.kind);
+
+  try {
+    const state = await turns.open(button.queryId, principal, claimed.ciphertext);
+    // The row's source (checked before the tap was taken) is the stored turn's own.
+    if (!state || state.kind !== 'consent' || state.source !== claimed.source) {
+      log.warn('agent_resume_unreadable', { wamid: event.wamid });
+      repo.markInboundOutcome(event.wamid, { intent: 'agent', decision: 'ERROR', errorCode: 'E_AGENT_STATE' });
+      return { action: 'reply', text: he.agentIncomplete };
+    }
+
+    const decision: ConsentDecision = button.verb === 'no' ? 'declined' : persist ? 'conversation' : 'once';
+    log.info('agent_consent_answered', { wamid: event.wamid, tool: state.tool, source: state.source, decision });
+    const conversation = state.conversation ?? claimed.conversation;
+    // The asking message's signed time, for the staleness rule, as after a phone read.
+    const sentAtMs = Number(repo.getInbound(claimed.wamid)?.['sent_at'] ?? now);
+    const turn = turnOf(deps, { sentAtMs, forwarded: false }, now, { kind: 'text' }, state.lang);
+    const providers = [...(agent.smartProviders ?? []), ...agent.providers];
+    const result = await timed(deps, 'agent', () =>
+      resumeAfterConsent(state, decision, consents.list(principal, conversation), turn, { providers, budget: agent.budget, log }),
+    );
+
+    if (result.kind === 'suspend') {
+      if (result.state.kind === 'consent') {
+        // The loop never asks twice; reaching here is a bug.
+        repo.markInboundOutcome(event.wamid, { intent: 'agent', decision: 'ALLOW', errorCode: 'E_AGENT_PARTIAL' });
+        return { action: 'reply', text: he.agentIncomplete };
+      }
+      // The allowed call is a phone read: the turn's second pause, under the tap.
+      const queryId = await turns.suspend(principal, event.wamid, {
+        ...result.state,
+        conversation,
+        ...(state.foreign ? { foreign: true } : {}),
+      });
+      repo.markInboundOutcome(event.wamid, { intent: 'agent', decision: 'DEVICE_QUERY' });
+      log.info('agent_suspended', { wamid: event.wamid, tool: result.state.tool });
+      return { action: 'device_query', queryId, query: result.state.query };
+    }
+
+    const settled = await settleAgentResult(result, state.text, event.wamid, deps, now, conversation, {
+      smart: true,
+      foreign: state.foreign === true,
+    });
+    // No fallback: the parser never sees a turn the user has answered a card on.
+    if (!settled) repo.markInboundOutcome(event.wamid, { intent: 'agent', decision: 'ALLOW', errorCode: 'E_AGENT_PARTIAL' });
+    const outcome: PipelineOutcome = settled ?? {
+      action: 'reply',
+      text: decision === 'declined' ? consentText.declined(state.source, state.lang) : he.agentIncomplete,
+    };
+    // Kept under the asking message's place in line, as after a phone read (§6.23).
+    if (outcome.action === 'reply') await keepExchange(deps, claimed.wamid, conversation, state.text, state.text, outcome);
+    return outcome;
+  } finally {
+    turns.finish(button.queryId);
+    agent.lock.release(principal, claimed.wamid);
+  }
+}
+
+/** A `/consents` revoke button: a one-shot offer, sender- and nonce-checked (`confirm/undo.ts`). */
+function consentRevoke(
+  button: Extract<ConsentButton, { kind: 'revoke' }>,
+  event: Extract<InboundEvent, { kind: 'button' }>,
+  deps: PipelineDeps,
+): PipelineOutcome {
+  const { repo, log, principal } = deps;
+  const consents = deps.services?.agent?.consents;
+  const used = deps.services?.deferred.use(button.id, button.nonce, principal);
+  repo.markInboundOutcome(event.wamid, { intent: 'consents', decision: 'BUTTON' });
+  const target = used?.ok && used.tool === CONSENT_REVOKE_TOOL ? revokeTarget(used.compensating) : null;
+  if (!consents || !target) {
+    log.info('consent_revoke_refused', { wamid: event.wamid });
+    return { action: 'reply', text: consentText.revokeExpired('he') };
+  }
+  consents.revoke(principal, target.conversation, target.source);
+  log.info('consent_revoked', { wamid: event.wamid, source: target.source });
+  return { action: 'reply', text: consentText.revoked(target.source, 'he') };
+}
+
+function revokeTarget(value: unknown): { conversation: string; source: ConsentSource } | null {
+  if (typeof value !== 'object' || value === null) return null;
+  const { conversation, source } = value as Record<string, unknown>;
+  return typeof conversation === 'string' && conversation !== '' && isConsentSource(source) ? { conversation, source } : null;
+}
+
+/**
+ * `/consents` (slice 5): in a smart conversation, the sources it allowed, each
+ * with a button that revokes it. Deterministic; no model.
+ */
+function consentsCommand(event: Extract<InboundEvent, { kind: 'text' | 'audio' }>, deps: PipelineDeps): PipelineOutcome {
+  const conversation = event.conversationId ?? '';
+  const consents = deps.services?.agent?.consents;
+  const deferred = deps.services?.deferred;
+  if (event.mode !== 'smart' || conversation === '' || !consents || !deferred) {
+    return { action: 'reply', text: consentText.onlySmart('he') };
+  }
+  const granted = consents.list(deps.principal, conversation);
+  if (granted.length === 0) return { action: 'reply', text: consentText.none('he') };
+  const buttons = granted.map((source) => {
+    const offer = deferred.offer({ tool: CONSENT_REVOKE_TOOL, compensating: { conversation, source }, principal: deps.principal });
+    return { id: revokeButtonId(offer.id, offer.nonce), title: consentText.revokeButton(source, 'he') };
+  });
+  return { action: 'reply', text: consentText.list(granted, 'he'), buttons };
 }
 
 /** Hebrew if there is any Hebrew in it; the assistant's default user writes Hebrew. */
@@ -1105,6 +1320,7 @@ async function renderCommand(command: Command, deps: PipelineDeps, now: number):
     case 'misses':
     case 'memory':
     case 'forget_memory':
+    case 'consents':
       // Answered before this, with the conversation it belongs to (§6.23).
       return missText.none;
 

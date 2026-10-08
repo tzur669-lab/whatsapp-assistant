@@ -106,6 +106,13 @@ Network on the hotspot: `NODE_OPTIONS=--dns-result-order=ipv4first` for wrangler
 
 ## 8. Session log (docs)
 
+- 2026-10-08: Smart conversations, slice 5: the consent gate
+  (`agent/consents.ts`, `render/consent.ts`, migration 0027 `agent_turns.kind`
+  etc.). In a smart conversation a tool of an unconsented source suspends the
+  turn (`kind: 'consent'`) with a card `cs:<queryId>:<nonce>:<once|conv|no>`;
+  mail, SMS, contacts and notifications only allow "this time". `/consents`
+  lists and revokes. Voice, shared text and the read-only try never suspend.
+
 - 2026-10-08: Smart conversations, slice 4: a smart conversation's own words
   run on `[...smartProviders, ...providers]`; the model is chosen before the
   tools; a smart model gets `SMART_NOTE` (s1), its own caps and no facts. Until

@@ -16,7 +16,8 @@ const KEY = btoa(String.fromCharCode(...new Uint8Array(32).fill(5)));
 const OTHER_KEY = btoa(String.fromCharCode(...new Uint8Array(32).fill(6)));
 const PRINCIPAL = 'p_turns';
 
-const state = (overrides: Partial<SuspendedState> = {}): SuspendedState => ({
+const state = (overrides: Partial<SuspendedState> = {}): SuspendedState =>
+  ({
   model: 'fake-model',
   messages: [
     { role: 'user', content: 'מה כתבו לי ב-SMS?' },
@@ -36,7 +37,7 @@ const state = (overrides: Partial<SuspendedState> = {}): SuspendedState => ({
   tool: 'phone.sms',
   query: { kind: 'sms', hours: 24 },
   ...overrides,
-});
+  }) as SuspendedState;
 
 describe('suspended turns', () => {
   let driver: TestSqlDriver;
@@ -111,7 +112,7 @@ describe('suspended turns', () => {
     expect(turns.nextExpiryAt()).toBe(NOW + SUSPEND_TTL_MS);
 
     now = NOW + SUSPEND_TTL_MS;
-    expect(turns.expireDue()).toEqual([{ wamid: 'app:in:1', principal: PRINCIPAL }]);
+    expect(turns.expireDue()).toEqual([{ wamid: 'app:in:1', principal: PRINCIPAL, kind: 'phone' }]);
     expect(turns.expireDue()).toEqual([]);
     expect(ciphertextOf(queryId)).toBeNull();
     expect(turns.nextExpiryAt()).toBeNull();

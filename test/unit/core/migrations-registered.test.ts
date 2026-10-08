@@ -32,4 +32,28 @@ describe('migrations', () => {
       driver.close();
     }
   });
+
+  it('tells a consent turn from a phone turn, every older row a phone one (0027)', () => {
+    const driver = new TestSqlDriver();
+    try {
+      const repo = new Repository(driver);
+      repo.migrate(MIGRATIONS.filter((m) => m.id < 27));
+      driver.exec(
+        `INSERT INTO agent_turns (query_id, principal, wamid, ciphertext, status, created_at, expires_at)
+         VALUES ('q1', 'p', 'w', 'c', 'waiting', 1, 2)`,
+      );
+      repo.migrate(MIGRATIONS);
+      const columns = driver.exec('PRAGMA table_info(agent_turns)').map((row) => row['name']);
+      expect(columns).toEqual(expect.arrayContaining(['kind', 'nonce_hash', 'source', 'conversation']));
+      expect(driver.exec('SELECT kind FROM agent_turns')).toEqual([{ kind: 'phone' }]);
+      expect(() =>
+        driver.exec(
+          `INSERT INTO agent_turns (query_id, principal, wamid, status, created_at, expires_at, kind)
+           VALUES ('q2', 'p', 'w', 'waiting', 1, 2, 'other')`,
+        ),
+      ).toThrow();
+    } finally {
+      driver.close();
+    }
+  });
 });

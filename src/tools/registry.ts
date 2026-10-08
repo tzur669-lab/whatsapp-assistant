@@ -158,21 +158,24 @@ export type GoogleScope =
   | 'https://www.googleapis.com/auth/calendar.app.created';
 
 /**
- * A source of the user's data that a smart conversation may read only with the
- * user's consent (2026-10-08).
+ * The sources of the user's data that a smart conversation may read only with
+ * the user's consent (2026-10-08), in the order they are listed to the user.
  */
-export type ConsentSource =
-  | 'calendar'
-  | 'reminders'
-  | 'tasks'
-  | 'mail'
-  | 'drive'
-  | 'birthdays'
-  | 'contacts'
-  | 'sms'
-  | 'calls'
-  | 'notifications'
-  | 'expenses';
+export const CONSENT_SOURCES = [
+  'calendar',
+  'reminders',
+  'tasks',
+  'mail',
+  'drive',
+  'birthdays',
+  'contacts',
+  'sms',
+  'calls',
+  'notifications',
+  'expenses',
+] as const;
+
+export type ConsentSource = (typeof CONSENT_SOURCES)[number];
 
 /**
  * What a tool's replies may carry: a consent source, `public` for data that is

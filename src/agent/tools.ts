@@ -12,7 +12,7 @@
  */
 import type { ZodTypeAny } from 'zod';
 import { dataSourceOf, REGISTRY, TOOL_NAMES } from '../tools/registry.js';
-import type { ToolName } from '../tools/registry.js';
+import type { ConsentSource, ToolName } from '../tools/registry.js';
 import type { WireTool } from './provider.js';
 
 type Def = { typeName?: string; innerType?: ZodTypeAny; type?: ZodTypeAny; values?: readonly string[]; checks?: readonly { kind: string }[] };
@@ -95,15 +95,25 @@ export function agentToolNames(options: OfferOptions = { cards: false }): ToolNa
 
 /**
  * What a smart conversation may be offered, on any model (smart conversations,
- * 2026-10-08): only the public tools of what the turn would be offered anyway.
- * Until the consent gate exists, nothing whose replies may carry personal data
- * reaches a turn whose history can reach a provider that may train on it.
- * Consent belongs to the conversation, not the model, so qwen and the
- * read-only try in a smart conversation get the same set. The consent gate
- * (slice 5) widens this to public + consented sources.
+ * 2026-10-08), of what the turn would be offered anyway: the public tools, the
+ * tools of the sources the conversation allowed (`granted`), and — when the
+ * turn may ask (`ask`: the conversation's own typed words) — the tools of
+ * every other consent source, whose call pauses the turn for the user's
+ * consent instead of running (slice 5). Never a private tool: notes, lists,
+ * the portfolio and facts reach no smart conversation. Consent belongs to the
+ * conversation, not the model, so qwen and the read-only try in a smart
+ * conversation get the same set. Without options: public only.
  */
-export function smartOfferedTools(offered: readonly ToolName[]): ToolName[] {
-  return offered.filter((name) => dataSourceOf(name) === 'public');
+export function smartOfferedTools(
+  offered: readonly ToolName[],
+  consent: { granted: readonly ConsentSource[]; ask: boolean } = { granted: [], ask: false },
+): ToolName[] {
+  return offered.filter((name) => {
+    const source = dataSourceOf(name);
+    if (source === 'public') return true;
+    if (source === 'private') return false;
+    return consent.ask || consent.granted.includes(source);
+  });
 }
 
 export function wireTools(names: readonly ToolName[]): WireTool[] {

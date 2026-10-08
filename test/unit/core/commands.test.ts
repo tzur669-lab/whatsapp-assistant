@@ -34,6 +34,7 @@ const INVOCATIONS: Record<Command['kind'], string> = {
   misses: '/misses',
   memory: '/memory',
   forget_memory: '/forget memory',
+  consents: '/consents',
   connect_google: '/connect google',
   pair: '/pair',
   digest: '/digest',
@@ -49,7 +50,12 @@ const INVOCATIONS: Record<Command['kind'], string> = {
  * `/ping` is a liveness check for whoever is operating the thing, not a feature.
  * Anything else added here is a decision, and this list is where it is recorded.
  */
-const HIDDEN: ReadonlySet<Command['kind']> = new Set(['ping']);
+const HIDDEN: ReadonlySet<Command['kind']> = new Set([
+  'ping',
+  // Smart conversations exist only in the app: its /help lists /consents, the
+  // WhatsApp /help does not (2026-10-08).
+  'consents',
+]);
 
 const helpText = stripIsolates(he.help);
 
@@ -77,6 +83,11 @@ describe('every command a user can see is documented', () => {
       const slash = INVOCATIONS[kind].split(' ')[0]!;
       expect(helpText, `${slash} is not in /help`).toContain(slash);
     }
+  });
+
+  it("lists /consents in the app's /help, where smart conversations are", () => {
+    expect(stripIsolates(he.helpApp)).toContain('/consents');
+    expect(helpText).not.toContain('/consents');
   });
 
   it('offers nothing in /help that is not a command', () => {
