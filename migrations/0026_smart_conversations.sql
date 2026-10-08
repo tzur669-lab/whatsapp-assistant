@@ -13,3 +13,27 @@ CREATE TABLE model_day_requests (
   count INTEGER NOT NULL DEFAULT 0 CHECK (count >= 0),
   PRIMARY KEY (day, model)
 );
+
+-- conversation_modes: each app conversation's mode, recorded once by its first
+-- message and never changed (smart conversations, slice 3). Written inside the
+-- same transaction as the inbound dedupe insert (Repository.recordInbound): the
+-- first writer wins, and a later message that declares the other mode is
+-- refused with 422. The shared thread ('') never has a row: it is always local.
+-- Deleted by /forget and /pair off. Rows unused for 30 days are purged.
+CREATE TABLE conversation_modes (
+  principal    TEXT NOT NULL,
+  conversation TEXT NOT NULL,
+  mode         TEXT NOT NULL CHECK (mode IN ('smart', 'local')),
+  last_used    INTEGER NOT NULL,
+  PRIMARY KEY (principal, conversation)
+);
+
+-- conversation_consents: a data source the user allowed for the rest of one
+-- smart conversation (used from slice 5). Same cleanup as conversation_modes.
+CREATE TABLE conversation_consents (
+  principal    TEXT NOT NULL,
+  conversation TEXT NOT NULL,
+  source       TEXT NOT NULL,
+  last_used    INTEGER NOT NULL,
+  PRIMARY KEY (principal, conversation, source)
+);

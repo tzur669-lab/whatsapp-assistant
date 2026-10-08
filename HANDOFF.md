@@ -106,6 +106,12 @@ Network on the hotspot: `NODE_OPTIONS=--dns-result-order=ipv4first` for wrangler
 
 ## 8. Session log (docs)
 
+- 2026-10-08: Smart conversations, slice 3: a conversation's mode (`smart` |
+  `local`) is recorded once inside `recordInbound`'s transaction
+  (`conversation_modes`, plus `conversation_consents` for slice 5, both in
+  migration 0026); a different mode later gets 422 `mode_mismatch`. Text
+  carries `mode` in the body, voice as a path segment. Not used yet.
+
 - 2026-10-08: Smart conversations, slice 2: `SMART_MODELS` (Gemini Flash, role
   `smart`, read-only, not used by any turn yet), `createGeminiAgentProvider`,
   request limits per minute/day in `TokenBudget` (day count in SQLite,

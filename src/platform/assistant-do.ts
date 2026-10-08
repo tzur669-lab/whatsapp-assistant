@@ -7,7 +7,7 @@
  * storage handle, and the alarm. Everything else is plain TypeScript underneath
  * (CLAUDE.md invariant 11).
  */
-import { Repository } from '../core/repo.js';
+import { CONVERSATION_MODE_RETENTION_MS, MODE_MISMATCH_ERROR, Repository } from '../core/repo.js';
 import { handleInbound, resumeFromPhone } from '../core/pipeline.js';
 import type { PipelineOutcome, Services } from '../core/pipeline.js';
 import { snoozeButtons, SNOOZE_TOOL } from '../core/orchestrator.js';
@@ -63,7 +63,7 @@ import { DEFAULT_PLACE, findPlace, HOME_CITY_KEY } from '../lookup/place.js';
 import type { Place } from '../lookup/place.js';
 import type { ScheduledTopic } from '../nlu/slot-schemas.js';
 import { restPeriodAt } from '../time/shabbat.js';
-import type { DeviceLocation, InboundEvent, OutboundButton, OutboundMessage } from '../channels/types.js';
+import type { ConversationMode, DeviceLocation, InboundEvent, OutboundButton, OutboundMessage } from '../channels/types.js';
 import type { AppEnv, ChannelMode } from '../core/env.js';
 import { channelOf } from '../core/env.js';
 import { AppOutbox } from '../channels/app/outbox.js';
@@ -528,6 +528,7 @@ export class AssistantDO implements DurableObject {
     this.lists.purgeRemoved();
     this.holdings.purge();
     this.agentTurns.purgeOld();
+    this.repo.purgeConversationModesBefore(Date.now() - CONVERSATION_MODE_RETENTION_MS);
     this.questions.purgeExpired();
     this.deferred.expireStale();
     this.google.purgeExpired();
@@ -833,11 +834,13 @@ export class AssistantDO implements DurableObject {
 
     if (app && method === 'POST' && path === '/app/message') return this.appMessage(body, signed, device, principal);
 
-    const voice = /^\/app\/voice\/([0-9a-f-]{36})(?:\/([0-9a-f-]{36}))?(?:\/(@[^/]+))?$/.exec(path);
+    // id, then optionally the conversation and after it its mode, then optionally the location.
+    const voice = /^\/app\/voice\/([0-9a-f-]{36})(?:\/([0-9a-f-]{36})(?:\/(smart|local))?)?(?:\/(@[^/]+))?$/.exec(path);
     if (app && method === 'POST' && voice) {
-      const location = voice[3] === undefined ? null : parseVoiceLocation(voice[3]);
-      if (voice[3] !== undefined && location === null) return appError(400, 'bad_request');
-      return this.appVoice(voice[1]!, voice[2] ?? null, location, body, request.contentType, signed, device, principal);
+      const location = voice[4] === undefined ? null : parseVoiceLocation(voice[4]);
+      if (voice[4] !== undefined && location === null) return appError(400, 'bad_request');
+      const mode = voice[3] === 'smart' ? 'smart' : 'local';
+      return this.appVoice(voice[1]!, voice[2] ?? null, mode, location, body, request.contentType, signed, device, principal);
     }
 
     if (app && method === 'GET' && path === '/app/outbox') return json(this.outbox.list());
@@ -928,6 +931,8 @@ export class AssistantDO implements DurableObject {
             ...(message.shared !== undefined ? { forwarded: true } : {}),
             text: message.shared !== undefined ? composeShared(message.text, message.shared) : message.text,
             ...(message.location ? { location: message.location } : {}),
+            // Absent is local. Shared text keeps the mode it declares (smart conversations).
+            mode: message.mode ?? 'local',
           }
         : { kind: 'button', ...base, buttonId: message.buttonId };
     return this.runAppTurn(event, message.id, device.id, principal);
@@ -936,6 +941,7 @@ export class AssistantDO implements DurableObject {
   private appVoice(
     messageId: string,
     conversationId: string | null,
+    mode: ConversationMode,
     location: DeviceLocation | null,
     body: Uint8Array,
     contentType: string,
@@ -970,6 +976,7 @@ export class AssistantDO implements DurableObject {
       forwarded: false,
       ...(conversationId ? { conversationId } : {}),
       ...(location ? { location } : {}),
+      mode,
     };
     return this.runAppTurn(event, messageId, device.id, principal);
   }
@@ -1009,8 +1016,11 @@ export class AssistantDO implements DurableObject {
     }
 
     if (outcome.action === 'none' && outcome.reason === 'duplicate') {
-      return json(await this.duplicateAnswer(messageId));
+      return this.duplicateAnswer(messageId);
     }
+    // The other mode than the conversation's (smart conversations). 422, not
+    // 409: on 409 the app signs again and resends, which would never end.
+    if (outcome.action === 'none' && outcome.reason === 'mode_mismatch') return modeMismatch();
     return this.answerApp(outcome, messageId, deviceId, principal, startedAt);
   }
 
@@ -1113,7 +1123,14 @@ export class AssistantDO implements DurableObject {
    * one; otherwise whether it is still running, finished without an answer, or
    * lost part-way. Never run a second time.
    */
-  private async duplicateAnswer(messageId: string): Promise<Record<string, unknown>> {
+  private async duplicateAnswer(messageId: string): Promise<Response> {
+    const inbound = this.repo.getInbound(`${APP_INBOUND_PREFIX}${messageId}`);
+    // Refused for its mode: the same refusal, every time (smart conversations).
+    if (inbound?.['error_code'] === MODE_MISMATCH_ERROR) return modeMismatch();
+    return json(await this.duplicateStatus(messageId));
+  }
+
+  private async duplicateStatus(messageId: string): Promise<Record<string, unknown>> {
     this.settleExpiredTurns();
     const row = this.outbox.replyTo(messageId);
     if (row) return { status: 'reply', row };
@@ -1895,6 +1912,11 @@ function appError(status: number, code: string): Response {
     status,
     headers: { 'content-type': 'application/json' },
   });
+}
+
+/** A message whose declared mode is not its conversation's (smart conversations). */
+function modeMismatch(): Response {
+  return appError(422, 'mode_mismatch');
 }
 
 function json(body: unknown): Response {

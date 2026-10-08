@@ -12,6 +12,13 @@
  */
 export type DeviceLocation = { latitude: number; longitude: number; name?: string | undefined };
 
+/**
+ * An app conversation's mode (smart conversations): recorded once, by the
+ * conversation's first message, and never changed. The shared thread is
+ * always `local`.
+ */
+export type ConversationMode = 'smart' | 'local';
+
 export type InboundText = {
   kind: 'text';
   wamid: string;
@@ -23,6 +30,11 @@ export type InboundText = {
   conversationId?: string;
   /** The phone's location when this was sent, when the user allowed it. */
   location?: DeviceLocation;
+  /**
+   * The conversation's mode. From the app, the one this message declares (absent:
+   * local); once `recordInbound` has run, the one recorded for the conversation.
+   */
+  mode?: ConversationMode;
 };
 
 /**
@@ -48,6 +60,11 @@ export type InboundAudio = {
   forwarded: boolean;
   conversationId?: string;
   location?: DeviceLocation;
+  /**
+   * The conversation's mode. From the app, the one this message declares (absent:
+   * local); once `recordInbound` has run, the one recorded for the conversation.
+   */
+  mode?: ConversationMode;
 };
 
 export type InboundButton = {
@@ -58,6 +75,8 @@ export type InboundButton = {
   buttonId: string;
   forwarded: boolean;
   conversationId?: string;
+  /** Never declared: a button runs in the mode recorded for its conversation, set by `recordInbound`. */
+  mode?: ConversationMode;
 };
 
 export type InboundUnsupported = {

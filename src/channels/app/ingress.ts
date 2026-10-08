@@ -35,11 +35,12 @@ export const APP_ROUTES: readonly AppRoute[] = [
   { method: 'POST', pattern: /^\/app\/message$/, maxBytes: 16_384, contentType: JSON_TYPE, channels: ['app'] },
   {
     method: 'POST',
-    // The message id, then optionally the conversation it was recorded in, then
+    // The message id, then optionally the conversation it was recorded in and,
+    // after it, optionally that conversation's mode (smart conversations), then
     // optionally where the phone was (`@lat,lon`, two decimals, then optionally
     // `,` and the town's name as hex).
     pattern:
-      /^\/app\/voice\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}(?:\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})?(?:\/@-?[0-9]{1,2}\.[0-9]{1,2},-?[0-9]{1,3}\.[0-9]{1,2}(?:,(?:[0-9a-f]{2}){1,160})?)?$/,
+      /^\/app\/voice\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}(?:\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}(?:\/(?:smart|local))?)?(?:\/@-?[0-9]{1,2}\.[0-9]{1,2},-?[0-9]{1,3}\.[0-9]{1,2}(?:,(?:[0-9a-f]{2}){1,160})?)?$/,
     maxBytes: MAX_VOICE_BYTES,
     contentType: ['audio/mp4', 'audio/aac', 'audio/ogg', 'audio/webm'],
     channels: ['app'],

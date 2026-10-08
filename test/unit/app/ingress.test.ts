@@ -34,6 +34,22 @@ describe('the voice route', () => {
     expect(await status(`/app/voice/${ID}/@32.79,34.99,${'ab'.repeat(161)}`)).toBe(404);
   });
 
+  it("takes the conversation's mode after the conversation, before any location (smart conversations)", async () => {
+    expect(await status(`/app/voice/${ID}/${CONV}/smart`)).toBe(200);
+    expect(await status(`/app/voice/${ID}/${CONV}/local`)).toBe(200);
+    expect(await status(`/app/voice/${ID}/${CONV}/smart/@32.09,34.78`)).toBe(200);
+    expect(await status(`/app/voice/${ID}/${CONV}`)).toBe(200);
+  });
+
+  it('refuses a mode that is not one of the two, or without a conversation, or out of place', async () => {
+    expect(await status(`/app/voice/${ID}/${CONV}/SMART`)).toBe(404);
+    expect(await status(`/app/voice/${ID}/${CONV}/fast`)).toBe(404);
+    expect(await status(`/app/voice/${ID}/${CONV}/`)).toBe(404);
+    expect(await status(`/app/voice/${ID}/smart`)).toBe(404);
+    expect(await status(`/app/voice/${ID}/${CONV}/@32.09,34.78/smart`)).toBe(404);
+    expect(await status(`/app/voice/${ID}/${CONV}/smart/local`)).toBe(404);
+  });
+
   it('refuses anything finer than two decimals, or out of place', async () => {
     expect(await status(`/app/voice/${ID}/@32.085,34.78`)).toBe(404);
     expect(await status(`/app/voice/${ID}/@32.09,34.78/${CONV}`)).toBe(404);

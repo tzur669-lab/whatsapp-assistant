@@ -83,6 +83,14 @@ describe('log canary, app channel', () => {
     const answer = (await (await assistant.fetch(voice)).json()) as { row: { text: string } };
     expect(answer.row.text).toContain('CANARY-VOICE-2b9c'); // the echo is in the response…
 
+    // A message refused for its conversation's mode logs no more than any other.
+    const conversationId = '11111111-1111-4111-8111-111111111111';
+    await assistant.fetch(await phone.toDo('POST', '/app/message', { id: messageId(), kind: 'text', text: CANARY, conversationId, mode: 'smart' }));
+    const refused = await assistant.fetch(
+      await phone.toDo('POST', '/app/message', { id: messageId(), kind: 'text', text: CANARY, conversationId, mode: 'local' }),
+    );
+    expect(refused.status).toBe(422);
+
     const all = written.join('\n');
     expect(all.length).toBeGreaterThan(0);
     for (const secret of [CANARY, 'CANARY-VOICE-2b9c', GEMINI_KEY, BOOTSTRAP.replace(/-/g, ''), BOOTSTRAP, mac, phone.publicKey, FAKE_PUSH_TOKEN, signature, nonce]) {

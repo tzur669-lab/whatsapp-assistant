@@ -3,6 +3,7 @@
  * runs unchanged on the Node Plan B (PLAN §3.4) and in unit tests.
  */
 import type { SqlDriver, SqlRow } from './sql.js';
+import type { ConversationMode } from '../channels/types.js';
 
 const SCHEMA_VERSION_KEY = 'schema_version';
 const DIGEST_HOUR_KEY = 'digest_hour';
@@ -17,7 +18,31 @@ export type InboundRecord = {
   receivedAt: number;
   sentAt: number;
   kind: string;
+  /** The app conversation it was written in. Absent or '': the shared thread, which is always local. */
+  conversation?: string;
+  /**
+   * The mode the message declares (smart conversations). Absent: it declares
+   * none and is never checked — a button, which runs in the recorded mode.
+   */
+  mode?: ConversationMode;
 };
+
+/**
+ * What `recordInbound` found. `mode` is the conversation's recorded mode — the
+ * one the turn runs in. A mismatch is recorded (so a retry is a duplicate) and
+ * already marked `E_MODE_MISMATCH`; it must not run.
+ */
+export type InboundRecorded =
+  | { status: 'fresh'; mode: ConversationMode }
+  | { status: 'mode_mismatch'; mode: ConversationMode }
+  | { status: 'duplicate' };
+
+/** The decision and error code a mismatched message is marked with. */
+export const MODE_MISMATCH_DECISION = 'MODE_MISMATCH';
+export const MODE_MISMATCH_ERROR = 'E_MODE_MISMATCH';
+
+/** Conversation modes and consents unused this long are purged (smart conversations). */
+export const CONVERSATION_MODE_RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
 
 export type OutboundRecord = {
   wamid: string;
@@ -108,10 +133,15 @@ export class Repository {
   }
 
   /**
-   * Record an inbound message. Returns false if this `wamid` was already seen,
-   * which is how Meta's at-least-once retries are collapsed (PLAN §7.1).
+   * Record an inbound message. A `wamid` already seen is a duplicate, which is
+   * how Meta's at-least-once retries are collapsed (PLAN §7.1).
+   *
+   * The conversation's mode is recorded in the same transaction (smart
+   * conversations): the first message of a conversation fixes it, every later
+   * one moves `last_used`, and one that declares the other mode is marked
+   * `E_MODE_MISMATCH` here, so its retry gets the same refusal.
    */
-  recordInbound(record: InboundRecord): boolean {
+  recordInbound(record: InboundRecord): InboundRecorded {
     // The insert and its sequence number land together, or neither does: a
     // duplicate consumes no number, and two messages never share one (§6.23).
     return this.sql.transaction(() => {
@@ -126,11 +156,81 @@ export class Repository {
         record.sentAt,
         record.kind,
       );
-      if (rows.length === 0) return false;
+      if (rows.length === 0) return { status: 'duplicate' } as const;
       const next = Number(this.getSetting(INBOUND_SEQ_KEY) ?? '0') + 1;
       this.setSetting(INBOUND_SEQ_KEY, String(next));
       this.sql.exec('UPDATE inbound_messages SET seq = ? WHERE wamid = ?', next, record.wamid);
-      return true;
+
+      const mode = this.recordMode(record.principal, record.conversation ?? '', record.mode, record.receivedAt);
+      if (record.mode !== undefined && (record.conversation ?? '') !== '' && mode !== record.mode) {
+        this.markInboundOutcome(record.wamid, { decision: MODE_MISMATCH_DECISION, errorCode: MODE_MISMATCH_ERROR });
+        return { status: 'mode_mismatch', mode } as const;
+      }
+      return { status: 'fresh', mode } as const;
+    });
+  }
+
+  /**
+   * The conversation's mode after this message: the first declared one wins.
+   * Only inside `recordInbound`'s transaction. The shared thread is never stored.
+   */
+  private recordMode(
+    principal: string,
+    conversation: string,
+    declared: ConversationMode | undefined,
+    atMs: number,
+  ): ConversationMode {
+    if (conversation === '') return 'local';
+    if (declared !== undefined) {
+      this.sql.exec(
+        `INSERT INTO conversation_modes (principal, conversation, mode, last_used)
+         VALUES (?, ?, ?, ?)
+         ON CONFLICT(principal, conversation) DO NOTHING`,
+        principal,
+        conversation,
+        declared,
+        atMs,
+      );
+    }
+    this.sql.exec(
+      'UPDATE conversation_modes SET last_used = MAX(last_used, ?) WHERE principal = ? AND conversation = ?',
+      atMs,
+      principal,
+      conversation,
+    );
+    return this.modeOf(principal, conversation);
+  }
+
+  /**
+   * A conversation's recorded mode (smart conversations). The shared thread,
+   * and a conversation with no record, are local.
+   */
+  modeOf(principal: string, conversation: string): ConversationMode {
+    if (conversation === '') return 'local';
+    const value = this.sql.exec(
+      'SELECT mode FROM conversation_modes WHERE principal = ? AND conversation = ?',
+      principal,
+      conversation,
+    )[0]?.['mode'];
+    return value === 'smart' ? 'smart' : 'local';
+  }
+
+  /** `/forget` and `/pair off`: every conversation's mode and consents of this principal. */
+  forgetConversationModes(principal: string): void {
+    this.sql.transaction(() => {
+      this.sql.exec('DELETE FROM conversation_modes WHERE principal = ?', principal);
+      this.sql.exec('DELETE FROM conversation_consents WHERE principal = ?', principal);
+    });
+  }
+
+  /**
+   * Modes and consents unused since `cutoffMs`. A conversation deleted in the
+   * app is deleted there only, so this is what clears its rows.
+   */
+  purgeConversationModesBefore(cutoffMs: number): void {
+    this.sql.transaction(() => {
+      this.sql.exec('DELETE FROM conversation_modes WHERE last_used < ?', cutoffMs);
+      this.sql.exec('DELETE FROM conversation_consents WHERE last_used < ?', cutoffMs);
     });
   }
 

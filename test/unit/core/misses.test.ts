@@ -61,15 +61,15 @@ describe('inbound sequence', () => {
     repo.recordInbound({ wamid, principal: PRINCIPAL, receivedAt: at, sentAt: at, kind: 'text' });
 
   it('numbers each new message once, in arrival order, whatever the clock says', () => {
-    expect(record('a')).toBe(true);
-    expect(record('b')).toBe(true);
+    expect(record('a')).toEqual({ status: 'fresh', mode: 'local' });
+    expect(record('b')).toEqual({ status: 'fresh', mode: 'local' });
     expect(repo.inboundSeq('a')).toBe(1);
     expect(repo.inboundSeq('b')).toBe(2);
   });
 
   it('a duplicate consumes no number', () => {
     record('a');
-    expect(record('a')).toBe(false);
+    expect(record('a')).toEqual({ status: 'duplicate' });
     record('b');
     expect(repo.inboundSeq('b')).toBe(2);
   });

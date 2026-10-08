@@ -1042,6 +1042,186 @@ describe('the app channel', () => {
     });
   });
 
+  // -- a conversation's mode (smart conversations, slice 3) -------------------
+
+  describe("a conversation's mode (smart conversations)", () => {
+    const A = '11111111-1111-4111-8111-111111111111';
+    const B = '22222222-2222-4222-8222-222222222222';
+    let chatCalls: number;
+
+    /** The agent on, and a count of every model call: a mismatch must make none. */
+    const buildCounting = () => {
+      env = { ...baseEnv(), GROQ_API_KEY: 'test-groq-key', AGENT: 'on' };
+      const fetchImpl = (async (input: string | URL | Request, init?: RequestInit) => {
+        const url = String(input instanceof Request ? input.url : input);
+        if (url.endsWith('/chat/completions')) {
+          chatCalls += 1;
+          return new Response(
+            JSON.stringify({ choices: [{ message: { content: 'תשובה' } }], usage: { prompt_tokens: 900, completion_tokens: 40 } }),
+            { status: 200, headers: { 'content-type': 'application/json' } },
+          );
+        }
+        return google.fetchImpl(input as never, init);
+      }) as unknown as typeof fetch;
+      assistant = new AssistantDO(fake.state as never, env, fetchImpl);
+    };
+
+    const text = async (phone: FakePhone, fields: { conversationId?: string; mode?: string; text?: string; id?: string }) =>
+      send(
+        await phone.toDo('POST', '/app/message', {
+          id: fields.id ?? messageId(),
+          kind: 'text',
+          text: fields.text ?? 'מה שלומך',
+          ...(fields.conversationId === undefined ? {} : { conversationId: fields.conversationId }),
+          ...(fields.mode === undefined ? {} : { mode: fields.mode }),
+        }),
+      );
+
+    const voice = async (phone: FakePhone, path: string) =>
+      send(await phone.toDo('POST', `/app/voice/${messageId()}/${path}`, new Uint8Array([1, 2, 3, 4]), { contentType: 'audio/mp4' }));
+
+    const modes = () =>
+      fake.driver.exec('SELECT conversation, mode FROM conversation_modes ORDER BY conversation') as { conversation: string; mode: string }[];
+
+    beforeEach(() => {
+      chatCalls = 0;
+    });
+
+    it('records the first message’s mode; a message that disagrees gets 422 and reaches no model', async () => {
+      buildCounting();
+      const phone = await pair();
+
+      expect((await text(phone, { conversationId: A, mode: 'smart' })).status).toBe(200);
+      const callsBefore = chatCalls;
+      const id = messageId();
+      const refused = await text(phone, { conversationId: A, mode: 'local', id });
+
+      expect(refused).toEqual({ status: 422, body: { error: 'mode_mismatch' } });
+      expect(chatCalls).toBe(callsBefore);
+      expect(modes()).toEqual([{ conversation: A, mode: 'smart' }]);
+      expect(fake.driver.exec('SELECT COUNT(*) AS n FROM app_outbox WHERE in_reply_to = ?', id)[0]?.['n']).toBe(0);
+    });
+
+    it('answers a retry of the refused message with the same 422, not 409 (the app signs again on 409)', async () => {
+      const phone = await pair();
+      await text(phone, { conversationId: A, mode: 'smart', text: '/help' });
+      const id = messageId();
+      expect((await text(phone, { conversationId: A, mode: 'local', text: '/help', id })).status).toBe(422);
+      expect(await text(phone, { conversationId: A, mode: 'local', text: '/help', id })).toEqual({
+        status: 422,
+        body: { error: 'mode_mismatch' },
+      });
+      // Even sent with the right mode, a retry is the same message: never run.
+      expect((await text(phone, { conversationId: A, mode: 'smart', text: '/help', id })).status).toBe(422);
+    });
+
+    it('reads a text message without a mode as local', async () => {
+      const phone = await pair();
+      expect((await text(phone, { conversationId: B, text: '/help' })).status).toBe(200);
+      expect(modes()).toEqual([{ conversation: B, mode: 'local' }]);
+      expect((await text(phone, { conversationId: B, mode: 'smart', text: '/help' })).status).toBe(422);
+      expect((await text(phone, { conversationId: B, mode: 'local', text: '/help' })).status).toBe(200);
+    });
+
+    it('never records the shared thread', async () => {
+      const phone = await pair();
+      expect((await text(phone, { mode: 'smart', text: '/help' })).status).toBe(200);
+      expect((await text(phone, { mode: 'local', text: '/help' })).status).toBe(200);
+      expect(modes()).toEqual([]);
+    });
+
+    it("takes a voice note's mode from its path, and refuses one that disagrees before transcribing it", async () => {
+      build({ GROQ_API_KEY: 'test-key-not-real' });
+      google.transcript = 'עזרה';
+      const phone = await pair();
+
+      expect((await voice(phone, `${A}/smart`)).status).toBe(200);
+      expect(modes()).toEqual([{ conversation: A, mode: 'smart' }]);
+
+      const transcribed = google.requests.filter((url) => url.includes('/audio/transcriptions')).length;
+      expect(await voice(phone, `${A}/local/@32.09,34.78`)).toEqual({ status: 422, body: { error: 'mode_mismatch' } });
+      // A voice note with no mode segment is local, too.
+      expect((await voice(phone, A)).status).toBe(422);
+      expect(google.requests.filter((url) => url.includes('/audio/transcriptions')).length).toBe(transcribed);
+
+      // Text and voice share the one record.
+      expect((await text(phone, { conversationId: A, mode: 'local', text: '/help' })).status).toBe(422);
+      expect((await voice(phone, `${B}/local`)).status).toBe(200);
+      expect((await text(phone, { conversationId: B, mode: 'smart', text: '/help' })).status).toBe(422);
+    });
+
+    it('refuses a voice mode that is not one of the two', async () => {
+      build({ GROQ_API_KEY: 'test-key-not-real' });
+      const phone = await pair();
+      expect((await voice(phone, `${A}/fast`)).status).toBe(404);
+      expect(modes()).toEqual([]);
+    });
+
+    it('records shared text with the mode it declares', async () => {
+      const phone = await pair();
+      const shared = await send(
+        await phone.toDo('POST', '/app/message', { id: messageId(), kind: 'text', text: 'מה זה?', shared: 'פגישה', conversationId: A, mode: 'smart' }),
+      );
+      expect(shared.status).toBe(200);
+      expect(modes()).toEqual([{ conversation: A, mode: 'smart' }]);
+    });
+
+    it('never checks a button: it runs in the mode already recorded', async () => {
+      const phone = await pair();
+      await text(phone, { conversationId: A, mode: 'smart', text: '/help' });
+      const tapped = await send(
+        await phone.toDo('POST', '/app/message', { id: messageId(), kind: 'button', buttonId: 'confirm:0a1b:2c3d', conversationId: A }),
+      );
+      expect(tapped.status).toBe(200);
+      expect(modes()).toEqual([{ conversation: A, mode: 'smart' }]);
+    });
+
+    it('forgets every mode on /forget and on /pair off', async () => {
+      const phone = await pair();
+      await text(phone, { conversationId: A, mode: 'smart', text: '/help' });
+      await text(phone, { conversationId: B, mode: 'local', text: '/help' });
+      fake.driver.exec(
+        "INSERT INTO conversation_consents (principal, conversation, source, last_used) VALUES (?, ?, 'calendar', ?)",
+        principal,
+        A,
+        NOW,
+      );
+
+      await text(phone, { conversationId: B, mode: 'local', text: '/forget' });
+      expect(modes()).toEqual([]);
+      expect(fake.driver.exec('SELECT COUNT(*) AS n FROM conversation_consents')[0]?.['n']).toBe(0);
+
+      // Forgotten, A is new again: its next message records its mode afresh.
+      expect((await text(phone, { conversationId: A, mode: 'local', text: '/help' })).status).toBe(200);
+      expect(modes()).toEqual([{ conversation: A, mode: 'local' }]);
+
+      await text(phone, { conversationId: A, mode: 'local', text: '/pair off' });
+      expect(modes()).toEqual([]);
+    });
+
+    it('purges modes and consents unused for 30 days in maintenance', async () => {
+      const phone = await pair();
+      await text(phone, { conversationId: A, mode: 'smart', text: '/help' });
+      vi.setSystemTime(NOW + 2 * 24 * 60 * 60 * 1000);
+      await text(phone, { conversationId: B, mode: 'smart', text: '/help' });
+      fake.driver.exec(
+        "INSERT INTO conversation_consents (principal, conversation, source, last_used) VALUES (?, ?, 'calendar', ?), (?, ?, 'calendar', ?)",
+        principal,
+        A,
+        NOW,
+        principal,
+        B,
+        Date.now(),
+      );
+
+      vi.setSystemTime(NOW + 31 * 24 * 60 * 60 * 1000);
+      await assistant.runMaintenance();
+
+      expect(modes()).toEqual([{ conversation: B, mode: 'smart' }]);
+      expect(fake.driver.exec('SELECT conversation FROM conversation_consents')).toEqual([{ conversation: B }]);
+    });
+  });
+
   // -- missed calls in the digest (ROADMAP #20, 2026-10-06) ---------------------
 
   describe('missed calls in the digest', () => {

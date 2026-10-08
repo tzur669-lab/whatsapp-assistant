@@ -65,6 +65,31 @@ describe('parseMessage', () => {
     expect(parseMessage(bytes({ id: ID, kind: 'button', buttonId: 'a', shared: 'y' }))).toBeNull();
   });
 
+  it("reads a text message's conversation mode, and refuses anything but the two (smart conversations)", () => {
+    const conversationId = '22222222-2222-4222-8222-222222222222';
+    expect(parseMessage(bytes({ id: ID, kind: 'text', text: 'x', conversationId, mode: 'smart' }))).toEqual({
+      id: ID,
+      kind: 'text',
+      text: 'x',
+      conversationId,
+      mode: 'smart',
+    });
+    expect(parseMessage(bytes({ id: ID, kind: 'text', text: 'x', mode: 'local' }))?.kind).toBe('text');
+    // Absent stays absent: the caller reads it as local, so an older app works.
+    expect(parseMessage(bytes({ id: ID, kind: 'text', text: 'x' }))).not.toHaveProperty('mode');
+    // Shared text still declares its conversation's mode.
+    expect(parseMessage(bytes({ id: ID, kind: 'text', text: 'x', shared: 'y', mode: 'smart' }))).toMatchObject({ mode: 'smart' });
+    for (const mode of ['SMART', 'fast', '', 1, null, true]) {
+      expect(parseMessage(bytes({ id: ID, kind: 'text', text: 'x', mode }))).toBeNull();
+    }
+  });
+
+  it('never takes a mode on a button: it runs in the mode already recorded', () => {
+    expect(parseMessage(bytes({ id: ID, kind: 'button', buttonId: 'a', mode: 'smart' }))).toBeNull();
+    expect(parseMessage(bytes({ id: ID, kind: 'button', buttonId: 'a', mode: 'local' }))).toBeNull();
+    expect(parseMessage(bytes({ id: ID, kind: 'button', buttonId: 'a' }))).toEqual({ id: ID, kind: 'button', buttonId: 'a' });
+  });
+
   it('refuses a button id with anything but the button alphabet', () => {
     expect(parseMessage(bytes({ id: ID, kind: 'button', buttonId: 'snooze:<script>' }))).toBeNull();
     expect(parseMessage(bytes({ id: ID, kind: 'button', buttonId: 'a'.repeat(257) }))).toBeNull();

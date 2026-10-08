@@ -10,6 +10,7 @@
  */
 import { z } from 'zod';
 import { phoneReadResultSchema } from '../../tools/phone-reads.js';
+import type { ConversationMode } from '../types.js';
 
 /** A client message id: a v4-shaped uuid, lowercase. */
 export const MESSAGE_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
@@ -37,6 +38,15 @@ const buttonIdSchema = z.string().min(1).max(256).regex(/^[a-z0-9:]+$/);
  * means the one shared thread.
  */
 const conversationId = messageId.optional();
+
+/**
+ * The conversation's mode (smart conversations), declared by every text
+ * message and voice note. The server records the first one and refuses a
+ * message that disagrees (422). Absent means local, so an older app works.
+ * Never on a button: a button runs in the mode already recorded.
+ */
+export const CONVERSATION_MODES = ['smart', 'local'] as const satisfies readonly ConversationMode[];
+const modeSchema = z.enum(CONVERSATION_MODES);
 
 /**
  * The town the phone's geocoder found for its location (2026-10-01), which the
@@ -72,6 +82,7 @@ const messageSchema = z.union([
       shared: z.string().min(1).max(MAX_SHARED_CHARS).optional(),
       conversationId,
       location: locationSchema.optional(),
+      mode: modeSchema.optional(),
     })
     .strict()
     // A command is the user's alone: none can carry someone else's text.

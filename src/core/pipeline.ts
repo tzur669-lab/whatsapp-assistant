@@ -215,7 +215,11 @@ export type PipelineOutcome =
   | { action: 'device_query'; queryId: string; query: PhoneReadInput }
   | {
       action: 'none';
-      reason: 'duplicate' | 'status' | 'not_implemented' | 'reply_deferred';
+      /**
+       * `mode_mismatch`: the message declared the other mode than the one its
+       * conversation recorded (smart conversations). Refused before anything ran.
+       */
+      reason: 'duplicate' | 'mode_mismatch' | 'status' | 'not_implemented' | 'reply_deferred';
       /** A failed delivery put a reminder back in the queue (§6.8). */
       rescheduleAlarm?: boolean;
     };
@@ -253,18 +257,31 @@ async function route(event: InboundEvent, deps: PipelineDeps): Promise<PipelineO
     return recordDeliveryStatus(event, deps, now);
   }
 
-  const fresh = repo.recordInbound({
+  // The conversation's mode is recorded with the dedupe insert, in its
+  // transaction, before the first await (smart conversations). A text or voice
+  // message declares one (absent: local); a button never does.
+  const recorded = repo.recordInbound({
     wamid: event.wamid,
     principal,
     receivedAt: now,
     sentAt: event.sentAtMs,
     kind: event.kind,
+    ...('conversationId' in event && event.conversationId !== undefined ? { conversation: event.conversationId } : {}),
+    ...(event.kind === 'text' || event.kind === 'audio' ? { mode: event.mode ?? 'local' } : {}),
   });
 
-  if (!fresh) {
+  if (recorded.status === 'duplicate') {
     log.info('duplicate_dropped', { wamid: event.wamid });
     return { action: 'none', reason: 'duplicate' };
   }
+  if (recorded.status === 'mode_mismatch') {
+    // Already marked in the same transaction. No model, no reply text.
+    log.info('mode_mismatch', { wamid: event.wamid });
+    return { action: 'none', reason: 'mode_mismatch' };
+  }
+  // From here on the event carries the conversation's recorded mode. Nothing
+  // chooses by it yet (smart conversations, slice 4 will).
+  if (event.kind !== 'unsupported') event = { ...event, mode: recorded.mode };
 
   repo.touchWindow(principal, now);
 
@@ -1267,9 +1284,10 @@ function birthdaySetting(
   }
 }
 
-/** `/forget` and `/pair off`: the agent's history and any lock go (§6.19). */
+/** `/forget` and `/pair off`: the agent's history, any lock and every conversation's mode go (§6.19). */
 function forgetConversation(deps: PipelineDeps): void {
   deps.exchanges?.forget(deps.principal);
+  deps.repo.forgetConversationModes(deps.principal);
   const agent = deps.services?.agent;
   if (!agent) return;
   agent.history.wipe(deps.principal);
