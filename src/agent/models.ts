@@ -96,7 +96,8 @@ export const GEMINI_FLASH = 'gemini-2.5-flash';
 /**
  * Models only a smart conversation may use (2026-10-08). Never in `MODELS`, so
  * never in a local conversation's `providers` or `fallbackProviders` (unit
- * test: the two tables never overlap). Nothing routes a turn here yet.
+ * test: the two tables never overlap). Only a smart conversation's own words
+ * reach them (`pipeline.ts`, `loop.ts`).
  */
 export const SMART_MODELS: readonly ModelEntry[] = [
   {

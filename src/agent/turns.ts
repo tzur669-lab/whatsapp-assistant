@@ -88,6 +88,10 @@ const stateSchema = z
     query: phoneReadInputSchema,
     // The narrowed tool set (2026-10-06); absent in states stored before it.
     offered: z.array(z.enum(TOOL_NAMES)).max(TOOL_NAMES.length).optional(),
+    // The conversation's mode and whether the message was someone else's
+    // words (2026-10-08); absent in states stored before them: local, own.
+    mode: z.enum(['smart', 'local']).optional(),
+    foreign: z.boolean().optional(),
   })
   .strict();
 

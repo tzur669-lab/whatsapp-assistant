@@ -24,6 +24,7 @@ import { REMINDER_ROW_TTL_MS, REPUSH_AFTER_MS } from '../../../src/channels/app/
 import { CLOCK_SKEW_MS } from '../../../src/channels/app/verify.js';
 import type { AppEnv } from '../../../src/core/env.js';
 import { SMART_MODELS } from '../../../src/agent/models.js';
+import { GEMINI_ENDPOINT } from '../../../src/agent/provider.js';
 
 const NOW = Date.parse('2026-09-29T09:00:00Z'); // a Tuesday
 const SELF = '972500000000';
@@ -777,6 +778,31 @@ describe('the app channel', () => {
       const gemini = SMART_MODELS[0]!.id;
       expect(report.models.find((m) => m.model === gemini)).toMatchObject({ role: 'fallback', dayTokens: null });
       expect(report.server.minute.map((m) => m.model)).toContain(gemini);
+    });
+
+    it("sends a smart conversation's own words to Gemini first, and a local one's to Groq only (slice 4)", async () => {
+      buildWithGroq({ GEMINI_API_KEY: 'fake-gemini-key-not-real' });
+      const phone = await pair();
+      const inMode = async (conversationId: string, mode: 'smart' | 'local') =>
+        send(await phone.toDo('POST', '/app/message', { id: messageId(), kind: 'text', text: 'מה נשמע?', conversationId, mode }));
+
+      await inMode(messageId(), 'local');
+      expect(modelUrls.length).toBeGreaterThan(0);
+      expect(modelUrls.every((url) => url.startsWith('https://api.groq.com/'))).toBe(true);
+
+      modelUrls = [];
+      await inMode(messageId(), 'smart');
+      expect(modelUrls[0]).toBe(GEMINI_ENDPOINT);
+    });
+
+    it('answers a smart conversation locally, saying so, without the Gemini key', async () => {
+      buildWithGroq();
+      const phone = await pair();
+      const reply = (await send(
+        await phone.toDo('POST', '/app/message', { id: messageId(), kind: 'text', text: 'מה נשמע?', conversationId: messageId(), mode: 'smart' }),
+      )).body as unknown as Reply;
+      expect(modelUrls.every((url) => url.startsWith('https://api.groq.com/'))).toBe(true);
+      expect(JSON.stringify(reply)).toContain(JSON.stringify(he.smartUnavailable('he')).slice(1, -1));
     });
 
     it('shows no Gemini line without its key', async () => {

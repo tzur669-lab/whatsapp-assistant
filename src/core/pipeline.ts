@@ -61,7 +61,7 @@ import type { AppOutbox } from '../channels/app/outbox.js';
 import { PAIRING_TTL_MS } from '../device/store.js';
 import { callText } from '../render/calls.js';
 import { reAsk } from '../render/clarify.js';
-import { toolCatalog } from '../tools/registry.js';
+import { dataSourceOf, toolCatalog } from '../tools/registry.js';
 import { budgetState } from '../policy/window.js';
 import { classifyMetaError } from '../channels/whatsapp/errors.js';
 import { he } from '../render/he.js';
@@ -96,8 +96,8 @@ export type AgentServices = {
   /**
    * The smart conversations' models (`SMART_MODELS`, 2026-10-08), built only
    * when both the Gemini and Groq keys are set. Never part of `providers` or
-   * `fallbackProviders`. Nothing reads it yet: a later slice routes smart
-   * conversations here.
+   * `fallbackProviders`. Asked first on a smart conversation's own words
+   * (never shared text, never the read-only try), before `providers`.
    */
   smartProviders?: readonly AgentProvider[];
   budget: TokenBudget;
@@ -279,8 +279,8 @@ async function route(event: InboundEvent, deps: PipelineDeps): Promise<PipelineO
     log.info('mode_mismatch', { wamid: event.wamid });
     return { action: 'none', reason: 'mode_mismatch' };
   }
-  // From here on the event carries the conversation's recorded mode. Nothing
-  // chooses by it yet (smart conversations, slice 4 will).
+  // From here on the event carries the conversation's recorded mode, which
+  // picks the models and tools of its turn (smart conversations).
   if (event.kind !== 'unsupported') event = { ...event, mode: recorded.mode };
 
   repo.touchWindow(principal, now);
@@ -523,7 +523,26 @@ async function respondToText(
   if (!BUSY_REPLIES.has(outcome) && outcome.action === 'reply') {
     await keepExchange(deps, event.wamid, event.conversationId ?? '', source.kind === 'voice' ? he.voicePlaceholder : text, text, outcome);
   }
+  // A smart conversation answered without its smart model, because none is
+  // configured, says so on the first line (2026-10-08). Shared text is local
+  // in any smart conversation, so it says nothing.
+  if (outcome.action === 'reply' && smartWanted(event) && !deps.services.agent?.smartProviders?.length) {
+    const note = he.smartUnavailable(languageOf(text));
+    return {
+      ...outcome,
+      text: `${note}\n\n${outcome.text}`,
+      ...(outcome.withoutEcho !== undefined ? { withoutEcho: `${note}\n\n${outcome.withoutEcho}` } : {}),
+    };
+  }
   return outcome;
+}
+
+/**
+ * The message is a smart conversation's own words (2026-10-08): the recorded
+ * mode is smart, and it is not someone else's text shared into it.
+ */
+function smartWanted(event: Extract<InboundEvent, { kind: 'text' | 'audio' }>): boolean {
+  return event.mode === 'smart' && !event.forwarded;
 }
 
 /** Steps 3 on of `respondToText`: the agent, the parser, the read-only try. */
@@ -733,9 +752,16 @@ async function respondWithAgent(
     const lang = languageOf(text);
     // Each of the app's conversations keeps its own memory (2026-10-01).
     const conversation = event.conversationId ?? '';
+    // The conversation's recorded mode (2026-10-08). Its own words may go to a
+    // smart model first; shared text and the read-only try stay local. Every
+    // model in it is offered the same public tools and sees no facts.
+    const smartConversation = event.mode === 'smart';
+    const smartModels = smartWanted(event) && !readOnly ? (agent.smartProviders ?? []) : [];
     const history = await agent.history.recent(principal, conversation);
-    // Facts about the user (§6.26): the agent's own read; never the misses or notes.
-    const facts = deps.services?.facts ? (await deps.services.facts.all(principal)).map((fact) => fact.text) : [];
+    // Facts about the user (§6.26): the agent's own read; never the misses or
+    // notes, and never in a smart conversation.
+    const facts =
+      deps.services?.facts && !smartConversation ? (await deps.services.facts.all(principal)).map((fact) => fact.text) : [];
     const result = await timed(deps, 'agent', () =>
       runAgentTurn(
         {
@@ -763,9 +789,10 @@ async function respondWithAgent(
             source.kind === 'text' &&
             deps.channel === 'app' &&
             (deps.deviceCaps ?? []).includes('device_query'),
+          ...(smartConversation ? { smart: true } : {}),
         },
         {
-          providers: readOnly ? (agent.fallbackProviders ?? []) : agent.providers,
+          providers: readOnly ? (agent.fallbackProviders ?? []) : [...smartModels, ...agent.providers],
           budget: agent.budget,
           log,
           ...(options.scope ? { scope: options.scope } : {}),
@@ -778,6 +805,7 @@ async function respondWithAgent(
       const queryId = await agent.turns.suspend(principal, event.wamid, {
         ...result.state,
         ...(conversation === '' ? {} : { conversation }),
+        ...(event.forwarded ? { foreign: true } : {}),
       });
       repo.markInboundOutcome(event.wamid, { intent: 'agent', decision: 'DEVICE_QUERY' });
       log.info('agent_suspended', { wamid: event.wamid, tool: result.state.tool });
@@ -791,6 +819,7 @@ async function respondWithAgent(
       deps,
       now,
       conversation,
+      { smart: smartConversation, foreign: event.forwarded },
       readOnly,
     );
     if (settled) return settled;
@@ -813,6 +842,8 @@ async function settleAgentResult(
   now: number,
   /** The app's conversation, '' for the shared thread. */
   conversation: string,
+  /** A smart conversation's turn, and whether its words were someone else's (2026-10-08). */
+  gate: { smart: boolean; foreign: boolean },
   /** The read-only second try: the first already counted the fallback and its code. */
   secondTry = false,
 ): Promise<PipelineOutcome | null> {
@@ -848,12 +879,25 @@ async function settleAgentResult(
     // neither the words that saved a note nor a reply showing one reach the
     // model on a later turn (2026-10-05).
     const kept = outcome.private === true;
+    // A smart conversation's history may reach a model that trains on it
+    // (2026-10-08). It keeps placeholders for someone else's words, both sides,
+    // and for any reply after a tool whose data is not public — a card, an
+    // Undo, a list of choices built by code included. The consent gate
+    // (slice 5) narrows "not public" to "not public and not consented".
+    const shared = gate.smart && gate.foreign;
+    const withheld = gate.smart && (result.tools ?? []).some((tool) => dataSourceOf(tool) !== 'public');
     await agent.history.append(
       principal,
       {
         // A transcript is never stored (invariant 13); the reply carries the context.
-        user: kept ? he.privatePlaceholder : userText,
-        reply: kept ? he.privatePlaceholder : outcome.text,
+        user: kept ? he.privatePlaceholder : shared ? he.sharedPlaceholder : userText,
+        reply: kept
+          ? he.privatePlaceholder
+          : shared
+            ? he.sharedPlaceholder
+            : withheld
+              ? he.withheldPlaceholder
+              : outcome.text,
         tainted: result.tainted,
       },
       conversation,
@@ -903,12 +947,19 @@ export async function resumeFromPhone(
 
     const now = deps.now();
     const turn = turnOf(deps, { sentAtMs: request.sentAtMs, forwarded: false }, now, { kind: 'text' }, state.lang);
+    // The stored mode picks the providers (2026-10-08): a smart conversation's
+    // turn may have started on its smart model.
+    const smart = state.mode === 'smart';
+    const providers = smart ? [...(agent.smartProviders ?? []), ...agent.providers] : agent.providers;
     const result = await timed(deps, 'agent', () =>
-      resumeAgentTurn(state, request.result, turn, { providers: agent.providers, budget: agent.budget, log }),
+      resumeAgentTurn(state, request.result, turn, { providers, budget: agent.budget, log }),
     );
     log.info('agent_resumed', { wamid: request.wamid, readStatus: request.result.status, itemCount: request.result.items.length });
 
-    const settled = await settleAgentResult(result, state.text, request.wamid, deps, now, state.conversation ?? '');
+    const settled = await settleAgentResult(result, state.text, request.wamid, deps, now, state.conversation ?? '', {
+      smart,
+      foreign: state.foreign === true,
+    });
     // No fallback here: the parser never sees a turn the phone has answered.
     const outcome: PipelineOutcome = settled ?? { action: 'reply', text: he.agentIncomplete };
     // Kept under the original message's place in line, so a late resume never

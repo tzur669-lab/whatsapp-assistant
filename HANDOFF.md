@@ -106,6 +106,14 @@ Network on the hotspot: `NODE_OPTIONS=--dns-result-order=ipv4first` for wrangler
 
 ## 8. Session log (docs)
 
+- 2026-10-08: Smart conversations, slice 4: a smart conversation's own words
+  run on `[...smartProviders, ...providers]`; the model is chosen before the
+  tools; a smart model gets `SMART_NOTE` (s1), its own caps and no facts. Until
+  the consent gate (slice 5) every model in a smart conversation is offered
+  public tools only (`smartOfferedTools`), and `settleAgentResult` stores
+  placeholders for non-public tool replies and for shared text. Groq
+  fingerprint unchanged; `smartFingerprintFor` pins Gemini evals.
+
 - 2026-10-08: Smart conversations, slice 3: a conversation's mode (`smart` |
   `local`) is recorded once inside `recordInbound`'s transaction
   (`conversation_modes`, plus `conversation_consents` for slice 5, both in

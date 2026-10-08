@@ -140,6 +140,26 @@ export const he = {
   /** What the agent's history keeps for a private exchange (notes, 2026-10-05). */
   privatePlaceholder: '[פתק]',
 
+  /**
+   * A smart conversation's history keeps this instead of a reply that may
+   * carry personal data (smart conversations, 2026-10-08): the model that may
+   * train on it never sees it on a later turn.
+   */
+  withheldPlaceholder: '[מידע אישי]',
+
+  /** Both sides of a turn about text shared from another app, in a smart conversation's history. */
+  sharedPlaceholder: '[טקסט ששותף]',
+
+  /**
+   * A smart conversation answered by the local models, because the smart model
+   * is not configured. The first line of the reply.
+   */
+  smartUnavailable(lang: 'he' | 'en'): string {
+    return lang === 'en'
+      ? 'Smart mode is not available right now. This answer is from the local model.'
+      : 'המצב החכם לא זמין כרגע. התשובה מהמודל המקומי.';
+  },
+
   /** `/forget` (§6.19). */
   forgotten: 'זיכרון השיחה נמחק.',
 

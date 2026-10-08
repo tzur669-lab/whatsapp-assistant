@@ -11,7 +11,7 @@
  * Wire names use `__` for the dot, which function names may not contain.
  */
 import type { ZodTypeAny } from 'zod';
-import { REGISTRY, TOOL_NAMES } from '../tools/registry.js';
+import { dataSourceOf, REGISTRY, TOOL_NAMES } from '../tools/registry.js';
 import type { ToolName } from '../tools/registry.js';
 import type { WireTool } from './provider.js';
 
@@ -91,6 +91,19 @@ export function agentToolNames(options: OfferOptions = { cards: false }): ToolNa
     if (spec.phoneRead) return options.phoneReads === true;
     return true;
   });
+}
+
+/**
+ * What a smart conversation may be offered, on any model (smart conversations,
+ * 2026-10-08): only the public tools of what the turn would be offered anyway.
+ * Until the consent gate exists, nothing whose replies may carry personal data
+ * reaches a turn whose history can reach a provider that may train on it.
+ * Consent belongs to the conversation, not the model, so qwen and the
+ * read-only try in a smart conversation get the same set. The consent gate
+ * (slice 5) widens this to public + consented sources.
+ */
+export function smartOfferedTools(offered: readonly ToolName[]): ToolName[] {
+  return offered.filter((name) => dataSourceOf(name) === 'public');
 }
 
 export function wireTools(names: readonly ToolName[]): WireTool[] {

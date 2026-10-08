@@ -61,6 +61,7 @@ describe('rate/budget failover', () => {
   type Setup = {
     providers: AgentProvider[];
     fallbackProviders?: AgentProvider[];
+    smartProviders?: AgentProvider[];
     nlu?: NluProvider[];
   };
 
@@ -75,6 +76,7 @@ describe('rate/budget failover', () => {
       agent: {
         providers: setup.providers,
         ...(setup.fallbackProviders ? { fallbackProviders: setup.fallbackProviders } : {}),
+        ...(setup.smartProviders ? { smartProviders: setup.smartProviders } : {}),
         budget,
         history,
         lock,
@@ -237,7 +239,9 @@ describe('rate/budget failover', () => {
 
     it("blocks a request-limited model until California midnight when its 429 named the day", async () => {
       const gemini = createFakeAgent([{ error: 'rate_limited', daily: true }], SMART_MODELS[0]!.id, 500, 'smart');
-      await handleInbound(text('שלום'), deps({ providers: [gemini] }));
+      // Only a smart conversation's turn reaches a smart model (slice 4).
+      const smart = { ...text('שלום'), conversationId: 'conv-smart-fo', mode: 'smart' } as InboundEvent;
+      await handleInbound(smart, deps({ providers: [], smartProviders: [gemini] }));
       expect(gemini.calls).toHaveLength(1);
       expect(budget.reservedFor(gemini.model)).toBe(0);
       // NOW is 02:00 PDT on 2026-09-24: the quota day ends at 07:00 UTC the next morning.

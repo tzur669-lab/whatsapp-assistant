@@ -1765,7 +1765,8 @@ export class AssistantDO implements DurableObject {
               providers: MODELS.filter((entry) => entry.canWrite).map((entry) => this.agentProvider(entry)),
               fallbackProviders: MODELS.filter((entry) => !entry.canWrite).map((entry) => this.agentProvider(entry)),
               // Smart conversations' models: a table of their own, never in
-              // the two lists above. Not used by any turn yet (2026-10-08).
+              // the two lists above. Asked first on a smart conversation's own
+              // words only (2026-10-08).
               ...(this.smartModels().length > 0
                 ? { smartProviders: this.smartModels().map((entry) => this.agentProvider(entry)) }
                 : {}),

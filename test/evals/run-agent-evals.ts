@@ -29,22 +29,35 @@
  * `--read-only` (2026-10-05): the fallback model's turn — reads only, and the
  * read-only line in the prompt. Recorded apart, and scored on what it may do:
  * read the right thing, answer in text, never reach for a write.
+ *
+ * A model in `SMART_MODELS` (smart conversations, 2026-10-08) runs as a smart
+ * turn: a Gemini provider with `GEMINI_API_KEY` from the same environment, the
+ * smart note in the prompt, the public catalog with no selection, and the
+ * smart fingerprint in the report. `--read-only` does not apply to it.
  */
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parse as parseYaml } from 'yaml';
-import { createGroqAgentProvider } from '../../src/agent/provider.js';
+import { createGeminiAgentProvider, createGroqAgentProvider } from '../../src/agent/provider.js';
 import type { AgentMessage, AgentProvider } from '../../src/agent/provider.js';
-import { languageLine, nowLine, READ_ONLY_NOTE, SYSTEM_PROMPT, AGENT_PROMPT_VERSION } from '../../src/agent/prompt.js';
-import { agentToolNames, fromWireName, wireTools } from '../../src/agent/tools.js';
+import {
+  languageLine,
+  nowLine,
+  READ_ONLY_NOTE,
+  SMART_NOTE,
+  SMART_NOTE_VERSION,
+  SYSTEM_PROMPT,
+  AGENT_PROMPT_VERSION,
+} from '../../src/agent/prompt.js';
+import { agentToolNames, fromWireName, smartOfferedTools, wireTools } from '../../src/agent/tools.js';
 import type { WireTool } from '../../src/agent/provider.js';
 import { promptChars } from '../../src/agent/loop.js';
 import { CHARS_PER_TOKEN } from '../../src/agent/budget.js';
-import { DEFAULT_MAX_COMPLETION_TOKENS, modelEntry } from '../../src/agent/models.js';
+import { DEFAULT_MAX_COMPLETION_TOKENS, modelEntry, SMART_MODELS } from '../../src/agent/models.js';
 import { selectTools } from '../../src/agent/tool-groups.js';
 import { EvalLedger } from './ledger.js';
-import { fingerprintFor } from './fingerprint.js';
+import { fingerprintFor, smartFingerprintFor } from './fingerprint.js';
 import { stripNulls } from '../../src/nlu/json-schema.js';
 import { validateIntentDraft } from '../../src/nlu/intent-schema.js';
 import type { IntentDraft } from '../../src/nlu/intent-schema.js';
@@ -118,29 +131,46 @@ const READ_TOOLS = new Set([
 let readOnly = false;
 /** Set once from `--select-tools`. */
 let selecting = false;
+/** Set once when the model is in `SMART_MODELS`: the run is a smart turn. */
+let smart = false;
 
 function offered() {
   const grants = { gmail: true, tasks: true, drive: true };
+  if (smart) return smartOfferedTools(agentToolNames({ cards: true, fileCards: true, phoneReads: true, grants }));
   return readOnly
     ? agentToolNames({ cards: false, phoneReads: false, grants, readOnly: true })
     : agentToolNames({ cards: true, fileCards: true, phoneReads: true, grants });
+}
+
+/** The system prompt the loop sends this kind of turn. */
+function systemPrompt(): string {
+  if (smart) return `${SYSTEM_PROMPT}\n${SMART_NOTE}`;
+  return readOnly ? `${SYSTEM_PROMPT}\n${READ_ONLY_NOTE}` : SYSTEM_PROMPT;
 }
 
 async function main(): Promise<void> {
   loadDevVars();
   const args = parseArgs(process.argv.slice(2));
   readOnly = args.readOnly;
-  const apiKey = process.env['GROQ_API_KEY'] ?? '';
-  if (!apiKey) fail('GROQ_API_KEY is not set. Put it in .dev.vars (git-ignored).');
+  smart = SMART_MODELS.some((model) => model.id === args.model);
+  if (smart && readOnly) fail('--read-only does not apply to a smart model: it never takes the read-only try.');
+  const keyName = smart ? 'GEMINI_API_KEY' : 'GROQ_API_KEY';
+  const apiKey = process.env[keyName] ?? '';
+  if (!apiKey) fail(`${keyName} is not set. Put it in .dev.vars (git-ignored).`);
 
   selecting = args.selectTools;
   const entry = modelEntry(args.model);
-  const provider = createGroqAgentProvider({
+  const config = {
     apiKey,
     model: args.model,
     timeoutMs: 30_000,
-    ...(entry ? { maxCompletionTokens: entry.maxCompletionTokens, params: entry.params } : {}),
-  });
+    ...(entry ? { role: entry.role, maxCompletionTokens: entry.maxCompletionTokens, params: entry.params } : {}),
+  };
+  const provider = smart ? createGeminiAgentProvider(config) : createGroqAgentProvider(config);
+  const tokensPerMinute = entry?.minuteTokens ?? TOKENS_PER_MINUTE;
+  // A model that limits requests per minute is spaced by them too.
+  const requestSpacingMs = entry?.minuteRequests ? Math.ceil(60_000 / entry.minuteRequests) : 0;
+  const charsPerToken = entry?.charsPerToken ?? CHARS_PER_TOKEN;
   const cases = sampleCases(loadCases(args.filter), args.sample);
   const injections = args.filter ? INJECTION_CASES.filter((c) => c.id.includes(args.filter!)) : INJECTION_CASES;
 
@@ -148,11 +178,11 @@ async function main(): Promise<void> {
   const recording: Recording =
     args.resume && existsSync(path)
       ? (JSON.parse(readFileSync(path, 'utf8')) as Recording)
-      : { model: args.model, prompt: AGENT_PROMPT_VERSION, cases: [] };
+      : { model: args.model, prompt: promptLabel(), cases: [] };
   const done = new Map(recording.cases.filter((c) => !c.error).map((c) => [c.id, c]));
   recording.cases = [...done.values()];
 
-  out(`agent eval: ${args.model}${readOnly ? ' (read-only)' : ''}, prompt ${AGENT_PROMPT_VERSION}, ${cases.length} cases + ${injections.length} injection`);
+  out(`agent eval: ${args.model}${readOnly ? ' (read-only)' : ''}${smart ? ' (smart)' : ''}, prompt ${promptLabel()}, ${cases.length} cases + ${injections.length} injection`);
   if (done.size > 0) out(`resuming: ${done.size} already answered`);
   const scoreRun = readOnly ? reportReadOnly : report;
   if (args.report) {
@@ -177,7 +207,7 @@ async function main(): Promise<void> {
         break;
       }
       const chars = promptChars(item.messages, JSON.stringify(item.tools).length);
-      const charge = ledger!.begin(args.model, Math.ceil(chars / CHARS_PER_TOKEN) + (entry?.maxCompletionTokens ?? DEFAULT_MAX_COMPLETION_TOKENS));
+      const charge = ledger!.begin(args.model, Math.ceil(chars / charsPerToken) + (entry?.maxCompletionTokens ?? DEFAULT_MAX_COMPLETION_TOKENS));
       const result = await ask(provider, item.id, item.messages, item.tools);
       ledger!.settle(charge, result.tokens);
       result.chars = chars;
@@ -191,19 +221,26 @@ async function main(): Promise<void> {
       out(`  ${item.id.padEnd(16)} ${result.error ?? (result.text ? 'text' : intentOf(result.draft))}  ${result.latencyMs} ms`);
 
       costliest = Math.max(costliest, result.tokens);
-      await sleep(spacingMs(costliest, TOKENS_PER_MINUTE, 60_000));
+      await sleep(Math.max(spacingMs(costliest, tokensPerMinute, 60_000), requestSpacingMs));
     }
   } finally {
     ledger?.close();
   }
 
   scoreRun(cases, recording);
-  if (selecting && entry) out(`\nfingerprint for ${entry.id}: ${fingerprintFor(entry)} (record it in src/agent/models.ts only if every gate passed)`);
+  if (smart && entry) out(`\nsmart fingerprint for ${entry.id}: ${smartFingerprintFor(entry)} (record it in src/agent/models.ts only if every gate passed)`);
+  else if (selecting && entry) out(`\nfingerprint for ${entry.id}: ${fingerprintFor(entry)} (record it in src/agent/models.ts only if every gate passed)`);
+}
+
+/** The prompt version a recording was made on: the smart note's too, on a smart run. */
+function promptLabel(): string {
+  return smart ? `${AGENT_PROMPT_VERSION}+${SMART_NOTE_VERSION}` : AGENT_PROMPT_VERSION;
 }
 
 /** What the bot would offer this message: the full set, or narrowed by code with `--select-tools`. */
 function toolsFor(input: string): WireTool[] {
-  return wireTools(selecting ? selectTools(input, offered()).tools : offered());
+  // A smart turn has no selection: the whole smart catalog, as the loop offers it.
+  return wireTools(selecting && !smart ? selectTools(input, offered()).tools : offered());
 }
 
 async function ask(provider: AgentProvider, id: string, messages: AgentMessage[], tools: WireTool[]): Promise<Recorded> {
@@ -236,7 +273,7 @@ async function ask(provider: AgentProvider, id: string, messages: AgentMessage[]
 /** The same messages the loop builds for a first call, with no history. */
 function firstTurn(input: string, nowMs: number): AgentMessage[] {
   return [
-    { role: 'system', content: readOnly ? `${SYSTEM_PROMPT}\n${READ_ONLY_NOTE}` : SYSTEM_PROMPT },
+    { role: 'system', content: systemPrompt() },
     // The same language rule the pipeline's languageOf applies.
     { role: 'user', content: `${nowLine(nowMs)}\n${languageLine(/[֐-׿]/.test(input) || !/[A-Za-z]/.test(input) ? 'he' : 'en')}\n\n${input}` },
   ];

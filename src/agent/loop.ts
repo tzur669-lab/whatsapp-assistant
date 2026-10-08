@@ -29,7 +29,7 @@ import { stripIsolates } from '../render/bidi.js';
 import type { Lang } from '../render/format-time.js';
 import { scrubForModel } from '../security/scrub.js';
 import type { Logger } from '../security/redact.js';
-import { REGISTRY } from '../tools/registry.js';
+import { REGISTRY, TOOL_NAMES } from '../tools/registry.js';
 import type { ToolName } from '../tools/registry.js';
 import type { PhoneReadInput, PhoneReadResult } from '../tools/phone-reads.js';
 import { phoneReadRefused, phoneReadText } from '../render/phone-reads.js';
@@ -37,11 +37,12 @@ import type { MessageScope, Reservation, TokenBudget } from './budget.js';
 import { CHARS_PER_TOKEN, newMessageScope, wasNeverSent } from './budget.js';
 import { DEFAULT_MAX_COMPLETION_TOKENS, modelEntry } from './models.js';
 import { selectionLabel, selectTools } from './tool-groups.js';
+import type { Selection } from './tool-groups.js';
 import type { HistoryEntry } from './history.js';
-import { languageLine, nowLine, READ_ONLY_NOTE, SYSTEM_PROMPT } from './prompt.js';
+import { languageLine, nowLine, READ_ONLY_NOTE, SMART_NOTE, SYSTEM_PROMPT } from './prompt.js';
 import type { AgentMessage, AgentProvider, AgentResponse, ToolCall, WireTool } from './provider.js';
 import { wireToolCall } from './provider.js';
-import { agentToolNames, fromWireName, TAINTING_TOOLS, wireTools } from './tools.js';
+import { agentToolNames, fromWireName, smartOfferedTools, TAINTING_TOOLS, wireTools } from './tools.js';
 
 export const MAX_MODEL_CALLS = 3;
 /** One model's minute bucket is 8K; a turn has to fit in one (plan K4). The default; `models.ts` sets each. */
@@ -68,8 +69,30 @@ export function promptChars(messages: readonly AgentMessage[], toolChars: number
  * not a bound: `test/unit/agent/calibration.test.ts` checks it against measured
  * prompt tokens.
  */
-export function estimateTokens(messages: readonly AgentMessage[], toolChars: number): number {
-  return Math.ceil(promptChars(messages, toolChars) / CHARS_PER_TOKEN);
+export function estimateTokens(
+  messages: readonly AgentMessage[],
+  toolChars: number,
+  charsPerToken: number = CHARS_PER_TOKEN,
+): number {
+  return Math.ceil(promptChars(messages, toolChars) / charsPerToken);
+}
+
+/** A smart model (`SMART_MODELS`): only a smart conversation's turn may run on it. */
+function isSmart(provider: AgentProvider): boolean {
+  return provider.role === 'smart';
+}
+
+/** A smart model's system prompt: today's, then the smart note (versioned apart, `prompt.ts`). */
+const SMART_SYSTEM_PROMPT = `${SYSTEM_PROMPT}\n${SMART_NOTE}`;
+
+/** The model's own limits, or today's defaults for a model the table does not list. */
+function limitsOf(model: string): { turnCap: number; maxModelCalls: number; charsPerToken: number } {
+  const entry = modelEntry(model);
+  return {
+    turnCap: entry?.turnCap ?? TURN_TOKEN_CAP,
+    maxModelCalls: entry?.maxModelCalls ?? MAX_MODEL_CALLS,
+    charsPerToken: entry?.charsPerToken ?? CHARS_PER_TOKEN,
+  };
 }
 
 /**
@@ -116,6 +139,13 @@ export type AgentTurnInput = {
    * so. Code enforces it — a tool not offered is refused as unknown.
    */
   readOnly?: boolean;
+  /**
+   * The turn belongs to a smart conversation (2026-10-08): only the public
+   * tools are offered, on every model (`smartOfferedTools`), the facts are
+   * never sent, and a smart model among the providers may take it. Absent: a
+   * smart model is never asked, whatever the providers hold.
+   */
+  smart?: boolean;
 };
 
 /**
@@ -147,10 +177,28 @@ export type SuspendedState = {
    * with a fresh `agentToolNames` on resume; absent in older states: the full set.
    */
   offered?: ToolName[];
+  /**
+   * The conversation's mode (2026-10-08). It picks the providers a resume may
+   * use and the tools it may keep. Absent in older states: local.
+   */
+  mode?: 'smart' | 'local';
+  /** The message was someone else's words (shared or forwarded). Set by the pipeline. */
+  foreign?: boolean;
 };
 
 export type AgentResult =
-  | { kind: 'reply'; reply: Reply; tainted: boolean; byModel: boolean }
+  | {
+      kind: 'reply';
+      reply: Reply;
+      tainted: boolean;
+      byModel: boolean;
+      /**
+       * Every tool that ran in the turn, reads included (2026-10-08). The
+       * history gate decides from their data sources what a smart conversation
+       * may keep. Absent: none ran.
+       */
+      tools?: ToolName[];
+    }
   | {
       kind: 'failed';
       errorCode: string;
@@ -159,6 +207,7 @@ export type AgentResult =
       /** The code-rendered text of a read that did complete, to answer with instead. */
       readText?: string;
       tainted: boolean;
+      tools?: ToolName[];
     }
   /** A phone read was allowed: the turn waits for the phone's answer. */
   | { kind: 'suspend'; state: SuspendedState };
@@ -200,32 +249,49 @@ type Loop = {
   turn: TurnContext;
   cards: boolean;
   grants?: { gmail?: boolean; tasks?: boolean; drive?: boolean };
+  /** The conversation's mode, kept in a suspended state. */
+  mode: 'smart' | 'local';
+  /** The tools that ran so far, in order. */
+  ran: ToolName[];
+};
+
+/** One way to start the turn: its catalog, its first call's messages and their estimate. */
+type Plan = {
+  selection: Selection;
+  tools: WireTool[];
+  toolChars: number;
+  messages: AgentMessage[];
+  /** The first call's estimated prompt tokens. */
+  prompt: number;
 };
 
 export async function runAgentTurn(input: AgentTurnInput, deps: AgentDeps): Promise<AgentResult> {
   const { budget } = deps;
   const readOnly = input.readOnly === true;
   const cards = !readOnly && input.cards === true;
-  const offered: ToolName[] = agentToolNames({
+  const smartConversation = input.smart === true;
+  const base: ToolName[] = agentToolNames({
     cards,
     fileCards: input.fileCards === true,
     phoneReads: !readOnly && input.phoneReads === true,
     ...(input.grants ? { grants: input.grants } : {}),
     ...(readOnly ? { readOnly } : {}),
   });
-  // Code narrows the catalog to the groups the words name, or keeps it
-  // whole (§4). It never adds a tool `agentToolNames` would not offer.
-  const selection = deps.legacyCatalog ? { tools: offered, groups: [] } : selectTools(input.text, offered);
-  const tools = wireTools(selection.tools);
-  const toolChars = JSON.stringify(tools).length;
+  // A smart conversation's turn is offered the public tools only, whichever
+  // model takes it: consent belongs to the conversation (2026-10-08).
+  const offered = smartConversation ? smartOfferedTools(base) : base;
+  // A smart model never takes a turn that is not a smart conversation's, even
+  // if a caller handed one in: the pipeline's lists are the first lock, this
+  // the second.
+  const providers = smartConversation ? deps.providers : deps.providers.filter((candidate) => !isSmart(candidate));
   const tainted = input.history.some((entry) => entry.tainted) || input.turn.tainted === true;
-  deps.log.info('agent_tools', { group: selectionLabel(selection), offered: selection.tools.length });
 
-  const system = readOnly ? `${SYSTEM_PROMPT}\n${READ_ONLY_NOTE}` : SYSTEM_PROMPT;
   // Facts the user asked to be remembered about them (§6.26): their own words,
-  // checked at save time for anything the model must not see.
+  // checked at save time for anything the model must not see. Never in a
+  // smart conversation (2026-10-08).
+  const allFacts = smartConversation ? [] : (input.facts ?? []);
   const aboutLine = (facts: readonly string[]) => (facts.length > 0 ? `\nAbout the user: ${facts.join('; ')}` : '');
-  const build = (history: readonly HistoryEntry[], facts: readonly string[]): AgentMessage[] => [
+  const build = (system: string, history: readonly HistoryEntry[], facts: readonly string[]): AgentMessage[] => [
     { role: 'system', content: system },
     // A replayed reply is scrubbed like a read's result (2026-10-08): a reply
     // code built — a card, a list of choices — may hold an address, a link or
@@ -245,56 +311,94 @@ export async function runAgentTurn(input: AgentTurnInput, deps: AgentDeps): Prom
   // first; the last one stays, because "כן, את זה" points at it. The facts are
   // small and worth more than old history: they go only if the first call
   // would not fit the cap at all — not merely the headroom above it.
-  const turnCap = Math.min(
-    ...deps.providers.map((candidate) => modelEntry(candidate.model)?.turnCap ?? TURN_TOKEN_CAP),
-  );
-  const limit = turnCap - COMPLETION_RESERVE - FIT_HEADROOM;
-  const allFacts = input.facts ?? [];
-  const fitted = fitHistory(input.history, (history) => estimateTokens(build(history, allFacts), toolChars), limit);
-  const facts =
-    estimateTokens(build(fitted.history, allFacts), toolChars) > turnCap - COMPLETION_RESERVE ? [] : allFacts;
-  if (fitted.dropped > 0 || facts.length < allFacts.length) {
-    deps.log.info('agent_fit', { dropped: fitted.dropped, factsDropped: facts.length < allFacts.length });
-  }
-  const messages = build(fitted.history, facts);
+  const plan = (selection: Selection, system: string, turnCap: number, charsPerToken: number): Plan => {
+    const tools = wireTools(selection.tools);
+    const toolChars = JSON.stringify(tools).length;
+    deps.log.info('agent_tools', { group: selectionLabel(selection), offered: selection.tools.length });
+    const estimate = (messages: readonly AgentMessage[]) => estimateTokens(messages, toolChars, charsPerToken);
+    const limit = turnCap - COMPLETION_RESERVE - FIT_HEADROOM;
+    const fitted = fitHistory(input.history, (history) => estimate(build(system, history, allFacts)), limit);
+    const facts = estimate(build(system, fitted.history, allFacts)) > turnCap - COMPLETION_RESERVE ? [] : allFacts;
+    if (fitted.dropped > 0 || facts.length < allFacts.length) {
+      deps.log.info('agent_fit', { dropped: fitted.dropped, factsDropped: facts.length < allFacts.length });
+    }
+    const messages = build(system, fitted.history, facts);
+    return { selection, tools, toolChars, messages, prompt: estimate(messages) };
+  };
+
+  // Today's turn, for a local model: code narrows the catalog to the groups
+  // the words name, or keeps it whole (§4) — it never adds a tool `offered`
+  // lacks — and the cap is the lowest of the local models'.
+  let localPlan: Plan | undefined;
+  const local = (): Plan =>
+    (localPlan ??= plan(
+      deps.legacyCatalog ? { tools: offered, groups: [] } : selectTools(input.text, offered),
+      readOnly ? `${SYSTEM_PROMPT}\n${READ_ONLY_NOTE}` : SYSTEM_PROMPT,
+      Math.min(
+        ...providers
+          .filter((candidate) => !isSmart(candidate))
+          .map((candidate) => modelEntry(candidate.model)?.turnCap ?? TURN_TOKEN_CAP),
+      ),
+      CHARS_PER_TOKEN,
+    ));
+  // A smart model's turn (2026-10-08): no selection — selection only ever
+  // saved tokens, never guarded anything — the smart note, its own limits.
+  const smartPlans = new Map<string, Plan>();
+  const smart = (candidate: AgentProvider): Plan => {
+    let found = smartPlans.get(candidate.model);
+    if (!found) {
+      const limits = limitsOf(candidate.model);
+      const system = readOnly ? `${SMART_SYSTEM_PROMPT}\n${READ_ONLY_NOTE}` : SMART_SYSTEM_PROMPT;
+      found = plan({ tools: offered, groups: [] }, system, limits.turnCap, limits.charsPerToken);
+      smartPlans.set(candidate.model, found);
+    }
+    return found;
+  };
+  const planFor = (candidate: AgentProvider): Plan => (isSmart(candidate) ? smart(candidate) : local());
 
   // One model for the whole turn: the first that can take two calls of this
   // size, else one. Switching mid-turn would spend a second model's budget on a
   // conversation the first already paid for. Only call 0 is reserved here.
+  // A smart model's turn is sized by its own plan, so the model is chosen
+  // before the tools; a local-only turn is planned up front, as before.
   const scope = deps.scope ?? newMessageScope();
-  const prompt = estimateTokens(messages, toolChars);
-  const candidates = deps.providers.filter((candidate) => !scope.refused.has(candidate.model));
+  const candidates = providers.filter((candidate) => !scope.refused.has(candidate.model));
+  if (!candidates.some(isSmart)) local();
   const reserveFor = (candidate: AgentProvider) =>
-    prompt + (candidate.maxCompletionTokens ?? DEFAULT_MAX_COMPLETION_TOKENS);
+    planFor(candidate).prompt + (candidate.maxCompletionTokens ?? DEFAULT_MAX_COMPLETION_TOKENS);
   const provider =
-    candidates.find((candidate) => budget.fits(candidate.model, reserveFor(candidate) + prompt + COMPLETION_RESERVE)) ??
-    candidates.find((candidate) => budget.fits(candidate.model, reserveFor(candidate)));
+    candidates.find((candidate) =>
+      budget.fits(candidate.model, reserveFor(candidate) + planFor(candidate).prompt + COMPLETION_RESERVE),
+    ) ?? candidates.find((candidate) => budget.fits(candidate.model, reserveFor(candidate)));
   const reserved = provider ? budget.reserve(provider.model, reserveFor(provider)) : null;
   if (!provider || !reserved) {
     // Every candidate lacked room: none is asked again for this message (§2b).
     for (const candidate of candidates) scope.refused.add(candidate.model);
     return { kind: 'failed', errorCode: 'budget_exhausted', toolRan: false, tainted };
   }
+  const chosen = planFor(provider);
 
   return drive(
     {
       provider,
       reserved,
-      messages,
+      messages: chosen.messages,
       spent: 0,
       calls: 0,
       tainted,
       toolRan: false,
       readText: undefined,
       phoneReadDone: false,
-      offered: selection.tools,
-      tools,
-      toolChars,
+      offered: chosen.selection.tools,
+      tools: chosen.tools,
+      toolChars: chosen.toolChars,
       text: input.text,
       lang: input.lang,
       turn: input.turn,
       cards,
       ...(input.grants ? { grants: input.grants } : {}),
+      mode: smartConversation ? 'smart' : 'local',
+      ran: [],
     },
     { ...deps, scope },
   );
@@ -324,21 +428,30 @@ export async function resumeAgentTurn(
   }
 
   const readText = phoneReadText(state.query, result.items, state.lang);
-  const provider = deps.providers.find((candidate) => candidate.model === state.model);
+  // The stored mode picks who may go on (2026-10-08): a smart model only for a
+  // smart conversation's turn; a state stored before modes is local.
+  const mode = state.mode ?? 'local';
+  const allowed = mode === 'smart' ? deps.providers : deps.providers.filter((candidate) => !isSmart(candidate));
+  const provider = allowed.find((candidate) => candidate.model === state.model);
+  // What ran before the phone was asked, the phone read included: from the
+  // stored calls, for the history gate.
+  const ran = ranIn(state.messages);
   if (!provider) {
-    return { kind: 'failed', errorCode: 'model_unavailable', toolRan: true, readText, tainted: true };
+    return { kind: 'failed', errorCode: 'model_unavailable', toolRan: true, readText, tainted: true, ...(ran.length > 0 ? { tools: ran } : {}) };
   }
 
   const fresh = agentToolNames({ cards: state.cards, phoneReads: true, ...(state.grants ? { grants: state.grants } : {}) });
   // The narrowed set the turn started with, but never a tool no longer offered
-  // (a grant revoked while the phone was reading).
-  const offered = state.offered ? fresh.filter((tool) => state.offered!.includes(tool)) : fresh;
+  // (a grant revoked while the phone was reading), and in a smart conversation
+  // never more than it may be offered now.
+  const narrowed = state.offered ? fresh.filter((tool) => state.offered!.includes(tool)) : fresh;
+  const offered = mode === 'smart' ? smartOfferedTools(narrowed) : narrowed;
   const tools = wireTools(offered);
   return drive(
     {
       provider,
       messages: [
-        { role: 'system', content: SYSTEM_PROMPT },
+        { role: 'system', content: isSmart(provider) ? SMART_SYSTEM_PROMPT : SYSTEM_PROMPT },
         ...state.messages,
         { role: 'tool', tool_call_id: state.toolCallId, content: resultForModel(readText) },
       ],
@@ -356,35 +469,53 @@ export async function resumeAgentTurn(
       turn,
       cards: state.cards,
       ...(state.grants ? { grants: state.grants } : {}),
+      mode,
+      ran,
     },
     deps,
   );
+}
+
+/** The registry tools a stored conversation called, in order. */
+function ranIn(messages: readonly AgentMessage[]): ToolName[] {
+  const ran: ToolName[] = [];
+  for (const message of messages) {
+    if (message.role !== 'assistant') continue;
+    for (const call of message.tool_calls ?? []) {
+      const tool = fromWireName(call.function.name, TOOL_NAMES);
+      if (tool) ran.push(tool);
+    }
+  }
+  return ran;
 }
 
 async function drive(loop: Loop, deps: AgentDeps): Promise<AgentResult> {
   const { log, budget } = deps;
   const model = loop.provider.model;
 
+  const ranTools = () => (loop.ran.length > 0 ? { tools: [...loop.ran] } : {});
   const failed = (errorCode: string): AgentResult => ({
     kind: 'failed',
     errorCode,
     toolRan: loop.toolRan,
     ...(loop.readText === undefined ? {} : { readText: loop.readText }),
     tainted: loop.tainted,
+    ...ranTools(),
   });
 
   const scope = deps.scope ?? newMessageScope();
-  const turnCap = modelEntry(model)?.turnCap ?? TURN_TOKEN_CAP;
+  // The model's own caps (2026-10-08); a Groq model's are today's.
+  const { turnCap, maxModelCalls, charsPerToken } = limitsOf(model);
   const maxCompletion = loop.provider.maxCompletionTokens ?? DEFAULT_MAX_COMPLETION_TOKENS;
 
-  while (loop.calls < MAX_MODEL_CALLS) {
+  while (loop.calls < maxModelCalls) {
     const call = loop.calls;
     // Text-only once a read has answered, and on the last call: the model can
     // only word the answer, and the catalog is not paid for again (§3).
     const textOnly =
-      !deps.legacyCatalog && (loop.readText !== undefined || loop.phoneReadDone || call === MAX_MODEL_CALLS - 1);
+      !deps.legacyCatalog && (loop.readText !== undefined || loop.phoneReadDone || call === maxModelCalls - 1);
     const tools = textOnly ? [] : loop.tools;
-    const prompt = estimateTokens(loop.messages, textOnly ? 0 : loop.toolChars);
+    const prompt = estimateTokens(loop.messages, textOnly ? 0 : loop.toolChars, charsPerToken);
     if (loop.spent + prompt + COMPLETION_RESERVE > turnCap) {
       if (loop.reserved) budget.release(loop.reserved);
       return failed('turn_token_cap');
@@ -436,7 +567,7 @@ async function drive(loop: Loop, deps: AgentDeps): Promise<AgentResult> {
     if (!toolCall) {
       const text = cleanModelText(response.text ?? '');
       if (text.length === 0) return failed('empty_reply');
-      return { kind: 'reply', reply: { text }, tainted: loop.tainted, byModel: true };
+      return { kind: 'reply', reply: { text }, tainted: loop.tainted, byModel: true, ...ranTools() };
     }
 
     // One tool call per model call. A second one in the same response is not
@@ -471,11 +602,13 @@ async function drive(loop: Loop, deps: AgentDeps): Promise<AgentResult> {
           tool: outcome.tool,
           query: reply.deviceQuery,
           offered: loop.offered,
+          ...(loop.mode === 'smart' ? { mode: loop.mode } : {}),
         },
       };
     }
 
     loop.toolRan = true;
+    loop.ran.push(outcome.tool);
     if (!reply.read) {
       // A reply that ends the turn still carries what it read: a terminal read
       // of mail, or a card built from an event, is someone else's words in the
@@ -490,6 +623,7 @@ async function drive(loop: Loop, deps: AgentDeps): Promise<AgentResult> {
         reply: { ...reply, ...(question ? { question } : {}) },
         tainted,
         byModel: false,
+        ...ranTools(),
       };
     }
 
