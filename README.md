@@ -10,6 +10,13 @@ It runs at **$0/month**: Cloudflare Workers Free, one Durable Object with
 SQLite, and Groq's free LLM tier. The user talks to it through its own
 Android app; a WhatsApp channel exists but is frozen.
 
+**Smart conversations** (optional, 2026-10-08). A new chat in the app is either
+*local* (Groq, as above) or *smart*: Gemini's free tier first, with no keyword
+narrowing of the tools and more room for history. On that tier Google may train on what it is sent,
+so in a smart chat your data reaches the model only after you allow its source
+(calendar, mail, reminders…) on a consent card; anything else stays out of the
+model and its history. `/consents` lists and revokes. Needs `GEMINI_API_KEY`.
+
 > **Setting it up from scratch?** Follow [SETUP.md](SETUP.md): accounts,
 > the Groq API key, models, secrets, deploy, the app, and working with an AI.
 >
@@ -51,7 +58,7 @@ Details: [ARCHITECTURE.md](ARCHITECTURE.md) (code map) and
 | Part | Technology |
 |---|---|
 | Server | TypeScript, Hono, Cloudflare Workers + SQLite Durable Object |
-| LLM | Groq free tier: `qwen3.8-27b` (primary), `gpt-oss-120b` (read-only backup), Whisper for voice |
+| LLM | Groq free tier: `qwen3.8-27b` (primary), `gpt-oss-120b` (read-only backup), Whisper for voice; Gemini free tier (`gemini-2.5-flash`) for smart conversations only |
 | Validation | Zod (strict) |
 | Integrations | Google Calendar, Tasks, Gmail (read + drafts), Drive (metadata), Contacts (birthdays), FCM, public keyless APIs |
 | App | Kotlin, Android, Keystore-signed requests (`apps/call-companion/`) |
@@ -61,7 +68,7 @@ Details: [ARCHITECTURE.md](ARCHITECTURE.md) (code map) and
 
 ```
 src/               server source — see ARCHITECTURE.md §3 for each folder
-migrations/        SQLite schema, 0001…0021
+migrations/        SQLite schema, 0001…0027
 test/              unit · integration · security · evals
 apps/call-companion/  Android app (own Gradle build and README)
 ops/               runbook, secret rotation, token revoke, restore

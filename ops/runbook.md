@@ -16,9 +16,9 @@ it is the way it is; this file is only what to do.
 | `GET /oauth/google/start?id=…` | Redeems a one-time connect link, redirects to Google. Not with `CHANNEL=off`. |
 | `GET /oauth/google/callback` | Exchanges the code and stores the grant. Not with `CHANNEL=off`. |
 | `POST /app/pair` | The phone pairs: its public key and a MAC proving it knows the code. The code itself is never sent. |
-| `POST /app/message` | A text message or a button tap, signed. `CHANNEL=app` only. |
-| `POST /app/voice/:id` | A recording (AAC in MP4, ≤ 1 MB), signed. `CHANNEL=app` only. |
-| `GET /app/outbox` | Every message the phone has not acked, 50 at a time, signed. `CHANNEL=app` only. |
+| `POST /app/message` | A text message or a button tap, signed. A text may carry `mode` (`smart` / `local`; absent is local). `CHANNEL=app` only. |
+| `POST /app/voice/:id[/:conversation[/:mode]][/@lat,lon]` | A recording (AAC in MP4, ≤ 1 MB), signed. The mode only after a conversation. `CHANNEL=app` only. |
+| `GET /app/outbox` | Every message the phone has not acked, 50 at a time, signed, plus `smart`: whether a smart conversation can run (agent on, `GEMINI_API_KEY` and `GROQ_API_KEY` set). `CHANNEL=app` only. |
 | `POST /app/outbox/ack` | The seqs the phone has stored, signed. `CHANNEL=app` only. |
 | `POST /app/push-token` | The app sends its rotated FCM address, signed. |
 | `GET /device/dispatch/:id` | The app fetches a call request after the push wakes it, signed. |
@@ -27,7 +27,9 @@ it is the way it is; this file is only what to do.
 Every `/app/*` and `/device/*` request after pairing carries `x-device-id`,
 `x-timestamp`, `x-nonce` and `x-signature` (PLAN §6.18). A 401 body says why:
 `unpaired`, `clock` (the phone's clock is more than five minutes off) or
-`unauthorized`; a 409 is a replayed nonce.
+`unauthorized`; a 409 is a replayed nonce (the app signs again); a 422
+`mode_mismatch` is a message that declared the other mode than its
+conversation's (the app shows it and never resends).
 
 **Durable Object** — one instance, `AssistantDO` named `singleton`. It holds the
 SQLite schema, the reminder alarm, and every confirmation gate.
@@ -57,6 +59,16 @@ exchange, not the misses the user kept; they expire after 30 days.
 `/consents` (app, smart conversations, 2026-10-08) lists the data sources the
 conversation allowed, each with a button that revokes it; anywhere else it says
 consents exist only in smart conversations. `/forget` deletes every consent too.
+
+**Smart conversations (PLAN §6.19, 2026-10-08).** A conversation is `smart`
+(Gemini first, then qwen) or `local`, fixed by its first message
+(`conversation_modes`). Needs `GEMINI_API_KEY` (optional secret, set by the
+human: `wrangler secret put GEMINI_API_KEY --env staging`) and `GROQ_API_KEY`;
+without them `GET /app/outbox` says `smart: false`, the app disables the
+choice, and a smart message that still arrives is answered locally with "המצב
+החכם לא זמין כרגע" on its first line. A consent card that is not answered in
+three minutes is marked `E_CONSENT_EXPIRED`; a late tap answers "פג תוקף".
+The quota screen shows Gemini on its own line once the key is set.
 
 **Portfolio (PLAN §6.24).** US prices come from Finnhub (`QUOTES_API_KEY`, optional
 secret); Tel Aviv prices from Yahoo, no key. "מחיר לא זמין כרגע" for every US
@@ -135,6 +147,9 @@ lines that are there are the ones worth reading.
 | Reminder said sent, never arrived | Meta accepted it and then failed | `/status` undelivered count; `outbound_messages.error_code` for the wamid |
 | App: a reminder showed only when the app was opened | The push did not wake the phone — battery restriction, a force-stopped app, notifications off | Logs for `outbox_push_failed` / `outbox_push_skipped`; `E_PUSH_UNREGISTERED` in `/status` means the app must send a new push address (open it once). On the phone: battery "unrestricted", notifications on |
 | App: every request answers 401 `clock` | The phone's clock is more than five minutes off | Turn on automatic time on the phone |
+| App: "smart" is greyed out in the new-conversation choice | `GET /app/outbox` says `smart: false`: `GEMINI_API_KEY` or `GROQ_API_KEY` is missing, or `AGENT` is not `on` | Set the key (human); the app reads the flag on its next outbox fetch |
+| App: a message is refused with "סוג השיחה לא תואם" (422 `mode_mismatch`) | The message declared the other mode than the one the server recorded for its conversation: the app's stored mode differs from the server's row (an app bug, or an old phone DB restored) | Logs for `mode_mismatch` (wamid only); `inbound_messages.error_code = 'E_MODE_MISMATCH'`. Nothing ran and no model was called. Open a new conversation in the app |
+| Smart conversation: every answer comes from qwen | Gemini is out of requests (its local count, or a 429: backoff 1/2/5/10 min, until Pacific midnight on a daily quota) | The quota screen: Gemini's line and its blocked-until time |
 | App: 401 `unpaired` | The phone was replaced, `/pair off` was sent, or `ALLOWLIST_WA_IDS` / `LOG_HASH_KEY` changed | Pair again with a new code (`-PairCode`) |
 | No digest | Off, wrong hour, or the window was shut | `/digest` reports the setting; logs for `digest_skipped` |
 | Nothing arrives on Shabbat | Working as asked | `/shabbat` reports it; logs for `delivery_deferred` with `rest_period` |

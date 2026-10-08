@@ -180,6 +180,32 @@ that a reminder came. Cleared when the server unpairs the phone.
 **Time to leave.** A reminder set with "תזכיר לי מתי לצאת…" arrives with a Waze
 card to the event's place, if it has one. The card can be claimed for two hours.
 
+## Smart or local (0.12)
+
+＋ asks which conversation to open: **✨ שיחה חכמה** (Gemini's free tier on the
+server, PLAN §6.19) or **שיחה מקומית** (the assistant as before). The choice
+says that Google may train on a smart conversation's content and human
+reviewers may read it, and that personal data reaches the model only after a
+consent card. The mode is fixed for the conversation's life and shown as a
+badge in its title. Shared text, the default assistant and the widget always
+open local conversations.
+
+**On the wire.** A text message carries `mode` (`smart` or `local`) in its
+body, only with a real `conversationId` and never with `shared`
+(`Protocol.wireMode`). A voice note carries it as a path segment after the
+conversation: `/app/voice/<id>[/<conversation>[/<mode>]][/@lat,lon]`
+(`Protocol.voicePath`). Buttons carry none. A missing mode is `local` on the
+server. `GET /app/outbox` answers with `smart`: false (or absent, from an older
+server) greys out the smart choice. A **422 `mode_mismatch`** means the server
+recorded the other mode for that conversation: the app shows a notice and never
+resends it (`Protocol.stepFor`: only a 409 is signed again). Consent cards are
+ordinary button cards (`cs:…`), and `/consents` lists what a smart conversation
+allowed. `ProtocolTest` pins both shapes against the server.
+
+The chat database is version 4: the `mode` column, with every existing
+conversation `local`. Needs the server from 2026-10-08 (migration 0027) or
+later — **deploy the server first**: an older one refuses the `mode` field.
+
 ## Setup
 
 1. **Firebase**: project `tzur-call-companion`, Android app

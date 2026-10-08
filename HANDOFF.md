@@ -5,7 +5,7 @@ system is, where things live, and what breaks easily, then links out. It does
 **not** repeat the rules in `CLAUDE.md` (always loaded) or the spec in
 `PLAN.md` (read by section, never whole).
 
-_Last updated: 2026-10-08 · server at migration 0025 · agent prompt a10 · parser prompt v6 · app 0.11.0_
+_Last updated: 2026-10-08 · server at migration 0027 · agent prompt a10 + smart note s1 · parser prompt v6 · app 0.12.0_
 
 ## 1. What this is
 
@@ -20,6 +20,11 @@ Contacts birthdays, phone actions and reads, public lookups, notes, lists, facts
 - **LLM:** Groq free tier. A bounded tool-calling **agent** (`AGENT=on`) with
   the single-shot **parser** as fallback. Models: `qwen3.8-27b` (primary, may
   write) and `gpt-oss-120b` (backup, read-only) — `src/agent/models.ts`.
+- **Smart conversations** (2026-10-08, PLAN §6.19): a conversation opened as
+  smart tries **Gemini's free tier** first (`SMART_MODELS`, `gemini-2.5-flash`,
+  needs `GEMINI_API_KEY`), then qwen. Gemini may train on what it gets, so the
+  user's data reaches it only for a source allowed on a consent card. Local
+  conversations are unchanged and never reach Gemini.
 
 ## 2. The one idea
 
@@ -36,6 +41,7 @@ app ─signed HTTPS─► Worker src/index.ts (route, size cap, forward bytes)
       └► pipeline src/core/pipeline.ts
            commands / buttons / open question  → deterministic, no LLM
            text → agent src/agent/loop.ts  (reads may loop; any write ends turn)
+                smart conversation: Gemini first, consent card per data source
                 └ fallback: parser src/nlu/ → orchestrator src/core/orchestrator.ts
            reply → outbox src/channels/app/outbox.ts (+ HTTP response)
 alarm()/cron → reminders, digest, scheduled reads → outbox → FCM push
@@ -48,6 +54,8 @@ Full map with every module: [ARCHITECTURE.md](ARCHITECTURE.md).
 | You touch | Watch out for |
 |---|---|
 | a tool (`src/tools/`) | Use the `add-tool` skill. Registry → one group in `agent/tool-groups.ts` → eval cases. Changing groups changes the eval fingerprint (`test/evals/fingerprint.ts`). New Google scope = stop and ask. |
+| a tool's `dataSource` (required in `registry.ts`) | A consent source, `public` or `private`, chosen by what its replies may carry (card, candidate list, Undo included), **not** by read/write: `reminders.leave` and `nav.go` are `calendar`. It decides the consent card, the smart catalog and the history placeholder. Unsure → stop and ask. |
+| smart conversations / the consent gate | The history gate is `settleAgentResult` only (the one `history.append`): never write history elsewhere. Never offer an unconsented source on a turn that cannot suspend — voice, shared text, the read-only try. `SMART_MODELS` never joins `MODELS`. Consent taps are code only (`beginConsent`, one transaction, before any await). |
 | `src/agent/budget.ts` `CHARS_PER_TOKEN` | Measured, not guessed: refresh `test/fixtures/token-calibration.json` from a real run (`scripts/calibration-sample.ts` overwrites it: merge, don't replace) and keep the 99% test green. Too low and messages that name no tool group fail the turn cap. |
 | `src/agent/` prompt, catalog, models | `pnpm eval:agent` (use `--filter`; a full run can burn a model's daily 200K tokens). `canWrite` in `models.ts` changes only after a human reads an eval report. |
 | `src/nlu/` | `pnpm eval`; "no invented slots" and "missing-slot detection" must stay 100%. The parser catalog is pinned to `PARSER_TOOL_NAMES` — new tools are agent-only. |
@@ -64,13 +72,21 @@ Full map with every module: [ARCHITECTURE.md](ARCHITECTURE.md).
 ## 5. Commands
 
 `pnpm typecheck && pnpm lint && pnpm test` before calling anything done.
-`pnpm eval` / `pnpm eval:agent [--filter p-] [--resume] [--select-tools]`.
+`pnpm eval` / `pnpm eval:agent [--filter p-] [--resume] [--select-tools] [--model <id>]` (a `SMART_MODELS` id runs as a smart turn and needs `GEMINI_API_KEY` in `.dev.vars`).
 `pnpm deploy:staging` only with approval. Production, secrets, rollback: human only.
 App: `cd apps/call-companion && ./gradlew testDebugUnitTest`.
 Network on the hotspot: `NODE_OPTIONS=--dns-result-order=ipv4first` for wrangler.
 
 ## 6. Where the current work is
 
+- **Smart conversations** (PLAN §6.19, plan
+  `~/.claude/plans/abundant-wobbling-sparkle.md`): built, slices 1–6, server
+  and app 0.12.0. Needs, in order: the human confirms the Gemini model id in AI
+  Studio, `pnpm eval:agent --model gemini-2.5-flash` and a human read of it,
+  a staging deploy (approval), the human sets `GEMINI_API_KEY`
+  (`wrangler secret put GEMINI_API_KEY --env staging`), and only then the
+  0.12.0 APK — **server first**: an older server refuses the `mode` field.
+  Open items in PLAN §13 (limits probe, Gemini calibration, consent on writes).
 - **Next work:** [ROADMAP.md](ROADMAP.md) (Hebrew) — block H (2026-10-07):
   a smarter bot. Parts 15 (notes), 16 ("לא הבנת" capture), 17 (tool
   unions, calibrated token estimate, history fitter, named lists) and 18

@@ -1636,6 +1636,158 @@ filtering by device capabilities come with the phase that needs them. The token
 meter is memory only — an evicted object forgets one minute, which costs at
 most one 429.
 
+#### Smart conversations (2026-10-08)
+
+Plan of record: `~/.claude/plans/abundant-wobbling-sparkle.md` (Hebrew;
+three `plan-review` rounds and an architecture review). Built in six slices
+(`5341af6` … `e9d04ef`). The problem: qwen on Groq's free tier spends ~5K of
+its 8K tokens a minute on the catalog, so code narrows the tools by keywords,
+history gets little room, and anything that does not "sound familiar" fails.
+
+**The user's decision (2026-10-08).** A second kind of conversation runs on
+**Gemini's free tier**. On that tier Google may use what it is sent to train
+its models, and human reviewers may read it. The user accepted that **only for
+conversations they chose to make smart**, and only with a gate: in a smart
+conversation, the user's data reaches the model, or its history, only after
+the user allowed its source on a card. Everything else stays exactly as before.
+
+- **Modes.** `smart` or `local`, chosen in the app when a conversation is
+  opened (0.12.0). Local is the default and is today's path, byte for byte (the
+  Groq fingerprint did not move). The shared thread (`''`), the reminders
+  thread, cron, scheduled reads, text shared from another app, the assistant
+  and the widget are always local.
+- **Recorded once.** The first text or voice message declares the mode: text
+  in a `mode` body field (signed through the body hash; `canonicalRequest` is
+  unchanged), voice as a path segment, `/app/voice/<id>/<conversation>/<smart|local>[/@lat,lon]`.
+  Absent means `local`, so an older APK keeps working; any other value fails
+  Zod. A button carries no mode and runs in the stored one. `recordInbound`
+  writes `conversation_modes` inside the dedupe transaction (insert if absent,
+  then read back, before the first await), so concurrent first messages agree
+  on one mode. A later message that declares the other mode is refused with
+  **422 `mode_mismatch`** — not 409, which the app answers by signing again,
+  forever — and is marked `E_MODE_MISMATCH` in the same transaction, so its
+  retry gets the same 422. No model is called. `/forget` and `/pair off` delete
+  every mode and consent row of the user; maintenance deletes rows unused for
+  30 days (deleting a conversation in the app is local to the phone).
+- **The models.** `SMART_MODELS` in `models.ts`, a table of its own: never in
+  `MODELS`, so never in a local conversation's `providers` or
+  `fallbackProviders` (unit test: the tables never overlap). One entry,
+  `gemini-2.5-flash`, provider `gemini`, role `smart`, `canWrite: false`; its
+  limits (`minuteTokens` 250,000, `minuteRequests` 10, `dayRequests` 250) are
+  placeholders until measured, `turnCap` 60,000, `maxModelCalls` 6,
+  `maxCompletionTokens` 4,096, and Groq's 3.0 characters a token until a
+  Gemini calibration exists (§13). `modelEntry` searches both tables. `smart` is
+  never `primary`, so every write a smart model proposes confirms
+  (`backup_model`), on top of policy and confirm, which remain the real gate.
+  `createGeminiAgentProvider` reuses the OpenAI-compatible adapter against
+  `generativelanguage.googleapis.com/v1beta/openai/chat/completions`, `fetch`
+  through a closure, no new dependency. The smart providers are built only
+  when both `GEMINI_API_KEY` and `GROQ_API_KEY` are set.
+- **The provider chain.** A smart conversation's own words (not shared text)
+  go to `[...smartProviders, ...providers]`: Gemini first, then qwen when
+  Gemini has no budget. Shared text in a smart conversation, and the read-only
+  try, stay on the local models. Invariant 1 is unchanged: one model per agent
+  turn, then the parser, then the read-only try. `runAgentTurn` also filters
+  smart providers out of any turn that is not a smart conversation's — the
+  pipeline's lists are the first lock, this the second. A resumed turn picks
+  its providers by its stored `mode`.
+- **The model before the tools.** A local turn chooses the tools and then the
+  model; a turn with a smart candidate plans per candidate. A smart model gets every
+  offered tool with no `selectTools` (selection only ever saved tokens, it
+  never guarded anything), its own `turnCap` and `charsPerToken`, and
+  `fitHistory` against its cap. When qwen takes the turn, it is planned exactly
+  as in a local one.
+- **The prompt.** `SYSTEM_PROMPT` (a10) plus `SMART_NOTE` (version `s1`) on a
+  smart model's turns only: talk freely, answer from its own knowledge, ask one
+  short question when unsure. Versioned apart, so the Groq prompt and its
+  fingerprint do not move; `smartFingerprintFor` (`test/evals/fingerprint.ts`)
+  hashes both, the catalog and `SMART_CATALOG_POLICY`.
+- **No facts.** No model in a smart conversation receives the `About the
+  user` line (§6.26), whichever model takes the turn.
+- **`dataSource` per tool** (`tools/registry.ts`, required, so a tool without
+  one does not compile): a consent source (`calendar`, `reminders`, `tasks`,
+  `mail`, `drive`, `birthdays`, `contacts`, `sms`, `calls`, `notifications`,
+  `expenses`), `public`, or `private`. Chosen by what the tool's replies may
+  carry — the reply, the resolve outcome, a confirmation card, a list of
+  candidates, the Undo text — not by whether it reads or writes:
+  `reminders.leave` and `nav.go` are `calendar` (they show an event's title or
+  place), `calls.place` and `message.compose` are `contacts`, `info.lookup`,
+  `calc.compute` and the plain cards are `public`, `notes.*`, `lists.*`,
+  `memory.*` and `portfolio.*` are `private`. Expenses are not private today,
+  so in a smart conversation they need consent. The same review found that
+  `calendar.move_event` and `calendar.delete_event` show event titles in
+  their candidate lists and cards; both now taint (`TAINTING_TOOLS`).
+- **What a smart conversation offers** (`smartOfferedTools`, every model in
+  it): `public` tools; the sources the conversation allowed; and, when the turn
+  may ask, every other consent source. `private` tools are never offered there.
+- **The consent gate** (`agent/consents.ts`, `render/consent.ts`). When a model
+  calls a tool whose consent source is not allowed, after Zod and the weekday
+  check but before anything is resolved or read, the turn suspends
+  (`agent_turns.kind = 'consent'`, the same encryption and 3-minute
+  `SUSPEND_TTL_MS` as a phone read) and the reply is a card that names the
+  source and nothing of its data: "המודל החכם מבקש גישה ל<מקור>." with
+  [לאשר הפעם] [לאשר בשיחה הזו] [לא] (`cs:<query id>:<nonce>:<once|conv|no>`).
+  **Mail, SMS, contacts and notifications** hold other people's words: only
+  [לאשר הפעם] [לא], and a `conv` for them writes nothing. Only a turn that may
+  ask suspends: a typed message of the smart conversation itself. **A voice
+  note** (the turn would store a transcript), **shared text** and **the
+  read-only try** never suspend; they are offered `public` tools and the
+  sources already allowed, and a call to any other source is refused to the
+  model as `access_not_allowed`.
+- **The tap** is code only (invariant 7), in `resumeFromPhone`'s order:
+  `beginConsent` takes the waiting turn in one synchronous transaction — a
+  consent turn, this sender, the nonce (its SHA-256 compared in constant time),
+  a choice its source allows — writes the `conversation_consents` row for
+  "this conversation", and takes the agent lock before anything awaits. A
+  double, concurrent, late, superseded or foreign tap runs nothing and hears
+  "פג תוקף, יש לשאול שוב." Once allowed, the **stored** call runs the normal
+  path on the same model (`resumeAfterConsent`) and its result is scrubbed.
+  "This time" allows the source for this turn only; the next turn asks again.
+  "No" tells the model `user_declined_access` with the source, and it answers
+  in words (code's own sentence if the resumed turn fails). An allowed call that is
+  itself a phone read suspends a second time (`kind: 'phone'`); at most
+  **2 suspends** a turn (`MAX_SUSPENDS`), and only the approved call may make
+  the second. A waiting consent turn is `pending` to a retry, never a
+  `device_query`; an expired one is marked `E_CONSENT_EXPIRED` with no further
+  message (the card was the answer). A newer message supersedes it.
+- **The history gate** (`settleAgentResult` in `pipeline.ts`, the only caller
+  of `history.append`). In a smart conversation the reply is stored as
+  `[מידע אישי]` when any tool that ran in the turn has a source that is not
+  `public` and was not allowed — in the conversation or for this turn. That
+  covers replies code built: a confirmation card, an Undo, "done", a list of
+  candidates. A turn on shared text keeps `[טקסט ששותף]` on both sides; a
+  private tool keeps `[פתק]`, as before. It holds whichever model answered —
+  qwen in a smart conversation passes the same gate. Every replayed reply
+  passes `scrubForModel` in every mode. The parser path writes no history;
+  `last_exchange`, misses, suspended turns and the outbox reach no model.
+- **`/consents`** in a smart conversation lists the allowed sources, each with
+  a one-shot revoke button (`cr:<offer id>:<nonce>:ok`, stored in
+  `undo_actions` as `consents.revoke`). Anywhere else it says consents exist
+  only in smart conversations. Deterministic, no model.
+- **Request budget** (`budget.ts`). A model that declares `minuteRequests` or
+  `dayRequests` (Gemini) is also counted in requests: per minute in the same
+  sliding window, per Pacific day (Google's reset) in `model_day_requests`
+  through `SqlDayRequestCounter` (`core/quota.ts`), read and bumped
+  synchronously inside `fits`/`reserve` and given back by `release`, so it
+  survives eviction and two messages cannot claim the same request. The local
+  count is an estimate; Google's 429 decides. **Every 429** on such a model
+  backs off 1, 2, 5, then 10 minutes, reset by a success, or until Pacific
+  midnight when the body names a daily quota; a longer `retry-after` wins.
+  Groq models declare neither, so none of this runs for them. The quota screen
+  shows Gemini on its own line once its key is set.
+- **Unavailable.** `GET /app/outbox` carries `smart: true` only when the agent
+  is on and both keys are set; the key never leaves the server. The app then
+  disables "smart" in its choice. A smart message that still arrives without a
+  smart provider is answered by the local models, with "המצב החכם לא זמין
+  כרגע" on its first line — the safe side.
+- **Writes.** A smart model's writes always confirm (role `smart`). Its
+  `canWrite` stays false until `pnpm eval:agent --model gemini-2.5-flash` has
+  run and a human has read the report (§13); note that `canWrite` only sorts
+  `MODELS` into agent and read-only lists, so it does not stop a smart model
+  from proposing a write — the confirmation does. Writes also go through the consent gate, since a write
+  tool's source is usually a consent source (`reminders.create` is
+  `reminders`): the UX is to be revisited (§13).
+
 ### 6.20 Phone actions as action cards [R]
 
 Phase B (2026-10-01). Six agent-only tools, never in the parser's catalog or
@@ -1845,6 +1997,7 @@ ROADMAP block H part 18. The user's decision: a lasting memory **the model sees*
 | Prompt injection (my text, forwarded text, event titles, future email) | Until 2026-10-01: LLM sees no data. Since the agent (§6.19): the model sees scrubbed read results, but text someone else wrote **taints** the turn and every write it leads to is CONFIRM, rendered by code; taint carries through the open question and history. A write ends the turn, so injected text cannot chain actions. Tier 4 doesn't exist. No permission-changing tool. Forwarded → confirm all writes |
 | Data exfiltration through the agent | No tool sends anything anywhere except through a code-rendered confirmation (Phase B cards, calls on the phone screen). Links in every outbound message are defanged, so a reply cannot carry data out in one tap. The model never sees numbers, addresses or codes: `scrubForModel` replaces them before a result reaches it (§6.19) |
 | Data sent to Groq | Since the agent: calendar titles from reads and the short history; since Phase C, a phone read the user asked for, scrubbed (§6.21). Groq does not train on inputs; **Zero Data Retention must be on before `AGENT=on`** (§2, §13). Tokens, ids, numbers, addresses never |
+| Data sent to Gemini (smart conversations, 2026-10-08) | Gemini's free tier may train on what it is sent and human reviewers may read it — accepted by the user for smart conversations only (§6.19). A local conversation, the shared thread, cron, shared text and the read-only try never reach it: `SMART_MODELS` is a table of its own, and the loop drops smart providers from any other turn. In a smart conversation the user's data reaches the model, or the history it replays, only for a source the user allowed on a consent card; anything else is stored as a placeholder. Facts (§6.26) are not sent; `private` tools are not offered. The key is server-side only: never in the app, a reply or a log |
 | Conversation history at rest | AES-GCM per row, bound to table and sender; 12 h, 1 h when tainted; last 6 exchanges; never a tool result or a transcript; `/forget` and `/pair off` wipe it; never logged (`history`, `reply`, `args`, `result` are on the ban list) (§6.19) |
 | Two agent turns interleaving while one awaits the model | `agent_lock`, taken synchronously before the first await, released at the end, 60 s expiry. A second message is answered "busy" and must be resent (§6.19) |
 | A fallback running a message twice | The parser runs only when no tool ran in the agent turn (§6.19) |
@@ -1862,6 +2015,8 @@ ROADMAP block H part 18. The user's decision: a lasting memory **the model sees*
 | Voice: acting on words nobody saw | Recognition is graded before use; a transcript the recognizer doubts becomes a question. Every reply echoes what was heard, so a mishearing is visible before it matters. An uncertain transcript sends any write to CONFIRM (§6.10) |
 | Voice: media download as an SSRF pivot | The download url comes from a response body while the request carries the Meta token. Host allowlist matched on whole labels, HTTPS only, no embedded credentials, redirects refused rather than followed, size and type checked from the metadata first (§6.1) |
 | Confirmation replay / forged button id | Every gate is checked atomically in the DO: exists, pending, not expired, same sender, nonce, input hash. A tap executes the stored row, never a re-parse. Tier 3 is offered no confirm button at all |
+| A consent tap forged, replayed or raced (invariant 7, 2026-10-08) | A consent card's buttons (`cs:<query id>:<nonce>:<once\|conv\|no>`) are a new kind of button reply, handled in the DO by code only. `beginConsent` takes the waiting turn once in one synchronous transaction: a consent turn, the same sender, the nonce's SHA-256 compared in constant time, a choice the source allows ("this conversation" is refused for mail, SMS, contacts and notifications); the "this conversation" row and the agent lock are taken before the first await. The **stored** tool call runs, never a re-parse. A double, concurrent, expired or superseded tap runs nothing. A `/consents` revoke is a one-shot `undo_actions` offer, sender- and nonce-checked (§6.19) |
+| A Gemini 429 body (documented exception, 2026-10-08) | The rule stands that an error body is never read, because it may quote the prompt. One exception: a Gemini 429's body is read, at most 16 KB, and only two values survive — `error.status` when it is an enum-like word, and whether a quota id names a day (`PerDay`). Everything else is dropped on the spot: never logged, returned or kept. A malformed, unfamiliar or oversized body counts as "not daily", and the backoff does not depend on it (`agent/provider.ts`, §6.19) |
 | Lost update on a calendar write | The etag the action was previewed with travels as `If-Match`. A 412 writes nothing and says the event changed |
 | Reminder delivered twice | Claim/lease: a row is claimed under a lease before the send and marked after. A crash between them leaves a lease that expires, not a duplicate. Re-entering `alarm()` is tested |
 | Refresh token unusable after key rotation | Ciphertext carries its key version and the keyring holds every version present, so rotation is additive. A token that will not decrypt disconnects the integration visibly rather than failing silently |
@@ -1912,6 +2067,7 @@ ROADMAP block H part 18. The user's decision: a lasting memory **the model sees*
 | `DEVICE_TOKEN_PEPPER` | secret | Keyed hash for used pairing codes and public keys (§6.18; device tokens until then). Separate from `LOG_HASH_KEY`: a log key and an auth key rotate on different schedules |
 | `PAIR_BOOTSTRAP_CODE` | secret | The code a phone pairs with in the app (§6.18). 20 Crockford characters from `set-staging-secrets.ps1 -PairCode`; each value works once, and a new value re-arms pairing |
 | `QUOTES_API_KEY` | secret, optional | Finnhub's free key, US stock quotes for the portfolio (§6.24). Sent only in the `X-Finnhub-Token` header, never in a URL or a log. Absent: US prices show as unavailable |
+| `GEMINI_API_KEY` | secret, optional | Google AI Studio's key for the smart conversations' Gemini model (§6.19). Server-side only: never sent to the app, never in a reply or a log. The smart models are built only when it and `GROQ_API_KEY` are both set; absent, the app is told smart conversations are unavailable |
 | `CHANNEL` | var | `app` / `whatsapp` / `off`, per environment; unset means `whatsapp` (§6.18) |
 | `AGENT` | var | `on` turns on the agent (§6.19); anything else keeps the parser. `off` in both environments until Groq ZDR is confirmed |
 
@@ -2626,6 +2782,13 @@ measured on the app channel. To finish with `--resume`.
 - [ ] Voice: Whisper takes a `prompt` to bias spelling — useful for Hebrew names and times. It is static config, not user data, so it does not breach invariant 2, but it is unmeasured. Worth a try against recorded clips.
 - [ ] Voice: the uncertain band (`avg_logprob` between -1.0 and -0.5) currently forces CONFIRM on writes. If that fires on most real recordings it is friction, not safety — revisit after two weeks of daily use.
 - [x] **The 8 s NLU timeout stays in production, and the eval uses 30 s** (2026-09-25). The run that settled this reported 50 of 156 cases as parse failures with a p95 of **8,015 ms** against an 8,000 ms timeout — a p95 sitting 15 ms above the cutoff is not a measurement of the model, it is the cutoff being reported back. Production keeps 8 s, because a user waiting longer has already had a bad experience and the fallback chain exists for exactly this; the eval raises it, because a run that cuts the model off is measuring speed, which §11.2 already scores separately. The complete corpus run and its own figures are in §11.9, which is still latency-contaminated for the same reason: it was recorded before the change. Whether `qwen` is fast *enough* becomes a real question only on the next run.
+- [x] **Smart conversations on Gemini's free tier** (2026-10-08, the user's decision; §6.19): Google may train on what a smart conversation sends and human reviewers may read it; accepted for smart conversations only, behind a consent gate per data source. Local stays the default.
+- [ ] **Smart conversations: confirm the Gemini model id in AI Studio** before `GEMINI_API_KEY` is set. `SMART_MODELS` names `gemini-2.5-flash`; Google's model page (2026-10) limits 2.5 Flash to projects that already used it and points new ones at newer Flash ids. A change of id is a reviewed commit to `models.ts` and re-pins the smart fingerprint.
+- [ ] **Smart conversations: measure the Gemini limits** — `minuteTokens`, `minuteRequests` and `dayRequests` in `SMART_MODELS` are placeholders (250,000 / 10 / 250). Read the key's project limits in AI Studio and confirm with a one-token probe, as for Groq.
+- [ ] **Smart conversations: Gemini `charsPerToken` calibration.** The entry uses Groq's 3.0 until a calibration file from a real Gemini run exists (a separate fixture, like `test/fixtures/token-calibration.json`).
+- [ ] **Smart conversations: `pnpm eval:agent --model gemini-2.5-flash`** (with `GEMINI_API_KEY` in `.dev.vars`; use `--filter` first), scored with "wrong tool calls" as well, and a human reads the report before `canWrite` changes. Note: `canWrite` only sorts `MODELS` into `providers` and `fallbackProviders` (`assistant-do.ts`); a `SMART_MODELS` entry is used whatever it says, so today Gemini may propose writes, and each one confirms because its role is not `primary`.
+- [ ] **Smart conversations: staging deploy** (approval in the session), then the human sets `GEMINI_API_KEY` with `wrangler secret put GEMINI_API_KEY --env staging`, and only then the 0.12.0 APK: an older server refuses the `mode` field.
+- [ ] **Smart conversations: writes ask consent for their source.** A write tool's `dataSource` is usually a consent source (`reminders.create` is `reminders`), so "remind me tomorrow at 9" in a smart conversation first shows a consent card. Safe, but friction: revisit the UX after real use (e.g. a write whose reply carries only the user's own words). Related: `private` tools (notes, lists, facts, portfolio) are not offered in a smart conversation at all.
 
 ---
 
@@ -2831,6 +2994,12 @@ measured on the app channel. To finish with `--resume`.
 | 2026-10-08 | **Quote sources for the portfolio** (§6.24; ROADMAP block H part 19, spike). Finnhub's free tier has no TASE, no batch and no FX, so: US from Finnhub (`QUOTES_API_KEY`, header only), TASE from Yahoo's unofficial chart endpoint (no key; works from a Worker), one call per symbol with at most 20 holdings, USD/ILS from Bank of Israel. A Yahoo failure shows "unavailable", never a guess. TASE security numbers are not supported (no Yahoo symbol). The user's decision, after the spike. The ticker is the one target the model names (an exception to invariant 5, as planned): code checks it with the source before anything is kept, and a wrong one is answered "לא מצאתי מניה כזאת". |
 | 2026-10-08 | **A note by its number** (§6.22; the user's report: asking for a specific note always showed note 1). The list numbers notes 1, 2, 3, but "פתק 3" searched the text for "3", matched nothing, and answered with the list from 1; a search result also restarted at 1. Now every answer numbers a note by its place in the newest-first list, and a request that names only a position ("פתק 3", "הפתק השני", "the third note", "האחרון") shows that note (`positionOf`, `tools/notes.ts`). A number past the end is searched as text. |
 | 2026-10-08 | **A day is today until midnight** (§6.3; the user's `/misses`: weather and the parasha, asked at 13:01, answered "הזמן הזה כבר עבר. למתי לקבוע?"). Reads and due dates resolved their day at noon to dodge the hour rules, so after noon "today" hit R7 (already past). New `resolveDay` in `time/resolve.ts`: noon, and when noon has passed, 23:59 of the same day; only a day before today still fails. Used by `info.lookup`, `calendar.list_events`, `calendar.free_time` and `tasks.add`. R9 (a weekday that is today) still asks. |
+| 2026-10-08 | **Smart conversations on Gemini, next to local ones** (§6.19, §7, §13; the user's decision; plan `abundant-wobbling-sparkle.md`, three review rounds and an architecture review, built in six slices). A new conversation is `smart` (Gemini free tier, which may train on what it is sent and whose human reviewers may read it — accepted for these conversations only) or `local` (Groq, unchanged). Gemini lives in its own `SMART_MODELS` table, never in `MODELS`, role `smart` (never primary, so its writes confirm), `canWrite: false`; asked first on a smart conversation's own words, then qwen. Shared text, the read-only try, cron and the shared and reminders threads stay local. No facts in a smart conversation; `private` tools are not offered there. `SMART_NOTE` (s1) is versioned apart from prompt a10, so the Groq fingerprint did not move |
+| 2026-10-08 | **`dataSource` per tool** (§6.19; slice 1). Required in `ToolSpec` (a consent source, `public` or `private`), chosen by what a reply may carry rather than read/write: `reminders.leave` and `nav.go` are `calendar`, expenses a consent source. Found on the way: `calendar.move_event` and `calendar.delete_event` show event titles in candidate lists and cards; both now taint (`TAINTING_TOOLS`). Replayed history replies pass `scrubForModel` in every conversation |
+| 2026-10-08 | **Request limits and the Gemini 429** (§6.19, §7.1; slice 2; migration 0026 `model_day_requests`). A model declaring `minuteRequests`/`dayRequests` is counted per minute and per Pacific day (SQLite, synchronous in `reserve`, returned by `release`). Every 429 on it backs off 1, 2, 5, 10 minutes, reset by a success, or to Pacific midnight when the body names a daily quota. **Documented exception to "never read an error body"**: a Gemini 429 body, ≤ 16 KB, yields only `error.status` (enum-like) and whether a quota id says `PerDay`; nothing else is kept or logged, and the backoff works without it. `GEMINI_API_KEY` is an optional secret |
+| 2026-10-08 | **A conversation's mode, recorded once** (§6.19; slice 3; migration 0026 `conversation_modes`, `conversation_consents`). Text sends `mode` in the body, voice as a path segment; absent is local. Recorded inside `recordInbound`'s transaction, first writer wins. The other mode later → **422 `mode_mismatch`**, not 409 (the app re-signs on 409), marked in the same transaction so a retry gets the same answer. Buttons carry no mode. `/forget`, `/pair off` and a 30-day purge clear the rows |
+| 2026-10-08 | **The consent gate** (§6.19, §7.1; slice 5; migration 0027 extends `agent_turns` with `kind`, `nonce_hash`, `source`, `conversation`). In a smart conversation a model's call to a source not yet allowed suspends the turn before anything is read, with a card: this time / this conversation / no — mail, SMS, contacts and notifications this time only. Taps are code only (invariant 7): `beginConsent`, the consent row and the lock in one synchronous step; the stored call runs on the same model; at most two suspends a turn. Voice, shared text and the read-only try never suspend. `settleAgentResult` stores `[מידע אישי]` for any reply after a source not allowed, `[טקסט ששותף]` for shared text. `/consents` lists and revokes |
+| 2026-10-08 | **App 0.12.0: smart or local** (§6.18, §6.19; slice 6). `GET /app/outbox` carries `smart: true` only when the agent is on and both keys are set (never the key). The new-conversation button asks smart or local (smart disabled while unavailable), the mode is fixed by the first message and shown as a badge, a 422 `mode_mismatch` is shown and never retried, the app's DB version 4 adds the column (existing conversations local). Shared text, the assistant and the widget open local conversations. **Deploy the server before the APK** |
 ---
 
 ## 15. Sources (checked 2026-09-24)

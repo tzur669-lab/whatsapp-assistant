@@ -2,7 +2,7 @@
 
 How the code is laid out and how the parts talk. The *why* behind each piece
 is in `PLAN.md` (section numbers given); the rules are in `CLAUDE.md`.
-Current as of 2026-10-08 (migration 0025).
+Current as of 2026-10-08 (migration 0027).
 
 ## 1. System diagram
 
@@ -29,6 +29,7 @@ Current as of 2026-10-08 (migration 0025).
   (agent,       (Calendar,      (Open-Meteo,
   parser,       Tasks, Gmail,   Hebcal, BoI,
   Whisper)      Drive)          ynet RSS, Wikipedia)
+  Gemini (smart conversations only, OpenAI-compatible endpoint)
 ```
 
 ## 2. One message, step by step
@@ -57,6 +58,20 @@ Current as of 2026-10-08 (migration 0025).
    `bidi.ts`), defanged, written to the outbox and returned in the response.
 
 Special shapes:
+- **Smart conversations** (2026-10-08, PLAN §6.19): the conversation's mode
+  (`smart` | `local`) is recorded once inside `recordInbound`'s transaction
+  (`conversation_modes`); a later message declaring the other mode gets 422
+  `mode_mismatch`. A smart conversation's own words go to
+  `[...smartProviders, ...providers]` (Gemini first, then qwen), the model is
+  chosen before the tools (a smart model gets every offered tool, no
+  selection, `SMART_NOTE`, its own caps, no facts). Shared text and the
+  read-only try stay local. A call to a tool whose `dataSource` is a consent
+  source not yet allowed suspends the turn (`agent_turns.kind = 'consent'`)
+  with a card (`render/consent.ts`); the tap is handled in code
+  (`beginConsent`, `resumeAfterConsent`), and "this conversation" writes
+  `conversation_consents`. `settleAgentResult` is the history gate: a reply
+  after a source not allowed is stored as a placeholder. `/consents` lists and
+  revokes. `GET /app/outbox` carries `smart` (agent on and both keys set).
 - **Phone reads** (contacts, notifications, SMS, call log): the turn is suspended,
   encrypted, in `agent_turns` (`agent/turns.ts`); the phone's signed
   `/app/device-result` resumes it once.
@@ -99,10 +114,10 @@ Special shapes:
 | `platform/` | **Only** Cloudflare code: the DO, SQL adapter, inlined migrations | §3.3–3.4 |
 | `channels/app/` | App ingress checks, request schemas, signature/pairing verify, outbox | §6.18 |
 | `channels/whatsapp/` | Frozen channel: HMAC verify, parse, send, media/voice download | §6.1 |
-| `core/` | `pipeline` (inbound order), `router` (commands), `orchestrator` (resolve→policy→act), `repo`/`sql` (data access), `exchanges` ("לא הבנת" capture, never given to the agent), `digest`, `birthdays`, `missed-calls`, `scheduled-read`, `quota`, `timing`, `env` | §6.4, §6.12 |
-| `agent/` | Bounded tool loop, prompt (a10), compact catalog, tool groups (1–3 → union), history fitter, model table, token budget, history, lock, suspended turns | §6.19 |
+| `core/` | `pipeline` (inbound order; `settleAgentResult` is the history gate), `router` (commands), `orchestrator` (resolve→policy→act), `repo`/`sql` (data access; conversation modes), `exchanges` ("לא הבנת" capture, never given to the agent), `digest`, `birthdays`, `missed-calls`, `scheduled-read`, `quota` (also `SqlDayRequestCounter`: requests per model per Pacific day), `timing`, `env` | §6.4, §6.12 |
+| `agent/` | Bounded tool loop, prompt (a10, plus `SMART_NOTE` s1 for smart models), compact catalog (`smartOfferedTools` for smart conversations), tool groups (1–3 → union), history fitter, model table (`MODELS`, `SMART_MODELS`), token and request budget, Groq and Gemini providers, history, lock, suspended turns (phone or consent), `consents.ts` (consent sources, `conversation_consents`, `cs:`/`cr:` button ids) | §6.19 |
 | `nlu/` | Fallback parser: prompt (v6), `IntentDraft` schema, slot schemas, Groq provider, rules fallback, weekday check, clarification answers | §6.2, §6.11 |
-| `tools/` | `registry.ts` (single source of truth: name, tier, slots, scopes, flags) + one file per area; `*-store.ts` hold SQL; `match.ts` finds targets | §6.4 |
+| `tools/` | `registry.ts` (single source of truth: name, tier, slots, scopes, flags, required `dataSource`) + one file per area; `*-store.ts` hold SQL; `match.ts` finds targets | §6.4, §6.19 |
 | `policy/` | Pure tier decision; WhatsApp 24 h window/budget | §6.4 |
 | `confirm/` | Pending confirmations, Undo offers, open questions | §6.5, §6.11 |
 | `time/` | `resolve` (R1–R12), `tz`, Hebrew lexicon, ranges, recurrence, past days, sunset, Shabbat/chag | §6.3, §6.13 |
@@ -112,7 +127,7 @@ Special shapes:
 | `device/` | Paired-phone state, FCM v1 (no SDK), call dispatch | §6.17 |
 | `voice/` | Whisper transcription + confidence gate | §6.10 |
 | `security/` | AES-GCM crypto, HMAC, redacting logger, `scrubForModel`/defang, allowlist | §7 |
-| `render/` | Every user-facing string (Hebrew/English templates, time format, bidi) | §6.3 |
+| `render/` | Every user-facing string (Hebrew/English templates, time format, bidi); `consent.ts`: the consent card, its buttons and `/consents` | §6.3, §6.19 |
 
 **Tools by tier** (from `tools/registry.ts`; parser sees only the first 8 marked *):
 - Tier 0 (read): `reminders.list`*, `calendar.list_events`*, `calendar.free_time`, `phone.contacts|notifications|sms|calls`, `info.lookup`, `tasks.list`, `mail.search|bills`, `drive.search`, `notes.find`, `lists.show`, `portfolio.show`, `expenses.summary`, `calc.compute`, `birthdays.upcoming`
@@ -122,7 +137,7 @@ Special shapes:
 
 ## 4. Storage
 
-One SQLite DB inside the DO. Schema = `migrations/0001…0025` (registered in
+One SQLite DB inside the DO. Schema = `migrations/0001…0027` (registered in
 `platform/migrations.ts`). Tables by area:
 
 | Area | Tables |
@@ -132,9 +147,10 @@ One SQLite DB inside the DO. Schema = `migrations/0001…0025` (registered in
 | Reminders | `reminders`, `reminder_series` |
 | Google | `integrations` (encrypted refresh tokens per grant), `oauth_links`, `oauth_states` |
 | App & phone | `devices`, `device_pairings`, `app_outbox`, `app_nonces`, `call_dispatches` |
-| Agent | `conversation_turns` (encrypted history), `agent_turns` (suspended), `agent_lock` |
+| Agent | `conversation_turns` (encrypted history), `agent_turns` (suspended; 0027 adds `kind` phone/consent, `nonce_hash`, `source`, `conversation`), `agent_lock` |
+| Smart conversations (0026) | `conversation_modes` (mode per app conversation, recorded once), `conversation_consents` (sources allowed for one conversation); both purged after 30 days unused and by `/forget`, `/pair off` |
 | Misses (§6.23) | `last_exchange` (encrypted, 1 h), `misses` (encrypted, 30 days); `inbound_messages.seq` + `settings.inbound_seq` order arrivals |
-| Quota | `groq_limits`, `groq_token_spend`, `worker_requests` |
+| Quota | `groq_limits`, `groq_token_spend`, `worker_requests`, `model_day_requests` (Gemini requests per Pacific day, 0026) |
 | Data | `ical_feeds`, `ical_events`, `birthdays`, `notes`, `lists`, `list_items`, `facts` (encrypted; the model sees them), `holdings` (the portfolio, soft-delete + version), `quote_cache` (public prices, no principal), `expenses`, `missed_calls` (minutes only) |
 
 Access goes through `core/sql.ts` (`SqlDriver`) so tests run
@@ -146,6 +162,8 @@ the same code on Node SQLite (`test/integration/sqlite-driver.ts`).
 - Cloudflare ↔ everything else (`platform/` only; Plan B is Node + SQLite).
 - Model ↔ data: the model never sees ids, numbers, addresses, tokens, notes, lists;
   reads are scrubbed; ids are found by `tools/match.ts` from `query_variants`.
+- Local ↔ smart models: `SMART_MODELS` is never in `MODELS`; a local
+  conversation, cron, shared text and the read-only try never reach Gemini.
 - Parser catalog ↔ agent catalog (`PARSER_TOOL_NAMES`): new tools don't touch
   the parser or `pnpm eval`.
 - Each Google area is its own grant and token.
@@ -153,6 +171,7 @@ the same code on Node SQLite (`test/integration/sqlite-driver.ts`).
 
 **Coupled on purpose (change together)**
 - `tools/registry.ts` ↔ `agent/tool-groups.ts` ↔ `test/evals/fingerprint.ts` ↔ `models.ts` evaluated fingerprint.
+- `tools/registry.ts` `dataSource` ↔ `agent/consents.ts` ↔ `render/consent.ts` ↔ the history gate in `pipeline.ts` ↔ the smart fingerprint (`SMART_CATALOG_POLICY`).
 - `channels/app/parse.ts` + `verify.ts` ↔ app's `Protocol.kt` (shared test vectors).
 - `migrations/*.sql` ↔ `platform/migrations.ts`.
 - `nlu/slot-schemas.ts` `DateSpec`/`TimeSpec` ↔ `time/resolve.ts` types.

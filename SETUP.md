@@ -101,16 +101,34 @@ Adding a new scope is a design decision: stop and ask the owner (CLAUDE.md).
 
 The WhatsApp channel is frozen (`CHANNEL=app`). No Meta account is needed.
 
+### 2.5 Google AI Studio (optional — smart conversations)
+
+Smart conversations (PLAN §6.19) run on Gemini's free tier. On that tier
+Google may use what it is sent to train its models, and human reviewers may
+read it; the owner accepted that for smart conversations only. In a smart
+conversation your data (calendar, mail, reminders…) reaches the model only
+after you allow its source on a consent card in the chat. Without a key the
+app shows "smart" as unavailable and everything stays local (Groq).
+
+1. Sign in at <https://aistudio.google.com> and **Get API key**. Copy it once
+   into a password manager; it becomes the `GEMINI_API_KEY` secret (Step 5).
+2. **Confirm the model id** in AI Studio's model list. The code names
+   `gemini-2.5-flash` (`SMART_MODELS` in `src/agent/models.ts`); a new project
+   may be offered a newer Flash id instead. Changing it is a reviewed code
+   change (PLAN §13), not a setting.
+
 ## Step 3 — The models (what to choose and why)
 
-All run on Groq with the one `GROQ_API_KEY`. They are pinned in code; the bot
-never picks a model at runtime.
+All but the last run on Groq with the one `GROQ_API_KEY`; the last is the
+optional smart-conversation model on Google AI Studio. They are pinned in code;
+the bot never picks a model at runtime.
 
 | Model id | Role | Where it is set | Notes |
 |---|---|---|---|
 | `qwen/qwen3.8-27b` | **Primary.** Runs the agent and the parser; may write | `src/agent/models.ts`, `src/nlu/index.ts` | Passed the eval gate (100% on "no invented slots") |
 | `openai/gpt-oss-120b` | **Backup**, read-only (`canWrite: false`) | same | Used on rate limits/failures; its writes always confirm |
 | `whisper-large-v3` | Voice notes → text | `src/voice/groq-whisper.ts` | Not the turbo variant, on purpose |
+| `gemini-2.5-flash` | **Smart conversations only**, on Google AI Studio with `GEMINI_API_KEY` | `SMART_MODELS` in `src/agent/models.ts` | Optional. Never used by a local conversation; `canWrite: false` until a human reads its eval report; every write it proposes needs confirmation |
 
 Free-tier budget to keep in mind: about **8K tokens/minute and 200K
 tokens/day per model**. A full `pnpm eval:agent` run can use up a model's
@@ -173,7 +191,14 @@ npx wrangler secret put GROQ_API_KEY --env staging          # paste when asked
 npx wrangler secret put GOOGLE_CLIENT_SECRET --env staging
 npx wrangler secret put ALLOWLIST_WA_IDS --env staging
 npx wrangler secret put QUOTES_API_KEY --env staging        # optional: Finnhub's free key, for US stock prices
+npx wrangler secret put GEMINI_API_KEY --env staging        # optional: AI Studio's key, for smart conversations
 ```
+
+**`GEMINI_API_KEY` (optional)** is not asked by the helper script: set it by
+hand with the line above, on Windows too (paste it when asked).
+Smart conversations turn on only when it and `GROQ_API_KEY` are both set and
+`AGENT` is `on`. Set it **after** the server that knows smart conversations is
+deployed (Step 7.1), and install the 0.12.0 app only after that.
 
 The full inventory, with what each one does, is PLAN §7.2.
 
@@ -184,6 +209,9 @@ Create `.dev.vars` in the repo root (it is gitignored) with one line:
 ```
 GROQ_API_KEY=<your key>
 ```
+
+Add `GEMINI_API_KEY=<your key>` on a second line only to run
+`pnpm eval:agent --model gemini-2.5-flash` (smart-model evals).
 
 Needed only by `pnpm eval` / `pnpm eval:agent`, which call the real Groq API.
 Tests (`pnpm test`) never need it. AI agents are blocked from reading it.
