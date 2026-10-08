@@ -121,6 +121,10 @@ export function wireTools(names: readonly ToolName[]): WireTool[] {
  */
 export const TAINTING_TOOLS: ReadonlySet<ToolName> = new Set<ToolName>([
   'calendar.list_events',
+  // Their confirmation card names the event found, and several matches come
+  // back as a list of titles: an invitation's words (2026-10-08).
+  'calendar.move_event',
+  'calendar.delete_event',
   'phone.contacts',
   'phone.notifications',
   'phone.sms',

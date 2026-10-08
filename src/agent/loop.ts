@@ -227,9 +227,12 @@ export async function runAgentTurn(input: AgentTurnInput, deps: AgentDeps): Prom
   const aboutLine = (facts: readonly string[]) => (facts.length > 0 ? `\nAbout the user: ${facts.join('; ')}` : '');
   const build = (history: readonly HistoryEntry[], facts: readonly string[]): AgentMessage[] => [
     { role: 'system', content: system },
+    // A replayed reply is scrubbed like a read's result (2026-10-08): a reply
+    // code built — a card, a list of choices — may hold an address, a link or
+    // a number. The user's own words, past and present, go as is (invariant 2).
     ...history.flatMap((entry): AgentMessage[] => [
       { role: 'user', content: entry.user },
-      { role: 'assistant', content: entry.reply },
+      { role: 'assistant', content: scrubForModel(entry.reply) },
     ]),
     {
       role: 'user',

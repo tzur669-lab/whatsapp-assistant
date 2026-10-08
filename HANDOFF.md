@@ -106,6 +106,11 @@ Network on the hotspot: `NODE_OPTIONS=--dns-result-order=ipv4first` for wrangler
 
 ## 8. Session log (docs)
 
+- 2026-10-08: Smart conversations, slice 1 (plan: Gemini "smart" chats next to
+  local Groq ones, a consent gate per data source). Every tool now declares a
+  required `dataSource` in the registry; `calendar.move_event`/`delete_event`
+  taint; replayed history replies pass `scrubForModel`. No new modules or tables.
+
 - 2026-10-08: `notes.find` answers "פתק 3" with that note; notes keep their
   newest-first number in every list. `resolveDay` (`time/resolve.ts`): reads
   about "today" after noon no longer ask "למתי לקבוע?". No new modules or tables.

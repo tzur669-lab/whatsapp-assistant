@@ -157,8 +157,40 @@ export type GoogleScope =
   | 'https://www.googleapis.com/auth/calendar.events.owned'
   | 'https://www.googleapis.com/auth/calendar.app.created';
 
+/**
+ * A source of the user's data that a smart conversation may read only with the
+ * user's consent (2026-10-08).
+ */
+export type ConsentSource =
+  | 'calendar'
+  | 'reminders'
+  | 'tasks'
+  | 'mail'
+  | 'drive'
+  | 'birthdays'
+  | 'contacts'
+  | 'sms'
+  | 'calls'
+  | 'notifications'
+  | 'expenses';
+
+/**
+ * What a tool's replies may carry: a consent source, `public` for data that is
+ * nobody's (or only the user's words from this very message), or `private` for
+ * what never reaches any model (notes, lists, the portfolio, facts).
+ */
+export type DataSource = ConsentSource | 'public' | 'private';
+
 export type ToolSpec = {
   name: ToolName;
+  /**
+   * The data the tool's replies may carry (2026-10-08): the reply, the resolve
+   * outcome, the confirmation card, a list of candidates, the Undo text. Not
+   * whether it reads or writes — `reminders.leave` writes a reminder but shows
+   * an event's title, so it is `calendar`. Required: a new tool without one does
+   * not compile.
+   */
+  dataSource: DataSource;
   /**
    * Shown to the LLM. Intent only — never data, ids, or examples of the user's
    * content. Kept short on purpose: the whole prompt competes for the free
@@ -212,6 +244,7 @@ const EVENTS_OWNED: GoogleScope = 'https://www.googleapis.com/auth/calendar.even
 export const REGISTRY: Readonly<Record<ToolName, ToolSpec>> = {
   'reminders.create': {
     name: 'reminders.create',
+    dataSource: 'reminders',
     llmDescription: 'Remind the user at a stated time.',
     draftSchema: remindersCreateSlots,
     tier: 1,
@@ -221,6 +254,7 @@ export const REGISTRY: Readonly<Record<ToolName, ToolSpec>> = {
   },
   'reminders.list': {
     name: 'reminders.list',
+    dataSource: 'reminders',
     llmDescription: 'List upcoming reminders.',
     draftSchema: remindersListSlots,
     tier: 0,
@@ -230,6 +264,7 @@ export const REGISTRY: Readonly<Record<ToolName, ToolSpec>> = {
   },
   'reminders.cancel': {
     name: 'reminders.cancel',
+    dataSource: 'reminders',
     llmDescription: 'Cancel a reminder the user describes.',
     draftSchema: remindersCancelSlots,
     tier: 2,
@@ -239,6 +274,7 @@ export const REGISTRY: Readonly<Record<ToolName, ToolSpec>> = {
   },
   'reminders.repeat': {
     name: 'reminders.repeat',
+    dataSource: 'reminders',
     llmDescription:
       'A repeating reminder at a stated time: every day, on given weekdays (0=Sunday), or a day of the month.',
     draftSchema: remindersRepeatSlots,
@@ -251,6 +287,7 @@ export const REGISTRY: Readonly<Record<ToolName, ToolSpec>> = {
   },
   'reminders.move': {
     name: 'reminders.move',
+    dataSource: 'reminders',
     llmDescription: 'Move a pending reminder the user describes to a new day or time.',
     draftSchema: remindersMoveSlots,
     // Found by description, so it is confirmed first, like a cancel.
@@ -261,6 +298,7 @@ export const REGISTRY: Readonly<Record<ToolName, ToolSpec>> = {
   },
   'reminders.at_rest': {
     name: 'reminders.at_rest',
+    dataSource: 'reminders',
     llmDescription:
       'A reminder relative to Shabbat or a chag: minutes before it starts (candle lighting) or after it ends.',
     draftSchema: remindersAtRestSlots,
@@ -271,6 +309,7 @@ export const REGISTRY: Readonly<Record<ToolName, ToolSpec>> = {
   },
   'reminders.scheduled_read': {
     name: 'reminders.scheduled_read',
+    dataSource: 'reminders',
     llmDescription:
       'Send a lookup on a schedule: weather, day times, UV and air, exchange rates, news or the Hebrew calendar, every day, on given weekdays (0=Sunday), or a day of the month, at a stated time.',
     draftSchema: remindersScheduledReadSlots,
@@ -283,6 +322,8 @@ export const REGISTRY: Readonly<Record<ToolName, ToolSpec>> = {
   },
   'reminders.leave': {
     name: 'reminders.leave',
+    // It reads the event: its title is in the reply and the Undo (2026-10-08).
+    dataSource: 'calendar',
     llmDescription:
       'A reminder to leave for a calendar event: the event by title words (event) or the next one (next_event), and the travel time in minutes if the user said it.',
     draftSchema: remindersLeaveSlots,
@@ -295,6 +336,7 @@ export const REGISTRY: Readonly<Record<ToolName, ToolSpec>> = {
   },
   'calendar.list_events': {
     name: 'calendar.list_events',
+    dataSource: 'calendar',
     llmDescription: 'List calendar events for a day or range.',
     draftSchema: calendarListEventsSlots,
     tier: 0,
@@ -304,6 +346,7 @@ export const REGISTRY: Readonly<Record<ToolName, ToolSpec>> = {
   },
   'calendar.create_event': {
     name: 'calendar.create_event',
+    dataSource: 'calendar',
     llmDescription: 'Schedule a meeting, appointment or call.',
     draftSchema: calendarCreateEventSlots,
     tier: 1,
@@ -313,6 +356,7 @@ export const REGISTRY: Readonly<Record<ToolName, ToolSpec>> = {
   },
   'calendar.move_event': {
     name: 'calendar.move_event',
+    dataSource: 'calendar',
     llmDescription: 'Move an existing event to a new time.',
     draftSchema: calendarMoveEventSlots,
     tier: 2,
@@ -322,6 +366,7 @@ export const REGISTRY: Readonly<Record<ToolName, ToolSpec>> = {
   },
   'calendar.delete_event': {
     name: 'calendar.delete_event',
+    dataSource: 'calendar',
     llmDescription: 'Delete one event the user describes.',
     draftSchema: calendarDeleteEventSlots,
     tier: 2,
@@ -331,6 +376,8 @@ export const REGISTRY: Readonly<Record<ToolName, ToolSpec>> = {
   },
   'calls.place': {
     name: 'calls.place',
+    // The phone matches a contact; its answer says whether one was found.
+    dataSource: 'contacts',
     llmDescription: 'Phone a contact the user names.',
     draftSchema: callsPlaceSlots,
     // Irreversible and external-facing. The tap on the phone, which shows the
@@ -343,6 +390,7 @@ export const REGISTRY: Readonly<Record<ToolName, ToolSpec>> = {
   },
   'alarm.set': {
     name: 'alarm.set',
+    dataSource: 'public',
     llmDescription: 'Set an alarm on the phone at a stated time.',
     draftSchema: alarmSetSlots,
     tier: 1,
@@ -354,6 +402,7 @@ export const REGISTRY: Readonly<Record<ToolName, ToolSpec>> = {
   },
   'timer.set': {
     name: 'timer.set',
+    dataSource: 'public',
     llmDescription: 'Start a countdown timer on the phone.',
     draftSchema: timerSetSlots,
     tier: 1,
@@ -365,6 +414,8 @@ export const REGISTRY: Readonly<Record<ToolName, ToolSpec>> = {
   },
   'nav.go': {
     name: 'nav.go',
+    // A destination may be an event's location (`source: 'event'`).
+    dataSource: 'calendar',
     llmDescription:
       "Navigate with Waze or Google Maps to a place (destination), a contact's address (contact), or a calendar event's location (event, or next_event for the next one).",
     draftSchema: navGoSlots,
@@ -377,6 +428,7 @@ export const REGISTRY: Readonly<Record<ToolName, ToolSpec>> = {
   },
   'app.open': {
     name: 'app.open',
+    dataSource: 'public',
     llmDescription: 'Open an app installed on the phone.',
     draftSchema: appOpenSlots,
     tier: 1,
@@ -388,6 +440,7 @@ export const REGISTRY: Readonly<Record<ToolName, ToolSpec>> = {
   },
   'media.play': {
     name: 'media.play',
+    dataSource: 'public',
     llmDescription:
       'Play on the phone. app: youtube_music for a song or music, youtube for a video, spotify only if the user said Spotify; leave it out when unclear. mode: background or fullscreen, only if the user said.',
     draftSchema: mediaPlaySlots,
@@ -401,6 +454,7 @@ export const REGISTRY: Readonly<Record<ToolName, ToolSpec>> = {
   },
   'settings.set': {
     name: 'settings.set',
+    dataSource: 'public',
     llmDescription: 'Flashlight, do-not-disturb, ringer mode, or open Wi-Fi/Bluetooth settings.',
     draftSchema: settingsSetSlots,
     tier: 1,
@@ -414,6 +468,8 @@ export const REGISTRY: Readonly<Record<ToolName, ToolSpec>> = {
   },
   'message.compose': {
     name: 'message.compose',
+    // The phone matches a contact, as for a call.
+    dataSource: 'contacts',
     llmDescription: 'Write an SMS or WhatsApp message to a contact; the user sends it.',
     draftSchema: messageComposeSlots,
     // External-facing. The card shows the whole text; the phone resolves the
@@ -426,6 +482,7 @@ export const REGISTRY: Readonly<Record<ToolName, ToolSpec>> = {
   },
   'phone.contacts': {
     name: 'phone.contacts',
+    dataSource: 'contacts',
     llmDescription: "Look up names in the phone's contacts (names only, no numbers).",
     draftSchema: phoneContactsSlots,
     tier: 0,
@@ -436,6 +493,7 @@ export const REGISTRY: Readonly<Record<ToolName, ToolSpec>> = {
   },
   'phone.notifications': {
     name: 'phone.notifications',
+    dataSource: 'notifications',
     llmDescription:
       "Read notifications that arrived on the phone from other apps, optionally from one app. Not the reminders the user set: those are reminders.list.",
     draftSchema: phoneNotificationsSlots,
@@ -447,6 +505,7 @@ export const REGISTRY: Readonly<Record<ToolName, ToolSpec>> = {
   },
   'phone.sms': {
     name: 'phone.sms',
+    dataSource: 'sms',
     llmDescription: 'Read recent SMS messages on the phone, optionally from one sender.',
     draftSchema: phoneSmsSlots,
     tier: 0,
@@ -457,6 +516,7 @@ export const REGISTRY: Readonly<Record<ToolName, ToolSpec>> = {
   },
   'info.lookup': {
     name: 'info.lookup',
+    dataSource: 'public',
     llmDescription:
       'Look up public data: weather (forecast for a place and day), jewish_calendar (Hebrew date, Shabbat times, parasha, holidays), exchange_rate (Bank of Israel), news (headlines), day_times (dawn, sunrise, sunset, nightfall), uv_air (UV index, air quality), wikipedia (an article; query: what to look up).',
     draftSchema: infoLookupSlots,
@@ -470,6 +530,7 @@ export const REGISTRY: Readonly<Record<ToolName, ToolSpec>> = {
   },
   'tasks.list': {
     name: 'tasks.list',
+    dataSource: 'tasks',
     llmDescription: "Show the user's Google Tasks lists (shopping, to-do), or one list.",
     draftSchema: tasksListSlots,
     tier: 0,
@@ -479,6 +540,7 @@ export const REGISTRY: Readonly<Record<ToolName, ToolSpec>> = {
   },
   'tasks.add': {
     name: 'tasks.add',
+    dataSource: 'tasks',
     llmDescription: 'Add an item to a Google Tasks list, only when the user says tasks (משימות). A named list like shopping is lists.add.',
     draftSchema: tasksAddSlots,
     // Reversible: the Undo deletes it.
@@ -489,6 +551,7 @@ export const REGISTRY: Readonly<Record<ToolName, ToolSpec>> = {
   },
   'mail.search': {
     name: 'mail.search',
+    dataSource: 'mail',
     llmDescription:
       "Search or read the user's Gmail, newest first: by sender, topic, unread. days: how far back (default 30, up to 365). count: how many (1 for 'my last mail', default 6, up to 10). full=true reads the newest match.",
     draftSchema: mailSearchSlots,
@@ -500,6 +563,7 @@ export const REGISTRY: Readonly<Record<ToolName, ToolSpec>> = {
   },
   'mail.draft': {
     name: 'mail.draft',
+    dataSource: 'mail',
     llmDescription: 'Write a Gmail draft (a reply to a recent mail, or new without a recipient). Never sent; the user sends it.',
     draftSchema: mailDraftSlots,
     // Nothing leaves: a draft waits in Gmail. Still confirmed, with the whole
@@ -511,6 +575,7 @@ export const REGISTRY: Readonly<Record<ToolName, ToolSpec>> = {
   },
   'notes.save': {
     name: 'notes.save',
+    dataSource: 'private',
     llmDescription: 'Keep a note the user asks to remember ("remember that…"), with no time. text: what to keep, in the user\'s words.',
     draftSchema: notesSaveSlots,
     // The user's own words, kept for them; Undo deletes it. Private: no reply
@@ -523,6 +588,7 @@ export const REGISTRY: Readonly<Record<ToolName, ToolSpec>> = {
   },
   'notes.find': {
     name: 'notes.find',
+    dataSource: 'private',
     llmDescription:
       "Show the user's notes, or those about what they describe (\"what did I save\", \"my notes\"). Empty query_variants: all. Shown to the user directly: always call it, never answer yourself.",
     draftSchema: notesFindSlots,
@@ -534,6 +600,7 @@ export const REGISTRY: Readonly<Record<ToolName, ToolSpec>> = {
   },
   'notes.delete': {
     name: 'notes.delete',
+    dataSource: 'private',
     llmDescription: 'Delete a note the user describes.',
     draftSchema: notesDeleteSlots,
     // Found by description, so it is confirmed first, like a cancel.
@@ -545,6 +612,7 @@ export const REGISTRY: Readonly<Record<ToolName, ToolSpec>> = {
   },
   'expenses.add': {
     name: 'expenses.add',
+    dataSource: 'expenses',
     llmDescription:
       'Record money the user spent, in shekels. amount: the number. category: the closest one (petrol is fuel, a supermarket is groceries). description: a few words, if said. The day only if said: days_ago (1 = yesterday), or weekday, or on_date.',
     draftSchema: expensesAddSlots,
@@ -555,6 +623,7 @@ export const REGISTRY: Readonly<Record<ToolName, ToolSpec>> = {
   },
   'expenses.summary': {
     name: 'expenses.summary',
+    dataSource: 'expenses',
     llmDescription: 'How much the user spent in a period; category when the user names what it was on (petrol is fuel). The answer is shown to the user directly.',
     draftSchema: expensesSummarySlots,
     // Sums are numbers the model-bound scrub would blank; code's text is the answer.
@@ -566,6 +635,7 @@ export const REGISTRY: Readonly<Record<ToolName, ToolSpec>> = {
   },
   'expenses.export': {
     name: 'expenses.export',
+    dataSource: 'expenses',
     llmDescription: 'Export the user\'s expenses to a spreadsheet file (Excel) on the phone.',
     draftSchema: expensesExportSlots,
     // A card: the file is saved on the user's own phone, from the signed claim.
@@ -579,6 +649,7 @@ export const REGISTRY: Readonly<Record<ToolName, ToolSpec>> = {
   },
   'drive.search': {
     name: 'drive.search',
+    dataSource: 'drive',
     llmDescription: "Find files in the user's Google Drive by name, kind or how recently changed (names and dates only).",
     draftSchema: driveSearchSlots,
     // Read only, names never contents. A shared file's name is someone else's
@@ -590,6 +661,7 @@ export const REGISTRY: Readonly<Record<ToolName, ToolSpec>> = {
   },
   'tasks.complete': {
     name: 'tasks.complete',
+    dataSource: 'tasks',
     llmDescription: 'Mark an item on a Google Tasks list as done.',
     draftSchema: tasksCompleteSlots,
     // Reversible: the Undo opens it again.
@@ -600,6 +672,7 @@ export const REGISTRY: Readonly<Record<ToolName, ToolSpec>> = {
   },
   'calc.compute': {
     name: 'calc.compute',
+    dataSource: 'public',
     llmDescription:
       'Compute arithmetic (+ - * / ^ % sqrt) or convert units. expression: digits and operators only. A conversion: expression is just the amount, with from_unit and to_unit; never write a conversion formula.',
     draftSchema: calcComputeSlots,
@@ -611,6 +684,7 @@ export const REGISTRY: Readonly<Record<ToolName, ToolSpec>> = {
   },
   'birthdays.upcoming': {
     name: 'birthdays.upcoming',
+    dataSource: 'birthdays',
     llmDescription:
       "Upcoming birthdays (the user's list and Google Contacts), or one person's birthday by name. days: how far ahead (default 30). The answer is shown to the user directly.",
     draftSchema: birthdaysUpcomingSlots,
@@ -624,6 +698,7 @@ export const REGISTRY: Readonly<Record<ToolName, ToolSpec>> = {
   },
   'mail.bills': {
     name: 'mail.bills',
+    dataSource: 'mail',
     llmDescription:
       'Bills and invoices to pay, found in Gmail, with the amount and the due date when the mail says them. days: how far back (default 45). The answer is shown to the user directly.',
     draftSchema: mailBillsSlots,
@@ -639,6 +714,7 @@ export const REGISTRY: Readonly<Record<ToolName, ToolSpec>> = {
   // the model or into its history. A list is found in code by its name.
   'lists.add': {
     name: 'lists.add',
+    dataSource: 'private',
     llmDescription:
       "Add items to one of the user's named lists (shopping, gifts, ideas). list: its name as said; items: each item. A new name starts a list. Google Tasks only when the user says tasks; shares the user owns are portfolio.update.",
     draftSchema: listsAddSlots,
@@ -650,6 +726,7 @@ export const REGISTRY: Readonly<Record<ToolName, ToolSpec>> = {
   },
   'lists.show': {
     name: 'lists.show',
+    dataSource: 'private',
     llmDescription: "Show one of the user's lists, or all of them when none is named. Shown to the user directly: always call it, never answer yourself.",
     draftSchema: listsShowSlots,
     tier: 0,
@@ -660,6 +737,7 @@ export const REGISTRY: Readonly<Record<ToolName, ToolSpec>> = {
   },
   'lists.remove': {
     name: 'lists.remove',
+    dataSource: 'private',
     llmDescription: 'Remove items from a list. items: the items as said.',
     draftSchema: listsRemoveSlots,
     tier: 1,
@@ -670,6 +748,7 @@ export const REGISTRY: Readonly<Record<ToolName, ToolSpec>> = {
   },
   'lists.delete': {
     name: 'lists.delete',
+    dataSource: 'private',
     llmDescription: 'Delete a whole list.',
     draftSchema: listsDeleteSlots,
     // A whole list in one step: confirmed first, like a note's deletion.
@@ -683,6 +762,7 @@ export const REGISTRY: Readonly<Record<ToolName, ToolSpec>> = {
   // every turn, by the user's decision. Saved only on an explicit signal.
   'memory.remember': {
     name: 'memory.remember',
+    dataSource: 'private',
     llmDescription:
       'Keep a lasting fact about the user, only when they say to remember it about them ("תזכור עליי", "על עצמי", "תזכור לתמיד", "remember about me"): where they live, preferences, family. Plain "remember that…" is notes.save. text: the fact, in their words.',
     draftSchema: memoryRememberSlots,
@@ -693,6 +773,7 @@ export const REGISTRY: Readonly<Record<ToolName, ToolSpec>> = {
   },
   'memory.forget': {
     name: 'memory.forget',
+    dataSource: 'private',
     llmDescription: 'Forget a fact about the user that they describe.',
     draftSchema: memoryForgetSlots,
     tier: 2,
@@ -704,6 +785,7 @@ export const REGISTRY: Readonly<Record<ToolName, ToolSpec>> = {
   // back to the model. The symbol is checked with the quote source in code.
   'portfolio.update': {
     name: 'portfolio.update',
+    dataSource: 'private',
     llmDescription:
       'A stock the user holds. op: set ("יש לי"), add ("קניתי", "תוסיף", "עוד"), reduce ("מכרתי"). symbol: the ticker (אפל→AAPL, טבע→TEVA, לאומי→LUMI). Prices per share; market, buy_price, buy_price_unit (שקל/אגורות) only if said.',
     draftSchema: portfolioUpdateSlots,
@@ -715,6 +797,7 @@ export const REGISTRY: Readonly<Record<ToolName, ToolSpec>> = {
   },
   'portfolio.show': {
     name: 'portfolio.show',
+    dataSource: 'private',
     llmDescription:
       "The user's stock portfolio: prices, value, gain or loss. Shown to the user directly: always call it.",
     draftSchema: portfolioShowSlots,
@@ -726,6 +809,7 @@ export const REGISTRY: Readonly<Record<ToolName, ToolSpec>> = {
   },
   'phone.calls': {
     name: 'phone.calls',
+    dataSource: 'calls',
     llmDescription: "Read the phone's recent calls (names, no numbers): who called, missed calls, or calls with one person.",
     draftSchema: phoneCallsSlots,
     tier: 0,
@@ -736,6 +820,7 @@ export const REGISTRY: Readonly<Record<ToolName, ToolSpec>> = {
   },
   'calendar.free_time': {
     name: 'calendar.free_time',
+    dataSource: 'calendar',
     llmDescription: 'Find free time in the calendar on a day or range. minutes: the shortest gap wanted, if said.',
     draftSchema: calendarFreeTimeSlots,
     // A read. Times only, never titles, so it does not taint the turn.
@@ -775,6 +860,10 @@ export function toolCatalog(enabled: readonly ToolName[] = PARSER_TOOL_NAMES): T
 
 export function tierOf(name: ToolName): Tier {
   return REGISTRY[name].tier;
+}
+
+export function dataSourceOf(name: ToolName): DataSource {
+  return REGISTRY[name].dataSource;
 }
 
 export function scopesOf(name: ToolName): GoogleScope[] {
