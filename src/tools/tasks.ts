@@ -10,7 +10,7 @@
  */
 import { z } from 'zod';
 import { MAX_LIST_CHARS, MAX_TITLE_CHARS, tasksAddSlots, tasksCompleteSlots, tasksListSlots } from '../nlu/slot-schemas.js';
-import { resolveWhen } from '../time/resolve.js';
+import { resolveDay } from '../time/resolve.js';
 import type { DateSpec } from '../time/resolve.js';
 import { localPartsOf, ZONE } from '../time/tz.js';
 import type { LocalParts } from '../time/tz.js';
@@ -121,10 +121,7 @@ export const tasksAdd: ToolDefinition = {
 
     let dueDate: string | undefined;
     if (slots.data.date) {
-      const when = resolveWhen(
-        { date: slots.data.date as DateSpec, time: { hour: 12, minute: 0, meridiem: 'unspecified', part_of_day: 'unspecified' } },
-        { nowMs: ctx.nowMs },
-      );
+      const when = resolveDay(slots.data.date as DateSpec, { nowMs: ctx.nowMs });
       if (when.kind === 'clarify') return { kind: 'clarify', clarify: { code: 'time', detail: when } };
       dueDate = isoDate(localPartsOf(when.utcMs, ZONE));
     }

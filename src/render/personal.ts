@@ -134,9 +134,15 @@ export const notesText = {
   /**
    * `found`: an answer to a search. `latest`: the newest notes. `no_match`: a
    * search that matched nothing, answered with the newest notes rather than a
-   * dead end. `more`: how many were left out (≤ 0 for none).
+   * dead end. `more`: how many were left out (≤ 0 for none). `number`: the
+   * note's place in the newest-first list, the number "פתק 3" asks by.
    */
-  list(notes: readonly Note[], kind: 'found' | 'latest' | 'no_match', more: number, lang: Lang): string {
+  list(
+    notes: readonly { note: Note; number: number }[],
+    kind: 'found' | 'latest' | 'no_match',
+    more: number,
+    lang: Lang,
+  ): string {
     const he = lang === 'he';
     const header =
       kind === 'found'
@@ -145,8 +151,8 @@ export const notesText = {
           ? he ? 'לא מצאתי התאמה. הנה הפתקים האחרונים:' : 'Nothing matched. Here are the latest notes:'
           : he ? 'הפתקים האחרונים:' : 'Latest notes:';
     const lines = notes.map(
-      (note, index) =>
-        `${isolateLtr(String(index + 1))}. ${formatDay(localPartsOf(note.createdAt, ZONE), lang)} — ${isolate(note.text)}`,
+      ({ note, number }) =>
+        `${isolateLtr(String(number))}. ${formatDay(localPartsOf(note.createdAt, ZONE), lang)} — ${isolate(note.text)}`,
     );
     const tail =
       more > 0

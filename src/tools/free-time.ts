@@ -14,7 +14,7 @@
  */
 import { z } from 'zod';
 import { calendarFreeTimeSlots } from '../nlu/slot-schemas.js';
-import { resolveWhen } from '../time/resolve.js';
+import { resolveDay } from '../time/resolve.js';
 import type { DateSpec } from '../time/resolve.js';
 import { resolveRange } from '../time/range.js';
 import { addDays, localPartsOf, wallTimeToUtc, ZONE } from '../time/tz.js';
@@ -66,10 +66,7 @@ export const calendarFreeTime: ToolDefinition = {
 
     let dayUtc = ctx.nowMs;
     if (date) {
-      const when = resolveWhen(
-        { date: date as DateSpec, time: { hour: 12, minute: 0, meridiem: 'unspecified', part_of_day: 'unspecified' } },
-        { nowMs: ctx.nowMs },
-      );
+      const when = resolveDay(date as DateSpec, { nowMs: ctx.nowMs });
       if (when.kind === 'clarify') return { kind: 'clarify', clarify: { code: 'time', detail: when } };
       dayUtc = when.utcMs;
     }

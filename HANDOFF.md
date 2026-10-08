@@ -106,6 +106,10 @@ Network on the hotspot: `NODE_OPTIONS=--dns-result-order=ipv4first` for wrangler
 
 ## 8. Session log (docs)
 
+- 2026-10-08: `notes.find` answers "פתק 3" with that note; notes keep their
+  newest-first number in every list. `resolveDay` (`time/resolve.ts`): reads
+  about "today" after noon no longer ask "למתי לקבוע?". No new modules or tables.
+
 - 2026-10-08: Block H part 19: `portfolio.update`/`portfolio.show` (private),
   `lookup/quotes.ts` (Finnhub US, Yahoo TASE), `holding-store.ts`, migration
   0025, `portfolio` as a scheduled topic, `QUOTES_API_KEY` (optional secret).

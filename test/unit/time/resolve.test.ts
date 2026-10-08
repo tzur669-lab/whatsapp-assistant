@@ -3,7 +3,7 @@
  * real clock.
  */
 import { describe, expect, it } from 'vitest';
-import { resolveWhen, DEFAULT_TIME_SETTINGS } from '../../../src/time/resolve.js';
+import { resolveDay, resolveWhen, DEFAULT_TIME_SETTINGS } from '../../../src/time/resolve.js';
 import type { DateSpec, TimeSpec } from '../../../src/time/resolve.js';
 
 const at = (iso: string) => Date.parse(iso);
@@ -321,5 +321,28 @@ describe('property: every resolved value is in the future and round-trips', () =
       const res = run(THU_2100, { kind: 'relative_days', offset }, undefined);
       expect(res.kind).toBe('clarify');
     }
+  });
+});
+
+// 2026-10-08: a read about "today" after noon asked "למתי לקבוע?".
+describe('resolveDay: a day, for reads and due dates', () => {
+  const today: DateSpec = { kind: 'relative_days', offset: 0 };
+
+  it('is today all day, also after noon', () => {
+    for (const iso of ['2026-10-08T08:00:00+03:00', '2026-10-08T13:01:00+03:00', '2026-10-08T23:58:00+03:00']) {
+      const day = resolveDay(today, { nowMs: at(iso) });
+      expect(day).toMatchObject({ kind: 'resolved', local: { year: 2026, month: 10, day: 8 } });
+    }
+  });
+
+  it('is noon on a later day', () => {
+    const day = resolveDay({ kind: 'relative_days', offset: 2 }, { nowMs: at('2026-10-08T13:01:00+03:00') });
+    expect(day).toMatchObject({ kind: 'resolved', local: { day: 10, hour: 12, minute: 0 } });
+  });
+
+  it('still asks about a weekday that is today', () => {
+    // Thursday 8.10.2026; weekday 4 is Thursday.
+    const day = resolveDay({ kind: 'weekday', weekday: 4, qualifier: 'unspecified' }, { nowMs: at('2026-10-08T13:01:00+03:00') });
+    expect(day).toMatchObject({ kind: 'clarify', reason: 'weekday_is_today' });
   });
 });

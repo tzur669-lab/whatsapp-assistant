@@ -205,6 +205,20 @@ export function resolveWhen(draft: WhenDraft, ctx: ResolveContext): ResolveResul
   };
 }
 
+/**
+ * A day, not a moment: for reads (weather, the calendar, free time) and due
+ * dates. Resolved at noon so no hour rule turns a plain day into a question.
+ * Past noon, noon today is "already past" (R7), so every read about today
+ * asked "למתי לקבוע?" (2026-10-08): a day whose noon has passed is tried again
+ * at 23:59, which only a day before today fails.
+ */
+export function resolveDay(date: DateSpec, ctx: ResolveContext): ResolveResult {
+  const at = (hour: number, minute: number) =>
+    resolveWhen({ date, time: { hour, minute, meridiem: 'unspecified', part_of_day: 'unspecified' } }, ctx);
+  const noon = at(12, 0);
+  return noon.kind === 'clarify' && noon.reason === 'already_past' ? at(23, 59) : noon;
+}
+
 // -- R1 -----------------------------------------------------------------------
 
 function resolveDuration(

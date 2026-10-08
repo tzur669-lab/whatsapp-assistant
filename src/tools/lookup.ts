@@ -10,7 +10,7 @@
  */
 import { z } from 'zod';
 import { infoLookupSlots, LOOKUP_TOPICS } from '../nlu/slot-schemas.js';
-import { resolveWhen } from '../time/resolve.js';
+import { resolveDay } from '../time/resolve.js';
 import type { DateSpec } from '../time/resolve.js';
 import { localPartsOf, ZONE } from '../time/tz.js';
 import { currentPlace, DEFAULT_PLACE, findPlace, HOME_CITY_KEY, MAX_PLACE_CHARS } from '../lookup/place.js';
@@ -62,14 +62,10 @@ export const infoLookup: ToolDefinition = {
     const wanted = query?.trim();
     if (topic === 'wikipedia' && !wanted) return { kind: 'clarify', clarify: { code: 'missing_slot', slot: 'target' } };
 
-    // A day is resolved by the time rules like every other date, at noon so no
-    // hour rule turns it into a question. None named: today.
+    // A day, resolved by the time rules (`resolveDay`). None named: today.
     let dayUtc = ctx.nowMs;
     if (date) {
-      const when = resolveWhen(
-        { date: date as DateSpec, time: { hour: 12, minute: 0, meridiem: 'unspecified', part_of_day: 'unspecified' } },
-        { nowMs: ctx.nowMs },
-      );
+      const when = resolveDay(date as DateSpec, { nowMs: ctx.nowMs });
       if (when.kind === 'clarify') return { kind: 'clarify', clarify: { code: 'time', detail: when } };
       dayUtc = when.utcMs;
     }

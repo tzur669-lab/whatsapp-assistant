@@ -51,6 +51,33 @@ export function searchTerms(variants: readonly string[]): string[] {
     )
     .filter((term) => term.length > 0);
 }
+/**
+ * "פתק 3", "הפתק השני", "the third note": a note named by its number in the
+ * list, which counts from the newest (2026-10-08). Searching the text for "3"
+ * matched nothing, so every such request answered with the list from 1.
+ */
+const ORDINALS: Readonly<Record<string, number>> = {
+  ראשונ: 1, ראשונה: 1, אחרונ: 1, אחרונה: 1, שני: 2, שניה: 2, שנייה: 2, שלישי: 3, שלישית: 3, רביעי: 4, רביעית: 4,
+  חמישי: 5, חמישית: 5, שישי: 6, שישית: 6, שביעי: 7, שביעית: 7, שמיני: 8, שמינית: 8, תשיעי: 9, תשיעית: 9,
+  עשירי: 10, עשירית: 10,
+  first: 1, last: 1, latest: 1, newest: 1, second: 2, third: 3, fourth: 4, fifth: 5, sixth: 6, seventh: 7,
+  eighth: 8, ninth: 9, tenth: 10,
+};
+const POSITION_WORDS = new Set(['מספר', 'מס', 'number', 'no'].map(foldForMatch));
+
+/** The 1-based position a variant names, or null when it names none. */
+export function positionOf(variants: readonly string[]): number | null {
+  for (const term of searchTerms(variants)) {
+    const words = term.split(' ').filter((word) => !POSITION_WORDS.has(word));
+    if (words.length !== 1 || !words[0]) continue;
+    const word = words[0].replace(/^ה(?=\p{L})/u, '');
+    if (/^\d{1,3}$/.test(word)) return Number(word);
+    const ordinal = ORDINALS[word] ?? ORDINALS[words[0]];
+    if (ordinal) return ordinal;
+  }
+  return null;
+}
+
 /** Above this, "which one?" is a worse question than "say it differently". */
 const MAX_CHOICES = 5;
 
@@ -127,16 +154,25 @@ export const notesFind: ToolDefinition = {
     const all = storeOf(ctx).all(ctx.principal);
     if (all.length === 0) return { text: personalQuestion('no_notes', ctx.lang) };
 
+    // Every note keeps its number in the newest-first list, in every answer, so
+    // "פתק 3" means the same note whichever list the user saw it in.
+    const numbered = (notes: readonly Note[]) => notes.map((note) => ({ note, number: all.indexOf(note) + 1 }));
+    const latest = numbered(all.slice(0, LIST_LIMIT));
+
     const terms = searchTerms(input.variants);
     if (terms.length === 0) {
-      return { text: notesText.list(all.slice(0, LIST_LIMIT), 'latest', all.length - LIST_LIMIT, ctx.lang) };
+      return { text: notesText.list(latest, 'latest', all.length - LIST_LIMIT, ctx.lang) };
     }
+    const position = positionOf(input.variants);
+    const byPosition = position === null ? undefined : all[position - 1];
+    if (byPosition) return { text: notesText.list(numbered([byPosition]), 'found', 0, ctx.lang) };
+
     const found = matchByText(all, terms, (note) => note.text);
     if (found.length === 0) {
       // Never a dead end: the note may not contain the words it was asked by.
-      return { text: notesText.list(all.slice(0, LIST_LIMIT), 'no_match', all.length - LIST_LIMIT, ctx.lang) };
+      return { text: notesText.list(latest, 'no_match', all.length - LIST_LIMIT, ctx.lang) };
     }
-    return { text: notesText.list(found.slice(0, LIST_LIMIT), 'found', found.length - LIST_LIMIT, ctx.lang) };
+    return { text: notesText.list(numbered(found.slice(0, LIST_LIMIT)), 'found', found.length - LIST_LIMIT, ctx.lang) };
   },
 };
 

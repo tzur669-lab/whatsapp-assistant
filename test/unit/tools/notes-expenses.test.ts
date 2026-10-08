@@ -8,7 +8,7 @@ import { ReminderStore } from '../../../src/tools/reminder-store.js';
 import { NoteStore, MAX_NOTES } from '../../../src/tools/note-store.js';
 import { ExpenseStore, expensesCsv, MAX_EXPORT_BYTES, MAX_EXPORT_ROWS } from '../../../src/tools/expense-store.js';
 import type { Expense } from '../../../src/tools/expense-store.js';
-import { LIST_LIMIT, notesDelete, notesFind, notesSave, searchTerms } from '../../../src/tools/notes.js';
+import { LIST_LIMIT, notesDelete, notesFind, notesSave, positionOf, searchTerms } from '../../../src/tools/notes.js';
 import { expensesAdd, expensesExport, expensesSummary } from '../../../src/tools/expenses.js';
 import type { ToolContext } from '../../../src/tools/types.js';
 import { stripIsolates } from '../../../src/render/bidi.js';
@@ -104,6 +104,47 @@ describe('notes and expenses', () => {
       expect(text).toContain('מצאתי:');
       expect(text).toContain('קוד השער');
       expect(text).not.toContain('חניה');
+    });
+
+    describe('by number (2026-10-08)', () => {
+      // Oldest first, so the list (newest first) reads ג, ב, א.
+      beforeEach(() => {
+        let t = NOW - 3000;
+        notes = new NoteStore(driver, () => (t += 1000));
+        ctx = { ...ctx, notes };
+        for (const text of ['פתק א', 'פתק ב', 'פתק ג']) notes.add(PRINCIPAL, text);
+      });
+
+      it('reads the position a request names', () => {
+        expect(positionOf(['פתק 3', 'note 3'])).toBe(3);
+        expect(positionOf(['פתק מספר 2'])).toBe(2);
+        expect(positionOf(['הפתק השני'])).toBe(2);
+        expect(positionOf(['the third note'])).toBe(3);
+        expect(positionOf(['הפתק האחרון'])).toBe(1);
+        expect(positionOf(['הפתק על החניה'])).toBeNull();
+        expect(positionOf(['הפתק מיום ראשון'])).toBeNull();
+      });
+
+      it('shows the note with that number, not the list from 1', async () => {
+        const text = await find(['פתק 2', 'note 2']);
+        expect(text).toContain('מצאתי:');
+        expect(text).toContain('2. ');
+        expect(text).toContain('פתק ב');
+        expect(text).not.toContain('פתק ג');
+        expect(text).not.toContain('פתק א');
+      });
+
+      it('keeps a found note\'s number from the full list', async () => {
+        const text = await find(['פתק ג']);
+        expect(text).toContain('1. ');
+        const second = await find(['פתק א']);
+        expect(second).toContain('3. ');
+      });
+
+      it('searches the text when the number is past the end', async () => {
+        notes.add(PRINCIPAL, 'קוד השער 1234');
+        expect(await find(['1234'])).toContain('קוד השער');
+      });
     });
 
     it('says how many more there are past the limit', async () => {

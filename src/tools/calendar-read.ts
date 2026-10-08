@@ -11,7 +11,7 @@
  * about today rather than asking a question nobody wants for a read.
  */
 import { z } from 'zod';
-import { resolveWhen } from '../time/resolve.js';
+import { resolveDay } from '../time/resolve.js';
 import type { DateSpec } from '../time/resolve.js';
 import { resolveRange } from '../time/range.js';
 import { localPartsOf, wallTimeToUtc, addDays, ZONE } from '../time/tz.js';
@@ -56,12 +56,9 @@ export const calendarListEvents: ToolDefinition = {
       return { kind: 'ready', input: dayWindow(ctx.nowMs) };
     }
 
-    // The time resolver owns every date in the system, including this one. It
-    // is given noon so the hour rules cannot turn a plain day into a question.
-    const when = resolveWhen(
-      { date, time: { hour: 12, minute: 0, meridiem: 'unspecified', part_of_day: 'unspecified' } },
-      { nowMs: ctx.nowMs },
-    );
+    // The time resolver owns every date in the system, including this one:
+    // a day, so the hour rules cannot turn it into a question (`resolveDay`).
+    const when = resolveDay(date, { nowMs: ctx.nowMs });
     if (when.kind === 'clarify') return { kind: 'clarify', clarify: { code: 'time', detail: when } };
 
     return { kind: 'ready', input: dayWindow(when.utcMs) };

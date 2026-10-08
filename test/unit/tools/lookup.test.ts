@@ -247,6 +247,26 @@ describe('info.lookup', () => {
     expect(infoLookup.resolve({ topic: 'stocks' }, ctx).kind).toBe('clarify');
   });
 
+  // 2026-10-08: past noon, "today" asked "למתי לקבוע?" like a reminder.
+  describe('a day whose noon has passed', () => {
+    const at = (iso: string) => ({ ...ctx, nowMs: Date.parse(iso) });
+
+    it('still looks up today in the afternoon and evening', () => {
+      for (const iso of ['2026-10-01T13:01:00+03:00', '2026-10-01T23:30:00+03:00']) {
+        const resolved = infoLookup.resolve({ topic: 'weather', date: { kind: 'relative_days', offset: 0 } }, at(iso));
+        expect(resolved).toMatchObject({ kind: 'ready', input: { isToday: true } });
+      }
+    });
+
+    it('looks up a later day the same way as before', () => {
+      const resolved = infoLookup.resolve(
+        { topic: 'jewish_calendar', date: { kind: 'relative_days', offset: 2 } },
+        at('2026-10-01T13:01:00+03:00'),
+      );
+      expect(resolved).toMatchObject({ kind: 'ready', input: { isToday: false } });
+    });
+  });
+
   it('never logs what it read', async () => {
     await run({ topic: 'news' }, [NEWS]);
     await run({ topic: 'weather' }, []);
