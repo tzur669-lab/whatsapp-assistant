@@ -49,6 +49,8 @@ import {
   listsDeleteSlots,
   memoryRememberSlots,
   memoryForgetSlots,
+  portfolioUpdateSlots,
+  portfolioShowSlots,
   expensesAddSlots,
   expensesSummarySlots,
   expensesExportSlots,
@@ -175,6 +177,9 @@ export const intentDraftSchema = z.discriminatedUnion('intent', [
   z.object({ intent: z.literal('lists.delete'), slots: listsDeleteSlots, ...common }).strict(),
   z.object({ intent: z.literal('memory.remember'), slots: memoryRememberSlots, ...common }).strict(),
   z.object({ intent: z.literal('memory.forget'), slots: memoryForgetSlots, ...common }).strict(),
+  // ROADMAP block H part 19 (2026-10-08). Agent-only, private.
+  z.object({ intent: z.literal('portfolio.update'), slots: portfolioUpdateSlots, ...common }).strict(),
+  z.object({ intent: z.literal('portfolio.show'), slots: portfolioShowSlots, ...common }).strict(),
   z.object({ intent: z.literal('expenses.summary'), slots: expensesSummarySlots, ...common }).strict(),
   z.object({ intent: z.literal('expenses.export'), slots: expensesExportSlots, ...common }).strict(),
   // Google Tasks (2026-10-01). Agent-only.

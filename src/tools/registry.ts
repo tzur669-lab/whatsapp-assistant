@@ -45,6 +45,8 @@ import {
   listsDeleteSlots,
   memoryRememberSlots,
   memoryForgetSlots,
+  portfolioUpdateSlots,
+  portfolioShowSlots,
   expensesAddSlots,
   expensesSummarySlots,
   expensesExportSlots,
@@ -125,6 +127,9 @@ export const TOOL_NAMES = [
   // ROADMAP block H part 18 (2026-10-07): facts about the user, which the model sees.
   'memory.remember',
   'memory.forget',
+  // ROADMAP block H part 19 (2026-10-08): the stock portfolio, private.
+  'portfolio.update',
+  'portfolio.show',
 ] as const;
 
 export type ToolName = (typeof TOOL_NAMES)[number];
@@ -635,7 +640,7 @@ export const REGISTRY: Readonly<Record<ToolName, ToolSpec>> = {
   'lists.add': {
     name: 'lists.add',
     llmDescription:
-      "Add items to one of the user's named lists (shopping, stocks, ideas). list: its name as said; items: each item. A new name starts a list. Google Tasks only when the user says tasks.",
+      "Add items to one of the user's named lists (shopping, gifts, ideas). list: its name as said; items: each item. A new name starts a list. Google Tasks only when the user says tasks; shares the user owns are portfolio.update.",
     draftSchema: listsAddSlots,
     tier: 1,
     scopes: [],
@@ -694,6 +699,30 @@ export const REGISTRY: Readonly<Record<ToolName, ToolSpec>> = {
     scopes: [],
     rateLimit: { perHour: 20, perDay: 50 },
     implementedIn: 6,
+  },
+  // The stock portfolio (block H part 19). Private: no holding or price goes
+  // back to the model. The symbol is checked with the quote source in code.
+  'portfolio.update': {
+    name: 'portfolio.update',
+    llmDescription:
+      'A stock the user holds. op: set ("יש לי"), add ("קניתי", "תוסיף", "עוד"), reduce ("מכרתי"). symbol: the ticker (אפל→AAPL, טבע→TEVA, לאומי→LUMI). Prices per share; market, buy_price, buy_price_unit (שקל/אגורות) only if said.',
+    draftSchema: portfolioUpdateSlots,
+    tier: 1,
+    scopes: [],
+    rateLimit: { perHour: 30, perDay: 150 },
+    implementedIn: 6,
+    private: true,
+  },
+  'portfolio.show': {
+    name: 'portfolio.show',
+    llmDescription:
+      "The user's stock portfolio: prices, value, gain or loss. Shown to the user directly: always call it.",
+    draftSchema: portfolioShowSlots,
+    tier: 0,
+    scopes: [],
+    rateLimit: { perHour: 30, perDay: 150 },
+    implementedIn: 6,
+    private: true,
   },
   'phone.calls': {
     name: 'phone.calls',

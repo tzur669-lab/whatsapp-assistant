@@ -87,6 +87,7 @@ export const reminderText = {
       exchange_rate: ['שערי המטבע', 'Exchange rates'],
       news: ['כותרות החדשות', 'News headlines'],
       jewish_calendar: ['לוח השנה העברי', 'Hebrew calendar'],
+      portfolio: ['תיק המניות', 'Stock portfolio'],
     };
     const [he, en] = names[topic];
     return lang === 'he' ? `${he} (שליחה קבועה)` : `${en} (scheduled)`;

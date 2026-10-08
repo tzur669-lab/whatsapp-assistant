@@ -5,12 +5,12 @@ system is, where things live, and what breaks easily, then links out. It does
 **not** repeat the rules in `CLAUDE.md` (always loaded) or the spec in
 `PLAN.md` (read by section, never whole).
 
-_Last updated: 2026-10-06 · server at migration 0024 · agent prompt a10 · parser prompt v6 · app 0.11.0_
+_Last updated: 2026-10-08 · server at migration 0025 · agent prompt a10 · parser prompt v6 · app 0.11.0_
 
 ## 1. What this is
 
 A single-user personal assistant (reminders, Google Calendar/Tasks/Gmail/Drive/
-Contacts birthdays, phone actions and reads, public lookups, notes, expenses). Hebrew first, English works.
+Contacts birthdays, phone actions and reads, public lookups, notes, lists, facts, a stock portfolio, expenses). Hebrew first, English works.
 
 - **Server:** TypeScript on Cloudflare Workers Free + **one** SQLite-backed
   Durable Object (`AssistantDO`). $0 recurring cost is priority #1 (PLAN §1).
@@ -51,7 +51,7 @@ Full map with every module: [ARCHITECTURE.md](ARCHITECTURE.md).
 | `src/agent/budget.ts` `CHARS_PER_TOKEN` | Measured, not guessed: refresh `test/fixtures/token-calibration.json` from a real run (`scripts/calibration-sample.ts` overwrites it: merge, don't replace) and keep the 99% test green. Too low and messages that name no tool group fail the turn cap. |
 | `src/agent/` prompt, catalog, models | `pnpm eval:agent` (use `--filter`; a full run can burn a model's daily 200K tokens). `canWrite` in `models.ts` changes only after a human reads an eval report. |
 | `src/nlu/` | `pnpm eval`; "no invented slots" and "missing-slot detection" must stay 100%. The parser catalog is pinned to `PARSER_TOOL_NAMES` — new tools are agent-only. |
-| anything a model can read | Pass it through `scrubForModel`; decide **taint** (text someone else wrote → every resulting write CONFIRMs). A `terminal` read or a card still taints through `TAINTING_TOOLS` / `Reply.tainting` (fixed 2026-10-06). A tool whose `resolveAsync` finds someone else's words (a calendar title in `reminders.leave`) sets `ResolveOutcome.tainting`, carried onto the reply (2026-10-06). Private tools (`notes.*`, `lists.*`) never reach the model or history. Facts (`memory.*`) are the opposite on purpose: the model sees them every turn, so `containsPrivateData` must refuse anything it must not see (PLAN §6.26). |
+| anything a model can read | Pass it through `scrubForModel`; decide **taint** (text someone else wrote → every resulting write CONFIRMs). A `terminal` read or a card still taints through `TAINTING_TOOLS` / `Reply.tainting` (fixed 2026-10-06). A tool whose `resolveAsync` finds someone else's words (a calendar title in `reminders.leave`) sets `ResolveOutcome.tainting`, carried onto the reply (2026-10-06). Private tools (`notes.*`, `lists.*`, `portfolio.*`) never reach the model or history. Facts (`memory.*`) are the opposite on purpose: the model sees them every turn, so `containsPrivateData` must refuse anything it must not see (PLAN §6.26). |
 | `pipeline.ts` return paths, `core/exchanges.ts` | Only turns that reached a model write `last_exchange` (via `respondWithModels` and `resumeFromPhone`); commands, confirmations, answers and the busy reply must not. Never hand `ExchangeLog` to the agent (PLAN §6.23). |
 | time/date logic | Only `src/time/resolve.ts` (forward) or `src/time/past-day.ts` (expenses, backward). DST: next fall-back 2026-10-25. Never default a missing time. |
 | a migration | Add `migrations/00NN_*.sql` **and** register it in `src/platform/migrations.ts`. Backward-compatible for one version. |
@@ -74,9 +74,11 @@ Network on the hotspot: `NODE_OPTIONS=--dns-result-order=ipv4first` for wrangler
 - **Next work:** [ROADMAP.md](ROADMAP.md) (Hebrew) — block H (2026-10-07):
   a smarter bot. Parts 15 (notes), 16 ("לא הבנת" capture), 17 (tool
   unions, calibrated token estimate, history fitter, named lists) and 18
-  (facts the model sees, PLAN §6.26) are done; next is part 19, the stock
-  portfolio, which needs the human's quote API key first. Evals on prompt
-  a10 are owed (PLAN §13). The full reviewed plan: `docs/plans/block-h.md` (read
+  (facts the model sees, PLAN §6.26) and 19 (the stock portfolio, PLAN
+  §6.24: Finnhub for US with `QUOTES_API_KEY`, set on staging; Yahoo for
+  TASE) are done. Block H is built; it needs a staging deploy. Open: the
+  full catalog has ~100 tokens of headroom left (PLAN §13 — decide before
+  adding tools), and evals on prompt a10 are owed (PLAN §13). The full reviewed plan: `docs/plans/block-h.md` (read
   the part you build). Block G waits behind it.
 - Block F is done (share to the bot, default assistant,
   widget, "time to leave"); it needs a deploy and the 0.11.0 APK — **server
@@ -103,6 +105,11 @@ Network on the hotspot: `NODE_OPTIONS=--dns-result-order=ipv4first` for wrangler
 | [SETUP.md](SETUP.md) | Setting up a new copy from zero: accounts, Groq key, models, secrets, deploy, app, AI agent. |
 
 ## 8. Session log (docs)
+
+- 2026-10-08: Block H part 19: `portfolio.update`/`portfolio.show` (private),
+  `lookup/quotes.ts` (Finnhub US, Yahoo TASE), `holding-store.ts`, migration
+  0025, `portfolio` as a scheduled topic, `QUOTES_API_KEY` (optional secret).
+  Agent wire: number slots are `integer` only with `.int()`.
 
 - 2026-10-07: Block H part 18: `memory.*`, `/memory`, `/forget memory`, facts in
   the agent's user turn (invariant 2 amended), migration 0024, examples after

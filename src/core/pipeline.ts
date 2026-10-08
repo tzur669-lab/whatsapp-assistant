@@ -18,6 +18,9 @@
  */
 import type { NoteStore } from '../tools/note-store.js';
 import type { ListStore } from '../tools/list-store.js';
+import type { HoldingStore } from '../tools/holding-store.js';
+import type { QuoteSources } from '../lookup/quotes.js';
+import { marketWordsIn } from '../tools/portfolio.js';
 import type { FactStore } from '../tools/fact-store.js';
 import type { ExpenseStore } from '../tools/expense-store.js';
 import type { DriveClient } from '../google/drive.js';
@@ -108,6 +111,9 @@ export type Services = {
   lists?: ListStore;
   /** Facts about the user (§6.26): the agent sees them on every turn. */
   facts?: FactStore;
+  /** The stock portfolio and its quote sources (§6.24). */
+  holdings?: HoldingStore;
+  quotes?: QuoteSources;
   expenses?: ExpenseStore;
   pending: PendingActions;
   /** The one clarifying question a sender may have open (§6.11). */
@@ -560,7 +566,7 @@ async function respondWithModels(
 
   const lang: Lang = checked.draft.language;
   const reply = await timed(deps, 'act', () =>
-    runIntent(checked.draft, turnOf(deps, event, now, source, lang), {
+    runIntent(checked.draft, turnOf(deps, event, now, source, lang, text), {
       dayInDoubt: checked.mismatched,
     }),
   );
@@ -712,7 +718,7 @@ async function respondWithAgent(
           text,
           lang,
           nowMs: now,
-          turn: turnOf(deps, event, now, source, lang),
+          turn: turnOf(deps, event, now, source, lang, text),
           history,
           ...(facts.length > 0 ? { facts } : {}),
           // Phone actions only where an app that runs cards will receive them (§6.20).
@@ -1279,9 +1285,12 @@ function turnOf(
   now: number,
   source: TextSource,
   lang: Lang,
+  /** The message's words, where a tool reads them in code (the market, §6.24). */
+  text?: string,
 ): TurnContext {
   const services = deps.services;
   if (!services) throw new Error('E_SERVICES_MISSING');
+  const marketWords = text !== undefined ? marketWordsIn(text) : undefined;
 
   return {
     tool: {
@@ -1307,6 +1316,9 @@ function turnOf(
       ...(services.notes ? { notes: services.notes } : {}),
       ...(services.lists ? { lists: services.lists } : {}),
       ...(services.facts ? { facts: services.facts } : {}),
+      ...(services.holdings ? { holdings: services.holdings } : {}),
+      ...(services.quotes ? { quotes: services.quotes } : {}),
+      ...(marketWords ? { marketWords } : {}),
       ...(services.expenses ? { expenses: services.expenses } : {}),
     },
     pending: services.pending,

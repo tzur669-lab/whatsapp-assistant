@@ -67,3 +67,14 @@ export async function ratesFor(
   });
   return [he ? 'שערים יציגים של בנק ישראל:' : 'Bank of Israel representative rates:', ...lines].join('\n');
 }
+
+/**
+ * The dollar's representative rate as a number, for the portfolio's ₪ total
+ * (PLAN §6.24). Null when the Bank of Israel cannot be read.
+ */
+export async function usdIls(fetchImpl: typeof fetch): Promise<{ rate: number; date: string | null } | null> {
+  const fetched = await getJson(fetchImpl, RATES);
+  if (!fetched.ok) return null;
+  const usd = ratesOf(fetched.value).find((r) => r.code === 'USD');
+  return usd ? { rate: usd.rate / usd.unit, date: usd.updated } : null;
+}

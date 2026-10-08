@@ -27,6 +27,7 @@ import { MAX_DESTINATION_CHARS } from '../nlu/slot-schemas.js';
 import { REMINDER_TOOLS } from '../tools/reminders.js';
 import { NOTE_TOOLS } from '../tools/notes.js';
 import { LIST_TOOLS } from '../tools/lists.js';
+import { PORTFOLIO_TOOLS } from '../tools/portfolio.js';
 import { MEMORY_TOOLS } from '../tools/memory.js';
 import { EXPENSE_TOOLS } from '../tools/expenses.js';
 import { calendarListEvents } from '../tools/calendar-read.js';
@@ -159,6 +160,7 @@ const IMPLEMENTED: Partial<Record<ToolName, ToolDefinition>> = {
   ...EXPENSE_TOOLS,
   ...LIST_TOOLS,
   ...MEMORY_TOOLS,
+  ...PORTFOLIO_TOOLS,
 };
 
 export type RunOptions = {

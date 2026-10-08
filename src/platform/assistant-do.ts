@@ -51,6 +51,10 @@ import { scheduledReadMessage } from '../core/scheduled-read.js';
 import { NoteStore } from '../tools/note-store.js';
 import { ListStore } from '../tools/list-store.js';
 import { FactStore } from '../tools/fact-store.js';
+import { HoldingStore } from '../tools/holding-store.js';
+import { createQuoteSources } from '../lookup/quotes.js';
+import type { QuoteSources } from '../lookup/quotes.js';
+import { portfolioReport } from '../tools/portfolio.js';
 import { MissedCallStore } from '../core/missed-calls.js';
 import type { MissedCall } from '../core/missed-calls.js';
 import { parseCallsReport } from '../channels/app/parse.js';
@@ -155,6 +159,8 @@ export class AssistantDO implements DurableObject {
   private readonly notes: NoteStore;
   private readonly lists: ListStore;
   private readonly facts: FactStore;
+  private readonly holdings: HoldingStore;
+  private readonly quotes: QuoteSources;
   private readonly missedCalls: MissedCallStore;
   private readonly expenses: ExpenseStore;
   private readonly deferred: UndoActions;
@@ -254,6 +260,9 @@ export class AssistantDO implements DurableObject {
     this.history = new ConversationHistory(this.sql, now, keyringOnce);
     this.exchanges = new ExchangeLog(this.sql, now, keyringOnce);
     this.facts = new FactStore(this.sql, now, keyringOnce);
+    this.holdings = new HoldingStore(this.sql, now);
+    // The key only in a header, inside `lookup/quotes.ts`; never logged (§6.24).
+    this.quotes = createQuoteSources(this.fetchImpl, this.env.QUOTES_API_KEY, now);
     this.agentLock = new AgentLock(this.sql, now);
     this.agentTurns = new SuspendedTurns(this.sql, now, keyringOnce);
 
@@ -514,6 +523,7 @@ export class AssistantDO implements DurableObject {
     this.history.purgeExpired();
     this.exchanges.purgeExpired();
     this.lists.purgeRemoved();
+    this.holdings.purge();
     this.agentTurns.purgeOld();
     this.questions.purgeExpired();
     this.deferred.expireStale();
@@ -1511,7 +1521,10 @@ export class AssistantDO implements DurableObject {
       repo: this.repo,
       log: this.log,
       fetchImpl: this.fetchImpl,
+      portfolio: () => portfolioReport(this.holdings, reminder.principal, this.quotes, this.fetchImpl, 'he', now),
     });
+    // The portfolio is the user's own money: kept off the lock screen, like notes (§6.24).
+    const isPrivate = reminder.action === 'portfolio';
     if (text === null) {
       this.reminders.markSkipped(reminder.id);
       return;
@@ -1536,6 +1549,7 @@ export class AssistantDO implements DurableObject {
           text,
           reminderId: reminder.id,
           principal: reminder.principal,
+          ...(isPrivate ? { private: true } : {}),
         });
         this.reminders.markSent(reminder.id, row.wamid);
         audit();
@@ -1705,6 +1719,8 @@ export class AssistantDO implements DurableObject {
       notes: this.notes,
       lists: this.lists,
       facts: this.facts,
+      holdings: this.holdings,
+      quotes: this.quotes,
       expenses: this.expenses,
       pending: this.pending,
       questions: this.questions,

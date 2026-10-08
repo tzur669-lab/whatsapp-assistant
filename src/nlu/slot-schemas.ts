@@ -365,7 +365,7 @@ export const LOOKUP_TOPICS = [
  * Wikipedia is not here: its query is free text, and a schedule would send it
  * out again and again with nobody there to see what it says.
  */
-export const SCHEDULED_TOPICS = ['weather', 'day_times', 'uv_air', 'exchange_rate', 'news', 'jewish_calendar'] as const;
+export const SCHEDULED_TOPICS = ['weather', 'day_times', 'uv_air', 'exchange_rate', 'news', 'jewish_calendar', 'portfolio'] as const;
 export type ScheduledTopic = (typeof SCHEDULED_TOPICS)[number];
 
 /** "תשלח לי כל בוקר ב-7 את מזג האוויר" (#7). Agent-only; the rule as in reminders.repeat. */
@@ -440,6 +440,35 @@ export const memoryRememberSlots = z.object({ text: z.string().min(1).max(MAX_FA
 
 /** "תשכח שאני צמחוני". */
 export const memoryForgetSlots = z.object({ query_variants: queryVariantsSchema.optional() }).strict();
+
+// ROADMAP block H part 19 (2026-10-08). Agent-only, private. The symbol is the
+// one value the model supplies that code then verifies with the quote source
+// (PLAN §6.24): a Hebrew company name is translated by the model to its ticker.
+
+export const MAX_SHARES = 10_000_000;
+
+/** "יש לי 10 אפל ב-150", "קניתי עוד 5 טבע בת״א", "מכרתי 3 אפל". */
+export const portfolioUpdateSlots = z
+  .object({
+    /** set: "יש לי"; add: "קניתי", "תוסיף", "עוד"; reduce: "מכרתי". */
+    op: z.enum(['set', 'add', 'reduce']).optional(),
+    /** The ticker: AAPL, NVDA, TEVA, LUMI. */
+    symbol: z.string().min(1).max(15).optional(),
+    market: z.enum(['us', 'tase']).optional(),
+    quantity: z.number().min(0).max(MAX_SHARES).optional(),
+    /** Per share, as said. */
+    buy_price: z.number().positive().max(10_000_000).optional(),
+    /** Only from the words: ₪/שקל → shekel; אגורות/אג׳ → agorot. */
+    buy_price_unit: z.enum(['shekel', 'agorot']).optional(),
+    /** The earlier shares' price, when asked for it. */
+    old_price: z.number().positive().max(10_000_000).optional(),
+    /** "לא ידוע" to that question. */
+    old_price_unknown: z.enum(['yes']).optional(),
+  })
+  .strict();
+
+/** "מה שווי התיק?", "איך המניות שלי?". */
+export const portfolioShowSlots = z.object({}).strict();
 
 export const EXPENSE_CATEGORY_SLOTS = [
   'food',

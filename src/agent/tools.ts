@@ -15,7 +15,7 @@ import { REGISTRY, TOOL_NAMES } from '../tools/registry.js';
 import type { ToolName } from '../tools/registry.js';
 import type { WireTool } from './provider.js';
 
-type Def = { typeName?: string; innerType?: ZodTypeAny; type?: ZodTypeAny; values?: readonly string[] };
+type Def = { typeName?: string; innerType?: ZodTypeAny; type?: ZodTypeAny; values?: readonly string[]; checks?: readonly { kind: string }[] };
 
 function compactSlot(field: ZodTypeAny): Record<string, unknown> {
   const def = (field as unknown as { _def: Def })._def;
@@ -33,7 +33,9 @@ function compactSlot(field: ZodTypeAny): Record<string, unknown> {
       // Items as declared: `weekdays` is numbers, `query_variants` strings.
       return { type: 'array', items: def.type ? compactSlot(def.type) : { type: 'string' } };
     case 'ZodNumber':
-      return { type: 'integer' };
+      // Whole numbers only where the schema says so, as on the parser's wire:
+      // a share price or an amount may have agorot (2026-10-08).
+      return { type: (def.checks ?? []).some((check) => check.kind === 'int') ? 'integer' : 'number' };
     case 'ZodBoolean':
       return { type: 'boolean' };
     default:

@@ -1066,3 +1066,131 @@
     slots:
       minutes: 60
     missing: []
+
+# Block H part 19 (2026-10-08): the stock portfolio. The model picks the op and
+# the ticker; code checks the symbol, the market and the units (PLAN §6.24).
+- id: pf-001
+  now: "2026-10-08T10:00:00+03:00"
+  input: "יש לי 10 מניות אפל שקניתי ב-150 דולר"
+  expect:
+    intent: portfolio.update
+    slots:
+      op: set
+      symbol: AAPL
+      quantity: 10
+      buy_price: 150
+    missing: []
+
+- id: pf-002
+  now: "2026-10-08T10:00:00+03:00"
+  input: "קניתי 5 מניות נבידיה"
+  expect:
+    intent: portfolio.update
+    slots:
+      op: add
+      symbol: NVDA
+      quantity: 5
+    missing: []
+
+- id: pf-003
+  now: "2026-10-08T10:00:00+03:00"
+  input: "קניתי עוד 5 אפל ב-180"
+  expect:
+    intent: portfolio.update
+    slots:
+      op: add
+      symbol: AAPL
+      quantity: 5
+      buy_price: 180
+    missing: []
+
+- id: pf-004
+  now: "2026-10-08T10:00:00+03:00"
+  input: "מכרתי 3 מניות אפל"
+  expect:
+    intent: portfolio.update
+    slots:
+      op: reduce
+      symbol: AAPL
+      quantity: 3
+    missing: []
+
+- id: pf-005
+  now: "2026-10-08T10:00:00+03:00"
+  input: "תוסיף לתיק 50 מניות טבע בת״א ב-6000 אגורות"
+  expect:
+    intent: portfolio.update
+    slots:
+      op: add
+      symbol: TEVA
+      quantity: 50
+      buy_price: 6000
+      buy_price_unit: agorot
+    missing: []
+
+- id: pf-006
+  now: "2026-10-08T10:00:00+03:00"
+  input: "קניתי 100 מניות לאומי ב-72 שקל"
+  expect:
+    intent: portfolio.update
+    slots:
+      op: add
+      symbol: LUMI
+      quantity: 100
+      buy_price: 72
+      buy_price_unit: shekel
+    missing: []
+
+- id: pf-007
+  now: "2026-10-08T10:00:00+03:00"
+  input: "תוריד את אפל מהתיק, מכרתי את כל ה-10"
+  expect:
+    intent: portfolio.update
+    slots:
+      op: reduce
+      symbol: AAPL
+      quantity: 10
+    missing: []
+
+- id: pf-008
+  now: "2026-10-08T10:00:00+03:00"
+  input: "מה שווי התיק?"
+  expect:
+    intent: portfolio.show
+    missing: []
+
+- id: pf-009
+  now: "2026-10-08T10:00:00+03:00"
+  input: "איך המניות שלי היום?"
+  expect:
+    intent: portfolio.show
+    missing: []
+
+- id: pf-010
+  now: "2026-10-08T10:00:00+03:00"
+  input: "how is my stock portfolio doing"
+  expect:
+    intent: portfolio.show
+    missing: []
+
+- id: pf-011
+  now: "2026-10-08T10:00:00+03:00"
+  input: "תשלח לי כל ערב ב-6 את שווי התיק"
+  expect:
+    intent: reminders.scheduled_read
+    slots:
+      topic: portfolio
+      every: day
+    missing: []
+
+- id: pf-012
+  now: "2026-10-08T10:00:00+03:00"
+  input: "I bought 20 shares of Microsoft at 410"
+  expect:
+    intent: portfolio.update
+    slots:
+      op: add
+      symbol: MSFT
+      quantity: 20
+      buy_price: 410
+    missing: []

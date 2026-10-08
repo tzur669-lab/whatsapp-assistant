@@ -21,6 +21,8 @@
 import type { NoteStore } from './note-store.js';
 import type { ListStore } from './list-store.js';
 import type { FactStore } from './fact-store.js';
+import type { HoldingStore } from './holding-store.js';
+import type { QuoteSources } from '../lookup/quotes.js';
 import type { ExpenseStore } from './expense-store.js';
 import type { ZodTypeAny } from 'zod';
 import type { Lang } from '../render/format-time.js';
@@ -103,7 +105,21 @@ export type PersonalQuestion =
   | 'facts_full'
   | 'fact_private'
   | 'fact_tainted'
-  | 'no_facts';
+  | 'no_facts'
+  | 'holding_symbol'
+  | 'holding_op'
+  | 'holding_quantity'
+  | 'holding_market'
+  | 'holding_unknown'
+  | 'holding_buy_price'
+  | 'holding_previous_price'
+  | 'holding_price_unit'
+  | 'holding_reduce_below'
+  | 'holding_reduce_none'
+  | 'holding_too_many'
+  | 'holdings_full'
+  | 'no_holdings'
+  | 'quotes_down';
 
 export type ResolveOutcome = (
   | {
@@ -168,6 +184,15 @@ export type ToolContext = {
   lists?: ListStore;
   /** Facts about the user (block H part 18). */
   facts?: FactStore;
+  /** The stock portfolio (block H part 19). */
+  holdings?: HoldingStore;
+  /** Quote sources for it: Finnhub (US) and Yahoo (TASE). */
+  quotes?: QuoteSources;
+  /**
+   * The market this message's own words name (PLAN §6.24): code reads them, and
+   * they win over the model's `market`. `both` when the words name the two.
+   */
+  marketWords?: 'us' | 'tase' | 'both';
   /** Expenses (§6.22). Absent only in tests that predate them. */
   expenses?: ExpenseStore;
   /**

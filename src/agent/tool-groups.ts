@@ -53,6 +53,8 @@ export const GROUPS: Readonly<Record<GroupName, readonly ToolName[]>> = {
     'lists.delete',
     'memory.remember',
     'memory.forget',
+    'portfolio.update',
+    'portfolio.show',
   ],
   info: ['info.lookup', 'calc.compute'],
   mail: ['mail.search', 'mail.draft', 'mail.bills'],
@@ -113,6 +115,9 @@ const PATTERNS: Readonly<Record<GroupName, readonly RegExp[]>> = {
     word('מטלה|מטלות'), /רשימ/, /הוצא/, /שילמתי/, /שקל/, /₪/, /קניתי/, /עלה לי/, /תקציב/, /אקסל/,
     /מה נשאר לי לעשות/,
     /\b(?:notes?|tasks?|todo|to-do|expenses?|spent|paid|budget|excel)\b/i,
+    // The stock portfolio (block H part 19).
+    word('מניה|מניות|מניית'), /תיק השקעות/, /תיק המניות/, /בורסה/, /בורסת/, /מכרתי/, /שווי התיק/,
+    /\b(?:stocks?|shares?|portfolio|ticker)\b/i,
   ],
   info: [
     /מזג/, /גשם/, /טמפרטור/, /קרינה/, /איכות האוויר/, /ויקיפדיה/, /מי זה/, /מי היה/, /מה זה/,

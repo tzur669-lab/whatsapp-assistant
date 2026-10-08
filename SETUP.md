@@ -157,6 +157,11 @@ powershell -ExecutionPolicy Bypass -File scripts\set-staging-secrets.ps1
   **Set it once and never change it:** the identity every record belongs to is
   derived from it, on the app channel too.
 - Firebase key file → leave empty for now; come back after Step 7.
+- `QUOTES_API_KEY` (optional) → a free key from finnhub.io (Dashboard → API
+  Key), for US stock prices in the portfolio. Without it US prices show as
+  unavailable; Tel Aviv prices need no key (PLAN §6.24). Set it with
+  `--env staging` — without the flag wrangler offers to create a new Worker:
+  answer **no**.
 
 **macOS/Linux — by hand**, one at a time, for each name:
 
@@ -167,6 +172,7 @@ openssl rand -base64 32 | npx wrangler secret put DEVICE_TOKEN_PEPPER --env stag
 npx wrangler secret put GROQ_API_KEY --env staging          # paste when asked
 npx wrangler secret put GOOGLE_CLIENT_SECRET --env staging
 npx wrangler secret put ALLOWLIST_WA_IDS --env staging
+npx wrangler secret put QUOTES_API_KEY --env staging        # optional: Finnhub's free key, for US stock prices
 ```
 
 The full inventory, with what each one does, is PLAN §7.2.

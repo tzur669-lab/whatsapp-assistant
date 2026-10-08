@@ -18,6 +18,7 @@ import { runLookup, unavailable } from '../tools/lookup.js';
 import type { Logger } from '../security/redact.js';
 import type { Lang } from '../render/format-time.js';
 import { reminderText } from '../render/reminders.js';
+import { portfolioText } from '../render/portfolio.js';
 
 /**
  * One read may hold the alarm this long. The lease is a minute, and a place
@@ -38,6 +39,11 @@ export type ScheduledReadDeps = {
   repo: Repository;
   log: Logger;
   fetchImpl: typeof fetch;
+  /**
+   * The portfolio (PLAN §6.24), rendered by the same code as `portfolio.show`:
+   * null when nothing is held. Absent where the platform keeps no portfolio.
+   */
+  portfolio?: () => Promise<string | null>;
 };
 
 /** The message to send, or null when the read is too late to be worth it. */
@@ -50,11 +56,16 @@ export async function scheduledReadMessage(
     return null;
   }
 
-  const read = runLookup(
-    // Today, at the home city: a schedule has no message to name a place in.
-    { topic: reminder.action, dayUtc: deps.nowMs, isToday: true },
-    { lang: deps.lang, repo: deps.repo, log: deps.log, fetchImpl: deps.fetchImpl },
-  ).then((result) => result.text);
+  const topic = reminder.action;
+  const read =
+    topic === 'portfolio'
+      ? // Not a public lookup: the user's own holdings, priced (PLAN §6.24).
+        (deps.portfolio ? deps.portfolio() : Promise.resolve(null)).then((text) => text ?? portfolioText.emptyScheduled(deps.lang))
+      : runLookup(
+          // Today, at the home city: a schedule has no message to name a place in.
+          { topic, dayUtc: deps.nowMs, isToday: true },
+          { lang: deps.lang, repo: deps.repo, log: deps.log, fetchImpl: deps.fetchImpl },
+        ).then((result) => result.text);
 
   let timer: ReturnType<typeof setTimeout> | undefined;
   const deadline = new Promise<null>((resolve) => {

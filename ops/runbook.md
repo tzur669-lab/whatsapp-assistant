@@ -55,6 +55,13 @@ exchange, not the misses the user kept; they expire after 30 days.
 `/memory` lists the facts kept about the user, which the agent sees on every turn
 (PLAN §6.26); `/forget memory` deletes them all, and `/forget` alone keeps them.
 
+**Portfolio (PLAN §6.24).** US prices come from Finnhub (`QUOTES_API_KEY`, optional
+secret); Tel Aviv prices from Yahoo, no key. "מחיר לא זמין כרגע" for every US
+stock: the key is missing or Finnhub refuses it (`wrangler secret put
+QUOTES_API_KEY --env staging`). For every TASE stock: Yahoo is down or blocking —
+nothing to set, the cached price is shown as stale until it answers again.
+`scripts/probe-quotes.ts` checks the key from a local shell.
+
 ## Deploying to staging
 
 ```

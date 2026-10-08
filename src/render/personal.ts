@@ -14,6 +14,7 @@ import type { CategoryTotal, ExpenseCategory } from '../tools/expense-store.js';
 import { MAX_NOTES } from '../tools/note-store.js';
 import { MAX_ITEMS_PER_LIST, MAX_LISTS } from '../tools/list-store.js';
 import { MAX_FACTS, MAX_FACTS_TOTAL_CHARS } from '../tools/fact-store.js';
+import { MAX_HOLDINGS } from '../tools/holding-store.js';
 import type { ExpensePeriod } from '../time/past-day.js';
 import { localPartsOf, ZONE } from '../time/tz.js';
 
@@ -78,6 +79,48 @@ export function personalQuestion(what: PersonalQuestion, lang: Lang): string {
         : 'A fact is kept only from your own words, not from shared or forwarded text.';
     case 'no_facts':
       return he ? 'אין עובדות שמורות עליך.' : 'No facts saved about you.';
+    case 'holding_symbol':
+      return he ? 'איזו מניה?' : 'Which stock?';
+    case 'holding_op':
+      return he
+        ? 'המניה הזאת כבר בתיק. להוסיף למה שיש, או שזו הכמות הכוללת?'
+        : 'That stock is already in the portfolio. Add to it, or is this the total?';
+    case 'holding_quantity':
+      return he ? 'כמה מניות?' : 'How many shares?';
+    case 'holding_market':
+      return he
+        ? 'המניה הזאת נסחרת גם בארה״ב וגם בתל אביב. באיזו בורסה: ארה״ב ($) או ת״א (₪)?'
+        : 'That stock trades in both the US and Tel Aviv. Which one: US ($) or TASE (₪)?';
+    case 'holding_unknown':
+      return he
+        ? 'לא מצאתי מניה כזאת. אפשר לכתוב את הסימול באנגלית, למשל AAPL או TEVA.'
+        : 'No such stock found. Try its ticker, for example AAPL or TEVA.';
+    case 'holding_buy_price':
+      return he
+        ? 'באיזה מחיר קנית? יש כבר מחיר קנייה שמור למניה הזאת, ובלי מחיר הממוצע ייצא שגוי.'
+        : 'At what price? A buy price is already stored for this stock, and without one the average would be wrong.';
+    case 'holding_previous_price':
+      return he
+        ? 'באיזה מחיר נקנו המניות שכבר בתיק? אם לא ידוע, אפשר לכתוב "לא ידוע".'
+        : 'What did the shares already held cost? If unknown, say "unknown".';
+    case 'holding_price_unit':
+      return he ? 'המחיר בשקלים או באגורות?' : 'Is the price in shekels or agorot?';
+    case 'holding_reduce_below':
+      return he ? 'אין בתיק כל כך הרבה מניות כאלה.' : 'The portfolio does not hold that many.';
+    case 'holding_reduce_none':
+      return he ? 'המניה הזאת לא בתיק.' : 'That stock is not in the portfolio.';
+    case 'holding_too_many':
+      return he ? 'זה יותר מ־10 מיליון מניות, המקסימום.' : 'That is more than 10 million shares, the most kept.';
+    case 'holdings_full':
+      return he
+        ? `יש כבר ${isolateLtr(String(MAX_HOLDINGS))} מניות בתיק, וזה המקסימום. אפשר להסיר מניה ולנסות שוב.`
+        : `The portfolio already holds ${MAX_HOLDINGS} stocks, the most kept. Remove one and try again.`;
+    case 'no_holdings':
+      return he
+        ? 'התיק ריק. אפשר להוסיף מניה, למשל: "יש לי 10 מניות אפל ב־150 דולר". פתק ישן עם מניות אפשר למצוא עם "מה הפתקים שלי".'
+        : 'The portfolio is empty. Add a stock, for example: "I have 10 Apple shares at $150". An old note with stocks is found with "show my notes".';
+    case 'quotes_down':
+      return he ? 'לא הצלחתי לבדוק את המניה כרגע. אפשר לנסות שוב בעוד דקה.' : 'Could not check the stock right now. Try again in a minute.';
   }
 }
 

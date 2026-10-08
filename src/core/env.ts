@@ -34,6 +34,11 @@ export interface AppEnv {
    * app by hand and never sent. Each value works once; a new one re-arms it.
    */
   PAIR_BOOTSTRAP_CODE?: string;
+  /**
+   * Finnhub's free key, for US stock quotes (PLAN §6.24). Optional: without it
+   * a US quote answers "unavailable"; TASE needs no key.
+   */
+  QUOTES_API_KEY?: string;
 
   // Vars
   WA_PHONE_NUMBER_ID: string;
