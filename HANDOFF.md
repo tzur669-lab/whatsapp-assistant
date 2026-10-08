@@ -106,6 +106,10 @@ Network on the hotspot: `NODE_OPTIONS=--dns-result-order=ipv4first` for wrangler
 
 ## 8. Session log (docs)
 
+- 2026-10-08: Smart conversations, slice 6: `smart` flag on the outbox
+  response; app 0.12.0 (smart/local choice, badge, mode in body and voice
+  path, 422 not retried, DB v4). Server before APK.
+
 - 2026-10-08: Smart conversations, slice 5: the consent gate
   (`agent/consents.ts`, `render/consent.ts`, migration 0027 `agent_turns.kind`
   etc.). In a smart conversation a tool of an unconsented source suspends the

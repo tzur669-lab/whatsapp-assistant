@@ -814,6 +814,24 @@ describe('the app channel', () => {
       expect(report.server.minute.map((m) => m.model)).not.toContain(gemini);
     });
 
+    it('tells the app on every outbox fetch whether a smart conversation can run, and never the key', async () => {
+      buildWithGroq();
+      const phone = await pair();
+      const smartOf = async (overrides: Partial<AppEnv>) => {
+        buildWithGroq(overrides);
+        const response = await send(await phone.toDo('GET', '/app/outbox'));
+        expect(response.status).toBe(200);
+        expect(JSON.stringify(response.body)).not.toContain('fake-gemini-key-not-real');
+        // The fields an older app reads are still there.
+        expect(response.body).toMatchObject({ rows: expect.any(Array), more: expect.any(Boolean) });
+        return response.body['smart'];
+      };
+      expect(await smartOf({ GEMINI_API_KEY: 'fake-gemini-key-not-real' })).toBe(true);
+      expect(await smartOf({})).toBe(false);
+      expect(await smartOf({ GEMINI_API_KEY: 'fake-gemini-key-not-real', GROQ_API_KEY: '' })).toBe(false);
+      expect(await smartOf({ GEMINI_API_KEY: 'fake-gemini-key-not-real', AGENT: 'off' })).toBe(false);
+    });
+
     it('is only for a paired phone', async () => {
       await pair();
       const response = await send(await new FakePhone().toDo('GET', '/app/quota', undefined, { unsigned: true }));

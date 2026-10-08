@@ -16,7 +16,8 @@ import java.util.Base64
  * Every request after pairing is signed with the Keystore key over the
  * canonical string ([Protocol.canonical]); the body is written from the very
  * array that was hashed. A 409 is a nonce the server has seen — answered by
- * signing again with a fresh one. A 401 `unpaired` means the server no longer
+ * signing again with a fresh one; nothing else is (a 422 `mode_mismatch`
+ * included). A 401 `unpaired` means the server no longer
  * knows this phone, and the identity is dropped so the app asks to pair.
  *
  * Blocking calls: run them off the main thread.
@@ -68,7 +69,8 @@ object Api {
         object Unreachable : PairResult()
     }
 
-    class Page(val rows: List<Row>, val more: Boolean)
+    /** [smart]: whether the server can run a smart conversation (0.12); null from a server that does not say. */
+    class Page(val rows: List<Row>, val more: Boolean, val smart: Boolean? = null)
 
     class Dispatch(val queryVariants: List<String>, val expiresAt: Long)
 
@@ -118,10 +120,14 @@ object Api {
         location: LocationLogic.Coarse? = null,
         /** Text shared from another app (0.11): someone else's words, sent apart from the request. */
         shared: String? = null,
+        /** The conversation's mode (0.12): `local` or `smart`, fixed for its life. */
+        mode: String? = null,
     ): Pair<Result, Answer?> {
         val body = JSONObject().put("id", messageId).put("kind", "text").put("text", text)
         shared?.let { body.put("shared", it) }
-        ChatLogic.wireConversation(conversation)?.let { body.put("conversationId", it) }
+        val wire = ChatLogic.wireConversation(conversation)
+        wire?.let { body.put("conversationId", it) }
+        Protocol.wireMode(wire, mode, shared != null)?.let { body.put("mode", it) }
         location?.let {
             val place = JSONObject().put("latitude", it.latitude).put("longitude", it.longitude)
             it.name?.let { name -> place.put("name", name) }
@@ -143,11 +149,16 @@ object Api {
         audio: ByteArray,
         conversation: String?,
         location: LocationLogic.Coarse? = null,
+        mode: String? = null,
     ): Pair<Result, Answer?> {
         require(Protocol.MESSAGE_ID.matches(messageId))
-        // The body is the recording itself, so the conversation and the place go in the (signed) path.
-        val base = ChatLogic.wireConversation(conversation)?.let { "/app/voice/$messageId/$it" } ?: "/app/voice/$messageId"
-        val path = location?.let { "$base/${LocationLogic.pathSegment(it)}" } ?: base
+        // The body is the recording itself, so the conversation, its mode and the place go in the (signed) path.
+        val path = Protocol.voicePath(
+            messageId,
+            ChatLogic.wireConversation(conversation),
+            mode,
+            location?.let { LocationLogic.pathSegment(it) },
+        )
         return answerOf(signed(context, "POST", path, AUDIO_TYPE, audio, VOICE_TIMEOUT_MS))
     }
 
@@ -211,7 +222,8 @@ object Api {
         val json = (result as? Result.Ok)?.json ?: return result to null
         val rows = json.optJSONArray("rows") ?: return result to null
         val parsed = (0 until rows.length()).mapNotNull { Row.from(rows.optJSONObject(it)) }
-        return result to Page(parsed, json.optBoolean("more", false))
+        val smart = if (json.opt("smart") is Boolean) json.getBoolean("smart") else null
+        return result to Page(parsed, json.optBoolean("more", false), smart)
     }
 
     /** These rows are committed on the phone. Only these: never "everything up to". */
@@ -349,17 +361,18 @@ object Api {
                 return Result.Unreachable
             }
             val json = json(text)
-            when {
-                status in 200..299 -> return Result.Ok(json)
-                status == 409 -> Unit // a nonce seen before: sign again with a new one
-                status == 401 -> {
+            when (Protocol.stepFor(status)) {
+                Protocol.Step.OK -> return Result.Ok(json)
+                Protocol.Step.RESIGN -> Unit // a nonce seen before: sign again with a new one
+                Protocol.Step.AUTH -> {
                     if (json?.optString("error") == "clock") return Result.Clock
                     // `unpaired`, or a signature the server cannot verify with the
                     // key it holds: either way this key is done. Pair again.
                     signer.forget()
                     return Result.Unpaired
                 }
-                else -> return Result.Refused(status, json?.optString("error"))
+                // Never sent again from here, a 422 `mode_mismatch` included (0.12).
+                Protocol.Step.REFUSED -> return Result.Refused(status, json?.optString("error"))
             }
         }
         return Result.Refused(409, "replay")

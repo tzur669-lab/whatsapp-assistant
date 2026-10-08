@@ -36,6 +36,17 @@
     <string name="chat_delete">מחיקה</string>
     <string name="chat_keep">ביטול</string>
     <string name="chat_copied">ההודעה הועתקה</string>
+
+    <!-- The kind of a new conversation (0.12): fixed for its life -->
+    <string name="mode_choose_title">איזו שיחה לפתוח?</string>
+    <string name="mode_smart">✨ שיחה חכמה</string>
+    <string name="mode_smart_note">פועלת עם &#x2068;Gemini&#x2069; בחינם. &#x2068;Google&#x2069; רשאית לאמן מודלים על התוכן, ובודקים אנושיים עשויים לקרוא אותו. מידע אישי נשלח למודל רק אחרי אישור בכרטיס.</string>
+    <string name="mode_smart_unavailable">לא זמינה כרגע</string>
+    <string name="mode_local">שיחה מקומית</string>
+    <string name="mode_local_note">העוזר הרגיל, כמו עד עכשיו.</string>
+    <string name="mode_fixed">אי אפשר לשנות את סוג השיחה אחרי שהיא נפתחת.</string>
+    <string name="mode_badge_smart">✨ חכמה</string>
+    <string name="mode_badge_local">מקומית</string>
     <string name="guide_open">📖 מדריך ופקודות</string>
     <string name="quota_open">📊 מכסות</string>
     <string name="location_on">📍 מיקום למזג אוויר: פועל</string>
@@ -53,6 +64,7 @@
     <string name="notice_refused">השרת דחה את ההודעה. אפשר לנסות שוב בעוד כמה דקות.</string>
     <string name="notice_too_large">ההקלטה גדולה מדי לשליחה. אפשר להקליט הודעה קצרה יותר.</string>
     <string name="notice_not_available">העוזר לא זמין באפליקציה כרגע.</string>
+    <string name="notice_mode_mismatch">סוג השיחה לא תואם למה שנשמר בשרת, ולכן ההודעה לא נשלחה. אפשר לפתוח שיחה חדשה ולכתוב בה.</string>
 
     <!-- Notifications -->
     <string name="channel_reminders">תזכורות</string>

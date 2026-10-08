@@ -105,6 +105,37 @@ object ChatLogic {
     /** What the chat shows for a message sent with shared text: the request, then the text quoted. */
     fun sharedDisplay(text: String, shared: String): String = "$text\n\n«$shared»"
 
+    /**
+     * The mode a message in [conversation] goes with (0.12): the one stored
+     * when the conversation was created, else the one chosen for it before its
+     * first message, else local. [ChatLogic.REMINDERS] has none.
+     */
+    fun modeFor(conversation: String, stored: String?, chosen: String?): String? = when {
+        wireConversation(conversation) == null -> null
+        stored != null -> ChatSchema.modeOf(stored)
+        chosen != null -> ChatSchema.modeOf(chosen)
+        else -> Protocol.MODE_LOCAL
+    }
+
+    /** Smart can be chosen only when the server said so; unknown is no. */
+    fun smartSelectable(serverSmart: Boolean?): Boolean = serverSmart == true
+
+    /** Why the server refused a message, as the chat says it. */
+    enum class Refusal { MODE_MISMATCH, NOT_AVAILABLE, TOO_LARGE, REFUSED }
+
+    fun refusalOf(status: Int, code: String?): Refusal = when {
+        status == 422 && code == "mode_mismatch" -> Refusal.MODE_MISMATCH
+        status == 404 -> Refusal.NOT_AVAILABLE
+        status == 413 -> Refusal.TOO_LARGE
+        else -> Refusal.REFUSED
+    }
+
+    /**
+     * Whether a refused message is sent again (same id): only after a server
+     * failure. A 4xx — a 422 `mode_mismatch` above all — would only be refused again.
+     */
+    fun retriesAfterRefusal(status: Int): Boolean = status >= 500
+
     /** A request sent with shared text may not be a command: the server refuses one. */
     fun canSendWithShared(text: String): Boolean = !text.trimStart().startsWith("/")
 }

@@ -32,6 +32,51 @@ object Protocol {
     /** The server's cap on text shared from another app (`parse.ts`, 2026-10-06). */
     const val MAX_SHARED_CHARS = 1_200
 
+    /**
+     * A conversation's mode (smart conversations, 2026-10-08), fixed for its
+     * life. The server takes a missing one as local; a button never carries one.
+     */
+    const val MODE_LOCAL = "local"
+    const val MODE_SMART = "smart"
+    private val MODES = setOf(MODE_LOCAL, MODE_SMART)
+
+    /**
+     * The `mode` a text body declares, or null to send none: only with a real
+     * conversation ([ChatLogic.wireConversation]), and never with text shared
+     * from another app, which the server always answers locally.
+     */
+    fun wireMode(wireConversation: String?, mode: String?, shared: Boolean): String? =
+        if (wireConversation == null || shared) null else mode?.takeIf { it in MODES }
+
+    /**
+     * A voice note's path, which the server matches exactly:
+     * `/app/voice/<id>[/<conversation>[/<mode>]][/@location]`. The mode only
+     * after a conversation; the location always last.
+     */
+    fun voicePath(messageId: String, wireConversation: String?, mode: String?, location: String?): String {
+        val parts = mutableListOf("/app/voice/$messageId")
+        if (wireConversation != null) {
+            parts += wireConversation
+            mode?.takeIf { it in MODES }?.let { parts += it }
+        }
+        location?.let { parts += it }
+        return parts.joinToString("/")
+    }
+
+    /** What the app does with an HTTP status from a signed request. */
+    enum class Step { OK, RESIGN, AUTH, REFUSED }
+
+    /**
+     * Only a 409 (a nonce seen before) is signed again. A 422 `mode_mismatch`
+     * is a refusal like any other 4xx: sending it again would get it again.
+     */
+    fun stepFor(status: Int): Step = when {
+        status in 200..299 -> Step.OK
+        status == 409 -> Step.RESIGN
+        status == 401 -> Step.AUTH
+        else -> Step.REFUSED
+    }
+
     private const val CROCKFORD = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
     private const val CODE_LENGTH = 20
     private val random = SecureRandom()

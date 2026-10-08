@@ -24,6 +24,9 @@ object Sync {
             if (result is Api.Result.Unpaired) ChatEvents.unpaired()
             if (page == null) return Outcome(false, fresh)
 
+            // Whether a smart conversation can be offered (0.12): on every fetch, so it follows the server.
+            page.smart?.let { ServerStatus.setSmart(context, it) }
+
             val saved = store.saveRows(page.rows)
             fresh += saved
             if (fresh.isNotEmpty()) ChatEvents.changed()
@@ -35,5 +38,24 @@ object Sync {
             if (!acked || !page.more) return Outcome(true, fresh)
         }
         Outcome(true, fresh)
+    }
+}
+
+/**
+ * What the server last said about itself (0.12): whether it can run a smart
+ * conversation. Null until a server that says so has been asked — the new
+ * conversation dialog then offers local only.
+ */
+object ServerStatus {
+    private const val PREFS = "server"
+    private const val KEY_SMART = "smart"
+
+    fun smart(context: Context): Boolean? {
+        val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        return if (prefs.contains(KEY_SMART)) prefs.getBoolean(KEY_SMART, false) else null
+    }
+
+    fun setSmart(context: Context, smart: Boolean) {
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putBoolean(KEY_SMART, smart).apply()
     }
 }

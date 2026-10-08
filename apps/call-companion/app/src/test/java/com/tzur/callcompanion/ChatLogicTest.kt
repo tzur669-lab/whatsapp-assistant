@@ -80,4 +80,33 @@ class ChatLogicTest {
         assertTrue(!ChatLogic.canSendWithShared(" /pause"))
         assertEquals("מה זה?\n\n«טקסט»", ChatLogic.sharedDisplay("מה זה?", "טקסט"))
     }
+
+    @Test fun `a conversation's stored mode wins, then the one chosen before its first message, then local`() {
+        val id = "11111111-1111-4111-8111-111111111111"
+        assertEquals(Protocol.MODE_SMART, ChatLogic.modeFor(id, stored = "smart", chosen = "local"))
+        assertEquals(Protocol.MODE_LOCAL, ChatLogic.modeFor(id, stored = "local", chosen = "smart"))
+        assertEquals(Protocol.MODE_SMART, ChatLogic.modeFor(id, stored = null, chosen = "smart"))
+        assertEquals(Protocol.MODE_LOCAL, ChatLogic.modeFor(id, stored = null, chosen = null))
+        assertEquals(Protocol.MODE_LOCAL, ChatLogic.modeFor(id, stored = "garbage", chosen = null))
+        // Reminders is no conversation on the wire: no mode.
+        assertNull(ChatLogic.modeFor(ChatLogic.REMINDERS, stored = null, chosen = "smart"))
+    }
+
+    @Test fun `smart can be chosen only when the server said it can run one`() {
+        assertTrue(ChatLogic.smartSelectable(true))
+        assertTrue(!ChatLogic.smartSelectable(false))
+        assertTrue(!ChatLogic.smartSelectable(null))
+    }
+
+    @Test fun `a 422 mode mismatch is its own message and is not sent again`() {
+        assertEquals(ChatLogic.Refusal.MODE_MISMATCH, ChatLogic.refusalOf(422, "mode_mismatch"))
+        assertTrue(!ChatLogic.retriesAfterRefusal(422))
+        assertEquals(ChatLogic.Refusal.REFUSED, ChatLogic.refusalOf(422, "other"))
+        assertEquals(ChatLogic.Refusal.NOT_AVAILABLE, ChatLogic.refusalOf(404, "not_found"))
+        assertEquals(ChatLogic.Refusal.TOO_LARGE, ChatLogic.refusalOf(413, null))
+        assertEquals(ChatLogic.Refusal.REFUSED, ChatLogic.refusalOf(400, "bad_request"))
+        // Only a server failure is asked about again, with the same id.
+        assertTrue(ChatLogic.retriesAfterRefusal(500))
+        assertTrue(ChatLogic.retriesAfterRefusal(503))
+    }
 }

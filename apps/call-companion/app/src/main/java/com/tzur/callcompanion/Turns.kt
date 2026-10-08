@@ -31,15 +31,25 @@ object Turns {
 
     val busy: Boolean get() = queued.get() > 0
 
-    fun sendText(context: Context, text: String, conversation: String, shared: String? = null) {
+    /** [mode]: the one chosen for a conversation that has no message yet (0.12); a stored one wins. */
+    fun sendText(context: Context, text: String, conversation: String, shared: String? = null, mode: String? = null) {
         val app = context.applicationContext
         val id = Protocol.newMessageId()
         val shown = if (shared == null) text else ChatLogic.sharedDisplay(text, shared)
-        ChatStore.get(app).addOutgoing(id, "text", shown, conversation)
+        val sentMode = record(app, id, "text", shown, conversation, mode)
         submit(app, id, null) {
             val here = PhoneLocation.now(app)
-            run(app, id, cheapResend = true) { Api.sendText(app, id, text, conversation, here, shared) }
+            run(app, id, cheapResend = true) { Api.sendText(app, id, text, conversation, here, shared, sentMode) }
         }
+    }
+
+    /** Stores the outgoing message, creating its conversation; returns the conversation's fixed mode. */
+    private fun record(app: Context, id: String, kind: String, text: String, conversation: String, mode: String?): String? {
+        val store = ChatStore.get(app)
+        val chosen = ChatLogic.modeFor(conversation, store.modeOf(conversation), mode) ?: Protocol.MODE_LOCAL
+        store.addOutgoing(id, kind, text, conversation, chosen)
+        // Read back: what the conversation was created with is what every message declares.
+        return ChatLogic.modeFor(conversation, store.modeOf(conversation), chosen)
     }
 
     /** A button under row [seq] — from the chat or from a notification. */
@@ -59,14 +69,14 @@ object Turns {
     }
 
     /** A recording, already read into memory; the file is gone by now. */
-    fun sendVoice(context: Context, audio: ByteArray, label: String, conversation: String) {
+    fun sendVoice(context: Context, audio: ByteArray, label: String, conversation: String, mode: String? = null) {
         val app = context.applicationContext
         val id = Protocol.newMessageId()
-        ChatStore.get(app).addOutgoing(id, "voice", label, conversation)
+        val sentMode = record(app, id, "voice", label, conversation, mode)
         // Up to a megabyte: asked about again only when nothing else answers.
         submit(app, id, null) {
             val here = PhoneLocation.now(app)
-            run(app, id, cheapResend = false) { Api.sendVoice(app, id, audio, conversation, here) }
+            run(app, id, cheapResend = false) { Api.sendVoice(app, id, audio, conversation, here, sentMode) }
         }
     }
 
@@ -112,7 +122,9 @@ object Turns {
                     return
                 }
                 result is Api.Result.Clock -> return fail(app, id, R.string.notice_clock)
-                result is Api.Result.Refused && result.status < 500 -> return fail(app, id, refusal(result.status))
+                // A 4xx is final: a 422 `mode_mismatch` sent again would be refused again (0.12).
+                result is Api.Result.Refused && !ChatLogic.retriesAfterRefusal(result.status) ->
+                    return fail(app, id, refusal(result.status, result.code))
                 else -> {
                     // No answer, or the server failed on the way: the same id again is safe.
                     if (SystemClock.elapsedRealtime() >= deadline) return fail(app, id, R.string.notice_no_connection)
@@ -184,9 +196,10 @@ object Turns {
         ChatEvents.changed()
     }
 
-    private fun refusal(status: Int): Int = when (status) {
-        404 -> R.string.notice_not_available
-        413 -> R.string.notice_too_large
-        else -> R.string.notice_refused
+    private fun refusal(status: Int, code: String?): Int = when (ChatLogic.refusalOf(status, code)) {
+        ChatLogic.Refusal.MODE_MISMATCH -> R.string.notice_mode_mismatch
+        ChatLogic.Refusal.NOT_AVAILABLE -> R.string.notice_not_available
+        ChatLogic.Refusal.TOO_LARGE -> R.string.notice_too_large
+        ChatLogic.Refusal.REFUSED -> R.string.notice_refused
     }
 }

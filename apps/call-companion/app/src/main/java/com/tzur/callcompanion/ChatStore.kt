@@ -24,9 +24,10 @@ import java.util.UUID
  * sends on its own goes to [ChatLogic.REMINDERS].
  */
 class ChatStore private constructor(context: Context) :
-    SQLiteOpenHelper(context.applicationContext, "chat.db", null, 3) {
+    SQLiteOpenHelper(context.applicationContext, "chat.db", null, ChatSchema.VERSION) {
 
-    class Conversation(val id: String, val title: String, val updatedAt: Long)
+    /** [mode]: `local` or `smart` (0.12), fixed when the conversation is created. */
+    class Conversation(val id: String, val title: String, val updatedAt: Long, val mode: String)
 
     class Message(
         val localId: Long,
@@ -73,16 +74,7 @@ class ChatStore private constructor(context: Context) :
     }
 
     private fun createConversations(db: SQLiteDatabase) {
-        db.execSQL(
-            """
-            CREATE TABLE conversations (
-              id         TEXT PRIMARY KEY,
-              title      TEXT NOT NULL,
-              created_at INTEGER NOT NULL,
-              updated_at INTEGER NOT NULL
-            )
-            """.trimIndent(),
-        )
+        db.execSQL(ChatSchema.CREATE_CONVERSATIONS)
         db.execSQL("CREATE INDEX messages_conversation ON messages (conversation, local_id)")
     }
 
@@ -113,21 +105,28 @@ class ChatStore private constructor(context: Context) :
                 })
             }
         }
+        // 0.12: a conversation's mode. Every earlier one is local.
+        for (step in ChatSchema.conversationSteps(oldVersion)) db.execSQL(step)
     }
 
     // -- conversations --------------------------------------------------------
 
     /** Every conversation, the most recently used first. [ChatLogic.REMINDERS] is not one of them. */
     fun conversations(): List<Conversation> =
-        readableDatabase.rawQuery("SELECT id, title, updated_at FROM conversations ORDER BY updated_at DESC", null).use { c ->
+        readableDatabase.rawQuery("SELECT id, title, updated_at, mode FROM conversations ORDER BY updated_at DESC", null).use { c ->
             val out = ArrayList<Conversation>(c.count)
-            while (c.moveToNext()) out += Conversation(c.getString(0), c.getString(1), c.getLong(2))
+            while (c.moveToNext()) out += Conversation(c.getString(0), c.getString(1), c.getLong(2), ChatSchema.modeOf(c.getString(3)))
             out
         }
 
     fun titleOf(conversation: String): String? =
         readableDatabase.rawQuery("SELECT title FROM conversations WHERE id = ?", arrayOf(conversation))
             .use { if (it.moveToFirst()) it.getString(0) else null }
+
+    /** The mode a conversation was created with, or null while it has no message yet (or is [ChatLogic.REMINDERS]). */
+    fun modeOf(conversation: String): String? =
+        readableDatabase.rawQuery("SELECT mode FROM conversations WHERE id = ?", arrayOf(conversation))
+            .use { if (it.moveToFirst()) ChatSchema.modeOf(it.getString(0)) else null }
 
     /** The conversation a sent message was written in, or null if it is no longer here. */
     fun conversationOfMessage(messageId: String): String? =
@@ -161,9 +160,10 @@ class ChatStore private constructor(context: Context) :
 
     /**
      * What the user typed, said or tapped, before it is sent. The first message
-     * of a conversation creates it, and names it.
+     * of a conversation creates it, names it, and fixes its [mode]; a later
+     * message never changes either.
      */
-    fun addOutgoing(messageId: String, kind: String, text: String, conversation: String) {
+    fun addOutgoing(messageId: String, kind: String, text: String, conversation: String, mode: String = Protocol.MODE_LOCAL) {
         val now = System.currentTimeMillis()
         val db = writableDatabase
         db.beginTransaction()
@@ -174,6 +174,7 @@ class ChatStore private constructor(context: Context) :
                     put("title", ChatLogic.titleFor(kind, text))
                     put("created_at", now)
                     put("updated_at", now)
+                    put("mode", ChatSchema.modeOf(mode))
                 }, SQLiteDatabase.CONFLICT_IGNORE)
             }
             db.insert("messages", null, ContentValues().apply {

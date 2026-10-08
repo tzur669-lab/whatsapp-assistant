@@ -50,6 +50,10 @@ import java.util.Locale
  * Several conversations, like an LLM client (0.5): ☰ opens the list, ＋ starts
  * a new one, and what the assistant sends on its own is in 🔔 תזכורות. A long
  * press copies a message; `/` in the field offers the commands.
+ *
+ * ＋ asks what kind of conversation to open (0.12): smart (Gemini) or local.
+ * The kind is fixed for the conversation's life and shown in the header.
+ * Shared text, the assistant, the widget and 🔔 תזכורות always open local.
  */
 class ChatActivity : Activity(), ChatEvents.Listener {
     private lateinit var store: ChatStore
@@ -67,6 +71,7 @@ class ChatActivity : Activity(), ChatEvents.Listener {
     /** The conversation on screen: a uuid, or [ChatLogic.REMINDERS]. */
     private var current: String = ChatLogic.REMINDERS
     private lateinit var titleView: TextView
+    private lateinit var modeBadge: TextView
     private lateinit var inputRow: LinearLayout
     private lateinit var readonlyNote: TextView
     private lateinit var drawer: LinearLayout
@@ -272,7 +277,19 @@ class ChatActivity : Activity(), ChatEvents.Listener {
             setPadding(dp(8), 0, dp(8), 0)
         }
         header.addView(titleView, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-        header.addView(headerButton(R.string.chat_new, R.string.chat_new_description) { startNew() })
+        // The conversation's kind (0.12), next to its title.
+        modeBadge = TextView(this).apply {
+            textSize = 12f
+            setTextColor(Color.WHITE)
+            background = GradientDrawable().apply {
+                cornerRadius = dp(10).toFloat()
+                setColor(Color.argb(0x40, 0xFF, 0xFF, 0xFF))
+            }
+            setPadding(dp(8), dp(2), dp(8), dp(2))
+            visibility = View.GONE
+        }
+        header.addView(modeBadge)
+        header.addView(headerButton(R.string.chat_new, R.string.chat_new_description) { chooseNew() })
         header.addView(Button(this).apply {
             text = getString(R.string.chat_settings)
             isAllCaps = false
@@ -429,7 +446,7 @@ class ChatActivity : Activity(), ChatEvents.Listener {
         panel.addView(Button(this).apply {
             text = "${getString(R.string.chat_new)}  ${getString(R.string.chat_new_title)}"
             isAllCaps = false
-            setOnClickListener { startNew() }
+            setOnClickListener { chooseNew() }
         })
         panel.addView(drawerItem(getString(R.string.chat_reminders), bold = true) { switchTo(ChatLogic.REMINDERS) })
         panel.addView(TextView(this).apply {
@@ -560,8 +577,75 @@ class ChatActivity : Activity(), ChatEvents.Listener {
         if (refreshNow) refresh()
     }
 
-    /** A new conversation exists once its first message is sent; until then it is only an id. */
-    private fun startNew() = switchTo(Protocol.newMessageId())
+    /**
+     * A new conversation exists once its first message is sent; until then it
+     * is only an id, and the kind chosen for it waits here (0.12). Opened by
+     * anything but ＋, it is local.
+     */
+    private fun startNew(mode: String = Protocol.MODE_LOCAL) {
+        val id = Protocol.newMessageId()
+        prefs().edit().putString(PREF_DRAFT, id).putString(PREF_DRAFT_MODE, mode).apply()
+        switchTo(id)
+    }
+
+    /** The kind chosen for a conversation that has no message yet, if it is [conversation]. */
+    private fun draftMode(conversation: String): String? =
+        prefs().takeIf { it.getString(PREF_DRAFT, null) == conversation }?.getString(PREF_DRAFT_MODE, null)
+
+    /** The mode the conversation on screen goes with; null for 🔔 תזכורות. */
+    private fun currentMode(): String? = ChatLogic.modeFor(current, store.modeOf(current), draftMode(current))
+
+    /**
+     * ＋: smart or local (0.12). Smart is offered only when the server last said
+     * it can run one; otherwise it shows, disabled, as unavailable.
+     */
+    private fun chooseNew() {
+        closeDrawer()
+        val smartOn = ChatLogic.smartSelectable(ServerStatus.smart(this))
+        val panel = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            layoutDirection = View.LAYOUT_DIRECTION_RTL
+            setPadding(dp(20), dp(8), dp(20), dp(4))
+        }
+        lateinit var dialog: AlertDialog
+        fun option(label: Int, note: String, enabled: Boolean, mode: String) {
+            panel.addView(Button(this).apply {
+                text = getString(label)
+                isAllCaps = false
+                isEnabled = enabled
+                setOnClickListener {
+                    dialog.dismiss()
+                    startNew(mode)
+                }
+            })
+            panel.addView(TextView(this).apply {
+                text = note
+                textSize = 13f
+                setTextColor(META)
+                textDirection = View.TEXT_DIRECTION_ANY_RTL
+                setPadding(dp(4), 0, dp(4), dp(12))
+            })
+        }
+        option(
+            R.string.mode_smart,
+            if (smartOn) getString(R.string.mode_smart_note) else getString(R.string.mode_smart_unavailable),
+            smartOn,
+            Protocol.MODE_SMART,
+        )
+        option(R.string.mode_local, getString(R.string.mode_local_note), true, Protocol.MODE_LOCAL)
+        panel.addView(TextView(this).apply {
+            text = getString(R.string.mode_fixed)
+            textSize = 12f
+            setTextColor(META)
+            setPadding(dp(4), 0, dp(4), dp(4))
+        })
+        dialog = AlertDialog.Builder(this)
+            .setTitle(R.string.mode_choose_title)
+            .setView(panel)
+            .setNegativeButton(R.string.chat_keep, null)
+            .create()
+        dialog.show()
+    }
 
     private fun confirmDelete(conversation: ChatStore.Conversation) {
         AlertDialog.Builder(this)
@@ -597,7 +681,8 @@ class ChatActivity : Activity(), ChatEvents.Listener {
                     textDirection = View.TEXT_DIRECTION_ANY_RTL
                 })
                 addView(TextView(this@ChatActivity).apply {
-                    text = Ui.isolate(formatTime(conversation.updatedAt))
+                    val time = Ui.isolate(formatTime(conversation.updatedAt))
+                    text = if (conversation.mode == Protocol.MODE_SMART) "${getString(R.string.mode_badge_smart)} · $time" else time
                     textSize = 11f
                     setTextColor(META)
                 })
@@ -646,7 +731,7 @@ class ChatActivity : Activity(), ChatEvents.Listener {
             Toast.makeText(this, R.string.share_no_command, Toast.LENGTH_LONG).show()
             return
         }
-        Turns.sendText(this, text, current, shared)
+        Turns.sendText(this, text, current, shared, currentMode())
         input.text.clear()
         pendingShared = null
         showShare()
@@ -702,7 +787,7 @@ class ChatActivity : Activity(), ChatEvents.Listener {
         } else {
             val seconds = recording.durationMs / 1000
             val length = Ui.isolate("%d:%02d".format(Locale.ROOT, seconds / 60, seconds % 60))
-            Turns.sendVoice(this, recording.audio, getString(R.string.chat_voice_label, length), current)
+            Turns.sendVoice(this, recording.audio, getString(R.string.chat_voice_label, length), current, currentMode())
         }
         refresh()
     }
@@ -735,6 +820,9 @@ class ChatActivity : Activity(), ChatEvents.Listener {
             title != null -> title
             else -> getString(R.string.chat_new_title)
         }
+        val mode = currentMode()
+        modeBadge.visibility = if (mode == null) View.GONE else View.VISIBLE
+        modeBadge.text = getString(if (mode == Protocol.MODE_SMART) R.string.mode_badge_smart else R.string.mode_badge_local)
         empty.text = getString(
             when {
                 reminders -> R.string.chat_reminders_empty
@@ -934,6 +1022,9 @@ class ChatActivity : Activity(), ChatEvents.Listener {
 
         private const val PREFS = "chat"
         private const val PREF_CONVERSATION = "conversation"
+        /** A conversation opened by ＋ before its first message, and the kind chosen for it (0.12). */
+        private const val PREF_DRAFT = "draft_conversation"
+        private const val PREF_DRAFT_MODE = "draft_mode"
         private val DIRECTION_MARKS = Regex("[\\u200E\\u200F\\u2066-\\u2069]")
         private val SELECTED = Color.rgb(0xE8, 0xF5, 0xE9)
 

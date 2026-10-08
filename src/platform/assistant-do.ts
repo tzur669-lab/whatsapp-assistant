@@ -847,7 +847,9 @@ export class AssistantDO implements DurableObject {
       return this.appVoice(voice[1]!, voice[2] ?? null, mode, location, body, request.contentType, signed, device, principal);
     }
 
-    if (app && method === 'GET' && path === '/app/outbox') return json(this.outbox.list());
+    // `smart`: whether a smart conversation can be offered (2026-10-08). The
+    // app reads it on every fetch; an older one ignores it. Never the key.
+    if (app && method === 'GET' && path === '/app/outbox') return json({ ...this.outbox.list(), smart: this.smartAvailable() });
     if (app && method === 'GET' && path === '/app/quota') return json(this.quotaReport());
     if (app && method === 'POST' && path === '/app/outbox/ack') return this.appAck(body);
     if (method === 'POST' && path === '/app/push-token') return this.appPushToken(body, device);
@@ -1825,6 +1827,11 @@ export class AssistantDO implements DurableObject {
       params: entry.params,
       fetchImpl: this.groqFetch,
     });
+  }
+
+  /** A smart conversation can run here: the agent is on and both keys are set. */
+  private smartAvailable(): boolean {
+    return agentEnabled(this.env) && this.smartModels().length > 0;
   }
 
   /** The smart models this server may build: only when both the Gemini and the Groq keys are set. */

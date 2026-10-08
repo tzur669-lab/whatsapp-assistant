@@ -107,6 +107,69 @@ class ProtocolTest {
         assertTrue(Protocol.MESSAGE_ID.matches(Protocol.newMessageId()))
     }
 
+    // -- conversation modes (0.12): vectors from the server's own code ---------
+
+    private val id = "0f8fad5b-d9cb-469f-a165-70867728950e"
+    private val conversation = "11111111-1111-4111-8111-111111111111"
+
+    /** `{"id":…,"kind":"text","text":"מה נשמע?","conversationId":…,"mode":"smart"}`, which the server's `parseMessage` reads as smart. */
+    private val smartBody = Base64.getDecoder().decode(
+        "eyJpZCI6IjBmOGZhZDViLWQ5Y2ItNDY5Zi1hMTY1LTcwODY3NzI4OTUwZSIsImtpbmQiOiJ0ZXh0IiwidGV4dCI6Itee15Qg16DXqdee16I/IiwiY29udmVyc2F0aW9uSWQiOiIxMTExMTExMS0xMTExLTQxMTEtODExMS0xMTExMTExMTExMTEiLCJtb2RlIjoic21hcnQifQ==",
+    )
+
+    @Test fun `a text body with its mode signs as the server's canonical string`() {
+        assertTrue(String(smartBody, Charsets.UTF_8).endsWith(",\"mode\":\"smart\"}"))
+        assertEquals(
+            listOf(
+                "ASSISTANT-REQ-v1", "POST", "/app/message", "00112233445566778899aabbccddeeff", "1790000000000",
+                "ffeeddccbbaa99887766554433221100", "83002be844aedfcd3add412cc19d50465301d314509d053e5396d86508eece02",
+            ).joinToString("\n"),
+            Protocol.canonical("POST", "/app/message", "00112233445566778899aabbccddeeff", 1_790_000_000_000L, "ffeeddccbbaa99887766554433221100", smartBody),
+        )
+    }
+
+    @Test fun `the mode goes in a text body only with a real conversation and never with shared text`() {
+        assertEquals("smart", Protocol.wireMode(conversation, Protocol.MODE_SMART, shared = false))
+        assertEquals("local", Protocol.wireMode(conversation, Protocol.MODE_LOCAL, shared = false))
+        assertNull(Protocol.wireMode(null, Protocol.MODE_SMART, shared = false)) // no conversation: reminders, the shared thread
+        assertNull(Protocol.wireMode(conversation, Protocol.MODE_SMART, shared = true))
+        assertNull(Protocol.wireMode(conversation, null, shared = false))
+        assertNull(Protocol.wireMode(conversation, "clever", shared = false)) // the server's Zod would refuse it
+    }
+
+    @Test fun `the voice path puts the mode after the conversation and the place last, as the server matches`() {
+        // Each is matched by the server's route (assistant-do.ts) into (id, conversation, mode, place).
+        assertEquals(
+            "/app/voice/$id/$conversation/smart/@32.09,34.78",
+            Protocol.voicePath(id, conversation, Protocol.MODE_SMART, "@32.09,34.78"),
+        )
+        assertEquals("/app/voice/$id/$conversation/local", Protocol.voicePath(id, conversation, Protocol.MODE_LOCAL, null))
+        // Without a mode or a conversation: the paths of 0.11, unchanged.
+        assertEquals("/app/voice/$id/$conversation/@32.09,34.78", Protocol.voicePath(id, conversation, null, "@32.09,34.78"))
+        assertEquals("/app/voice/$id/@32.09,34.78", Protocol.voicePath(id, null, Protocol.MODE_SMART, "@32.09,34.78"))
+        assertEquals("/app/voice/$id", Protocol.voicePath(id, null, null, null))
+    }
+
+    @Test fun `a voice path with its mode signs as the server's canonical string`() {
+        val audio = byteArrayOf(0, 0, 0, 24, 102, 116, 121, 112)
+        val path = Protocol.voicePath(id, conversation, Protocol.MODE_SMART, "@32.09,34.78")
+        assertEquals(
+            listOf(
+                "ASSISTANT-REQ-v1", "POST", path, "00112233445566778899aabbccddeeff", "1790000000000",
+                "ffeeddccbbaa99887766554433221100", "d9f1cb99ee21291800d5e62bd9bca07850461d7d8096afc4150a52dc8554d49f",
+            ).joinToString("\n"),
+            Protocol.canonical("POST", path, "00112233445566778899aabbccddeeff", 1_790_000_000_000L, "ffeeddccbbaa99887766554433221100", audio),
+        )
+    }
+
+    @Test fun `only a 409 is signed again, never a 422 mode mismatch`() {
+        assertEquals(Protocol.Step.RESIGN, Protocol.stepFor(409))
+        assertEquals(Protocol.Step.REFUSED, Protocol.stepFor(422))
+        assertEquals(Protocol.Step.OK, Protocol.stepFor(200))
+        assertEquals(Protocol.Step.AUTH, Protocol.stepFor(401))
+        assertEquals(Protocol.Step.REFUSED, Protocol.stepFor(500))
+    }
+
     @Test fun `only server-shaped button ids pass`() {
         assertTrue(Protocol.BUTTON_ID.matches("snooze:0a1b2c:9f8e7d:m10"))
         assertFalse(Protocol.BUTTON_ID.matches("Snooze"))
