@@ -11,9 +11,11 @@
  * Wire names use `__` for the dot, which function names may not contain.
  */
 import type { ZodTypeAny } from 'zod';
+import { timeSpecSchema } from '../nlu/slot-schemas.js';
+import { timeWordsNamed } from '../time/hebrew-lexicon.js';
 import { dataSourceOf, REGISTRY, TOOL_NAMES } from '../tools/registry.js';
 import type { ConsentSource, ToolName } from '../tools/registry.js';
-import type { WireTool } from './provider.js';
+import type { AgentMessage, WireTool } from './provider.js';
 
 type Def = { typeName?: string; innerType?: ZodTypeAny; type?: ZodTypeAny; values?: readonly string[]; checks?: readonly { kind: string }[] };
 
@@ -51,6 +53,89 @@ export function toWireName(name: ToolName): string {
 export function fromWireName(wire: string, offered: readonly ToolName[]): ToolName | null {
   const name = wire.replace('__', '.');
   return (offered as readonly string[]).includes(name) ? (name as ToolName) : null;
+}
+
+/** Each tool's TimeSpec slots, found by schema identity: `time`, `from_time`, `to_time`. */
+const TIME_SLOTS: Readonly<Record<string, readonly string[]>> = Object.fromEntries(
+  TOOL_NAMES.map((name) => {
+    const shape = (REGISTRY[name].draftSchema as unknown as { shape: Record<string, ZodTypeAny> }).shape;
+    const slots = Object.entries(shape)
+      .filter(([, field]) => {
+        const def = (field as unknown as { _def: Def })._def;
+        return field === timeSpecSchema || def.innerType === timeSpecSchema;
+      })
+      .map(([slot]) => slot);
+    return [name, slots];
+  }),
+);
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+/**
+ * A TimeSpec sent without `meridiem` or `part_of_day` (2026-10-08). The catalog
+ * names a TimeSpec only as an object, and Gemini sent `{"hour":8,"minute":0}`
+ * for 6 of 19 tool calls in one eval, each rejected by strict Zod. A missing
+ * key is filled with 'unspecified' — the value that already means "not stated"
+ * — only where that cannot change the time (invariant 4):
+ *
+ *   - only when `hour` and `minute` are both numbers: a missing time, hour or
+ *     minute is never made up, and stays a rejection or a CLARIFY;
+ *   - never over a key that was sent;
+ *   - `meridiem` when the hour is 13–23, which no am/pm moves, or when nothing
+ *     in the conversation (`said`: the user's words, this turn and the history)
+ *     names am or pm;
+ *   - `part_of_day` when the hour is 13–23, when a sent am/pm decides alone
+ *     (`applyMeridiem` and R5 never read `part_of_day` then), or when nothing
+ *     said names a part of the day.
+ *
+ * Otherwise the key stays missing and strict Zod rejects the call, as before:
+ * "8 בערב" sent as `{"hour":8,"minute":0}` never becomes 08:00. What a filled
+ * call resolves to is what an explicit 'unspecified' resolves to (R4 reads a
+ * bare 1–12 hour on the 24-hour clock; R5 asks about 00–05). Agent tool calls
+ * only; the parser's strict structured output always sends both keys. Never
+ * mutates its input.
+ */
+export function fillUnstatedTime(tool: string, args: unknown, said: string): unknown {
+  if (!isRecord(args)) return args;
+  let out: Record<string, unknown> | null = null;
+  let named: { meridiem: boolean; partOfDay: boolean } | null = null;
+  for (const slot of TIME_SLOTS[tool] ?? []) {
+    const time = args[slot];
+    if (!isRecord(time) || typeof time['hour'] !== 'number' || typeof time['minute'] !== 'number') continue;
+    const noMeridiem = time['meridiem'] === undefined;
+    const noPart = time['part_of_day'] === undefined;
+    if (!noMeridiem && !noPart) continue;
+
+    named ??= timeWordsNamed(said);
+    const lateHour = time['hour'] >= 13 && time['hour'] <= 23;
+    const statedMeridiem = time['meridiem'] === 'am' || time['meridiem'] === 'pm';
+    const fillMeridiem = noMeridiem && (lateHour || !named.meridiem);
+    const fillPart = noPart && (lateHour || statedMeridiem || !named.partOfDay);
+    if (!fillMeridiem && !fillPart) continue;
+
+    out ??= { ...args };
+    out[slot] = {
+      ...time,
+      ...(fillMeridiem ? { meridiem: 'unspecified' } : {}),
+      ...(fillPart ? { part_of_day: 'unspecified' } : {}),
+    };
+  }
+  return out ?? args;
+}
+
+/**
+ * What `fillUnstatedTime` checks for am/pm and parts of the day: every message
+ * of the turn but the system prompt — the user's words now and in the history,
+ * the replies, read results. Wide on purpose: a word found anywhere only keeps
+ * the rejection.
+ */
+export function conversationText(messages: readonly AgentMessage[]): string {
+  return messages
+    .filter((message) => message.role !== 'system')
+    .map((message) => message.content ?? '')
+    .join('\n');
 }
 
 /**

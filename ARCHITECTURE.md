@@ -45,7 +45,9 @@ Current as of 2026-10-08 (migration 0027).
 3. **Agent** (`agent/loop.ts`, when `AGENT=on`) — per-sender lock
    (`lock.ts`), encrypted short history (`history.ts`), code picks a tool
    group (`tool-groups.ts`), budget reserves tokens before each call
-   (`budget.ts`, `models.ts`). Each tool call → `orchestrator` path below.
+   (`budget.ts`, `models.ts`). Each tool call → `fillUnstatedTime`
+   (`tools.ts`: a TimeSpec's missing `meridiem`/`part_of_day` → 'unspecified'
+   only where it cannot move the time) → strict Zod → `orchestrator` path below.
    Only Tier 0 reads return to the model; any other outcome ends the turn.
 4. **Fallback parser** (`nlu/`) — one `IntentDraft` under strict structured
    output; models then `rules-fallback.ts`. If it finds no tool, the backup
@@ -120,7 +122,7 @@ Special shapes:
 | `tools/` | `registry.ts` (single source of truth: name, tier, slots, scopes, flags, required `dataSource`) + one file per area; `*-store.ts` hold SQL; `match.ts` finds targets | §6.4, §6.19 |
 | `policy/` | Pure tier decision; WhatsApp 24 h window/budget | §6.4 |
 | `confirm/` | Pending confirmations, Undo offers, open questions | §6.5, §6.11 |
-| `time/` | `resolve` (R1–R12), `tz`, Hebrew lexicon, ranges, recurrence, past days, sunset, Shabbat/chag | §6.3, §6.13 |
+| `time/` | `resolve` (R1–R12), `tz`, Hebrew lexicon (and `timeWordsNamed`, the am/pm and part-of-day check), ranges, recurrence, past days, sunset, Shabbat/chag | §6.3, §6.13 |
 | `google/` | OAuth (PKCE), per-area grants with encrypted refresh tokens, Calendar/Tasks/Gmail/Drive/Contacts (birthdays only) clients | §6.6 |
 | `ical/` | Subscribed calendar feeds: URL guard, fetch, parse, cache, merge | §6.15 |
 | `lookup/` | Public keyless data for `info.lookup` + calculator grammar; `quotes.ts`: stock quotes (Finnhub US with `QUOTES_API_KEY` in a header, Yahoo TASE), units normalized once | §6.4, §6.24 |

@@ -113,7 +113,8 @@ app shows "smart" as unavailable and everything stays local (Groq).
 1. Sign in at <https://aistudio.google.com> and **Get API key**. Copy it once
    into a password manager; it becomes the `GEMINI_API_KEY` secret (Step 5).
 2. **Confirm the model id** in AI Studio's model list. The code names
-   `gemini-3.5-flash` (`SMART_MODELS` in `src/agent/models.ts`):
+   `gemini-3.5-flash-lite` (`SMART_MODELS` in `src/agent/models.ts`):
+   `gemini-3.5-flash`'s free tier stopped after ~25 requests a day,
    `gemini-2.5-flash` is closed to new users (404, 2026-10-08), and the newer
    3.7/3.8 Flash ids often answered 503 "high demand". Changing it is a
    reviewed code change (PLAN §13), not a setting.
@@ -129,7 +130,7 @@ the bot never picks a model at runtime.
 | `qwen/qwen3.8-27b` | **Primary.** Runs the agent and the parser; may write | `src/agent/models.ts`, `src/nlu/index.ts` | Passed the eval gate (100% on "no invented slots") |
 | `openai/gpt-oss-120b` | **Backup**, read-only (`canWrite: false`) | same | Used on rate limits/failures; its writes always confirm |
 | `whisper-large-v3` | Voice notes → text | `src/voice/groq-whisper.ts` | Not the turbo variant, on purpose |
-| `gemini-3.5-flash` | **Smart conversations only**, on Google AI Studio with `GEMINI_API_KEY` | `SMART_MODELS` in `src/agent/models.ts` | Optional. Never used by a local conversation; `canWrite: false` until a human reads its eval report; every write it proposes needs confirmation |
+| `gemini-3.5-flash-lite` | **Smart conversations only**, on Google AI Studio with `GEMINI_API_KEY` | `SMART_MODELS` in `src/agent/models.ts` | Optional. Never used by a local conversation; `canWrite: false` until a human reads its eval report; every write it proposes needs confirmation |
 
 Free-tier budget to keep in mind: about **8K tokens/minute and 200K
 tokens/day per model**. A full `pnpm eval:agent` run can use up a model's
@@ -212,7 +213,7 @@ GROQ_API_KEY=<your key>
 ```
 
 Add `GEMINI_API_KEY=<your key>` on a second line only to run
-`pnpm eval:agent --model gemini-3.5-flash` (smart-model evals; guarded by
+`pnpm eval:agent --model gemini-3.5-flash-lite` (smart-model evals; guarded by
 requests: it stops at 80% of the entry's `dayRequests`).
 
 Needed only by `pnpm eval` / `pnpm eval:agent`, which call the real Groq API.

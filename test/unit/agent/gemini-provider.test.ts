@@ -333,8 +333,8 @@ describe('the smart model table', () => {
     for (const entry of MODELS) expect(entry.role).not.toBe('smart');
   });
 
-  it('is gemini-3.5-flash: 2.5 Flash is closed to new users (404, 2026-10-08)', () => {
-    expect(SMART_MODELS.map((entry) => entry.id)).toEqual(['gemini-3.5-flash']);
+  it('is gemini-3.5-flash-lite: the 3.5 Flash free tier stopped after ~25 requests a day (2026-10-08)', () => {
+    expect(SMART_MODELS.map((entry) => entry.id)).toEqual(['gemini-3.5-flash-lite']);
   });
 
   it('pins fully versioned Gemini ids that may not write until a human reads an eval', () => {

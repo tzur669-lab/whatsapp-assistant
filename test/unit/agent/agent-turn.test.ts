@@ -177,6 +177,43 @@ describe('an agent turn', () => {
       expect(reminders.listUpcoming(PRINCIPAL)).toHaveLength(1);
     });
 
+    it('reads a time sent without meridiem and part_of_day as not stated (2026-10-08)', async () => {
+      const out = await handleInbound(
+        text('תזכיר לי מחר בשמונה להתקשר לאבא'),
+        deps([{ tool: 'reminders.create', args: { text: 'להתקשר לאבא', date: { kind: 'relative_days', offset: 1 }, time: { hour: 8, minute: 0 } } }]),
+      );
+      if (out.action !== 'reply') throw new Error('expected a reply');
+      expect(plain(out.text)).toContain('יום ו׳ 25.9 · 08:00');
+      expect(agent.calls).toHaveLength(1);
+    });
+
+    it('hands such a time back when the message names a part of the day it lacks', async () => {
+      const out = await handleInbound(
+        text('תזכיר לי מחר ב-8 בערב להתקשר לאבא'),
+        deps([
+          { tool: 'reminders.create', args: { text: 'להתקשר לאבא', date: { kind: 'relative_days', offset: 1 }, time: { hour: 8, minute: 0 } } },
+          { tool: 'reminders.create', args: { text: 'להתקשר לאבא', ...TOMORROW_AT_EIGHT_PM } },
+        ]),
+      );
+      if (out.action !== 'reply') throw new Error('expected a reply');
+      expect(agent.calls[1]!.find((m) => m.role === 'tool')?.content).toContain('invalid_arguments');
+      expect(plain(out.text)).toContain('יום ו׳ 25.9 · 20:00');
+    });
+
+    it('hands it back too when an earlier message named the part of the day', async () => {
+      await handleInbound(text('יש לי פגישה ב-8 בערב'), deps([{ text: 'רשמתי לפניי.' }]));
+      const out = await handleInbound(
+        text('תזכיר לי עליה מחר'),
+        deps([
+          { tool: 'reminders.create', args: { text: 'פגישה', date: { kind: 'relative_days', offset: 1 }, time: { hour: 8, minute: 0 } } },
+          { tool: 'reminders.create', args: { text: 'פגישה', ...TOMORROW_AT_EIGHT_PM } },
+        ]),
+      );
+      if (out.action !== 'reply') throw new Error('expected a reply');
+      expect(agent.calls).toHaveLength(2);
+      expect(plain(out.text)).toContain('20:00');
+    });
+
     it('refuses a tool the catalog never offered', async () => {
       const out = await handleInbound(
         text('תריץ פקודה'),

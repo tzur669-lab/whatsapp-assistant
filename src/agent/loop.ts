@@ -48,7 +48,7 @@ import type { HistoryEntry } from './history.js';
 import { languageLine, nowLine, READ_ONLY_NOTE, SMART_NOTE, SYSTEM_PROMPT } from './prompt.js';
 import type { AgentMessage, AgentProvider, AgentResponse, ToolCall, WireTool } from './provider.js';
 import { wireToolCall } from './provider.js';
-import { agentToolNames, fromWireName, smartOfferedTools, TAINTING_TOOLS, wireTools } from './tools.js';
+import { agentToolNames, conversationText, fillUnstatedTime, fromWireName, smartOfferedTools, TAINTING_TOOLS, wireTools } from './tools.js';
 import { consentSourceOf } from './consents.js';
 import { MAX_SUSPENDS } from './turns.js';
 
@@ -907,6 +907,10 @@ async function runToolCall(call: ToolCall, loop: Loop, log: Logger, approved: bo
   } catch {
     return { kind: 'retry', result: '{"error":"arguments_not_json"}' };
   }
+  // A TimeSpec without meridiem or part_of_day: 'unspecified' only where it
+  // cannot move the time, judged against everything said in the turn but the
+  // system prompt (2026-10-08). Shape only; strict Zod still runs next.
+  args = fillUnstatedTime(tool, args, conversationText(loop.messages));
 
   // The arguments are model output, and pass the same strict schema a parsed
   // draft does (plan invariant 3). Issue paths are slot names, never values.

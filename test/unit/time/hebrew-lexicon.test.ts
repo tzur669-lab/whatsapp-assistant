@@ -4,7 +4,7 @@
  * guards against.
  */
 import { describe, expect, it } from 'vitest';
-import { normalizeHebrew, parseHebrewWhen, weekdaysNamed } from '../../../src/time/hebrew-lexicon.js';
+import { timeWordsNamed, normalizeHebrew, parseHebrewWhen, weekdaysNamed } from '../../../src/time/hebrew-lexicon.js';
 
 describe('normalizeHebrew', () => {
   it('strips nikud', () => {
@@ -271,5 +271,54 @@ describe('weekdaysNamed', () => {
   it('survives nikud and maqaf', () => {
     expect(named('בְּיוֹם שֵׁנִי')).toEqual([1]);
     expect(named('ב־שלישי')).toEqual([2]);
+  });
+});
+
+// A check, not a parser (2026-10-08): may a time the model sent without
+// `meridiem` or `part_of_day` be read as "not stated"? It leans to yes: a false
+// yes only keeps the strict rejection there was before; a false no could let a
+// dropped "בערב" through as 08:00.
+describe('timeWordsNamed', () => {
+  const named = (text: string) => timeWordsNamed(text);
+
+  it('finds a part of the day in Hebrew, with prefixes and gershayim', () => {
+    for (const text of [
+      'תזכיר לי מחר ב-8 בערב',
+      'ב-8 בבוקר',
+      'הבוקר',
+      'בצהריים',
+      'בצהרים',
+      'ב-2 בלילה',
+      'בחצות',
+      'לפנות בוקר',
+    ]) {
+      expect(named(text).partOfDay, text).toBe(true);
+    }
+  });
+
+  it('counts אחה״צ and לפנה״צ as both: a model may write either slot for them', () => {
+    for (const text of ['ב-4 אחה״צ', 'ב-10 לפנה״צ', 'אחר הצהריים', 'אחרי הצהריים', 'לפני הצהריים']) {
+      expect(named(text), text).toEqual({ meridiem: true, partOfDay: true });
+    }
+  });
+
+  it('finds am and pm in English, and parts of the day', () => {
+    for (const text of ['tomorrow at 8pm', 'at 8 p.m.', 'at 8 AM']) {
+      expect(named(text).meridiem, text).toBe(true);
+    }
+    for (const text of ['this evening', 'tonight at 8', 'in the morning', 'at noon', 'midnight', 'afternoon']) {
+      expect(named(text).partOfDay, text).toBe(true);
+    }
+  });
+
+  it('keeps the two apart where they are apart', () => {
+    expect(named('מחר ב-8 בערב')).toEqual({ meridiem: false, partOfDay: true });
+    expect(named('tomorrow at 8pm')).toEqual({ meridiem: true, partOfDay: false });
+  });
+
+  it('finds neither in a bare hour', () => {
+    for (const text of ['תזכיר לי מחר ב-8 להתקשר לאבא', 'בשמונה', 'ב-20:00', 'remind me at 8 tomorrow', 'at 8:30', 'call the camp']) {
+      expect(named(text), text).toEqual({ meridiem: false, partOfDay: false });
+    }
   });
 });

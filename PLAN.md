@@ -1444,14 +1444,24 @@ Phases: **A** the agent core (this section, built) · **B** phone actions as
 action cards · **C** phone data reads · **D** Gmail read-only.
 
 **Loop** (`src/agent/loop.ts`). System prompt + history + the user turn (local
-time from code) → model → at most one tool call per model call → strict Zod
+time from code) → model → at most one tool call per model call → `fillUnstatedTime` → strict Zod
 (`validateIntentDraft`) → `checkNamedWeekdays` → `runIntent` (resolve, decide,
 act — unchanged). A Tier 0 read returns its code-rendered text, scrubbed
 (`src/security/scrub.ts`), to the model; **every other outcome ends the turn as
 code rendered it** — a write's confirmation with its Undo, a question recorded as
 §6.11's open question, a confirmation, a refusal, a call's silent dispatch. A
 write is therefore never worded by the model. Invalid arguments or an unknown tool
-go back to the model as an error result, and nothing runs. Caps: 3 model calls,
+go back to the model as an error result, and nothing runs. A TimeSpec sent
+without `meridiem` or `part_of_day` (2026-10-08; Gemini did so in 6 of 19 tool
+calls) gets 'unspecified' for the missing key — the value that already means
+"not stated" — only where it cannot move the time: `hour` and `minute` both
+numbers, never over a sent key, and only when the hour is 13–23, a sent am/pm
+decides alone (for `part_of_day`), or nothing in the turn's messages but the
+system prompt names am/pm or a part of the day (`timeWordsNamed`, leaning to
+"named"). Otherwise strict Zod rejects it as before, so "8 בערב" sent as
+`{hour: 8, minute: 0}` never becomes 08:00. A filled time resolves exactly as an
+explicit 'unspecified' (R4, R5). Agent calls only; the eval scores the same way.
+Caps: 3 model calls,
 7,000 tokens (per model, `models.ts`), one model per **agent turn** (§2's 8K per
 minute); reply text ≤ 1,500 characters, markdown removed.
 
@@ -1672,13 +1682,14 @@ the user allowed its source on a card. Everything else stays exactly as before.
 - **The models.** `SMART_MODELS` in `models.ts`, a table of its own: never in
   `MODELS`, so never in a local conversation's `providers` or
   `fallbackProviders` (unit test: the tables never overlap). One entry,
-  `gemini-3.5-flash` (2026-10-08: `gemini-2.5-flash` answered 404 "no longer
-  available to new users" in a live probe; 3.7/3.8 Flash often answered 503
-  "high demand" — revisit), provider `gemini`, role `smart`,
+  `gemini-3.5-flash-lite` (2026-10-08, the user's choice: `gemini-3.5-flash`'s
+  free tier stopped after ~25 requests a day in the agent eval;
+  `gemini-2.5-flash` answered 404 "no longer available to new users" in a live
+  probe; 3.7/3.8 Flash often answered 503 "high demand" — revisit), provider `gemini`, role `smart`,
   `reasoningEffort: 'low'` (Gemini 3 thinks inside `max_tokens`; a small
   budget ended `length` with an empty message), `canWrite: false`; its
-  limits (`minuteTokens` 250,000, `minuteRequests` 10, `dayRequests` 250) are
-  placeholders until measured, `turnCap` 60,000, `maxModelCalls` 6,
+  limits (`minuteTokens` 250,000, `minuteRequests` 15, `dayRequests` 500) are
+  conservative placeholders until measured, `turnCap` 60,000, `maxModelCalls` 6,
   `maxCompletionTokens` 4,096, and Groq's 3.0 characters a token until a
   Gemini calibration exists (§13). `modelEntry` searches both tables. `smart` is
   never `primary`, so every write a smart model proposes confirms
@@ -1800,7 +1811,7 @@ the user allowed its source on a card. Everything else stays exactly as before.
   smart provider is answered by the local models, with "המצב החכם לא זמין
   כרגע" on its first line — the safe side.
 - **Writes.** A smart model's writes always confirm (role `smart`). Its
-  `canWrite` stays false until `pnpm eval:agent --model gemini-3.5-flash` has
+  `canWrite` stays false until `pnpm eval:agent --model gemini-3.5-flash-lite` has
   run and a human has read the report (§13); note that `canWrite` only sorts
   `MODELS` into agent and read-only lists, so it does not stop a smart model
   from proposing a write — the confirmation does. Writes also go through the consent gate, since a write
@@ -2802,10 +2813,10 @@ measured on the app channel. To finish with `--resume`.
 - [ ] Voice: the uncertain band (`avg_logprob` between -1.0 and -0.5) currently forces CONFIRM on writes. If that fires on most real recordings it is friction, not safety — revisit after two weeks of daily use.
 - [x] **The 8 s NLU timeout stays in production, and the eval uses 30 s** (2026-09-25). The run that settled this reported 50 of 156 cases as parse failures with a p95 of **8,015 ms** against an 8,000 ms timeout — a p95 sitting 15 ms above the cutoff is not a measurement of the model, it is the cutoff being reported back. Production keeps 8 s, because a user waiting longer has already had a bad experience and the fallback chain exists for exactly this; the eval raises it, because a run that cuts the model off is measuring speed, which §11.2 already scores separately. The complete corpus run and its own figures are in §11.9, which is still latency-contaminated for the same reason: it was recorded before the change. Whether `qwen` is fast *enough* becomes a real question only on the next run.
 - [x] **Smart conversations on Gemini's free tier** (2026-10-08, the user's decision; §6.19): Google may train on what a smart conversation sends and human reviewers may read it; accepted for smart conversations only, behind a consent gate per data source. Local stays the default.
-- [ ] **Smart conversations: confirm the Gemini model id in AI Studio** before `GEMINI_API_KEY` is set. `SMART_MODELS` names `gemini-3.5-flash` since 2026-10-08: a live probe got 404 "no longer available to new users" for `gemini-2.5-flash` and 200 for 3.5 Flash. `gemini-3.7-flash` and `gemini-3.8-flash` exist but often answered 503 "high demand" that day: revisit them. A change of id is a reviewed commit to `models.ts` and re-pins the smart fingerprint.
-- [ ] **Smart conversations: measure the Gemini limits** — `minuteTokens`, `minuteRequests` and `dayRequests` in `SMART_MODELS` are placeholders (250,000 / 10 / 250). Read the key's project limits in AI Studio and confirm with a one-token probe, as for Groq.
+- [ ] **Smart conversations: confirm the Gemini model id in AI Studio** before `GEMINI_API_KEY` is set. `SMART_MODELS` names `gemini-3.5-flash-lite` since 2026-10-08 (the user's choice; a probe answered 200 in about 1–2 s): a live probe got 404 "no longer available to new users" for `gemini-2.5-flash`, and `gemini-3.5-flash`'s free tier stopped after ~25 requests a day. `gemini-3.7-flash` and `gemini-3.8-flash` exist but often answered 503 "high demand" that day: revisit them. A change of id is a reviewed commit to `models.ts`. The smart fingerprint does not hash the id (only the request, prompt, catalog and wire), so it does not move with it: the new model needs its own eval report all the same.
+- [ ] **Smart conversations: measure the Gemini limits** — `minuteTokens`, `minuteRequests` and `dayRequests` in `SMART_MODELS` are placeholders (250,000 / 15 / 500, conservative guesses for 3.5 Flash-Lite, 2026-10-08). Read the key's project limits in AI Studio and confirm with a one-token probe, as for Groq.
 - [ ] **Smart conversations: Gemini `charsPerToken` calibration.** The entry uses Groq's 3.0 until a calibration file from a real Gemini run exists (a separate fixture, like `test/fixtures/token-calibration.json`).
-- [ ] **Smart conversations: `pnpm eval:agent --model gemini-3.5-flash`** (with `GEMINI_API_KEY` in `.dev.vars`; use `--filter` first), scored with "wrong tool calls" as well, and a human reads the report before `canWrite` changes. Note: `canWrite` only sorts `MODELS` into `providers` and `fallbackProviders` (`assistant-do.ts`); a `SMART_MODELS` entry is used whatever it says, so today Gemini may propose writes, and each one confirms because its role is not `primary`.
+- [ ] **Smart conversations: `pnpm eval:agent --model gemini-3.5-flash-lite`** (with `GEMINI_API_KEY` in `.dev.vars`; use `--filter` first), scored with "wrong tool calls" as well, and a human reads the report before `canWrite` changes. Note: `canWrite` only sorts `MODELS` into `providers` and `fallbackProviders` (`assistant-do.ts`); a `SMART_MODELS` entry is used whatever it says, so today Gemini may propose writes, and each one confirms because its role is not `primary`.
 - [ ] **Smart conversations: staging deploy** (approval in the session), then the human sets `GEMINI_API_KEY` with `wrangler secret put GEMINI_API_KEY --env staging`, and only then the 0.12.0 APK: an older server refuses the `mode` field.
 - [ ] **Smart conversations: writes ask consent for their source.** A write tool's `dataSource` is usually a consent source (`reminders.create` is `reminders`), so "remind me tomorrow at 9" in a smart conversation first shows a consent card. Safe, but friction: revisit the UX after real use (e.g. a write whose reply carries only the user's own words). Related: `private` tools (notes, lists, facts, portfolio) are not offered in a smart conversation at all.
 
@@ -3020,6 +3031,7 @@ measured on the app channel. To finish with `--resume`.
 | 2026-10-08 | **The consent gate** (§6.19, §7.1; slice 5; migration 0027 extends `agent_turns` with `kind`, `nonce_hash`, `source`, `conversation`). In a smart conversation a model's call to a source not yet allowed suspends the turn before anything is read, with a card: this time / this conversation / no — mail, SMS, contacts and notifications this time only. Taps are code only (invariant 7): `beginConsent`, the consent row and the lock in one synchronous step; the stored call runs on the same model; at most two suspends a turn. Voice, shared text and the read-only try never suspend. `settleAgentResult` stores `[מידע אישי]` for any reply after a source not allowed, `[טקסט ששותף]` for shared text. `/consents` lists and revokes |
 | 2026-10-08 | **App 0.12.0: smart or local** (§6.18, §6.19; slice 6). `GET /app/outbox` carries `smart: true` only when the agent is on and both keys are set (never the key). The new-conversation button asks smart or local (smart disabled while unavailable), the mode is fixed by the first message and shown as a badge, a 422 `mode_mismatch` is shown and never retried, the app's DB version 4 adds the column (existing conversations local). Shared text, the assistant and the widget open local conversations. **Deploy the server before the APK** |
 | 2026-10-08 | **Gemini 3.5 Flash, thought signatures, a busy smart model** (§6.19). `SMART_MODELS` names `gemini-3.5-flash` with `reasoningEffort: 'low'`: `gemini-2.5-flash` answered 404 "no longer available to new users" in a live probe; 3.7/3.8 Flash often answered 503 (revisit). Gemini 3 tool calls carry a thought signature that must be sent back: kept on `ToolCall.signature` (shape-checked, opaque, never logged), re-emitted only when present, stored with a suspended turn; Groq requests unchanged byte for byte. A smart model's 503/500 rests it on the 429 ladder (not daily) so the next message picks qwen. Eval ledger: a smart model is guarded by its requests per Pacific day (stop at 80% of `dayRequests`, apart from the Groq totals), and a call that failed with a status is recorded at 0 tokens; the eval's synthetic injection call carries Google's placeholder signature on a smart run. Smart fingerprint re-pinned (`params`, `GEMINI_WIRE_VERSION`); the Groq one is unchanged |
+| 2026-10-08 | **Smart model 3.5 Flash-Lite; a TimeSpec without its qualifiers** (§6.19). `SMART_MODELS` names `gemini-3.5-flash-lite` (the user's choice): 3.5 Flash's free tier stopped after ~25 requests a day in the agent eval; limits 15/min, 500/day are unmeasured placeholders. In that eval 6 of 19 Gemini tool calls were rejected for a TimeSpec `{hour, minute}` with no `meridiem`/`part_of_day`. Agent calls now get 'unspecified' for a missing key only where it cannot move the time (hour 13–23; a sent am/pm for `part_of_day`; or no am/pm or part-of-day word anywhere in the turn's messages), never for a missing time, hour or minute; otherwise strict Zod rejects as before. A filled time resolves as an explicit 'unspecified'. On Groq this only turns a former rejection into the same resolution an explicit 'unspecified' gets. Groq fingerprint unchanged; the smart fingerprint does not hash the model id, so it is unchanged too |
 ---
 
 ## 15. Sources (checked 2026-09-24)

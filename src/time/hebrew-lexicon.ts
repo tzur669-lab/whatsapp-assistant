@@ -518,3 +518,31 @@ export function parseAnswerDuration(raw: string): number | null {
   if (minutes) return count;
   return count >= 5 && count <= 24 * 60 ? count : null;
 }
+
+// -- am/pm and parts of the day a conversation names ----------------------------
+//
+// Not a parser: a check on one (2026-10-08). A model's TimeSpec may come
+// without `meridiem` or `part_of_day`, and the agent fills a missing one with
+// 'unspecified' only while nothing said names what it would hold
+// (`fillUnstatedTime`, `src/agent/tools.ts`). So the lists lean wide, matching
+// inside words too: a false yes only keeps the strict rejection there was
+// before, while a false no could let a dropped "בערב" through as 08:00.
+
+/** Hebrew words that name a part of the day, matched as substrings. */
+const PART_OF_DAY_STEMS = ['בוקר', 'צהרי', 'ערב', 'לילה', 'חצות', 'שחר'] as const;
+
+/** Hebrew forms that read as am or pm as well as a part of the day. */
+const MERIDIEM_STEMS = ['אחה"צ', 'לפנה"צ', 'אחר הצהר', 'אחרי הצהר', 'לפני הצהר'] as const;
+
+const EN_MERIDIEM = /(?<![a-z])[ap]\.?m(?![a-z])/i;
+const EN_PART_OF_DAY_WORDS = /\b(?:morning|noon|midday|afternoon|evening|tonight|night|midnight)\b/i;
+
+export function timeWordsNamed(raw: string): { meridiem: boolean; partOfDay: boolean } {
+  const text = normalizeHebrew(raw);
+  const meridiem = MERIDIEM_STEMS.some((stem) => text.includes(stem)) || EN_MERIDIEM.test(text);
+  const partOfDay =
+    MERIDIEM_STEMS.some((stem) => text.includes(stem)) ||
+    PART_OF_DAY_STEMS.some((stem) => text.includes(stem)) ||
+    EN_PART_OF_DAY_WORDS.test(text);
+  return { meridiem, partOfDay };
+}
