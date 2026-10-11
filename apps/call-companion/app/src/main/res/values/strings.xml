@@ -197,6 +197,16 @@
         <item quantity="other">%1$s · %2$d שלבים</item>
     </plurals>
     <string name="routine_no_verify_note">אין שלב אימות, ולכן לא יהיה ידוע אם הפעולה נקלטה.</string>
+    <string name="routine_scan">🔍 מה רואים</string>
+    <string name="scan_title">מה השגרה רואה במסך</string>
+    <string name="scan_hint">רמז: %1$s</string>
+    <string name="scan_id">מזהה: %1$s</string>
+    <string name="scan_clickable">לחיץ</string>
+    <string name="scan_not_clickable">לא לחיץ</string>
+    <string name="scan_disabled">לא פעיל</string>
+    <string name="scan_editable">שדה הקלדה</string>
+    <string name="scan_failed">לא ניתן לקרוא את המסך: האפליקציה לא נפתחה בזמן, או שהטלפון נעול.</string>
+    <string name="scan_empty">האפליקציה נפתחה, אבל השירות לא רואה בה אף טקסט. כנראה אי אפשר להפעיל אותה בשגרה.</string>
     <string name="routine_dry">בדיקה יבשה</string>
     <string name="routine_run">הפעלה</string>
     <string name="routine_edit">עריכה</string>
@@ -214,10 +224,13 @@
     <string name="routine_steps_title">שלבים, אחרי פתיחת האפליקציה</string>
     <string name="routine_add_step">＋ הוספת שלב</string>
     <string name="routine_step_remove">✕</string>
-    <string name="routine_save_without_verify">אין בשגרה שלב \"לוודא שהופיע טקסט\", ולכן לא יהיה אפשר לדעת אם הפעולה נקלטה. לשמור בכל זאת?</string>
+    <string name="routine_save_without_verify">אין בשגרה שלב אימות (\"לוודא שכפתור כבה\" או \"לוודא שהופיע טקסט\"), ולכן לא יהיה אפשר לדעת אם הפעולה נקלטה. לשמור בכל זאת?</string>
     <string name="step_kind_title">איזה שלב להוסיף?</string>
     <string name="step_kind_tap_text">ללחוץ על טקסט</string>
     <string name="step_kind_wait_for_text">לחכות שיופיע טקסט</string>
+    <string name="step_kind_expect_disabled">לוודא שכפתור כבה (אישור שהפעולה הצליחה)</string>
+    <string name="step_expect_disabled">לוודא שהכפתור %1$s כבה, עד %2$d שניות</string>
+    <string name="routine_reason_target_disabled">הכפתור נמצא, אבל הוא כבוי כרגע. למשל כי הפעולה כבר בוצעה היום.</string>
     <string name="step_kind_expect_text">לוודא שהופיע טקסט (אישור שהפעולה הצליחה)</string>
     <string name="step_kind_wait">להמתין כמה שניות</string>
     <string name="step_kind_tap_id">ללחוץ לפי מזהה טכני באנגלית (מתקדם)</string>
@@ -239,7 +252,7 @@
     <string name="routine_problem_steps">צריך בין שלב אחד ל־10 שלבים.</string>
     <string name="routine_problem_no_tap">צריך לפחות שלב לחיצה אחד.</string>
     <string name="routine_problem_step">אחד השלבים לא תקין: טקסט ריק או ארוך מ־60 תווים, או זמן מחוץ לטווח.</string>
-    <string name="routine_problem_expect_order">שלב \"לוודא שהופיע טקסט\" צריך לבוא אחרי כל הלחיצות.</string>
+    <string name="routine_problem_expect_order">שלב אימות צריך לבוא אחרי כל הלחיצות.</string>
 
     <string name="routine_result_title">תוצאת השגרה</string>
     <string name="routine_result_verified">✓ הושלם, והטקסט שמאשר את הפעולה הופיע.</string>

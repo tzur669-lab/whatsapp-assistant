@@ -24,12 +24,19 @@ object RoutineLogic {
         TAP_ID,
         /** After the taps: the text that proves it worked, up to [Step.seconds]. */
         EXPECT_TEXT,
+        /**
+         * After the taps: the element with this text is now off (disabled) —
+         * e.g. "כניסה" greys out once the punch registered. Proof for an app
+         * whose texts never change. Up to [Step.seconds].
+         */
+        EXPECT_DISABLED,
         /** Pause [Step.seconds]. */
         WAIT,
     }
 
     data class Step(val kind: Kind, val value: String = "", val seconds: Int = DEFAULT_SECONDS) {
         val isTap: Boolean get() = kind == Kind.TAP_TEXT || kind == Kind.TAP_ID
+        val isCheck: Boolean get() = kind == Kind.EXPECT_TEXT || kind == Kind.EXPECT_DISABLED
     }
 
     data class Routine(
@@ -40,7 +47,7 @@ object RoutineLogic {
         val steps: List<Step>,
     ) {
         /** A routine that taps but never checks a result can only say "tapped, not verified". */
-        val verifies: Boolean get() = steps.any { it.kind == Kind.EXPECT_TEXT }
+        val verifies: Boolean get() = steps.any { it.isCheck }
     }
 
     const val MAX_NAME = 40
@@ -70,7 +77,7 @@ object RoutineLogic {
         if (routine.steps.none { it.isTap }) return "no_tap"
         if (routine.steps.any { stepProblem(it) != null }) return "step"
         val lastTap = routine.steps.indexOfLast { it.isTap }
-        val firstExpect = routine.steps.indexOfFirst { it.kind == Kind.EXPECT_TEXT }
+        val firstExpect = routine.steps.indexOfFirst { it.isCheck }
         if (firstExpect in 0 until lastTap) return "expect_order"
         return null
     }
@@ -81,7 +88,7 @@ object RoutineLogic {
      * TAP_TEXT), `seconds` (out of range). Checked as the step is added.
      */
     fun stepProblem(step: Step): String? = when (step.kind) {
-        Kind.WAIT_FOR_TEXT, Kind.TAP_TEXT, Kind.EXPECT_TEXT -> when {
+        Kind.WAIT_FOR_TEXT, Kind.TAP_TEXT, Kind.EXPECT_TEXT, Kind.EXPECT_DISABLED -> when {
             normalize(step.value).isEmpty() || step.value.length > MAX_TEXT -> "text"
             step.seconds !in 1..MAX_WAIT_SECONDS -> "seconds"
             else -> null
@@ -130,11 +137,17 @@ object RoutineLogic {
         val visible: Boolean,
         val enabled: Boolean,
         val target: Int,
+        /** A field's grey placeholder. A tap may name a field by it; a check never counts it. */
+        val hint: String? = null,
+        val editable: Boolean = false,
+        val clickable: Boolean = false,
     )
 
     sealed class Pick {
         data class One(val index: Int) : Pick()
         object None : Pick()
+        /** Found once, but switched off right now — nothing is tapped. */
+        object Disabled : Pick()
         data class Many(val count: Int) : Pick()
     }
 
@@ -154,20 +167,35 @@ object RoutineLogic {
         val wantedId = step.value.trim()
         val hits = nodes.filter { node ->
             node.visible && when (step.kind) {
-                Kind.TAP_TEXT -> matches(node.text, wanted) || matches(node.description, wanted)
+                Kind.TAP_TEXT -> matches(node.text, wanted) || matches(node.description, wanted) ||
+                    matches(node.hint, wanted)
                 Kind.TAP_ID -> node.viewId != null && idMatches(node.viewId, wantedId)
                 else -> false
             }
         }
         if (hits.isEmpty()) return Pick.None
         val targets = hits.map { it.target }.distinct()
-        if (targets.any { it < 0 }) return if (targets.size == 1) Pick.None else Pick.Many(targets.size)
-        val usable = targets.filter { nodes.getOrNull(it)?.let { t -> t.visible && t.enabled } == true }
+        if (targets.size > 1) return Pick.Many(targets.size)
+        val target = nodes.getOrNull(targets[0])
         return when {
-            targets.size > 1 -> Pick.Many(targets.size)
-            usable.size == 1 -> Pick.One(usable[0])
-            else -> Pick.None
+            target == null || !target.visible -> Pick.None
+            !target.enabled -> Pick.Disabled
+            else -> Pick.One(targets[0])
         }
+    }
+
+    /**
+     * Whether the one element named [text] is now switched off. Not found, or
+     * found more than once, is not proof.
+     */
+    fun isDisabled(nodes: List<Node>, text: String): Boolean {
+        val wanted = normalize(text)
+        val targets = nodes
+            .filter { it.visible && (matches(it.text, wanted) || matches(it.description, wanted)) }
+            .map { if (it.target >= 0) it.target else -1 }
+            .distinct()
+        if (targets.size != 1 || targets[0] < 0) return false
+        return nodes.getOrNull(targets[0])?.enabled == false
     }
 
     private fun matches(value: String?, wanted: String): Boolean =
@@ -177,11 +205,44 @@ object RoutineLogic {
     private fun idMatches(viewId: String, wanted: String): Boolean =
         if (wanted.contains(":id/")) viewId == wanted else viewId.substringAfter(":id/") == wanted
 
+    /** One line of a screen scan: what the service can read, shown only on this phone. */
+    data class ScanLine(
+        val text: String?,
+        val hint: String?,
+        val viewId: String?,
+        val clickable: Boolean,
+        val enabled: Boolean,
+        val editable: Boolean,
+    )
+
+    const val MAX_SCAN_LINES = 80
+
+    /**
+     * What a routine could use on this screen: every visible element with a
+     * text, a description, a placeholder or a view id, in screen order, once
+     * each. [ScanLine.clickable] is whether a tap on it would click something.
+     */
+    fun scan(nodes: List<Node>): List<ScanLine> {
+        val seen = HashSet<String>()
+        val lines = ArrayList<ScanLine>()
+        for (node in nodes) {
+            if (!node.visible) continue
+            val text = (node.text ?: node.description)?.trim()?.takeIf { it.isNotEmpty() }
+            val hint = node.hint?.trim()?.takeIf { it.isNotEmpty() && it != text }
+            val id = node.viewId?.substringAfter(":id/")?.takeIf { it.isNotEmpty() }
+            if (text == null && hint == null && id == null) continue
+            val line = ScanLine(text, hint, id, node.target >= 0, node.enabled, node.editable)
+            if (seen.add(line.toString())) lines.add(line)
+            if (lines.size >= MAX_SCAN_LINES) break
+        }
+        return lines
+    }
+
     /** How a run ended. Only [VERIFIED] means the app showed the expected result. */
     enum class Outcome {
-        /** Every tap ran and the EXPECT_TEXT step saw its text. */
+        /** Every tap ran and the check step (EXPECT_TEXT or EXPECT_DISABLED) passed. */
         VERIFIED,
-        /** Every tap ran; the routine has no EXPECT_TEXT, so the result is not known. */
+        /** Every tap ran; the routine has no check step, so the result is not known. */
         TAPPED_UNVERIFIED,
         /** Stopped before any tap: nothing happened in the app. */
         FAILED_BEFORE_TAP,

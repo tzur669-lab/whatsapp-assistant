@@ -79,6 +79,40 @@ class RoutineAccessibilityService : AccessibilityService() {
         }
     }
 
+    /**
+     * Opens [packageName], waits for its screen to settle, and lists what a
+     * routine could use there. Taps nothing; the list stays on this phone.
+     * Null when the app did not come to the front, or the phone is locked.
+     */
+    private fun startScan(packageName: String, done: (List<RoutineLogic.ScanLine>?) -> Unit) {
+        applyPackages(listOf(packageName))
+        worker.execute {
+            val lines = try {
+                scanNow(packageName)
+            } catch (_: Exception) {
+                null
+            } finally {
+                runningPackage = null
+            }
+            main.post { done(lines) }
+        }
+    }
+
+    private fun scanNow(packageName: String): List<RoutineLogic.ScanLine>? {
+        if (locked()) return null
+        val launch = packageManager.getLaunchIntentForPackage(packageName) ?: return null
+        val deadline = SystemClock.uptimeMillis() + RoutineLogic.OPEN_TIMEOUT_MS + SCAN_SETTLE_MS
+        runningPackage = packageName
+        lastChangeAt = SystemClock.uptimeMillis()
+        main.post { startActivity(launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
+        if (!waitFor(RoutineLogic.OPEN_TIMEOUT_MS, deadline) { snapshot(packageName) != null }) return null
+        // A web page inside the app keeps loading after its window appears.
+        SystemClock.sleep(SCAN_SETTLE_MS)
+        waitUntilStable(deadline + RoutineLogic.STABLE_MAX_MS)
+        val (_, infos) = snapshot(packageName) ?: return null
+        return RoutineLogic.scan(infos)
+    }
+
     private fun execute(routine: RoutineLogic.Routine, dryRun: Boolean): RoutineLogic.Result {
         val deadline = SystemClock.uptimeMillis() + RoutineLogic.RUN_DEADLINE_MS
         if (locked()) return RoutineLogic.Result(RoutineLogic.Outcome.BLOCKED, -1, "locked")
@@ -113,12 +147,20 @@ class RoutineAccessibilityService : AccessibilityService() {
                     if (!seen) return RoutineLogic.failure(tapped, index, guardReason(routine) ?: "not_verified")
                 }
 
+                RoutineLogic.Kind.EXPECT_DISABLED -> {
+                    val off = waitFor(step.seconds * 1000L, deadline) {
+                        snapshot(routine.packageName)?.let { RoutineLogic.isDisabled(it.second, step.value) } == true
+                    }
+                    if (!off) return RoutineLogic.failure(tapped, index, guardReason(routine) ?: "not_verified")
+                }
+
                 RoutineLogic.Kind.TAP_TEXT, RoutineLogic.Kind.TAP_ID -> {
                     waitUntilStable(deadline)
                     val (nodes, infos) = snapshot(routine.packageName)
                         ?: return RoutineLogic.failure(tapped, index, guardReason(routine) ?: "app_not_front")
                     when (val pick = RoutineLogic.pickTarget(infos, step)) {
                         RoutineLogic.Pick.None -> return RoutineLogic.failure(tapped, index, "target_not_found")
+                        RoutineLogic.Pick.Disabled -> return RoutineLogic.failure(tapped, index, "target_disabled")
                         is RoutineLogic.Pick.Many -> return RoutineLogic.failure(tapped, index, "target_ambiguous")
                         is RoutineLogic.Pick.One -> {
                             // A dry run stops at the first tap: everything before it was found.
@@ -185,6 +227,9 @@ class RoutineAccessibilityService : AccessibilityService() {
                     visible = node.isVisibleToUser,
                     enabled = node.isEnabled,
                     target = target,
+                    hint = node.hintText?.toString(),
+                    editable = node.isEditable,
+                    clickable = node.isClickable,
                 ),
             )
             for (i in node.childCount - 1 downTo 0) node.getChild(i)?.let { stack.addLast(it to target) }
@@ -212,6 +257,7 @@ class RoutineAccessibilityService : AccessibilityService() {
     companion object {
         private const val POLL_MS = 250L
         private const val MAX_NODES = 2_000
+        private const val SCAN_SETTLE_MS = 2_000L
 
         @Volatile private var instance: RoutineAccessibilityService? = null
         private val worker = Executors.newSingleThreadExecutor()
@@ -227,6 +273,13 @@ class RoutineAccessibilityService : AccessibilityService() {
         fun run(routine: RoutineLogic.Routine, dryRun: Boolean, done: (RoutineLogic.Result) -> Unit): Boolean {
             val service = instance ?: return false
             service.start(routine, dryRun, done)
+            return true
+        }
+
+        /** A screen scan of [packageName]; false when the service is off. */
+        fun scan(packageName: String, done: (List<RoutineLogic.ScanLine>?) -> Unit): Boolean {
+            val service = instance ?: return false
+            service.startScan(packageName, done)
             return true
         }
 

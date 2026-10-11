@@ -99,7 +99,7 @@ class RoutineLogicTest {
 
     @Test fun hiddenOrDisabledTargetsAreNotTapped() {
         assertEquals(Pick.None, RoutineLogic.pickTarget(listOf(node("כניסה", target = 0, visible = false)), Step(Kind.TAP_TEXT, "כניסה")))
-        assertEquals(Pick.None, RoutineLogic.pickTarget(listOf(node("כניסה", target = 0, enabled = false)), Step(Kind.TAP_TEXT, "כניסה")))
+        assertEquals(Pick.Disabled, RoutineLogic.pickTarget(listOf(node("כניסה", target = 0, enabled = false)), Step(Kind.TAP_TEXT, "כניסה")))
     }
 
     @Test fun aTextWithNothingClickableAroundItIsNotTapped() {
@@ -122,6 +122,44 @@ class RoutineLogicTest {
         assertTrue(RoutineLogic.hasText(nodes, "הדיווח נקלט"))
         assertFalse(RoutineLogic.hasText(nodes, "נקלט"))
         assertFalse(RoutineLogic.hasText(nodes, "סוד"))
+    }
+
+    // --- The attendance app's real shape (read with uiautomator, 2026-10-11) ---
+
+    /** btn_logout (יציאה, on), btn_login (כניסה, off after the punch); both labels are tv_logout. */
+    private fun attendance(loginEnabled: Boolean) = listOf(
+        node(id = "com.ok2go.ok2go:id/btn_logout", target = 0),
+        node("יציאה", id = "com.ok2go.ok2go:id/tv_logout", target = 0),
+        node(id = "com.ok2go.ok2go:id/btn_login", target = 2, enabled = loginEnabled),
+        node("כניסה", id = "com.ok2go.ok2go:id/tv_logout", target = 2),
+    )
+
+    @Test fun clockInIsTappedThroughItsLabel() {
+        assertEquals(Pick.One(2), RoutineLogic.pickTarget(attendance(true), Step(Kind.TAP_TEXT, "כניסה")))
+        assertEquals(Pick.One(2), RoutineLogic.pickTarget(attendance(true), Step(Kind.TAP_ID, "btn_login")))
+    }
+
+    @Test fun clockInAfterThePunchIsDisabledNotMissing() {
+        assertEquals(Pick.Disabled, RoutineLogic.pickTarget(attendance(false), Step(Kind.TAP_TEXT, "כניסה")))
+    }
+
+    @Test fun theSharedLabelIdIsAmbiguous() {
+        assertEquals(Pick.Many(2), RoutineLogic.pickTarget(attendance(true), Step(Kind.TAP_ID, "tv_logout")))
+    }
+
+    @Test fun thePunchIsProvedByTheButtonGoingOff() {
+        assertFalse(RoutineLogic.isDisabled(attendance(true), "כניסה"))
+        assertTrue(RoutineLogic.isDisabled(attendance(false), "כניסה"))
+        // "יציאה" is on the screen either way: a text check would prove nothing.
+        assertTrue(RoutineLogic.hasText(attendance(true), "יציאה"))
+        assertFalse(RoutineLogic.isDisabled(attendance(false), "חסר"))
+    }
+
+    @Test fun aDisabledCheckCountsAsVerification() {
+        val r = Routine("r", "כניסה", "com.ok2go.ok2go", "clock2go2020",
+            listOf(Step(Kind.TAP_TEXT, "כניסה"), Step(Kind.EXPECT_DISABLED, "כניסה", 15)))
+        assertNull(RoutineLogic.problem(r))
+        assertTrue(r.verifies)
     }
 
     // --- Outcomes ---

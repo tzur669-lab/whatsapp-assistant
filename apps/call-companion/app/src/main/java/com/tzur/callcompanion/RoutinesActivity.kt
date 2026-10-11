@@ -103,6 +103,7 @@ class RoutinesActivity : Activity() {
             })
         }
         val actions = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        actions.addView(smallButton(getString(R.string.routine_scan)) { scan(routine) })
         actions.addView(smallButton(getString(R.string.routine_dry)) { run(routine, dryRun = true) })
         actions.addView(smallButton(getString(R.string.routine_run)) { confirmRun(routine) })
         actions.addView(smallButton(getString(R.string.routine_edit)) { edit(routine) })
@@ -146,7 +147,56 @@ class RoutinesActivity : Activity() {
         }
     }
 
+    private fun scan(routine: RoutineLogic.Routine) {
+        val app = applicationContext
+        val started = RoutineAccessibilityService.scan(routine.packageName) { lines ->
+            val back = Intent(app, RoutinesActivity::class.java)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_REORDER_TO_FRONT)
+                .putExtra(EXTRA_SCAN, ArrayList(lines.orEmpty().map { scanLineText(it) }))
+                .putExtra(EXTRA_SCAN_OK, lines != null)
+            app.startActivity(back)
+        }
+        if (!started) {
+            AlertDialog.Builder(this)
+                .setMessage(R.string.routines_service_off)
+                .setPositiveButton(R.string.routines_service_open) { _, _ -> openAccessibilitySettings() }
+                .setNegativeButton(R.string.chat_keep, null)
+                .show()
+        }
+    }
+
+    /** One scan line as the user reads it: the words, then what kind of element it is. */
+    private fun scanLineText(line: RoutineLogic.ScanLine): String {
+        val parts = ArrayList<String>()
+        line.text?.let { parts.add(Ui.isolate("\"$it\"")) }
+        line.hint?.let { parts.add(getString(R.string.scan_hint, Ui.isolate("\"$it\""))) }
+        line.viewId?.let { parts.add(getString(R.string.scan_id, Ui.isolate(it))) }
+        val flags = ArrayList<String>()
+        flags.add(getString(if (line.clickable) R.string.scan_clickable else R.string.scan_not_clickable))
+        if (!line.enabled) flags.add(getString(R.string.scan_disabled))
+        if (line.editable) flags.add(getString(R.string.scan_editable))
+        return parts.joinToString(" · ") + "\n   " + flags.joinToString(", ")
+    }
+
+    private fun showScan(intent: Intent?): Boolean {
+        val lines = intent?.getStringArrayListExtra(EXTRA_SCAN) ?: return false
+        val ok = intent.getBooleanExtra(EXTRA_SCAN_OK, false)
+        intent.removeExtra(EXTRA_SCAN)
+        val message = when {
+            !ok -> getString(R.string.scan_failed)
+            lines.isEmpty() -> getString(R.string.scan_empty)
+            else -> lines.joinToString("\n\n")
+        }
+        AlertDialog.Builder(this)
+            .setTitle(R.string.scan_title)
+            .setMessage(message)
+            .setPositiveButton(android.R.string.ok, null)
+            .show()
+        return true
+    }
+
     private fun showResult(intent: Intent?) {
+        if (showScan(intent)) return
         val outcomeName = intent?.getStringExtra(EXTRA_OUTCOME) ?: return
         intent.removeExtra(EXTRA_OUTCOME)
         val outcome = RoutineLogic.Outcome.entries.firstOrNull { it.name == outcomeName } ?: return
@@ -177,6 +227,7 @@ class RoutinesActivity : Activity() {
             "text_not_found" -> R.string.routine_reason_text_not_found
             "not_verified" -> R.string.routine_reason_not_verified
             "target_not_found" -> R.string.routine_reason_target_not_found
+            "target_disabled" -> R.string.routine_reason_target_disabled
             "target_ambiguous" -> R.string.routine_reason_target_ambiguous
             "tap_refused" -> R.string.routine_reason_tap_refused
             "deadline" -> R.string.routine_reason_deadline
@@ -289,6 +340,7 @@ class RoutinesActivity : Activity() {
         val kinds = listOf(
             RoutineLogic.Kind.TAP_TEXT to R.string.step_kind_tap_text,
             RoutineLogic.Kind.WAIT_FOR_TEXT to R.string.step_kind_wait_for_text,
+            RoutineLogic.Kind.EXPECT_DISABLED to R.string.step_kind_expect_disabled,
             RoutineLogic.Kind.EXPECT_TEXT to R.string.step_kind_expect_text,
             RoutineLogic.Kind.WAIT to R.string.step_kind_wait,
             RoutineLogic.Kind.TAP_ID to R.string.step_kind_tap_id,
@@ -309,7 +361,8 @@ class RoutinesActivity : Activity() {
         }
         val needsText = kind != RoutineLogic.Kind.WAIT
         val needsSeconds = kind == RoutineLogic.Kind.WAIT ||
-            kind == RoutineLogic.Kind.WAIT_FOR_TEXT || kind == RoutineLogic.Kind.EXPECT_TEXT
+            kind == RoutineLogic.Kind.WAIT_FOR_TEXT || kind == RoutineLogic.Kind.EXPECT_TEXT ||
+            kind == RoutineLogic.Kind.EXPECT_DISABLED
         val text = EditText(this).apply {
             hint = getString(if (kind == RoutineLogic.Kind.TAP_ID) R.string.step_hint_id else R.string.step_hint_text)
             inputType = InputType.TYPE_CLASS_TEXT
@@ -350,6 +403,7 @@ class RoutinesActivity : Activity() {
         RoutineLogic.Kind.TAP_TEXT -> getString(R.string.step_tap_text, quote(step.value))
         RoutineLogic.Kind.TAP_ID -> getString(R.string.step_tap_id, Ui.isolate(step.value))
         RoutineLogic.Kind.EXPECT_TEXT -> getString(R.string.step_expect_text, quote(step.value), step.seconds)
+        RoutineLogic.Kind.EXPECT_DISABLED -> getString(R.string.step_expect_disabled, quote(step.value), step.seconds)
         RoutineLogic.Kind.WAIT -> getString(R.string.step_wait, step.seconds)
     }
 
@@ -360,6 +414,7 @@ class RoutinesActivity : Activity() {
             RoutineLogic.Kind.TAP_TEXT -> R.string.step_kind_tap_text
             RoutineLogic.Kind.WAIT_FOR_TEXT -> R.string.step_kind_wait_for_text
             RoutineLogic.Kind.EXPECT_TEXT -> R.string.step_kind_expect_text
+            RoutineLogic.Kind.EXPECT_DISABLED -> R.string.step_kind_expect_disabled
             RoutineLogic.Kind.WAIT -> R.string.step_kind_wait
             RoutineLogic.Kind.TAP_ID -> R.string.step_kind_tap_id
         },
@@ -456,5 +511,7 @@ class RoutinesActivity : Activity() {
         const val EXTRA_OUTCOME = "routine_outcome"
         const val EXTRA_STEP = "routine_step"
         const val EXTRA_REASON = "routine_reason"
+        const val EXTRA_SCAN = "routine_scan"
+        const val EXTRA_SCAN_OK = "routine_scan_ok"
     }
 }
