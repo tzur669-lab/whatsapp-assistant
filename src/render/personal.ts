@@ -121,6 +121,26 @@ export function personalQuestion(what: PersonalQuestion, lang: Lang): string {
         : 'The portfolio is empty. Add a stock, for example: "I have 10 Apple shares at $150". An old note with stocks is found with "show my notes".';
     case 'quotes_down':
       return he ? 'לא הצלחתי לבדוק את המניה כרגע. אפשר לנסות שוב בעוד דקה.' : 'Could not check the stock right now. Try again in a minute.';
+    case 'routine_name':
+      return he ? 'איזו שגרה להפעיל?' : 'Which routine should I run?';
+    case 'no_routines':
+      return he
+        ? 'עוד אין שגרות. בונים אותן באפליקציה: ☰ ← ⚙️ שגרות.'
+        : 'There are no routines yet. Build them in the app: ☰ → ⚙️ Routines.';
+    case 'routine_unknown':
+      return he
+        ? 'לא מצאתי שגרה בשם הזה. אפשר לכתוב את השם כמו שהוא מופיע במסך השגרות באפליקציה.'
+        : "No routine by that name. Write the name as it appears on the app's routines screen.";
+    case 'routine_ambiguous':
+      return he
+        ? 'כמה שגרות מתאימות לשם הזה. יש לכתוב את השם המלא.'
+        : 'More than one routine matches that name. Write its full name.';
+    case 'routine_far':
+      return he ? 'אפשר לתזמן שגרה עד 7 ימים קדימה.' : 'A routine can be scheduled up to 7 days ahead.';
+    case 'routine_tainted':
+      return he
+        ? 'שגרה מופעלת רק מבקשה שכתבת או אמרת בעצמך, לא מטקסט ששותף או הועבר.'
+        : 'A routine runs only on your own request, not from shared or forwarded text.';
   }
 }
 

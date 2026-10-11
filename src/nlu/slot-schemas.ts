@@ -470,6 +470,19 @@ export const portfolioUpdateSlots = z
 /** "מה שווי התיק?", "איך המניות שלי?". */
 export const portfolioShowSlots = z.object({}).strict();
 
+/**
+ * Routines (PLAN §6.27): the routine by its name as the user said it, and
+ * when — nothing for now, or a day and time code resolves. The steps are on
+ * the phone; the model only names one.
+ */
+export const routineRunSlots = z
+  .object({
+    routine: queryVariantsSchema.optional(),
+    date: dateSpecSchema.optional(),
+    time: timeSpecSchema.optional(),
+  })
+  .strict();
+
 export const EXPENSE_CATEGORY_SLOTS = [
   'food',
   'groceries',

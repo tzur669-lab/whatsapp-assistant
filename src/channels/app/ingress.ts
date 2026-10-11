@@ -57,6 +57,11 @@ export const APP_ROUTES: readonly AppRoute[] = [
   { method: 'POST', pattern: /^\/app\/device-result$/, maxBytes: 32_768, contentType: JSON_TYPE, channels: ['app'] },
   // Missed calls for the digest (2026-10-06): twenty names and times at most.
   { method: 'POST', pattern: /^\/app\/calls-report$/, maxBytes: 8_192, contentType: JSON_TYPE, channels: ['app'] },
+  // Routines (§6.27): twenty names, ids, labels and hashes; a run's claim and
+  // its result, codes only.
+  { method: 'POST', pattern: /^\/app\/routines$/, maxBytes: 16_384, contentType: JSON_TYPE, channels: ['app'] },
+  { method: 'POST', pattern: /^\/app\/routine\/claim$/, maxBytes: 1_024, contentType: JSON_TYPE, channels: ['app'] },
+  { method: 'POST', pattern: /^\/app\/routine\/result$/, maxBytes: 1_024, contentType: JSON_TYPE, channels: ['app'] },
 ];
 
 export type Checked =

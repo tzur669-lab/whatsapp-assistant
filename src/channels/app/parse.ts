@@ -11,6 +11,8 @@
 import { z } from 'zod';
 import { phoneReadResultSchema } from '../../tools/phone-reads.js';
 import type { ConversationMode } from '../types.js';
+import { MAX_APP_LABEL, MAX_ROUTINE_NAME, MAX_ROUTINES } from '../../tools/routine-store.js';
+import { RUN_REASONS } from '../../render/routines.js';
 
 /** A client message id: a v4-shaped uuid, lowercase. */
 export const MESSAGE_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
@@ -213,6 +215,51 @@ export function parseDeviceResult(body: Uint8Array): z.infer<typeof deviceResult
 
 export function parseClaim(body: Uint8Array): z.infer<typeof claimSchema> | null {
   return parseWith(claimSchema, body);
+}
+
+/**
+ * Routines (PLAN §6.27). The sync carries the user's names for them, each
+ * routine's id, the target app's label and the SHA-256 of its steps — never a
+ * step. The claim and the result name a run by its opaque id; a result is
+ * codes only, never what was on the screen.
+ */
+const routineSyncSchema = z
+  .object({
+    routines: z
+      .array(
+        z
+          .object({
+            id: z.string().regex(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/),
+            name: z.string().trim().min(1).max(MAX_ROUTINE_NAME),
+            appLabel: z.string().trim().min(1).max(MAX_APP_LABEL),
+            stepHash: z.string().regex(/^[0-9a-f]{64}$/),
+          })
+          .strict(),
+      )
+      .max(MAX_ROUTINES),
+  })
+  .strict();
+
+const routineClaimSchema = z.object({ runId: z.string().regex(/^[0-9a-f]{32}$/) }).strict();
+
+const routineResultSchema = z
+  .object({
+    runId: z.string().regex(/^[0-9a-f]{32}$/),
+    outcome: z.enum(['verified', 'tapped_unverified', 'failed_before_tap', 'failed_after_tap', 'blocked', 'changed']),
+    reason: z.enum(RUN_REASONS).optional(),
+  })
+  .strict();
+
+export function parseRoutineSync(body: Uint8Array): z.infer<typeof routineSyncSchema> | null {
+  return parseWith(routineSyncSchema, body);
+}
+
+export function parseRoutineClaim(body: Uint8Array): z.infer<typeof routineClaimSchema> | null {
+  return parseWith(routineClaimSchema, body);
+}
+
+export function parseRoutineResult(body: Uint8Array): z.infer<typeof routineResultSchema> | null {
+  return parseWith(routineResultSchema, body);
 }
 
 export function parseActionReport(body: Uint8Array): z.infer<typeof actionReportSchema> | null {

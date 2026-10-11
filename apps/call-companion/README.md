@@ -221,8 +221,20 @@ tap, then stops without tapping; **הפעלה** runs it now, phone unlocked.
 info → ⋮ → Allow restricted settings**). Before every step it checks that the
 phone is unlocked and that the routine's own app is in front; a tap is
 `ACTION_CLICK` on exactly one visible, enabled element, matched on its whole
-text. Screen content is never stored or sent. The server does not know about
-routines yet (stage 2).
+text. Screen content is never stored or sent.
+
+**Scheduled from the chat** ("בעוד רבע שעה תפעיל את יציאה מהעבודה"). The app
+syncs each routine's id, name, app label and step hash (`POST /app/routines`,
+never a step) after every change and once per process. The server confirms the
+request in the chat, sends a notice with a cancel button two minutes before,
+and at the time a data push `{kind: routine, run_id}`. `RoutineRunner`:
+behind the lock screen, `RoutineRunActivity` turns the screen on and asks
+Android to dismiss the lock (by itself under Extend Unlock, or one fingerprint
+touch); then one signed claim (`/app/routine/claim`) returns the routine's id
+and step hash, the local routine must match it, the steps run, and the outcome
+goes back as codes (`/app/routine/result`). A claimed run is never retried.
+Locked for two minutes, or more than ten minutes late: nothing runs.
+**Deploy the server first**: an older one answers the sync with 404.
 
 ## Setup
 

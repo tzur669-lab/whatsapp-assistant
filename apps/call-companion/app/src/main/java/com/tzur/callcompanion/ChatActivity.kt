@@ -228,6 +228,8 @@ class ChatActivity : Activity(), ChatEvents.Listener {
         ChatEvents.foreground = true
         ChatEvents.listener = this
         Notifier.cancelAll(this)
+        // Routines (0.13): the server's copy of the names, and any result not yet reported.
+        RoutineRunner.syncOnce(this)
         refresh()
 
         val app = applicationContext

@@ -266,6 +266,54 @@ object Api {
     }
 
     /**
+     * The routines, for the server to find one by name (0.13, PLAN §6.27):
+     * each one's id, name, app label and step hash. Never a step.
+     */
+    fun syncRoutines(context: Context, routines: List<RoutineLogic.Routine>): Boolean {
+        val list = JSONArray()
+        // The server keeps 20 at most and refuses a longer list whole.
+        for (routine in routines.take(RoutineLogic.MAX_ROUTINES)) {
+            list.put(
+                JSONObject()
+                    .put("id", routine.id)
+                    .put("name", routine.name)
+                    .put("appLabel", routine.appLabel.take(RoutineLogic.MAX_APP_LABEL).ifBlank { routine.packageName.take(RoutineLogic.MAX_APP_LABEL) })
+                    .put("stepHash", RoutineLogic.stepHash(routine)),
+            )
+        }
+        val body = JSONObject().put("routines", list)
+        return signed(context, "POST", "/app/routines", JSON_TYPE, utf8(body), SHORT_TIMEOUT_MS) is Result.Ok
+    }
+
+    sealed class RoutineClaim {
+        class Ok(val routineId: String, val stepHash: String) : RoutineClaim()
+        class Refused(val reason: String) : RoutineClaim()
+        object Unreachable : RoutineClaim()
+    }
+
+    /** The one claim on a run: the server answers which routine, or why not. */
+    fun claimRoutine(context: Context, runId: String): RoutineClaim {
+        val body = JSONObject().put("runId", runId)
+        val json = when (val result = signed(context, "POST", "/app/routine/claim", JSON_TYPE, utf8(body), PUSH_TIMEOUT_MS)) {
+            is Result.Ok -> result.json ?: return RoutineClaim.Refused("not_found")
+            is Result.Unreachable -> return RoutineClaim.Unreachable
+            else -> return RoutineClaim.Refused("not_found")
+        }
+        if (json.optString("status") != "ok") return RoutineClaim.Refused(json.optString("reason", "not_found"))
+        val routineId = json.optString("routineId")
+        val stepHash = json.optString("stepHash")
+        if (routineId.isEmpty() || stepHash.isEmpty()) return RoutineClaim.Refused("not_found")
+        return RoutineClaim.Ok(routineId, stepHash)
+    }
+
+    /** What happened, as codes: never what was on the screen. */
+    fun reportRoutine(context: Context, runId: String, outcome: String, reason: String?): Boolean {
+        val body = JSONObject().put("runId", runId).put("outcome", outcome)
+        if (reason != null) body.put("reason", reason)
+        return signed(context, "POST", "/app/routine/result", JSON_TYPE, utf8(body), SHORT_TIMEOUT_MS) is Result.Ok
+    }
+
+    /**
      * The calls missed in the last day, for the digest (2026-10-06): names, or
      * none for a number not in the contacts, and times. Never a number.
      */

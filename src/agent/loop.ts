@@ -169,6 +169,8 @@ export type AgentTurnInput = {
    * only the tools that never ask (public, private, own-input writes).
    */
   consent?: { granted: readonly ConsentSource[]; ask: boolean };
+  /** The message names a synced routine, so `routine.run` is offered (§6.27, D4). */
+  routines?: boolean;
 };
 
 /** The user's answer on a consent card (slice 5). */
@@ -340,6 +342,7 @@ export async function runAgentTurn(input: AgentTurnInput, deps: AgentDeps): Prom
     phoneReads: !readOnly && input.phoneReads === true,
     ...(input.grants ? { grants: input.grants } : {}),
     ...(readOnly ? { readOnly } : {}),
+    ...(input.routines ? { routines: true } : {}),
   });
   // A smart conversation's turn is offered the same tools whichever model takes
   // it: consent belongs to the conversation (2026-10-08). Those that never ask

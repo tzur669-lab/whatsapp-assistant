@@ -5,7 +5,7 @@ system is, where things live, and what breaks easily, then links out. It does
 **not** repeat the rules in `CLAUDE.md` (always loaded) or the spec in
 `PLAN.md` (read by section, never whole).
 
-_Last updated: 2026-10-11 · server at migration 0027 · agent prompt a10 + smart note s2 · parser prompt v6 · app 0.13.0 · smart model gemini-3.5-flash-lite_
+_Last updated: 2026-10-11 · server at migration 0028 · agent prompt a10 + smart note s2 · parser prompt v6 · app 0.13.0 · smart model gemini-3.5-flash-lite_
 
 ## 1. What this is
 
@@ -65,6 +65,7 @@ Full map with every module: [ARCHITECTURE.md](ARCHITECTURE.md).
 | anything a model can read | Pass it through `scrubForModel`; decide **taint** (text someone else wrote → every resulting write CONFIRMs). A `terminal` read or a card still taints through `TAINTING_TOOLS` / `Reply.tainting` (fixed 2026-10-06). A tool whose `resolveAsync` finds someone else's words (a calendar title in `reminders.leave`) sets `ResolveOutcome.tainting`, carried onto the reply (2026-10-06). Private tools (`notes.*`, `lists.*`, `portfolio.*`) never reach the model or history. Facts (`memory.*`) are the opposite on purpose: the model sees them every turn, so `containsPrivateData` must refuse anything it must not see (PLAN §6.26). |
 | `pipeline.ts` return paths, `core/exchanges.ts` | Only turns that reached a model write `last_exchange` (via `respondWithModels` and `resumeFromPhone`); commands, confirmations, answers and the busy reply must not. Never hand `ExchangeLog` to the agent (PLAN §6.23). |
 | time/date logic | Only `src/time/resolve.ts` (forward) or `src/time/past-day.ts` (expenses, backward). DST: next fall-back 2026-10-25. Never default a missing time. |
+| routines (`tools/routine*.ts`, `routine_runs`) | A run moves one way, one conditional `UPDATE` at a time; the claim is the only thing that lets the phone run it, once, on time, with the confirmed step hash. Never retry a claimed run. `routine.run` is offered only when `namesRoutine` says so — never add it to the full catalog. Reason codes are closed on both sides (`RUN_REASONS` ↔ the app's `RoutineRunner`). PLAN §6.27. |
 | a migration | Add `migrations/00NN_*.sql` **and** register it in `src/platform/migrations.ts`. Backward-compatible for one version. |
 | `src/channels/app/parse.ts` or the wire protocol | The app has a matching `Protocol.kt` with test vectors. **Deploy the server before installing a new APK**, or the old server rejects the new app. |
 | outbound `fetch` | Call `fetch` through a closure, never `this.fetchImpl(...)` — Workers throws "Illegal invocation" (tests use `test/integration/workers-fetch.ts` to catch it). |
@@ -83,10 +84,12 @@ Network on the hotspot: `NODE_OPTIONS=--dns-result-order=ipv4first` for wrangler
 ## 6. Where the current work is
 
 - **Routines** (PLAN §6.27, plan `docs/plans/routines.md`): "open the
-  attendance app in 15 minutes and tap כניסה". Stage 1 is built (app 0.13.0,
-  phone only: build, dry run, run now with the phone unlocked). Next: the
-  user tests a dry run on the real app; then stage 2 (server: `routine.run`,
-  one-shot claim, cancel) after the user approves D1–D4 in the plan.
+  attendance app in 15 minutes and tap כניסה". Stages 1–2 and the core of 3
+  are built (app 0.13.0, migration 0028, decisions D1–D4 approved): the
+  dry run passed on the real attendance app (exit, 2026-10-11). Needs, in
+  order: a staging deploy (approval), then the 0.13.0 APK — **server
+  first**, or the app's sync gets 404 — and the owed items in PLAN §13
+  (`eval:agent --filter rt-`, a first real scheduled run).
 - **Smart conversations** (PLAN §6.19, plan
   `~/.claude/plans/abundant-wobbling-sparkle.md`): built, slices 1–6, server
   and app 0.12.0. Model `gemini-3.5-flash-lite` since 2026-10-08, the
@@ -136,6 +139,13 @@ Network on the hotspot: `NODE_OPTIONS=--dns-result-order=ipv4first` for wrangler
 | [SETUP.md](SETUP.md) | Setting up a new copy from zero: accounts, Groq key, models, secrets, deploy, app, AI agent. |
 
 ## 8. Session log (docs)
+
+- 2026-10-11: Routines, stage 2 (+ the core of stage 3): `routine.run`
+  (`tools/routines.ts`, Tier 2, private, `refusesTainted`), `tools/routine-store.ts`,
+  `render/routines.ts`, migration 0028 (`routine_names`, `routine_runs`), routes
+  `/app/routines`, `/app/routine/claim`, `/app/routine/result`, FCM `kind: routine`,
+  cancel button `rt:`; app `RoutineRunner.kt`, `RoutineRunActivity.kt`. Offered only
+  when a routine is named; Groq fingerprint unchanged (`cases.routines.yaml`).
 
 - 2026-10-11: Routines, stage 1 (app 0.13.0): `RoutineLogic.kt`,
   `RoutineStore.kt`, `RoutineAccessibilityService.kt`, `RoutinesActivity.kt`,

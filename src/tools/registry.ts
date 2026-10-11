@@ -60,6 +60,7 @@ import {
   mailBillsSlots,
   phoneCallsSlots,
   timerSetSlots,
+  routineRunSlots,
 } from '../nlu/slot-schemas.js';
 
 export const TOOL_NAMES = [
@@ -130,6 +131,9 @@ export const TOOL_NAMES = [
   // ROADMAP block H part 19 (2026-10-08): the stock portfolio, private.
   'portfolio.update',
   'portfolio.show',
+  // Routines (PLAN §6.27, 2026-10-11): the user's own steps inside one app,
+  // run by the phone. Offered only when the message names a synced routine.
+  'routine.run',
 ] as const;
 
 export type ToolName = (typeof TOOL_NAMES)[number];
@@ -276,11 +280,34 @@ export type ToolSpec = SourceSpec & {
   terminal?: true;
   /** A card tool offered only to an app that reports this capability (§6.20). */
   needsCap?: 'file';
+  /**
+   * Refused outright in a turn that read someone else's text (§6.27), not
+   * merely confirmed: its resolve sees the taint. A confirmation tap is a
+   * clean turn of its own, so a check left to execute would come too late.
+   */
+  refusesTainted?: true;
 };
 
 const EVENTS_OWNED: GoogleScope = 'https://www.googleapis.com/auth/calendar.events.owned';
 
 export const REGISTRY: Readonly<Record<ToolName, ToolSpec>> = {
+  'routine.run': {
+    name: 'routine.run',
+    // The routine's name is the user's own label for steps on the phone, and
+    // nothing about them is any model's business: private, like notes.
+    dataSource: 'private',
+    private: true,
+    llmDescription:
+      "Run one of the user's saved phone routines, by its name: now, or at a stated day and time within 7 days.",
+    draftSchema: routineRunSlots,
+    refusesTainted: true,
+    // It acts inside another app with no tap at the due time (decision D1), so
+    // the request itself is confirmed first, always.
+    tier: 2,
+    scopes: [],
+    rateLimit: { perHour: 10, perDay: 30 },
+    implementedIn: 6,
+  },
   'reminders.create': {
     name: 'reminders.create',
     dataSource: 'reminders',

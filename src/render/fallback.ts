@@ -15,6 +15,7 @@ const EXAMPLES: Readonly<Record<GroupName, readonly [string, string]>> = {
   mail: ['יש מייל חדש מהבנק?', 'אילו חשבונות יש לשלם?'],
   drive: ['תמצא לי בדרייב את הקובץ של החוזה', 'איפה המסמך של הביטוח?'],
   phone: [`תעיר אותי ב${isolateLtr('-6:30')}`, 'תנווט הביתה'],
+  routine: ['תפעיל את השגרה כניסה לעבודה', 'בעוד רבע שעה תפעיל את יציאה מהעבודה'],
 };
 
 const GENERAL: readonly [string, string] = [`תזכיר לי מחר ב${isolateLtr('-8')} להתקשר לאבא`, 'מה הפתקים שלי'];

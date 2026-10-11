@@ -15,6 +15,8 @@ import com.google.firebase.messaging.RemoteMessage
  *   signed, so the name never passes through Google.
  * - `kind: calls_report` — the digest asks for the calls missed in the last
  *   day (2026-10-06). Answered signed, with names only; nothing is shown.
+ * - `kind: routine` — a scheduled routine is due (0.13): its run id only; the
+ *   routine comes back from the signed claim (`RoutineRunner`).
  */
 class CompanionMessagingService : FirebaseMessagingService() {
     private companion object {
@@ -26,6 +28,7 @@ class CompanionMessagingService : FirebaseMessagingService() {
         if (!Signer(this).isPaired) return
         if (message.data["kind"] == "outbox") return onOutbox()
         if (message.data["kind"] == "calls_report") return onCallsReport()
+        if (message.data["kind"] == "routine") return RoutineRunner.onPush(this, message.data["run_id"] ?: return)
         val dispatchId = message.data["dispatch_id"] ?: return
         onDispatch(dispatchId)
     }

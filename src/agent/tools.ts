@@ -163,12 +163,19 @@ export type OfferOptions = {
    * now, nothing else — no write, no card, no phone read.
    */
   readOnly?: boolean;
+  /**
+   * The message names one of the user's synced routines (decision D4,
+   * 2026-10-11): only then is `routine.run` offered, so it never costs the
+   * full catalog's tokens.
+   */
+  routines?: boolean;
 };
 
 export function agentToolNames(options: OfferOptions = { cards: false }): ToolName[] {
   return TOOL_NAMES.filter((name) => {
     const spec = REGISTRY[name];
     if (options.readOnly && (spec.tier !== 0 || spec.phoneRead || spec.confirmation === 'card')) return false;
+    if (name === 'routine.run') return options.routines === true;
     if (name.startsWith('mail.')) return options.grants?.gmail === true;
     if (name.startsWith('tasks.')) return options.grants?.tasks === true;
     if (name.startsWith('drive.')) return options.grants?.drive === true;

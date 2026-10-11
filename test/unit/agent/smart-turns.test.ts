@@ -55,7 +55,9 @@ const LOCAL = 'conv-local-0001';
 const ALL_CAPS = ['cards', 'file', 'device_query'];
 
 /** What a smart conversation runs without asking (2026-10-11): public, private, and writes that only echo their call. */
+// `routine.run` is offered only when the words name a routine (§6.27, D4), never on these turns.
 const NO_CONSENT_TOOLS = TOOL_NAMES.filter((name) => {
+  if (name === 'routine.run') return false;
   const source = dataSourceOf(name);
   return source === 'public' || source === 'private' || consentRuleOf(name) === 'exempt-own-input';
 });

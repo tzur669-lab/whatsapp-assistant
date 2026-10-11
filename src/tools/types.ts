@@ -42,6 +42,7 @@ import type { GmailClient } from '../google/gmail.js';
 import type { DriveClient } from '../google/drive.js';
 import type { ContactsClient } from '../google/contacts.js';
 import type { BirthdayStore } from '../core/birthdays.js';
+import type { RoutineStore } from './routine-store.js';
 
 /** One candidate when a description matched more than one thing. */
 export type TargetChoice = { id: string; label: string };
@@ -119,7 +120,13 @@ export type PersonalQuestion =
   | 'holding_too_many'
   | 'holdings_full'
   | 'no_holdings'
-  | 'quotes_down';
+  | 'quotes_down'
+  | 'routine_name'
+  | 'no_routines'
+  | 'routine_unknown'
+  | 'routine_ambiguous'
+  | 'routine_far'
+  | 'routine_tainted';
 
 export type ResolveOutcome = (
   | {
@@ -195,6 +202,8 @@ export type ToolContext = {
   marketWords?: 'us' | 'tase' | 'both';
   /** Expenses (§6.22). Absent only in tests that predate them. */
   expenses?: ExpenseStore;
+  /** Routines synced from the paired app, and their runs (§6.27). */
+  routines?: RoutineStore;
   /**
    * The turn already read text someone else wrote (§6.19). Set by `runIntent`
    * for the one tool that sends the model's words out: Wikipedia (2026-10-05).

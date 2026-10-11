@@ -18,7 +18,7 @@ import { normalizeHebrew } from '../time/hebrew-lexicon.js';
 import type { ToolName } from '../tools/registry.js';
 import { TOOL_NAMES } from '../tools/registry.js';
 
-export type GroupName = 'time' | 'records' | 'info' | 'mail' | 'drive' | 'phone';
+export type GroupName = 'time' | 'records' | 'info' | 'mail' | 'drive' | 'phone' | 'routine';
 
 export const GROUPS: Readonly<Record<GroupName, readonly ToolName[]>> = {
   time: [
@@ -73,6 +73,9 @@ export const GROUPS: Readonly<Record<GroupName, readonly ToolName[]>> = {
     'phone.sms',
     'phone.calls',
   ],
+  // Routines (§6.27): offered only when the message names a synced routine
+  // (decision D4), and then kept whatever group the words select.
+  routine: ['routine.run'],
 };
 
 /**
@@ -139,6 +142,8 @@ const PATTERNS: Readonly<Record<GroupName, readonly RegExp[]>> = {
     word('שיר|שירים'), /ספוטיפיי/,
     /\b(?:call|dial|contacts?|notifications?|alerts?|sms|text|whatsapp|missed calls?|who called|alarm|wake me|timer|navigate|waze|open|app|settings|volume|play|music|song|spotify)\b/i,
   ],
+  // For "לא הבנתי" examples only: selection never narrows by this group.
+  routine: [/שגר/, /רוטינ/, /\broutines?\b/i],
 };
 
 const GROUP_NAMES = Object.keys(GROUPS) as GroupName[];
@@ -174,10 +179,12 @@ export const MAX_UNION_GROUPS = 3;
  * another group.
  */
 export function selectTools(text: string, offered: readonly ToolName[]): Selection {
-  const groups = matchGroups(text);
+  // `routine.run` is offered only when the words name a routine (D4); then it
+  // stays in whatever the other words select. The group itself never narrows.
+  const groups = matchGroups(text).filter((group) => group !== 'routine');
   const full = { tools: [...offered], groups: [] };
   if (groups.length === 0 || groups.length > MAX_UNION_GROUPS) return full;
-  const members = new Set<ToolName>();
+  const members = new Set<ToolName>(offered.filter((tool) => tool === 'routine.run'));
   for (const group of groups) {
     const available = GROUPS[group].filter((tool) => offered.includes(tool));
     if (available.length * 2 <= GROUPS[group].length) return full;

@@ -28,6 +28,11 @@ const PUSH_TTL = '120s';
 const SIGNAL_TTL = '14400s';
 /** The digest's ask for missed calls: worthless after the digest has gone. */
 const ASK_TTL = '60s';
+/**
+ * A routine's run (§6.27): ten minutes, its whole window. A phone that wakes
+ * later never sees it, and the claim refuses a late run anyway.
+ */
+const ROUTINE_TTL = '600s';
 const TIMEOUT_MS = 8_000;
 
 export type PushResult =
@@ -80,6 +85,14 @@ export class FcmClient {
    */
   askCalls(pushToken: string): Promise<PushResult> {
     return this.post(pushToken, { kind: 'calls_report' }, ASK_TTL);
+  }
+
+  /**
+   * Wake the phone to run a routine (§6.27): the run's opaque id and nothing
+   * else. Which routine it is comes back only from the signed claim.
+   */
+  runRoutine(pushToken: string, runId: string): Promise<PushResult> {
+    return this.post(pushToken, { kind: 'routine', run_id: runId }, ROUTINE_TTL);
   }
 
   private async post(pushToken: string, data: Record<string, string>, ttl: string): Promise<PushResult> {

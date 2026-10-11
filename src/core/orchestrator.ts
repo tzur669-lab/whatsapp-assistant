@@ -28,6 +28,8 @@ import { REMINDER_TOOLS } from '../tools/reminders.js';
 import { NOTE_TOOLS } from '../tools/notes.js';
 import { LIST_TOOLS } from '../tools/lists.js';
 import { PORTFOLIO_TOOLS } from '../tools/portfolio.js';
+import { routineRun } from '../tools/routines.js';
+import { routineText } from '../render/routines.js';
 import { MEMORY_TOOLS } from '../tools/memory.js';
 import { EXPENSE_TOOLS } from '../tools/expenses.js';
 import { calendarListEvents } from '../tools/calendar-read.js';
@@ -161,6 +163,7 @@ const IMPLEMENTED: Partial<Record<ToolName, ToolDefinition>> = {
   ...LIST_TOOLS,
   ...MEMORY_TOOLS,
   ...PORTFOLIO_TOOLS,
+  'routine.run': routineRun,
 };
 
 export type RunOptions = {
@@ -221,13 +224,16 @@ async function runIntentInner(
   }
 
   // 1. Resolve. Everything the model left out is decided here or asked about.
+  // A tool that refuses a tainted turn sees the taint here (`refusesTainted`):
+  // the confirmation tap that would reach execute is a clean turn of its own.
+  const resolveCtx = turn.tainted && REGISTRY[draft.intent].refusesTainted ? { ...ctx, tainted: true } : ctx;
   let resolved: ResolveOutcome;
   try {
     // A tool whose target lives behind the network resolves asynchronously; the
     // rest stay synchronous so nothing is fetched before policy has a chance.
     resolved = tool.resolveAsync
-      ? await tool.resolveAsync(draft.slots, ctx)
-      : tool.resolve(draft.slots, ctx);
+      ? await tool.resolveAsync(draft.slots, resolveCtx)
+      : tool.resolve(draft.slots, resolveCtx);
   } catch (error) {
     ctx.log.error('resolve_failed', {
       tool: draft.intent,
@@ -516,7 +522,30 @@ export async function runButton(raw: string, turn: TurnContext): Promise<Reply> 
       return runDeferred(parsed.id, parsed.nonce, turn, 0);
     case 'snooze':
       return runDeferred(parsed.id, parsed.nonce, turn, snoozeMinutes(parsed.verb));
+    case 'rt':
+      return parsed.verb === 'no' ? cancelRoutineRun(parsed.id, parsed.nonce, turn) : { text: statusText.confirmNotFound };
   }
+}
+
+/**
+ * The cancel button on a routine's notice (§6.27). The run's own row decides:
+ * the nonce must match its stored hash, and a run the phone already claimed
+ * is not stopped — the reply says so instead of claiming a cancel.
+ */
+function cancelRoutineRun(runId: string, nonce: string, turn: TurnContext): Reply {
+  const ctx = turn.tool;
+  const store = ctx.routines;
+  if (!store) return { text: routineText.nothingToCancel(ctx.lang) };
+  const outcome = store.cancel(runId, nonce, ctx.principal);
+  audit(turn, 'routine.run', null, 'CANCELLED', outcome, runId);
+  const run = store.get(runId);
+  const text =
+    outcome === 'cancelled' && run
+      ? routineText.cancelled(run, ctx.lang)
+      : outcome === 'started'
+        ? routineText.tooLateToCancel(ctx.lang)
+        : routineText.nothingToCancel(ctx.lang);
+  return { text, private: true, rescheduleAlarm: true };
 }
 
 /** A tapped confirm button. */

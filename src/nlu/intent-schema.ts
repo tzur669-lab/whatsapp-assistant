@@ -18,6 +18,7 @@ import {
   birthdaysUpcomingSlots,
   mailBillsSlots,
   phoneCallsSlots,
+  routineRunSlots,
   calendarCreateEventSlots,
   calendarDeleteEventSlots,
   calendarListEventsSlots,
@@ -195,6 +196,8 @@ export const intentDraftSchema = z.discriminatedUnion('intent', [
   z.object({ intent: z.literal('birthdays.upcoming'), slots: birthdaysUpcomingSlots, ...common }).strict(),
   z.object({ intent: z.literal('mail.bills'), slots: mailBillsSlots, ...common }).strict(),
   z.object({ intent: z.literal('phone.calls'), slots: phoneCallsSlots, ...common }).strict(),
+  // Routines (2026-10-11). Agent-only, private, offered only when a routine is named.
+  z.object({ intent: z.literal('routine.run'), slots: routineRunSlots, ...common }).strict(),
   // Anything outside the tool list, including prompt-injection attempts.
   z.object({ intent: z.literal('unsupported'), slots: ignoredSlots, ...common }).strict(),
 ]);

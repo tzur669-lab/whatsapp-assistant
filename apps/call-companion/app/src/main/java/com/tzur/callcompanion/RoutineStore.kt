@@ -41,6 +41,8 @@ object RoutineStore {
         prefs(context).edit().putString(KEY, array.toString()).apply()
         // The service listens only to the apps the routines use.
         RoutineAccessibilityService.refreshPackages(context)
+        // The server finds a routine by name, and closes runs of a changed one (stage 2).
+        RoutineRunner.sync(context)
     }
 
     private fun json(routine: RoutineLogic.Routine): JSONObject = JSONObject()

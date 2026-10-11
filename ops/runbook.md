@@ -20,6 +20,9 @@ it is the way it is; this file is only what to do.
 | `POST /app/voice/:id[/:conversation[/:mode]][/@lat,lon]` | A recording (AAC in MP4, ≤ 1 MB), signed. The mode only after a conversation. `CHANNEL=app` only. |
 | `GET /app/outbox` | Every message the phone has not acked, 50 at a time, signed, plus `smart`: whether a smart conversation can run (agent on, `GEMINI_API_KEY` and `GROQ_API_KEY` set). `CHANNEL=app` only. |
 | `POST /app/outbox/ack` | The seqs the phone has stored, signed. `CHANNEL=app` only. |
+| `POST /app/routines` | The phone's routine list (id, name, app label, step hash; never steps), signed; replaces the server's copy and closes runs of a changed routine (PLAN §6.27). `CHANNEL=app` only. |
+| `POST /app/routine/claim` | The phone's one claim on a pushed run, signed: the routine's id and step hash, or why not. `CHANNEL=app` only. |
+| `POST /app/routine/result` | A run's outcome as codes, signed; settled once. `CHANNEL=app` only. |
 | `POST /app/push-token` | The app sends its rotated FCM address, signed. |
 | `GET /device/dispatch/:id` | The app fetches a call request after the push wakes it, signed. |
 | `POST /device/report` | The app reports how a call ended: a count and an outcome, never a name or number. Signed. |

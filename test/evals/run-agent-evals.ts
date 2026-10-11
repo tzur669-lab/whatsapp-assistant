@@ -140,13 +140,23 @@ let selecting = false;
 /** Set once when the model is in `SMART_MODELS`: the run is a smart turn. */
 let smart = false;
 
-function offered() {
+/**
+ * The routines an eval turn behaves as if the app had synced (§6.27):
+ * `routine.run` is offered only when the input names one, as in the pipeline.
+ */
+const EVAL_ROUTINES = ['כניסה לעבודה', 'יציאה מהעבודה', 'clock out'];
+
+function namesEvalRoutine(input: string): boolean {
+  return EVAL_ROUTINES.some((name) => input.toLowerCase().includes(name)) || /שגר|רוטינ|\broutines?\b/i.test(input);
+}
+
+function offered(routines = false) {
   const grants = { gmail: true, tasks: true, drive: true };
   // A typed smart turn that may ask for consent: everything a local turn gets (slice 5; private tools since 2026-10-11).
-  if (smart) return smartOfferedTools(agentToolNames({ cards: true, fileCards: true, phoneReads: true, grants }), { granted: [], ask: true });
+  if (smart) return smartOfferedTools(agentToolNames({ cards: true, fileCards: true, phoneReads: true, grants, routines }), { granted: [], ask: true });
   return readOnly
     ? agentToolNames({ cards: false, phoneReads: false, grants, readOnly: true })
-    : agentToolNames({ cards: true, fileCards: true, phoneReads: true, grants });
+    : agentToolNames({ cards: true, fileCards: true, phoneReads: true, grants, routines });
 }
 
 /** The system prompt the loop sends this kind of turn. */
@@ -255,7 +265,8 @@ function promptLabel(): string {
 /** What the bot would offer this message: the full set, or narrowed by code with `--select-tools`. */
 function toolsFor(input: string): WireTool[] {
   // A smart turn has no selection: the whole smart catalog, as the loop offers it.
-  return wireTools(selecting && !smart ? selectTools(input, offered()).tools : offered());
+  const tools = offered(namesEvalRoutine(input));
+  return wireTools(selecting && !smart ? selectTools(input, tools).tools : tools);
 }
 
 async function ask(provider: AgentProvider, id: string, messages: AgentMessage[], tools: WireTool[]): Promise<Recorded> {
@@ -280,7 +291,7 @@ async function ask(provider: AgentProvider, id: string, messages: AgentMessage[]
   const call = response.toolCalls[0];
   if (!call) return { id, draft: null, text: true, latencyMs, tokens, promptTokens };
 
-  const tool = fromWireName(call.name, offered());
+  const tool = fromWireName(call.name, offered(true));
   let slots: unknown = {};
   try {
     slots = stripNulls(JSON.parse(call.arguments));
@@ -486,7 +497,8 @@ function loadCases(filter: string | null): EvalCase[] {
   const dir = fileURLToPath(new URL('.', import.meta.url));
   const cases: EvalCase[] = [];
   // The phone actions are scored as an app that runs cards would see them (§6.20).
-  for (const file of ['cases.he.yaml', 'cases.en.yaml', 'cases.phone.yaml']) {
+  // `cases.routines.yaml` is outside the fingerprint (see its header, §6.27).
+  for (const file of ['cases.he.yaml', 'cases.en.yaml', 'cases.phone.yaml', 'cases.routines.yaml']) {
     const parsed = parseYaml(readFileSync(`${dir}${file}`, 'utf8')) as EvalCase[] | null;
     if (Array.isArray(parsed)) cases.push(...parsed);
   }

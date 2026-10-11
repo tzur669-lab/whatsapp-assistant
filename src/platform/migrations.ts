@@ -30,6 +30,7 @@ import facts0024 from '../../migrations/0024_facts.sql';
 import portfolio0025 from '../../migrations/0025_portfolio.sql';
 import smartConversations0026 from '../../migrations/0026_smart_conversations.sql';
 import consentTurns0027 from '../../migrations/0027_consent_turns.sql';
+import routines0028 from '../../migrations/0028_routines.sql';
 
 export const MIGRATIONS = [
   { id: 1, sql: init0001 },
@@ -59,4 +60,5 @@ export const MIGRATIONS = [
   { id: 25, sql: portfolio0025 },
   { id: 26, sql: smartConversations0026 },
   { id: 27, sql: consentTurns0027 },
+  { id: 28, sql: routines0028 },
 ] as const;

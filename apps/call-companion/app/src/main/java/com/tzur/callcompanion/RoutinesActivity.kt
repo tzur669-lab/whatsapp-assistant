@@ -71,7 +71,7 @@ class RoutinesActivity : Activity() {
         val routines = RoutineStore.all(this)
         if (routines.isEmpty()) column.addView(paragraph(getString(R.string.routines_empty)))
         for (routine in routines) column.addView(routineRow(routine))
-        column.addView(button(getString(R.string.routines_new)) { edit(null) })
+        if (routines.size < RoutineLogic.MAX_ROUTINES) column.addView(button(getString(R.string.routines_new)) { edit(null) })
     }
 
     private fun routineRow(routine: RoutineLogic.Routine): View {

@@ -2,7 +2,7 @@
 
 How the code is laid out and how the parts talk. The *why* behind each piece
 is in `PLAN.md` (section numbers given); the rules are in `CLAUDE.md`.
-Current as of 2026-10-11 (migration 0027).
+Current as of 2026-10-11 (migration 0028).
 
 ## 1. System diagram
 
@@ -124,7 +124,7 @@ Special shapes:
 | `core/` | `pipeline` (inbound order; `settleAgentResult` is the history gate), `router` (commands), `orchestrator` (resolve→policy→act), `repo`/`sql` (data access; conversation modes), `exchanges` ("לא הבנת" capture, never given to the agent), `digest`, `birthdays`, `missed-calls`, `scheduled-read`, `quota` (also `SqlDayRequestCounter`: requests per model per Pacific day), `timing`, `env` | §6.4, §6.12 |
 | `agent/` | Bounded tool loop, prompt (a10, plus `SMART_NOTE` s2 for smart models), compact catalog (`smartOfferedTools` for smart conversations), tool groups (1–3 → union), history fitter, model table (`MODELS`, `SMART_MODELS`), token and request budget, Groq and Gemini providers, history, lock, suspended turns (phone or consent), `consents.ts` (consent sources, `consentNeededFor`/`echoesOwnInput` from each tool's `consent` rule, `conversation_consents`, `cs:`/`cr:` button ids) | §6.19 |
 | `nlu/` | Fallback parser: prompt (v6), `IntentDraft` schema, slot schemas, Groq provider, rules fallback, weekday check, clarification answers | §6.2, §6.11 |
-| `tools/` | `registry.ts` (single source of truth: name, tier, slots, scopes, flags, required `dataSource`, and `consent` rule for a consent source) + one file per area; `*-store.ts` hold SQL; `match.ts` finds targets | §6.4, §6.19 |
+| `tools/` | `registry.ts` (single source of truth: name, tier, slots, scopes, flags, required `dataSource`, and `consent` rule for a consent source) + one file per area; `*-store.ts` hold SQL; `match.ts` finds targets; `routines.ts` + `routine-store.ts`: `routine.run` and the run lifecycle (synced names, one claim per run) | §6.4, §6.19, §6.27 |
 | `policy/` | Pure tier decision; WhatsApp 24 h window/budget | §6.4 |
 | `confirm/` | Pending confirmations, Undo offers, open questions | §6.5, §6.11 |
 | `time/` | `resolve` (R1–R12), `tz`, Hebrew lexicon (and `timeWordsNamed`, the am/pm and part-of-day check), ranges, recurrence, past days, sunset, Shabbat/chag | §6.3, §6.13 |
@@ -134,17 +134,17 @@ Special shapes:
 | `device/` | Paired-phone state, FCM v1 (no SDK), call dispatch | §6.17 |
 | `voice/` | Whisper transcription + confidence gate | §6.10 |
 | `security/` | AES-GCM crypto, HMAC, redacting logger, `scrubForModel`/defang, allowlist | §7 |
-| `render/` | Every user-facing string (Hebrew/English templates, time format, bidi); `consent.ts`: the consent card, its buttons and `/consents` | §6.3, §6.19 |
+| `render/` | Every user-facing string (Hebrew/English templates, time format, bidi); `consent.ts`: the consent card, its buttons and `/consents`; `routines.ts`: routine confirmations, notices and results (`RUN_REASONS`) | §6.3, §6.19, §6.27 |
 
 **Tools by tier** (from `tools/registry.ts`; parser sees only the first 8 marked *):
 - Tier 0 (read): `reminders.list`*, `calendar.list_events`*, `calendar.free_time`, `phone.contacts|notifications|sms|calls`, `info.lookup`, `tasks.list`, `mail.search|bills`, `drive.search`, `notes.find`, `lists.show`, `portfolio.show`, `expenses.summary`, `calc.compute`, `birthdays.upcoming`
 - Tier 1 (runs now; Undo where reversible; cards run on the phone): `reminders.create`*, `reminders.repeat|at_rest|scheduled_read|leave`, `calendar.create_event`* (Tier 3 with attendees), `tasks.add|complete`, `notes.save`, `lists.add|remove`, `memory.remember`, `portfolio.update`, `expenses.add|export`, cards `alarm.set`, `timer.set`, `nav.go`, `app.open`, `media.play`, `settings.set`
-- Tier 2 (confirm): `reminders.cancel`*, `reminders.move`, `calendar.move_event`*, `calendar.delete_event`*, `mail.draft`, `notes.delete`, `lists.delete`, `memory.forget`
+- Tier 2 (confirm): `reminders.cancel`*, `reminders.move`, `calendar.move_event`*, `calendar.delete_event`*, `mail.draft`, `notes.delete`, `lists.delete`, `memory.forget`, `routine.run` (private; offered only when a synced routine is named; refuses a tainted turn; runs at its time with no tap)
 - Tier 3 (confirm on phone): `calls.place`*, `message.compose`
 
 ## 4. Storage
 
-One SQLite DB inside the DO. Schema = `migrations/0001…0027` (registered in
+One SQLite DB inside the DO. Schema = `migrations/0001…0028` (registered in
 `platform/migrations.ts`). Tables by area:
 
 | Area | Tables |
@@ -157,6 +157,7 @@ One SQLite DB inside the DO. Schema = `migrations/0001…0027` (registered in
 | Agent | `conversation_turns` (encrypted history), `agent_turns` (suspended; 0027 adds `kind` phone/consent, `nonce_hash`, `source`, `conversation`), `agent_lock` |
 | Smart conversations (0026) | `conversation_modes` (mode per app conversation, recorded once), `conversation_consents` (sources allowed for one conversation); both purged after 30 days unused and by `/forget`, `/pair off` |
 | Misses (§6.23) | `last_exchange` (encrypted, 1 h), `misses` (encrypted, 30 days); `inbound_messages.seq` + `settings.inbound_seq` order arrivals |
+| Routines (0028, §6.27) | `routine_names` (the app's sync: id, name, app label, step hash — never steps), `routine_runs` (one row per confirmed run: scheduled → noticed → pushed → claimed → done/unverified/failed/unknown, or cancelled/expired/changed) |
 | Quota | `groq_limits`, `groq_token_spend`, `worker_requests`, `model_day_requests` (Gemini requests per Pacific day, 0026) |
 | Data | `ical_feeds`, `ical_events`, `birthdays`, `notes`, `lists`, `list_items`, `facts` (encrypted; the model sees them), `holdings` (the portfolio, soft-delete + version), `quote_cache` (public prices, no principal), `expenses`, `missed_calls` (minutes only) |
 
@@ -181,6 +182,7 @@ the same code on Node SQLite (`test/integration/sqlite-driver.ts`).
 - `tools/registry.ts` `dataSource` and `consent` ↔ `agent/consents.ts` ↔ `render/consent.ts` ↔ the history gate in `pipeline.ts` ↔ the smart fingerprint (`SMART_CATALOG_POLICY`).
 - `channels/app/parse.ts` + `verify.ts` ↔ app's `Protocol.kt` (shared test vectors).
 - `migrations/*.sql` ↔ `platform/migrations.ts`.
+- Routines: `tools/routine-store.ts` ↔ `channels/app/parse.ts` (`/app/routines`, `/app/routine/claim`, `/app/routine/result`) ↔ `channels/app/ingress.ts` ↔ the app's `RoutineRunner.kt`/`RoutineLogic.stepHash`; `render/routines.ts` `RUN_REASONS` ↔ the app's reason codes; `core/pipeline.ts` `namesRoutine` ↔ `agent/tools.ts` `routines` offer ↔ `agent/tool-groups.ts` (routine kept in any selection).
 - `nlu/slot-schemas.ts` `DateSpec`/`TimeSpec` ↔ `time/resolve.ts` types.
 - Agent prompt version ↔ eval recordings.
 

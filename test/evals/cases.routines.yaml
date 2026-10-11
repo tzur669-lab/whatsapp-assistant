@@ -1,0 +1,54 @@
+# Routine cases (PLAN §6.27, 2026-10-11), run by `pnpm eval:agent` only.
+#
+# Kept out of `fingerprintPhrases` on purpose: `routine.run` is offered only
+# when the input names a routine, so these phrases change nothing any other
+# case is offered, and the recorded Groq fingerprints stay what was measured.
+# A run of these cases is still owed before the tool counts as evaluated.
+
+# Routines (PLAN §6.27, 2026-10-11): `routine.run`, offered only when the input
+# names a routine (the eval harness's EVAL_ROUTINES stand in for the synced
+# names). Code finds the routine; the model only names it and says when.
+
+- id: rt-001
+  now: "2026-10-11T10:00:00+03:00"
+  input: "בעוד רבע שעה תפעיל את יציאה מהעבודה"
+  expect:
+    intent: routine.run
+    slots:
+      date: { kind: in_duration, minutes: 15 }
+    missing: []
+
+- id: rt-002
+  now: "2026-10-11T10:00:00+03:00"
+  input: "תפעיל את השגרה כניסה לעבודה"
+  expect:
+    intent: routine.run
+    missing: []
+
+- id: rt-003
+  now: "2026-10-11T10:00:00+03:00"
+  input: "run my clock out routine in 10 minutes"
+  expect:
+    intent: routine.run
+    slots:
+      date: { kind: in_duration, minutes: 10 }
+    missing: []
+
+- id: rt-004
+  now: "2026-10-11T10:00:00+03:00"
+  input: "תפעיל את יציאה מהעבודה היום בחמש אחר הצהריים"
+  expect:
+    intent: routine.run
+    slots:
+      time: { hour: 5, minute: 0, meridiem: unspecified, part_of_day: afternoon }
+    missing: []
+
+# Not a routine: no routine is named, so routine.run is not even offered.
+- id: rt-005
+  now: "2026-10-11T10:00:00+03:00"
+  input: "תזכיר לי בעוד רבע שעה לצאת מהעבודה"
+  expect:
+    intent: reminders.create
+    slots:
+      date: { kind: in_duration, minutes: 15 }
+    missing: []

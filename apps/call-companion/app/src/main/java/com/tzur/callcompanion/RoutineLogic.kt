@@ -52,7 +52,11 @@ object RoutineLogic {
 
     const val MAX_NAME = 40
     const val MAX_TEXT = 60
+    /** The app's label as the server keeps it (stage 2). */
+    const val MAX_APP_LABEL = 60
     const val MAX_STEPS = 10
+    /** As many as the server keeps (stage 2). */
+    const val MAX_ROUTINES = 20
     const val DEFAULT_SECONDS = 15
     const val MAX_WAIT_SECONDS = 20
     const val MAX_PAUSE_SECONDS = 5

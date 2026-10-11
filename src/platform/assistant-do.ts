@@ -52,6 +52,11 @@ import { NoteStore } from '../tools/note-store.js';
 import { ListStore } from '../tools/list-store.js';
 import { FactStore } from '../tools/fact-store.js';
 import { HoldingStore } from '../tools/holding-store.js';
+import { RoutineStore } from '../tools/routine-store.js';
+import type { Run } from '../tools/routine-store.js';
+import { routineText } from '../render/routines.js';
+import type { RoutineView, RunReason } from '../render/routines.js';
+import { buttonId } from '../confirm/pending.js';
 import { createQuoteSources } from '../lookup/quotes.js';
 import type { QuoteSources } from '../lookup/quotes.js';
 import { portfolioReport } from '../tools/portfolio.js';
@@ -83,6 +88,9 @@ import {
   MESSAGE_ID,
   parseAck,
   parseActionReport,
+  parseRoutineClaim,
+  parseRoutineResult,
+  parseRoutineSync,
   parseDeviceResult,
   parseClaim,
   parseMessage,
@@ -161,6 +169,7 @@ export class AssistantDO implements DurableObject {
   private readonly lists: ListStore;
   private readonly facts: FactStore;
   private readonly holdings: HoldingStore;
+  private readonly routines: RoutineStore;
   private readonly quotes: QuoteSources;
   private readonly missedCalls: MissedCallStore;
   private readonly expenses: ExpenseStore;
@@ -267,6 +276,7 @@ export class AssistantDO implements DurableObject {
     this.exchanges = new ExchangeLog(this.sql, now, keyringOnce);
     this.facts = new FactStore(this.sql, now, keyringOnce);
     this.holdings = new HoldingStore(this.sql, now);
+    this.routines = new RoutineStore(this.sql, now);
     // The key only in a header, inside `lookup/quotes.ts`; never logged (§6.24).
     this.quotes = createQuoteSources(this.fetchImpl, this.env.QUOTES_API_KEY, now);
     this.agentLock = new AgentLock(this.sql, now);
@@ -339,6 +349,7 @@ export class AssistantDO implements DurableObject {
     this.history.purgeExpired();
     this.exchanges.purgeExpired();
     this.agentTurns.purgeOld();
+    this.routines.purgeOld(now);
     // A turn the phone never answered gets its answer now, not on the next read.
     this.settleExpiredTurns();
 
@@ -373,6 +384,10 @@ export class AssistantDO implements DurableObject {
       }
     }
 
+    // Routines (§6.27) before reminders: a run is due to the minute, and a
+    // scheduled read in the batch below waits on the network.
+    await this.serviceRoutines(principal, now);
+
     const due = this.reminders.claimDue();
     this.log.info('alarm_fired', { claimed: due.length });
 
@@ -402,6 +417,137 @@ export class AssistantDO implements DurableObject {
     }
 
     await this.armAlarm();
+  }
+
+  // -- routines (PLAN §6.27) ---------------------------------------------------
+
+  /**
+   * Every routine run that has something due: the notice with its cancel
+   * button, the push that wakes the phone (and once a minute again until it
+   * claims), the run that never started in its ten minutes, and the claim that
+   * never reported. Each row moves once, inside the store's transaction, so a
+   * re-entered alarm finds nothing left to do twice.
+   */
+  private async serviceRoutines(principal: string, now: number): Promise<void> {
+    for (const { run, nonce } of this.routines.takeNotices(now)) {
+      await this.sayRoutine(run, routineText.notice(viewOfRun(run), 'he'), [
+        { id: buttonId('rt', run.runId, nonce, 'no'), title: routineText.cancelButton('he') },
+      ]);
+    }
+
+    const due = this.routines.takeDue(now);
+    const unclaimed = this.routines.takeUnclaimed(now);
+    for (const run of [...due.push, ...unclaimed.repush]) await this.pushRoutine(principal, run);
+    for (const run of [...due.expired, ...unclaimed.expired]) {
+      this.log.warn('routine_expired', { runId: run.runId });
+      await this.sayRoutine(run, routineText.expired(viewOfRun(run), 'he'));
+    }
+
+    for (const run of this.routines.takeStaleClaims(now)) {
+      this.log.warn('routine_unreported', { runId: run.runId });
+      await this.sayRoutine(run, routineText.unknown(viewOfRun(run), null, 'he'));
+    }
+  }
+
+  /** The run's id and nothing else, high priority, ten minutes to live. */
+  private async pushRoutine(principal: string, run: Run): Promise<void> {
+    const device = this.devices.activeDevice(principal);
+    const token = device ? await this.devices.pushTokenOf(device.id) : null;
+    const fcm = this.fcmClient();
+    if (!device || !token || !fcm) {
+      this.log.info('routine_push_skipped', { device: device !== null, token: token !== null, fcm: fcm !== null });
+      return;
+    }
+    const pushed = await fcm.runRoutine(token, run.runId);
+    this.log.info('routine_pushed', { runId: run.runId, ok: pushed.ok });
+    if (!pushed.ok && pushed.reason === 'unregistered') {
+      this.devices.forgetPushToken(device.id);
+      this.repo.setLastErrorCode('E_PUSH_UNREGISTERED');
+    }
+  }
+
+  /** One message about a run, to the reminders conversation. */
+  private async sayRoutine(run: Run, text: string, buttons?: OutboundButton[]): Promise<void> {
+    await this.send(
+      { to: this.selfWaId(), text, ...(buttons ? { buttons } : {}) },
+      { kind: 'reminder', principal: run.principal },
+    );
+  }
+
+  /**
+   * The app's routine list (§6.27): names, ids, app labels and step hashes,
+   * replacing what was stored. A run still waiting whose routine was deleted
+   * or edited is closed now, and the user hears it now.
+   */
+  private async appRoutineSync(body: Uint8Array, principal: string): Promise<Response> {
+    const parsed = parseRoutineSync(body);
+    if (!parsed) return appError(400, 'bad_request');
+    const changed = this.routines.replaceNames(
+      principal,
+      parsed.routines.map((r) => ({ routineId: r.id, name: r.name, stepHash: r.stepHash, appLabel: r.appLabel })),
+    );
+    this.log.info('routines_synced', { count: parsed.routines.length, closed: changed.length });
+    for (const run of changed) await this.sayRoutine(run, routineText.changed(run, 'he'));
+    if (changed.length > 0) await this.armAlarm();
+    return json({ status: 'ok' });
+  }
+
+  /**
+   * The phone's one claim on a run (§6.27): it gets the routine's id and step
+   * hash back only if the run is pushed, on time, and still the routine that
+   * was confirmed. A second claim — a second push, a restart — is refused.
+   */
+  private appRoutineClaim(body: Uint8Array, principal: string): Response {
+    const parsed = parseRoutineClaim(body);
+    if (!parsed) return appError(400, 'bad_request');
+    const claimed = this.routines.claim(parsed.runId, principal);
+    this.repo.audit({
+      ts: Date.now(),
+      principal,
+      tool: 'routine.run',
+      tier: 2,
+      decision: 'ROUTINE_CLAIMED',
+      outcome: claimed.ok ? 'ok' : claimed.reason,
+      externalRef: parsed.runId,
+    });
+    if (!claimed.ok) {
+      this.log.info('routine_claim_refused', { reason: claimed.reason });
+      return json({ status: 'refused', reason: claimed.reason });
+    }
+    return json({ status: 'ok', routineId: claimed.routineId, stepHash: claimed.stepHash });
+  }
+
+  /** What happened, as codes (§6.27). Settled once; a late result after "unknown" is heard too. */
+  private async appRoutineResult(body: Uint8Array, principal: string): Promise<Response> {
+    const parsed = parseRoutineResult(body);
+    if (!parsed) return appError(400, 'bad_request');
+    const settled = this.routines.settle(parsed.runId, principal, parsed.outcome, parsed.reason ?? null);
+    this.repo.audit({
+      ts: Date.now(),
+      principal,
+      tool: 'routine.run',
+      tier: 2,
+      decision: 'ROUTINE_RESULT',
+      outcome: settled ? settled.status : 'ignored',
+      externalRef: parsed.runId,
+    });
+    if (!settled) return json({ status: 'ok' });
+
+    const view = viewOfRun(settled.run);
+    const reason: RunReason = parsed.reason ?? 'error';
+    const text =
+      settled.status === 'done'
+        ? routineText.done(view, 'he')
+        : settled.status === 'unverified'
+          ? routineText.unverified(view, 'he')
+          : settled.status === 'unknown'
+            ? routineText.unknown(view, reason, 'he')
+            : settled.status === 'changed'
+              ? routineText.changed(view, 'he')
+              : routineText.failed(view, parsed.outcome === 'blocked' ? (parsed.reason ?? 'locked') : reason, 'he');
+    await this.sayRoutine(settled.run, text);
+    await this.armAlarm();
+    return json({ status: 'ok' });
   }
 
   // -- OAuth -----------------------------------------------------------------
@@ -857,6 +1003,9 @@ export class AssistantDO implements DurableObject {
     if (app && method === 'POST' && path === '/app/action/report') return this.appActionReport(body, principal);
     if (app && method === 'POST' && path === '/app/device-result') return this.appDeviceResult(body, device, principal);
     if (app && method === 'POST' && path === '/app/calls-report') return this.appCallsReport(body, principal);
+    if (app && method === 'POST' && path === '/app/routines') return this.appRoutineSync(body, principal);
+    if (app && method === 'POST' && path === '/app/routine/claim') return this.appRoutineClaim(body, principal);
+    if (app && method === 'POST' && path === '/app/routine/result') return this.appRoutineResult(body, principal);
 
     const dispatch = /^\/device\/dispatch\/([0-9a-f]{32})$/.exec(path);
     if (method === 'GET' && dispatch) {
@@ -1757,6 +1906,7 @@ export class AssistantDO implements DurableObject {
       lists: this.lists,
       facts: this.facts,
       holdings: this.holdings,
+      routines: this.routines,
       quotes: this.quotes,
       expenses: this.expenses,
       pending: this.pending,
@@ -1878,6 +2028,7 @@ export class AssistantDO implements DurableObject {
     const outboxAt = this.channel() === 'app' ? this.outbox.nextWakeAt() : this.outbox.nextExpiryAt();
     const candidates = [
       this.reminders.nextDueAt(),
+      this.routines.nextWakeAt(),
       this.devices.nextExpiryAt(),
       outboxAt,
       // A turn waiting for the phone is answered when its time runs out (§6.21).
@@ -1946,4 +2097,9 @@ function json(body: unknown): Response {
     status: 200,
     headers: { 'content-type': 'application/json' },
   });
+}
+
+/** A run as the routine texts show it: when it was due, never "now". */
+function viewOfRun(run: Run): RoutineView {
+  return { name: run.name, appLabel: run.appLabel, dueAtUtc: run.dueAtUtc, tz: run.tz, now: false };
 }

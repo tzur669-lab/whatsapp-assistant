@@ -154,6 +154,20 @@
             </intent-filter>
         </service>
 
+        <!--
+          A scheduled routine over the lock screen (0.13): the screen comes on and
+          Android is asked to dismiss the lock — by itself with Extend Unlock, or
+          with the fingerprint. Not exported: only the app starts it.
+        -->
+        <activity
+            android:name=".RoutineRunActivity"
+            android:exported="false"
+            android:excludeFromRecents="true"
+            android:launchMode="singleTask"
+            android:showWhenLocked="true"
+            android:turnScreenOn="true"
+            android:taskAffinity="" />
+
         <!-- Routines (0.13): build, test and run them. Opened by the app only. -->
         <activity
             android:name=".RoutinesActivity"

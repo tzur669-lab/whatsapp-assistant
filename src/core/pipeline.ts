@@ -19,6 +19,8 @@
 import type { NoteStore } from '../tools/note-store.js';
 import type { ListStore } from '../tools/list-store.js';
 import type { HoldingStore } from '../tools/holding-store.js';
+import type { RoutineStore } from '../tools/routine-store.js';
+import { foldForMatch } from '../tools/match.js';
 import type { QuoteSources } from '../lookup/quotes.js';
 import { marketWordsIn } from '../tools/portfolio.js';
 import type { FactStore } from '../tools/fact-store.js';
@@ -132,6 +134,8 @@ export type Services = {
   holdings?: HoldingStore;
   quotes?: QuoteSources;
   expenses?: ExpenseStore;
+  /** Routines synced from the paired app, and their runs (§6.27). */
+  routines?: RoutineStore;
   pending: PendingActions;
   /** The one clarifying question a sender may have open (§6.11). */
   questions: OpenQuestions;
@@ -820,6 +824,8 @@ async function respondWithAgent(
             deps.channel === 'app' &&
             (deps.deviceCaps ?? []).includes('device_query'),
           ...(smartConversation ? { smart: true, consent: { granted, ask } } : {}),
+          // Only when the words name a synced routine (§6.27, decision D4).
+          ...(deps.channel === 'app' && namesRoutine(text, deps.services?.routines, principal) ? { routines: true } : {}),
         },
         {
           providers: readOnly ? (agent.fallbackProviders ?? []) : [...smartModels, ...agent.providers],
@@ -1614,6 +1620,7 @@ function turnOf(
       ...(services.quotes ? { quotes: services.quotes } : {}),
       ...(marketWords ? { marketWords } : {}),
       ...(services.expenses ? { expenses: services.expenses } : {}),
+      ...(services.routines ? { routines: services.routines } : {}),
     },
     pending: services.pending,
     deferred: services.deferred,
@@ -1693,4 +1700,20 @@ function unclearReply(outcome: { status: 'unclear' | 'too_long' | 'failed'; reas
     default:
       return he.voiceUnclear;
   }
+}
+
+/**
+ * Whether the message names one of the routines the app synced, or says
+ * "routine" outright (§6.27, decision D4). Code reads the words: the model is
+ * offered `routine.run` only then, and code still finds the routine itself.
+ */
+export function namesRoutine(text: string, store: RoutineStore | undefined, principal: string): boolean {
+  const names = store?.names(principal) ?? [];
+  if (names.length === 0) return false;
+  if (/שגר|רוטינ|\broutines?\b/i.test(text)) return true;
+  const folded = foldForMatch(text);
+  return names.some((routine) => {
+    const name = foldForMatch(routine.name);
+    return name.length > 0 && folded.includes(name);
+  });
 }
