@@ -2,7 +2,7 @@
 
 How the code is laid out and how the parts talk. The *why* behind each piece
 is in `PLAN.md` (section numbers given); the rules are in `CLAUDE.md`.
-Current as of 2026-10-08 (migration 0027).
+Current as of 2026-10-11 (migration 0027).
 
 ## 1. System diagram
 
@@ -67,12 +67,17 @@ Special shapes:
   `[...smartProviders, ...providers]` (Gemini first, then qwen), the model is
   chosen before the tools (a smart model gets every offered tool, no
   selection, `SMART_NOTE`, its own caps, no facts). Shared text and the
-  read-only try stay local. A call to a tool whose `dataSource` is a consent
-  source not yet allowed suspends the turn (`agent_turns.kind = 'consent'`)
+  read-only try stay local. Every model in it is offered what a local turn
+  would be, less the consent sources it may not ask for; `private` tools are
+  offered (2026-10-11) and never answer to a model. A call to a tool whose
+  `dataSource` is a consent source not yet allowed, and whose `consent` rule is
+  `always`, suspends the turn (`agent_turns.kind = 'consent'`)
   with a card (`render/consent.ts`); the tap is handled in code
   (`beginConsent`, `resumeAfterConsent`), and "this conversation" writes
-  `conversation_consents`. `settleAgentResult` is the history gate: a reply
-  after a source not allowed is stored as a placeholder. `/consents` lists and
+  `conversation_consents`. A write whose replies only echo its own call
+  (`exempt-own-input`, e.g. `reminders.create`) never asks. `settleAgentResult`
+  is the history gate: a reply after a source not allowed is stored as a
+  placeholder; an own-input write's reply is kept. `/consents` lists and
   revokes. `GET /app/outbox` carries `smart` (agent on and both keys set).
 - **Phone reads** (contacts, notifications, SMS, call log): the turn is suspended,
   encrypted, in `agent_turns` (`agent/turns.ts`); the phone's signed
@@ -117,9 +122,9 @@ Special shapes:
 | `channels/app/` | App ingress checks, request schemas, signature/pairing verify, outbox | §6.18 |
 | `channels/whatsapp/` | Frozen channel: HMAC verify, parse, send, media/voice download | §6.1 |
 | `core/` | `pipeline` (inbound order; `settleAgentResult` is the history gate), `router` (commands), `orchestrator` (resolve→policy→act), `repo`/`sql` (data access; conversation modes), `exchanges` ("לא הבנת" capture, never given to the agent), `digest`, `birthdays`, `missed-calls`, `scheduled-read`, `quota` (also `SqlDayRequestCounter`: requests per model per Pacific day), `timing`, `env` | §6.4, §6.12 |
-| `agent/` | Bounded tool loop, prompt (a10, plus `SMART_NOTE` s1 for smart models), compact catalog (`smartOfferedTools` for smart conversations), tool groups (1–3 → union), history fitter, model table (`MODELS`, `SMART_MODELS`), token and request budget, Groq and Gemini providers, history, lock, suspended turns (phone or consent), `consents.ts` (consent sources, `conversation_consents`, `cs:`/`cr:` button ids) | §6.19 |
+| `agent/` | Bounded tool loop, prompt (a10, plus `SMART_NOTE` s2 for smart models), compact catalog (`smartOfferedTools` for smart conversations), tool groups (1–3 → union), history fitter, model table (`MODELS`, `SMART_MODELS`), token and request budget, Groq and Gemini providers, history, lock, suspended turns (phone or consent), `consents.ts` (consent sources, `consentNeededFor`/`echoesOwnInput` from each tool's `consent` rule, `conversation_consents`, `cs:`/`cr:` button ids) | §6.19 |
 | `nlu/` | Fallback parser: prompt (v6), `IntentDraft` schema, slot schemas, Groq provider, rules fallback, weekday check, clarification answers | §6.2, §6.11 |
-| `tools/` | `registry.ts` (single source of truth: name, tier, slots, scopes, flags, required `dataSource`) + one file per area; `*-store.ts` hold SQL; `match.ts` finds targets | §6.4, §6.19 |
+| `tools/` | `registry.ts` (single source of truth: name, tier, slots, scopes, flags, required `dataSource`, and `consent` rule for a consent source) + one file per area; `*-store.ts` hold SQL; `match.ts` finds targets | §6.4, §6.19 |
 | `policy/` | Pure tier decision; WhatsApp 24 h window/budget | §6.4 |
 | `confirm/` | Pending confirmations, Undo offers, open questions | §6.5, §6.11 |
 | `time/` | `resolve` (R1–R12), `tz`, Hebrew lexicon (and `timeWordsNamed`, the am/pm and part-of-day check), ranges, recurrence, past days, sunset, Shabbat/chag | §6.3, §6.13 |
@@ -173,7 +178,7 @@ the same code on Node SQLite (`test/integration/sqlite-driver.ts`).
 
 **Coupled on purpose (change together)**
 - `tools/registry.ts` ↔ `agent/tool-groups.ts` ↔ `test/evals/fingerprint.ts` ↔ `models.ts` evaluated fingerprint.
-- `tools/registry.ts` `dataSource` ↔ `agent/consents.ts` ↔ `render/consent.ts` ↔ the history gate in `pipeline.ts` ↔ the smart fingerprint (`SMART_CATALOG_POLICY`).
+- `tools/registry.ts` `dataSource` and `consent` ↔ `agent/consents.ts` ↔ `render/consent.ts` ↔ the history gate in `pipeline.ts` ↔ the smart fingerprint (`SMART_CATALOG_POLICY`).
 - `channels/app/parse.ts` + `verify.ts` ↔ app's `Protocol.kt` (shared test vectors).
 - `migrations/*.sql` ↔ `platform/migrations.ts`.
 - `nlu/slot-schemas.ts` `DateSpec`/`TimeSpec` ↔ `time/resolve.ts` types.

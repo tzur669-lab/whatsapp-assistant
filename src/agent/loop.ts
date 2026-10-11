@@ -49,7 +49,7 @@ import { languageLine, nowLine, READ_ONLY_NOTE, SMART_NOTE, SYSTEM_PROMPT } from
 import type { AgentMessage, AgentProvider, AgentResponse, ToolCall, WireTool } from './provider.js';
 import { wireToolCall } from './provider.js';
 import { agentToolNames, conversationText, fillUnstatedTime, fromWireName, smartOfferedTools, TAINTING_TOOLS, wireTools } from './tools.js';
-import { consentSourceOf } from './consents.js';
+import { consentNeededFor } from './consents.js';
 import { MAX_SUSPENDS } from './turns.js';
 
 export const MAX_MODEL_CALLS = 3;
@@ -166,7 +166,7 @@ export type AgentTurnInput = {
    * consent source are offered too, and a call to one suspends the turn for the
    * user's answer instead of running. Only on the conversation's own typed
    * words — never a voice note, the read-only try or shared text. Absent:
-   * public tools only.
+   * only the tools that never ask (public, private, own-input writes).
    */
   consent?: { granted: readonly ConsentSource[]; ask: boolean };
 };
@@ -342,8 +342,9 @@ export async function runAgentTurn(input: AgentTurnInput, deps: AgentDeps): Prom
     ...(readOnly ? { readOnly } : {}),
   });
   // A smart conversation's turn is offered the same tools whichever model takes
-  // it: consent belongs to the conversation (2026-10-08). The public ones, the
-  // allowed sources', and — when it may ask — every other consent source's.
+  // it: consent belongs to the conversation (2026-10-08). Those that never ask
+  // (public, private, own-input writes; 2026-10-11), the allowed sources', and
+  // — when it may ask — every other consent source's.
   const granted = smartConversation ? (input.consent?.granted ?? []) : [];
   const ask = smartConversation && !readOnly && input.consent?.ask === true;
   const offered = smartConversation ? smartOfferedTools(base, { granted, ask }) : base;
@@ -937,8 +938,9 @@ async function runToolCall(call: ToolCall, loop: Loop, log: Logger, approved: bo
   // Consent (smart conversations, slice 5): a source the conversation has not
   // allowed is never resolved or read. A turn that may ask pauses for the
   // user's answer; one that may not — a resumed turn, a second ask — is
-  // refused like a tool not offered.
-  const source = loop.mode === 'smart' ? consentSourceOf(tool) : null;
+  // refused like a tool not offered. A write whose replies only echo its own
+  // call never asks (2026-10-11, `consent: 'exempt-own-input'`).
+  const source = loop.mode === 'smart' ? consentNeededFor(tool) : null;
   if (source !== null && !loop.allowed.has(source)) {
     if (!loop.ask || !maySuspend) {
       log.info('agent_consent_refused', { tool, source });

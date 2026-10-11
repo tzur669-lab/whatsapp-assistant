@@ -1723,11 +1723,17 @@ the user allowed its source on a card. Everything else stays exactly as before.
   never guarded anything), its own `turnCap` and `charsPerToken`, and
   `fitHistory` against its cap. When qwen takes the turn, it is planned exactly
   as in a local one.
-- **The prompt.** `SYSTEM_PROMPT` (a10) plus `SMART_NOTE` (version `s1`) on a
+- **The prompt.** `SYSTEM_PROMPT` (a10) plus `SMART_NOTE` (version `s2`) on a
   smart model's turns only: talk freely, answer from its own knowledge, ask one
-  short question when unsure. Versioned apart, so the Groq prompt and its
-  fingerprint do not move; `smartFingerprintFor` (`test/evals/fingerprint.ts`)
-  hashes both, the catalog and `SMART_CATALOG_POLICY`.
+  short question when unsure; and (s2, 2026-10-11) a TimeSpec always has all
+  four keys — an hour said alone has minute 0, `meridiem` and `part_of_day` are
+  "unspecified" unless said — and the hour stays as said even when that time
+  has passed today. Gemini had read "leave out any slot the user did not state"
+  as leaving out keys inside a TimeSpec (`{"hour":8}` for "at 8"), and once
+  moved a passed "8" to 20; `fillUnstatedTime` never makes up a minute, so the
+  model is told. Versioned apart, so the Groq prompt and its fingerprint do not
+  move; `smartFingerprintFor` (`test/evals/fingerprint.ts`) hashes both, the
+  catalog and `SMART_CATALOG_POLICY`.
 - **No facts.** No model in a smart conversation receives the `About the
   user` line (§6.26), whichever model takes the turn.
 - **`dataSource` per tool** (`tools/registry.ts`, required, so a tool without
@@ -1743,11 +1749,43 @@ the user allowed its source on a card. Everything else stays exactly as before.
   so in a smart conversation they need consent. The same review found that
   `calendar.move_event` and `calendar.delete_event` show event titles in
   their candidate lists and cards; both now taint (`TAINTING_TOOLS`).
+- **The consent rule per tool** (2026-10-11, `consent` in `tools/registry.ts`:
+  required with a consent source, refused by the compiler on a `public` or
+  `private` tool). `always`: a call waits for the consent card unless its
+  source is allowed. `exempt-own-input`: no card, and the history keeps the
+  reply — only when every reply the tool can make (the success text, a
+  question, a list of choices, the confirmation card, the Undo offer, a
+  refusal, an error) holds nothing but the call's own arguments, dates and
+  times code computed, and fixed strings; proved per tool from its `resolve`,
+  `preview`, `execute` and render code, and pinned by a test. A model's
+  arguments hold only what it was already sent, so the echo shows it nothing
+  new. Exempt: `reminders.create`, `reminders.repeat`, `reminders.at_rest` (the
+  held note is a fixed sentence), `reminders.scheduled_read` (code's label for
+  the topic), `calendar.create_event` (no conflict check reads the calendar;
+  the reply echoes the event the call created) and `expenses.add` (the "list is
+  full" refusal is a fixed sentence). Every read and every tool that finds an
+  existing target stays `always`, and so do the borderline writes: `tasks.add`
+  (names the Google Tasks list it matched, or the first one), `expenses.export`
+  (counts the rows), `calls.place` (the phone's answer says whether a contact
+  exists), `message.compose` (the contact is matched on the phone, out of the
+  server's sight), `mail.draft` (finds the mail it answers), `reminders.leave`
+  and `nav.go` (an event). A smart model's writes still confirm (role `smart`).
 - **What a smart conversation offers** (`smartOfferedTools`, every model in
-  it): `public` tools; the sources the conversation allowed; and, when the turn
-  may ask, every other consent source. `private` tools are never offered there.
+  it), of what a local turn would be offered: the tools that never ask —
+  `public`, `private` and own-input writes (2026-10-11); the sources the
+  conversation allowed; and, when the turn may ask, every other consent source.
+  So a typed turn gets the local catalog, and a voice note, shared text or the
+  read-only try the local one less the sources not allowed. **Private tools**
+  (notes, lists, the portfolio, facts) were not offered until 2026-10-11, and
+  "add milk to the shopping list" went to Google Tasks; now they are, and no
+  reply of theirs returns to a model (a private read ends the turn) or reaches
+  the history (`[פתק]` on both sides). `memory.*` is not `private: true`: in a
+  smart conversation its reply is kept as `[מידע אישי]` (its source is never
+  "allowed"), facts are still never sent, and a save from a tainted turn
+  confirms first, as in §6.26.
 - **The consent gate** (`agent/consents.ts`, `render/consent.ts`). When a model
-  calls a tool whose consent source is not allowed, after Zod and the weekday
+  calls a tool whose consent source is not allowed and whose rule is `always`
+  (`consentNeededFor`), after Zod and the weekday
   check but before anything is resolved or read, the turn suspends
   (`agent_turns.kind = 'consent'`, the same encryption and 3-minute
   `SUSPEND_TTL_MS` as a phone read) and the reply is a card that names the
@@ -1757,9 +1795,10 @@ the user allowed its source on a card. Everything else stays exactly as before.
   [לאשר הפעם] [לא], and a `conv` for them writes nothing. Only a turn that may
   ask suspends: a typed message of the smart conversation itself. **A voice
   note** (the turn would store a transcript), **shared text** and **the
-  read-only try** never suspend; they are offered `public` tools and the
-  sources already allowed, and a call to any other source is refused to the
-  model as `access_not_allowed`.
+  read-only try** never suspend; they are offered the tools that never ask and
+  the sources already allowed, and a call to any other tool is refused to the
+  model as one not offered (`unknown_tool`; the loop's `access_not_allowed` is
+  a second lock behind it).
 - **The tap** is code only (invariant 7), in `resumeFromPhone`'s order:
   `beginConsent` takes the waiting turn in one synchronous transaction — a
   consent turn, this sender, the nonce (its SHA-256 compared in constant time),
@@ -1779,7 +1818,8 @@ the user allowed its source on a card. Everything else stays exactly as before.
 - **The history gate** (`settleAgentResult` in `pipeline.ts`, the only caller
   of `history.append`). In a smart conversation the reply is stored as
   `[מידע אישי]` when any tool that ran in the turn has a source that is not
-  `public` and was not allowed — in the conversation or for this turn. That
+  `public`, is not an own-input write (`echoesOwnInput`, 2026-10-11), and was
+  not allowed — in the conversation or for this turn. That
   covers replies code built: a confirmation card, an Undo, "done", a list of
   candidates. A turn on shared text keeps `[טקסט ששותף]` on both sides; a
   private tool keeps `[פתק]`, as before. It holds whichever model answered —
@@ -2027,7 +2067,7 @@ ROADMAP block H part 18. The user's decision: a lasting memory **the model sees*
 | Prompt injection (my text, forwarded text, event titles, future email) | Until 2026-10-01: LLM sees no data. Since the agent (§6.19): the model sees scrubbed read results, but text someone else wrote **taints** the turn and every write it leads to is CONFIRM, rendered by code; taint carries through the open question and history. A write ends the turn, so injected text cannot chain actions. Tier 4 doesn't exist. No permission-changing tool. Forwarded → confirm all writes |
 | Data exfiltration through the agent | No tool sends anything anywhere except through a code-rendered confirmation (Phase B cards, calls on the phone screen). Links in every outbound message are defanged, so a reply cannot carry data out in one tap. The model never sees numbers, addresses or codes: `scrubForModel` replaces them before a result reaches it (§6.19) |
 | Data sent to Groq | Since the agent: calendar titles from reads and the short history; since Phase C, a phone read the user asked for, scrubbed (§6.21). Groq does not train on inputs; **Zero Data Retention must be on before `AGENT=on`** (§2, §13). Tokens, ids, numbers, addresses never |
-| Data sent to Gemini (smart conversations, 2026-10-08) | Gemini's free tier may train on what it is sent and human reviewers may read it — accepted by the user for smart conversations only (§6.19). A local conversation, the shared thread, cron, shared text and the read-only try never reach it: `SMART_MODELS` is a table of its own, and the loop drops smart providers from any other turn. In a smart conversation the user's data reaches the model, or the history it replays, only for a source the user allowed on a consent card; anything else is stored as a placeholder. Facts (§6.26) are not sent; `private` tools are not offered. The key is server-side only: never in the app, a reply or a log |
+| Data sent to Gemini (smart conversations, 2026-10-08) | Gemini's free tier may train on what it is sent and human reviewers may read it — accepted by the user for smart conversations only (§6.19). A local conversation, the shared thread, cron, shared text and the read-only try never reach it: `SMART_MODELS` is a table of its own, and the loop drops smart providers from any other turn. In a smart conversation the user's data reaches the model, or the history it replays, only for a source the user allowed on a consent card; anything else is stored as a placeholder. Facts (§6.26) are not sent. `private` tools are offered (2026-10-11), but no reply of theirs reaches a model or the history; a write whose every reply only echoes its own call (`consent: 'exempt-own-input'`) runs without a card. The key is server-side only: never in the app, a reply or a log |
 | Conversation history at rest | AES-GCM per row, bound to table and sender; 12 h, 1 h when tainted; last 6 exchanges; never a tool result or a transcript; `/forget` and `/pair off` wipe it; never logged (`history`, `reply`, `args`, `result` are on the ban list) (§6.19) |
 | Two agent turns interleaving while one awaits the model | `agent_lock`, taken synchronously before the first await, released at the end, 60 s expiry. A second message is answered "busy" and must be resent (§6.19) |
 | A fallback running a message twice | The parser runs only when no tool ran in the agent turn (§6.19) |
@@ -2818,7 +2858,8 @@ measured on the app channel. To finish with `--resume`.
 - [ ] **Smart conversations: Gemini `charsPerToken` calibration.** The entry uses Groq's 3.0 until a calibration file from a real Gemini run exists (a separate fixture, like `test/fixtures/token-calibration.json`).
 - [ ] **Smart conversations: `pnpm eval:agent --model gemini-3.5-flash-lite`** (with `GEMINI_API_KEY` in `.dev.vars`; use `--filter` first), scored with "wrong tool calls" as well, and a human reads the report before `canWrite` changes. Note: `canWrite` only sorts `MODELS` into `providers` and `fallbackProviders` (`assistant-do.ts`); a `SMART_MODELS` entry is used whatever it says, so today Gemini may propose writes, and each one confirms because its role is not `primary`.
 - [ ] **Smart conversations: staging deploy** (approval in the session), then the human sets `GEMINI_API_KEY` with `wrangler secret put GEMINI_API_KEY --env staging`, and only then the 0.12.0 APK: an older server refuses the `mode` field.
-- [ ] **Smart conversations: writes ask consent for their source.** A write tool's `dataSource` is usually a consent source (`reminders.create` is `reminders`), so "remind me tomorrow at 9" in a smart conversation first shows a consent card. Safe, but friction: revisit the UX after real use (e.g. a write whose reply carries only the user's own words). Related: `private` tools (notes, lists, facts, portfolio) are not offered in a smart conversation at all.
+- [ ] **Smart conversations: evals for smart note s2 and the private tools** (2026-10-11): `pnpm eval:agent --model gemini-3.5-flash-lite --filter en-past`, `--filter en-typo`, `--filter he-amb`, `--filter li-add`, `--filter tk-add` (the TimeSpec sentence; `lists.add` now offered). Re-scored with today's code, the 3.5 Flash-Lite and 3.5 Flash recordings still reject en-past-001 and en-typo-001 (`time.minute` missing) and he-amb-001 on Flash-Lite (broken arguments, not repairable); Flash's en-dst-001, he-amb-001, he-rem-001, he-typo-001 already pass by `fillUnstatedTime`.
+- [x] **Smart conversations: writes ask consent for their source** — settled 2026-10-11 (§6.19): a required `consent` rule per consent-source tool; six writes whose replies only echo their call never ask; private tools are offered. Was: A write tool's `dataSource` is usually a consent source (`reminders.create` is `reminders`), so "remind me tomorrow at 9" in a smart conversation first shows a consent card. Safe, but friction: revisit the UX after real use (e.g. a write whose reply carries only the user's own words). Related: `private` tools (notes, lists, facts, portfolio) are not offered in a smart conversation at all.
 
 ---
 
@@ -3032,6 +3073,7 @@ measured on the app channel. To finish with `--resume`.
 | 2026-10-08 | **App 0.12.0: smart or local** (§6.18, §6.19; slice 6). `GET /app/outbox` carries `smart: true` only when the agent is on and both keys are set (never the key). The new-conversation button asks smart or local (smart disabled while unavailable), the mode is fixed by the first message and shown as a badge, a 422 `mode_mismatch` is shown and never retried, the app's DB version 4 adds the column (existing conversations local). Shared text, the assistant and the widget open local conversations. **Deploy the server before the APK** |
 | 2026-10-08 | **Gemini 3.5 Flash, thought signatures, a busy smart model** (§6.19). `SMART_MODELS` names `gemini-3.5-flash` with `reasoningEffort: 'low'`: `gemini-2.5-flash` answered 404 "no longer available to new users" in a live probe; 3.7/3.8 Flash often answered 503 (revisit). Gemini 3 tool calls carry a thought signature that must be sent back: kept on `ToolCall.signature` (shape-checked, opaque, never logged), re-emitted only when present, stored with a suspended turn; Groq requests unchanged byte for byte. A smart model's 503/500 rests it on the 429 ladder (not daily) so the next message picks qwen. Eval ledger: a smart model is guarded by its requests per Pacific day (stop at 80% of `dayRequests`, apart from the Groq totals), and a call that failed with a status is recorded at 0 tokens; the eval's synthetic injection call carries Google's placeholder signature on a smart run. Smart fingerprint re-pinned (`params`, `GEMINI_WIRE_VERSION`); the Groq one is unchanged |
 | 2026-10-08 | **Smart model 3.5 Flash-Lite; a TimeSpec without its qualifiers** (§6.19). `SMART_MODELS` names `gemini-3.5-flash-lite` (the user's choice): 3.5 Flash's free tier stopped after ~25 requests a day in the agent eval; limits 15/min, 500/day are unmeasured placeholders. In that eval 6 of 19 Gemini tool calls were rejected for a TimeSpec `{hour, minute}` with no `meridiem`/`part_of_day`. Agent calls now get 'unspecified' for a missing key only where it cannot move the time (hour 13–23; a sent am/pm for `part_of_day`; or no am/pm or part-of-day word anywhere in the turn's messages), never for a missing time, hour or minute; otherwise strict Zod rejects as before. A filled time resolves as an explicit 'unspecified'. On Groq this only turns a former rejection into the same resolution an explicit 'unspecified' gets. Groq fingerprint unchanged; the smart fingerprint does not hash the model id, so it is unchanged too |
+| 2026-10-11 | **Smart conversations: private tools offered, own-input writes never ask, smart note s2** (§6.19, §7.1, §13). (1) `private` tools (notes, lists, the portfolio, facts) are offered in a smart conversation as in a local one — `lists.add` had not been, so "add milk to the shopping list" went to `tasks.add` (li-add-001, tk-add-001 in the 3.5 Flash-Lite recording); their replies still never return to a model and the history keeps `[פתק]` (`memory.*`: `[מידע אישי]`, facts never sent, a tainted save confirms first per §6.26). (2) A required `consent` rule per consent-source tool (`always` | `exempt-own-input`; the compiler refuses one missing, or set on a public or private tool). Exempt — no consent card, reply kept in the history — only when every reply path holds nothing but the call's arguments, computed dates and times and fixed strings, read from each tool's resolve, preview, execute and render code: `reminders.create`, `reminders.repeat`, `reminders.at_rest`, `reminders.scheduled_read`, `calendar.create_event` (no conflict check), `expenses.add`. Borderline and kept `always`: `tasks.add` (shows the matched list's title), `expenses.export` (row count), `calls.place` (whether a contact exists), `message.compose` (contact matched on the phone, unseen by the server). A smart model's writes still confirm. (3) `SMART_NOTE` s2: a TimeSpec has all four keys, minute 0 for a bare hour, the hour as said. Re-scoring the Gemini recordings with today's validation: 4 of the remaining 5 rejections were `time.minute` missing, 1 was broken arguments (left rejected); a missing minute is still never filled in code. `SMART_CATALOG_POLICY` …/3; the Groq fingerprint (`ec8897b5e26d0c57`) and every local turn are unchanged. Evals owed (§13) |
 ---
 
 ## 15. Sources (checked 2026-09-24)

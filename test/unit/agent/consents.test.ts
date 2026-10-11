@@ -12,6 +12,7 @@ import { Repository } from '../../../src/core/repo.js';
 import { MIGRATIONS } from '../../../src/platform/migrations.js';
 import {
   consentButtonId,
+  consentNeededFor,
   consentSourceOf,
   ConversationConsents,
   isConsentSource,
@@ -19,7 +20,7 @@ import {
   parseConsentButton,
   revokeButtonId,
 } from '../../../src/agent/consents.js';
-import { CONSENT_SOURCES, dataSourceOf, TOOL_NAMES } from '../../../src/tools/registry.js';
+import { CONSENT_SOURCES, consentRuleOf, dataSourceOf, TOOL_NAMES } from '../../../src/tools/registry.js';
 import { TestSqlDriver } from '../../integration/sqlite-driver.js';
 
 const NOW = Date.parse('2026-10-08T09:00:00Z');
@@ -45,6 +46,20 @@ describe('consent sources', () => {
     for (const name of TOOL_NAMES) {
       const source = dataSourceOf(name);
       expect(consentSourceOf(name), name).toBe(source === 'public' || source === 'private' ? null : source);
+    }
+  });
+
+  it('asks for a source before a tool runs only when its rule is always (2026-10-11)', () => {
+    expect(consentNeededFor('reminders.list')).toBe('reminders');
+    expect(consentNeededFor('reminders.cancel')).toBe('reminders');
+    expect(consentNeededFor('tasks.add')).toBe('tasks');
+    expect(consentNeededFor('reminders.create')).toBeNull();
+    expect(consentNeededFor('calendar.create_event')).toBeNull();
+    expect(consentNeededFor('expenses.add')).toBeNull();
+    expect(consentNeededFor('calc.compute')).toBeNull();
+    expect(consentNeededFor('lists.add')).toBeNull();
+    for (const name of TOOL_NAMES) {
+      expect(consentNeededFor(name), name).toBe(consentRuleOf(name) === 'always' ? consentSourceOf(name) : null);
     }
   });
 

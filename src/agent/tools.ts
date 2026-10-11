@@ -13,8 +13,9 @@
 import type { ZodTypeAny } from 'zod';
 import { timeSpecSchema } from '../nlu/slot-schemas.js';
 import { timeWordsNamed } from '../time/hebrew-lexicon.js';
-import { dataSourceOf, REGISTRY, TOOL_NAMES } from '../tools/registry.js';
+import { REGISTRY, TOOL_NAMES } from '../tools/registry.js';
 import type { ConsentSource, ToolName } from '../tools/registry.js';
+import { consentNeededFor } from './consents.js';
 import type { AgentMessage, WireTool } from './provider.js';
 
 type Def = { typeName?: string; innerType?: ZodTypeAny; type?: ZodTypeAny; values?: readonly string[]; checks?: readonly { kind: string }[] };
@@ -180,23 +181,30 @@ export function agentToolNames(options: OfferOptions = { cards: false }): ToolNa
 
 /**
  * What a smart conversation may be offered, on any model (smart conversations,
- * 2026-10-08), of what the turn would be offered anyway: the public tools, the
- * tools of the sources the conversation allowed (`granted`), and — when the
- * turn may ask (`ask`: the conversation's own typed words) — the tools of
- * every other consent source, whose call pauses the turn for the user's
- * consent instead of running (slice 5). Never a private tool: notes, lists,
- * the portfolio and facts reach no smart conversation. Consent belongs to the
- * conversation, not the model, so qwen and the read-only try in a smart
- * conversation get the same set. Without options: public only.
+ * 2026-10-08), of what the turn would be offered anyway:
+ *
+ *   - the tools that never ask (2026-10-11): `public` ones; `private` ones
+ *     (notes, lists, the portfolio, facts), whose replies never return to a
+ *     model and are kept in the history as placeholders; and the writes whose
+ *     every reply only echoes their own call (`consent: 'exempt-own-input'`);
+ *   - the tools of the sources the conversation allowed (`granted`);
+ *   - when the turn may ask (`ask`: the conversation's own typed words), the
+ *     tools of every other consent source, whose call pauses the turn for the
+ *     user's consent instead of running (slice 5).
+ *
+ * So a turn that may ask is offered exactly what a local turn would be, and a
+ * voice note, shared text or the read-only try what a local one would be less
+ * the sources not allowed. Consent belongs to the conversation, not the model,
+ * so qwen and the read-only try in a smart conversation get the same set.
+ * Without options: only the tools that never ask.
  */
 export function smartOfferedTools(
   offered: readonly ToolName[],
   consent: { granted: readonly ConsentSource[]; ask: boolean } = { granted: [], ask: false },
 ): ToolName[] {
   return offered.filter((name) => {
-    const source = dataSourceOf(name);
-    if (source === 'public') return true;
-    if (source === 'private') return false;
+    const source = consentNeededFor(name);
+    if (source === null) return true;
     return consent.ask || consent.granted.includes(source);
   });
 }

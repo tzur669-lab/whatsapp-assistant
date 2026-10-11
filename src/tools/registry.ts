@@ -184,16 +184,52 @@ export type ConsentSource = (typeof CONSENT_SOURCES)[number];
  */
 export type DataSource = ConsentSource | 'public' | 'private';
 
-export type ToolSpec = {
+/**
+ * Whether a smart conversation asks the user before a tool of a consent source
+ * runs (2026-10-11).
+ *
+ * - `always`: every call waits for the consent card, unless the conversation or
+ *   the turn already allowed the source.
+ * - `exempt-own-input`: no card. Allowed only when EVERY reply the tool can
+ *   make — the success text, a question, a list of choices, the confirmation
+ *   card, the Undo offer, a refusal or an error — holds nothing but the call's
+ *   own arguments, dates and times code computed, and fixed strings: no record,
+ *   title, name or count it found in the source. Proved by reading the tool's
+ *   `resolve`, `preview`, `execute` and render code; unsure is `always`.
+ *
+ * A model's arguments hold only what that model was already sent, so echoing
+ * them shows it nothing new. Reads, and every tool that finds an existing
+ * target, are `always`.
+ */
+export type ConsentRule = 'always' | 'exempt-own-input';
+
+/**
+ * The data the tool's replies may carry, and for a consent source its consent
+ * rule. Both are required where they apply: a consent-source tool without
+ * `consent` does not compile, and neither does a public or private one with it.
+ */
+type SourceSpec =
+  | {
+      /**
+       * The data the tool's replies may carry (2026-10-08): the reply, the
+       * resolve outcome, the confirmation card, a list of candidates, the Undo
+       * text. Not whether it reads or writes — `reminders.leave` writes a
+       * reminder but shows an event's title, so it is `calendar`. Required: a
+       * new tool without one does not compile.
+       */
+      dataSource: ConsentSource;
+      /** Whether a smart conversation asks first (`ConsentRule`). Required with a consent source. */
+      consent: ConsentRule;
+    }
+  | {
+      /** Public data or the user's words in this message, or what no model may see (see above). */
+      dataSource: 'public' | 'private';
+      /** Never set: there is nothing to consent to. */
+      consent?: never;
+    };
+
+export type ToolSpec = SourceSpec & {
   name: ToolName;
-  /**
-   * The data the tool's replies may carry (2026-10-08): the reply, the resolve
-   * outcome, the confirmation card, a list of candidates, the Undo text. Not
-   * whether it reads or writes — `reminders.leave` writes a reminder but shows
-   * an event's title, so it is `calendar`. Required: a new tool without one does
-   * not compile.
-   */
-  dataSource: DataSource;
   /**
    * Shown to the LLM. Intent only — never data, ids, or examples of the user's
    * content. Kept short on purpose: the whole prompt competes for the free
@@ -248,6 +284,9 @@ export const REGISTRY: Readonly<Record<ToolName, ToolSpec>> = {
   'reminders.create': {
     name: 'reminders.create',
     dataSource: 'reminders',
+    // Exempt (2026-10-11): its replies hold the call's text and the time code
+    // computed — set, the time question, the confirmation — never a stored one.
+    consent: 'exempt-own-input',
     llmDescription: 'Remind the user at a stated time.',
     draftSchema: remindersCreateSlots,
     tier: 1,
@@ -258,6 +297,7 @@ export const REGISTRY: Readonly<Record<ToolName, ToolSpec>> = {
   'reminders.list': {
     name: 'reminders.list',
     dataSource: 'reminders',
+    consent: 'always',
     llmDescription: 'List upcoming reminders.',
     draftSchema: remindersListSlots,
     tier: 0,
@@ -268,6 +308,7 @@ export const REGISTRY: Readonly<Record<ToolName, ToolSpec>> = {
   'reminders.cancel': {
     name: 'reminders.cancel',
     dataSource: 'reminders',
+    consent: 'always',
     llmDescription: 'Cancel a reminder the user describes.',
     draftSchema: remindersCancelSlots,
     tier: 2,
@@ -278,6 +319,8 @@ export const REGISTRY: Readonly<Record<ToolName, ToolSpec>> = {
   'reminders.repeat': {
     name: 'reminders.repeat',
     dataSource: 'reminders',
+    // Exempt (2026-10-11): the call's text, the rule and its first time, computed.
+    consent: 'exempt-own-input',
     llmDescription:
       'A repeating reminder at a stated time: every day, on given weekdays (0=Sunday), or a day of the month.',
     draftSchema: remindersRepeatSlots,
@@ -291,6 +334,7 @@ export const REGISTRY: Readonly<Record<ToolName, ToolSpec>> = {
   'reminders.move': {
     name: 'reminders.move',
     dataSource: 'reminders',
+    consent: 'always',
     llmDescription: 'Move a pending reminder the user describes to a new day or time.',
     draftSchema: remindersMoveSlots,
     // Found by description, so it is confirmed first, like a cancel.
@@ -302,6 +346,9 @@ export const REGISTRY: Readonly<Record<ToolName, ToolSpec>> = {
   'reminders.at_rest': {
     name: 'reminders.at_rest',
     dataSource: 'reminders',
+    // Exempt (2026-10-11): the call's text and the computed Shabbat or chag time;
+    // the held note is a fixed sentence.
+    consent: 'exempt-own-input',
     llmDescription:
       'A reminder relative to Shabbat or a chag: minutes before it starts (candle lighting) or after it ends.',
     draftSchema: remindersAtRestSlots,
@@ -313,6 +360,8 @@ export const REGISTRY: Readonly<Record<ToolName, ToolSpec>> = {
   'reminders.scheduled_read': {
     name: 'reminders.scheduled_read',
     dataSource: 'reminders',
+    // Exempt (2026-10-11): code's label for the topic, the rule and its first time.
+    consent: 'exempt-own-input',
     llmDescription:
       'Send a lookup on a schedule: weather, day times, UV and air, exchange rates, news or the Hebrew calendar, every day, on given weekdays (0=Sunday), or a day of the month, at a stated time.',
     draftSchema: remindersScheduledReadSlots,
@@ -327,6 +376,7 @@ export const REGISTRY: Readonly<Record<ToolName, ToolSpec>> = {
     name: 'reminders.leave',
     // It reads the event: its title is in the reply and the Undo (2026-10-08).
     dataSource: 'calendar',
+    consent: 'always',
     llmDescription:
       'A reminder to leave for a calendar event: the event by title words (event) or the next one (next_event), and the travel time in minutes if the user said it.',
     draftSchema: remindersLeaveSlots,
@@ -340,6 +390,7 @@ export const REGISTRY: Readonly<Record<ToolName, ToolSpec>> = {
   'calendar.list_events': {
     name: 'calendar.list_events',
     dataSource: 'calendar',
+    consent: 'always',
     llmDescription: 'List calendar events for a day or range.',
     draftSchema: calendarListEventsSlots,
     tier: 0,
@@ -350,6 +401,9 @@ export const REGISTRY: Readonly<Record<ToolName, ToolSpec>> = {
   'calendar.create_event': {
     name: 'calendar.create_event',
     dataSource: 'calendar',
+    // Exempt (2026-10-11): the call's title and the computed times — the reply
+    // echoes the event this call created. No other event is read: no conflict check.
+    consent: 'exempt-own-input',
     llmDescription: 'Schedule a meeting, appointment or call.',
     draftSchema: calendarCreateEventSlots,
     tier: 1,
@@ -360,6 +414,7 @@ export const REGISTRY: Readonly<Record<ToolName, ToolSpec>> = {
   'calendar.move_event': {
     name: 'calendar.move_event',
     dataSource: 'calendar',
+    consent: 'always',
     llmDescription: 'Move an existing event to a new time.',
     draftSchema: calendarMoveEventSlots,
     tier: 2,
@@ -370,6 +425,7 @@ export const REGISTRY: Readonly<Record<ToolName, ToolSpec>> = {
   'calendar.delete_event': {
     name: 'calendar.delete_event',
     dataSource: 'calendar',
+    consent: 'always',
     llmDescription: 'Delete one event the user describes.',
     draftSchema: calendarDeleteEventSlots,
     tier: 2,
@@ -381,6 +437,8 @@ export const REGISTRY: Readonly<Record<ToolName, ToolSpec>> = {
     name: 'calls.place',
     // The phone matches a contact; its answer says whether one was found.
     dataSource: 'contacts',
+    // Not exempt: the phone's answer says whether a contact by that name exists.
+    consent: 'always',
     llmDescription: 'Phone a contact the user names.',
     draftSchema: callsPlaceSlots,
     // Irreversible and external-facing. The tap on the phone, which shows the
@@ -419,6 +477,7 @@ export const REGISTRY: Readonly<Record<ToolName, ToolSpec>> = {
     name: 'nav.go',
     // A destination may be an event's location (`source: 'event'`).
     dataSource: 'calendar',
+    consent: 'always',
     llmDescription:
       "Navigate with Waze or Google Maps to a place (destination), a contact's address (contact), or a calendar event's location (event, or next_event for the next one).",
     draftSchema: navGoSlots,
@@ -473,6 +532,9 @@ export const REGISTRY: Readonly<Record<ToolName, ToolSpec>> = {
     name: 'message.compose',
     // The phone matches a contact, as for a call.
     dataSource: 'contacts',
+    // Not exempt: its card shows only the call's words, but the phone matches the
+    // contact after the claim, out of the server's sight. Unsure is always.
+    consent: 'always',
     llmDescription: 'Write an SMS or WhatsApp message to a contact; the user sends it.',
     draftSchema: messageComposeSlots,
     // External-facing. The card shows the whole text; the phone resolves the
@@ -486,6 +548,7 @@ export const REGISTRY: Readonly<Record<ToolName, ToolSpec>> = {
   'phone.contacts': {
     name: 'phone.contacts',
     dataSource: 'contacts',
+    consent: 'always',
     llmDescription: "Look up names in the phone's contacts (names only, no numbers).",
     draftSchema: phoneContactsSlots,
     tier: 0,
@@ -497,6 +560,7 @@ export const REGISTRY: Readonly<Record<ToolName, ToolSpec>> = {
   'phone.notifications': {
     name: 'phone.notifications',
     dataSource: 'notifications',
+    consent: 'always',
     llmDescription:
       "Read notifications that arrived on the phone from other apps, optionally from one app. Not the reminders the user set: those are reminders.list.",
     draftSchema: phoneNotificationsSlots,
@@ -509,6 +573,7 @@ export const REGISTRY: Readonly<Record<ToolName, ToolSpec>> = {
   'phone.sms': {
     name: 'phone.sms',
     dataSource: 'sms',
+    consent: 'always',
     llmDescription: 'Read recent SMS messages on the phone, optionally from one sender.',
     draftSchema: phoneSmsSlots,
     tier: 0,
@@ -534,6 +599,7 @@ export const REGISTRY: Readonly<Record<ToolName, ToolSpec>> = {
   'tasks.list': {
     name: 'tasks.list',
     dataSource: 'tasks',
+    consent: 'always',
     llmDescription: "Show the user's Google Tasks lists (shopping, to-do), or one list.",
     draftSchema: tasksListSlots,
     tier: 0,
@@ -544,6 +610,9 @@ export const REGISTRY: Readonly<Record<ToolName, ToolSpec>> = {
   'tasks.add': {
     name: 'tasks.add',
     dataSource: 'tasks',
+    // Not exempt: the reply names the Google Tasks list it matched, or the
+    // first one when none was named — a title from the source.
+    consent: 'always',
     llmDescription: 'Add an item to a Google Tasks list, only when the user says tasks (משימות). A named list like shopping is lists.add.',
     draftSchema: tasksAddSlots,
     // Reversible: the Undo deletes it.
@@ -555,6 +624,7 @@ export const REGISTRY: Readonly<Record<ToolName, ToolSpec>> = {
   'mail.search': {
     name: 'mail.search',
     dataSource: 'mail',
+    consent: 'always',
     llmDescription:
       "Search or read the user's Gmail, newest first: by sender, topic, unread. days: how far back (default 30, up to 365). count: how many (1 for 'my last mail', default 6, up to 10). full=true reads the newest match.",
     draftSchema: mailSearchSlots,
@@ -567,6 +637,7 @@ export const REGISTRY: Readonly<Record<ToolName, ToolSpec>> = {
   'mail.draft': {
     name: 'mail.draft',
     dataSource: 'mail',
+    consent: 'always',
     llmDescription: 'Write a Gmail draft (a reply to a recent mail, or new without a recipient). Never sent; the user sends it.',
     draftSchema: mailDraftSlots,
     // Nothing leaves: a draft waits in Gmail. Still confirmed, with the whole
@@ -616,6 +687,9 @@ export const REGISTRY: Readonly<Record<ToolName, ToolSpec>> = {
   'expenses.add': {
     name: 'expenses.add',
     dataSource: 'expenses',
+    // Exempt (2026-10-11): the call's amount, category and words, and the day
+    // code computed. The "list is full" refusal is a fixed sentence.
+    consent: 'exempt-own-input',
     llmDescription:
       'Record money the user spent, in shekels. amount: the number. category: the closest one (petrol is fuel, a supermarket is groceries). description: a few words, if said. The day only if said: days_ago (1 = yesterday), or weekday, or on_date.',
     draftSchema: expensesAddSlots,
@@ -627,6 +701,7 @@ export const REGISTRY: Readonly<Record<ToolName, ToolSpec>> = {
   'expenses.summary': {
     name: 'expenses.summary',
     dataSource: 'expenses',
+    consent: 'always',
     llmDescription: 'How much the user spent in a period; category when the user names what it was on (petrol is fuel). The answer is shown to the user directly.',
     draftSchema: expensesSummarySlots,
     // Sums are numbers the model-bound scrub would blank; code's text is the answer.
@@ -639,6 +714,8 @@ export const REGISTRY: Readonly<Record<ToolName, ToolSpec>> = {
   'expenses.export': {
     name: 'expenses.export',
     dataSource: 'expenses',
+    // Not exempt: the card counts the stored expenses.
+    consent: 'always',
     llmDescription: 'Export the user\'s expenses to a spreadsheet file (Excel) on the phone.',
     draftSchema: expensesExportSlots,
     // A card: the file is saved on the user's own phone, from the signed claim.
@@ -653,6 +730,7 @@ export const REGISTRY: Readonly<Record<ToolName, ToolSpec>> = {
   'drive.search': {
     name: 'drive.search',
     dataSource: 'drive',
+    consent: 'always',
     llmDescription: "Find files in the user's Google Drive by name, kind or how recently changed (names and dates only).",
     draftSchema: driveSearchSlots,
     // Read only, names never contents. A shared file's name is someone else's
@@ -665,6 +743,7 @@ export const REGISTRY: Readonly<Record<ToolName, ToolSpec>> = {
   'tasks.complete': {
     name: 'tasks.complete',
     dataSource: 'tasks',
+    consent: 'always',
     llmDescription: 'Mark an item on a Google Tasks list as done.',
     draftSchema: tasksCompleteSlots,
     // Reversible: the Undo opens it again.
@@ -688,6 +767,7 @@ export const REGISTRY: Readonly<Record<ToolName, ToolSpec>> = {
   'birthdays.upcoming': {
     name: 'birthdays.upcoming',
     dataSource: 'birthdays',
+    consent: 'always',
     llmDescription:
       "Upcoming birthdays (the user's list and Google Contacts), or one person's birthday by name. days: how far ahead (default 30). The answer is shown to the user directly.",
     draftSchema: birthdaysUpcomingSlots,
@@ -702,6 +782,7 @@ export const REGISTRY: Readonly<Record<ToolName, ToolSpec>> = {
   'mail.bills': {
     name: 'mail.bills',
     dataSource: 'mail',
+    consent: 'always',
     llmDescription:
       'Bills and invoices to pay, found in Gmail, with the amount and the due date when the mail says them. days: how far back (default 45). The answer is shown to the user directly.',
     draftSchema: mailBillsSlots,
@@ -813,6 +894,7 @@ export const REGISTRY: Readonly<Record<ToolName, ToolSpec>> = {
   'phone.calls': {
     name: 'phone.calls',
     dataSource: 'calls',
+    consent: 'always',
     llmDescription: "Read the phone's recent calls (names, no numbers): who called, missed calls, or calls with one person.",
     draftSchema: phoneCallsSlots,
     tier: 0,
@@ -824,6 +906,7 @@ export const REGISTRY: Readonly<Record<ToolName, ToolSpec>> = {
   'calendar.free_time': {
     name: 'calendar.free_time',
     dataSource: 'calendar',
+    consent: 'always',
     llmDescription: 'Find free time in the calendar on a day or range. minutes: the shortest gap wanted, if said.',
     draftSchema: calendarFreeTimeSlots,
     // A read. Times only, never titles, so it does not taint the turn.
@@ -867,6 +950,11 @@ export function tierOf(name: ToolName): Tier {
 
 export function dataSourceOf(name: ToolName): DataSource {
   return REGISTRY[name].dataSource;
+}
+
+/** A consent-source tool's rule (2026-10-11); null for a public or private tool. */
+export function consentRuleOf(name: ToolName): ConsentRule | null {
+  return REGISTRY[name].consent ?? null;
 }
 
 export function scopesOf(name: ToolName): GoogleScope[] {

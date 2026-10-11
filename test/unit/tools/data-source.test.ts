@@ -5,7 +5,7 @@
  * not by whether the tool reads or writes.
  */
 import { describe, expect, it } from 'vitest';
-import { dataSourceOf, REGISTRY, TOOL_NAMES } from '../../../src/tools/registry.js';
+import { consentRuleOf, dataSourceOf, REGISTRY, TOOL_NAMES } from '../../../src/tools/registry.js';
 import type { DataSource, ToolName, ToolSpec } from '../../../src/tools/registry.js';
 
 const SOURCES: readonly DataSource[] = [
@@ -92,5 +92,66 @@ describe('dataSource', () => {
     for (const name of TOOL_NAMES) {
       if (REGISTRY[name].private) expect(dataSourceOf(name), name).toBe('private');
     }
+  });
+});
+
+/**
+ * The consent rule (2026-10-11): whether a smart conversation asks before a
+ * tool of a consent source runs. Exempt only when every reply holds nothing but
+ * the call's own arguments, computed dates and times, and fixed strings —
+ * proved per tool by reading its resolve, preview, execute and render code.
+ */
+describe('consent', () => {
+  /** Pinned: a tool joins this list only with that proof, in review. */
+  const EXEMPT: readonly ToolName[] = [
+    'reminders.create',
+    'reminders.repeat',
+    'reminders.at_rest',
+    'reminders.scheduled_read',
+    'calendar.create_event',
+    'expenses.add',
+  ];
+
+  it('every consent-source tool has a rule; a public or private tool has none', () => {
+    for (const name of TOOL_NAMES) {
+      const source = dataSourceOf(name);
+      if (source === 'public' || source === 'private') expect(consentRuleOf(name), name).toBeNull();
+      else expect(['always', 'exempt-own-input'], name).toContain(consentRuleOf(name));
+    }
+  });
+
+  it('exempts exactly the writes whose replies echo only their own call', () => {
+    expect(TOOL_NAMES.filter((name) => consentRuleOf(name) === 'exempt-own-input').sort()).toEqual([...EXEMPT].sort());
+  });
+
+  it('never exempts a read, a phone read or action, or a tool confirmed off the chat', () => {
+    for (const name of EXEMPT) {
+      const spec = REGISTRY[name];
+      expect(spec.tier, name).toBeGreaterThanOrEqual(1);
+      expect(spec.phoneRead, name).toBeUndefined();
+      expect(spec.confirmation, name).toBeUndefined();
+      expect(spec.terminal, name).toBeUndefined();
+    }
+  });
+
+  it('keeps asking for the borderline writes that show something of the source', () => {
+    // tasks.add names the list it matched; expenses.export counts the rows;
+    // calls.place's answer says whether a contact exists; message.compose's
+    // contact is matched on the phone; reminders.leave and nav.go read an event.
+    for (const name of ['tasks.add', 'expenses.export', 'calls.place', 'message.compose', 'reminders.leave', 'nav.go'] as const) {
+      expect(consentRuleOf(name), name).toBe('always');
+    }
+  });
+
+  it('a consent-source spec without a rule does not compile, nor a public one with a rule', () => {
+    const spec = REGISTRY['reminders.create'];
+    const { consent: _dropped, ...rest } = spec;
+    // @ts-expect-error -- `consent` is required with a consent source.
+    const missing: ToolSpec = rest;
+    expect(missing.name).toBe('reminders.create');
+
+    // @ts-expect-error -- a public tool has nothing to consent to.
+    const extra: ToolSpec = { ...REGISTRY['calc.compute'], consent: 'always' };
+    expect(extra.name).toBe('calc.compute');
   });
 });

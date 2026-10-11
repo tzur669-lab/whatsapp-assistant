@@ -32,8 +32,10 @@
  *
  * A model in `SMART_MODELS` (smart conversations, 2026-10-08) runs as a smart
  * turn: a Gemini provider with `GEMINI_API_KEY` from the same environment, the
- * smart note in the prompt, the public catalog with no selection, and the
- * smart fingerprint in the report. `--read-only` does not apply to it.
+ * smart note in the prompt, the smart catalog of a typed turn that may ask (since
+ * 2026-10-11 the whole local catalog, private tools included) with no
+ * selection, and the smart fingerprint in the report. `--read-only` does not
+ * apply to it.
  */
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
@@ -140,7 +142,7 @@ let smart = false;
 
 function offered() {
   const grants = { gmail: true, tasks: true, drive: true };
-  // A typed smart turn that may ask for consent: public and every consent source's tools (slice 5).
+  // A typed smart turn that may ask for consent: everything a local turn gets (slice 5; private tools since 2026-10-11).
   if (smart) return smartOfferedTools(agentToolNames({ cards: true, fileCards: true, phoneReads: true, grants }), { granted: [], ask: true });
   return readOnly
     ? agentToolNames({ cards: false, phoneReads: false, grants, readOnly: true })

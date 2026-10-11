@@ -15,7 +15,9 @@ Android app; a WhatsApp channel exists but is frozen.
 narrowing of the tools and more room for history. On that tier Google may train on what it is sent,
 so in a smart chat your data reaches the model only after you allow its source
 (calendar, mail, reminders…) on a consent card; anything else stays out of the
-model and its history. `/consents` lists and revokes. Needs `GEMINI_API_KEY`.
+model and its history. A write that only repeats your own words — a new
+reminder, event or expense — needs no card, and notes and lists work there too
+without ever reaching the model. `/consents` lists and revokes. Needs `GEMINI_API_KEY`.
 
 > **Setting it up from scratch?** Follow [SETUP.md](SETUP.md): accounts,
 > the Groq API key, models, secrets, deploy, the app, and working with an AI.

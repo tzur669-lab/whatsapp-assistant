@@ -7,9 +7,11 @@
  * conversation the server never recorded, shared text, a voice note, a missing
  * key, the read-only try); a smart one asks Gemini first and qwen when Gemini
  * has no room; without a consent store (these services have none) a smart
- * conversation is offered public tools only, on every model; and its history
- * keeps placeholders for anything that is not public and for someone else's
- * words. The consent gate itself (slice 5) is `consent-gate.test.ts`.
+ * conversation is offered only the tools that never ask — public, private and
+ * own-input writes (2026-10-11) — on every model; and its history keeps
+ * placeholders for anything a source did not allow and for someone else's
+ * words. The consent gate itself (slice 5) is `consent-gate.test.ts`; private
+ * tools and own-input writes in smart conversations are `smart-own-input.test.ts`.
  */
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { Repository } from '../../../src/core/repo.js';
@@ -30,7 +32,7 @@ import { SMART_NOTE, SYSTEM_PROMPT } from '../../../src/agent/prompt.js';
 import { agentToolNames, smartOfferedTools, toWireName } from '../../../src/agent/tools.js';
 import { runAgentTurn } from '../../../src/agent/loop.js';
 import type { SuspendedState } from '../../../src/agent/loop.js';
-import { dataSourceOf, TOOL_NAMES } from '../../../src/tools/registry.js';
+import { consentRuleOf, dataSourceOf, TOOL_NAMES } from '../../../src/tools/registry.js';
 import type { ToolName } from '../../../src/tools/registry.js';
 import { FactStore } from '../../../src/tools/fact-store.js';
 import { he } from '../../../src/render/he.js';
@@ -52,34 +54,52 @@ const SMART = 'conv-smart-0001';
 const LOCAL = 'conv-local-0001';
 const ALL_CAPS = ['cards', 'file', 'device_query'];
 
-const PUBLIC_TOOLS = TOOL_NAMES.filter((name) => dataSourceOf(name) === 'public');
-const PUBLIC_WIRE = new Set(PUBLIC_TOOLS.map(toWireName));
+/** What a smart conversation runs without asking (2026-10-11): public, private, and writes that only echo their call. */
+const NO_CONSENT_TOOLS = TOOL_NAMES.filter((name) => {
+  const source = dataSourceOf(name);
+  return source === 'public' || source === 'private' || consentRuleOf(name) === 'exempt-own-input';
+});
+const NO_CONSENT_WIRE = new Set(NO_CONSENT_TOOLS.map(toWireName));
 
 describe('smartOfferedTools', () => {
-  it('keeps only the public tools of what was offered, in order', () => {
-    const offered = agentToolNames({ cards: true, fileCards: true, phoneReads: true, grants: { gmail: true, tasks: true, drive: true } });
-    const smart = smartOfferedTools(offered);
-    expect(smart.length).toBeGreaterThan(0);
-    expect(smart.every((name) => dataSourceOf(name) === 'public')).toBe(true);
-    expect(smart).toEqual(offered.filter((name) => dataSourceOf(name) === 'public'));
-    for (const name of ['calendar.list_events', 'reminders.create', 'notes.save', 'phone.sms', 'expenses.add'] as ToolName[]) {
-      expect(smart).not.toContain(name);
+  const FULL_OFFER = agentToolNames({ cards: true, fileCards: true, phoneReads: true, grants: { gmail: true, tasks: true, drive: true } });
+
+  it('keeps, of what was offered and in order, the tools that never ask: public, private and own-input writes (2026-10-11)', () => {
+    const smart = smartOfferedTools(FULL_OFFER);
+    expect(smart).toEqual(FULL_OFFER.filter((name) => NO_CONSENT_TOOLS.includes(name)));
+    // Private tools are offered: their replies never reach a model (2026-10-11).
+    for (const name of ['notes.save', 'notes.find', 'lists.add', 'lists.show', 'portfolio.show', 'memory.remember', 'memory.forget'] as ToolName[]) {
+      expect(smart, name).toContain(name);
+    }
+    // Writes that only echo their own call need no consent.
+    for (const name of ['reminders.create', 'reminders.repeat', 'calendar.create_event', 'expenses.add'] as ToolName[]) {
+      expect(smart, name).toContain(name);
+    }
+    for (const name of ['calendar.list_events', 'reminders.list', 'reminders.cancel', 'tasks.add', 'phone.sms', 'expenses.export'] as ToolName[]) {
+      expect(smart, name).not.toContain(name);
     }
   });
 
-  it('adds the granted sources, and every consent source when the turn may ask; never a private tool (slice 5)', () => {
-    const offered = agentToolNames({ cards: true, fileCards: true, phoneReads: true, grants: { gmail: true, tasks: true, drive: true } });
-    const granted = smartOfferedTools(offered, { granted: ['calendar'], ask: false });
+  it('adds the granted sources, and every consent source when the turn may ask (slice 5)', () => {
+    const granted = smartOfferedTools(FULL_OFFER, { granted: ['calendar'], ask: false });
     expect(granted).toContain('calendar.list_events');
     expect(granted).toContain('nav.go');
     expect(granted).not.toContain('reminders.list');
-    expect(granted.every((name) => ['public', 'calendar'].includes(dataSourceOf(name)))).toBe(true);
+    expect(granted.every((name) => NO_CONSENT_TOOLS.includes(name) || dataSourceOf(name) === 'calendar')).toBe(true);
 
-    const asking = smartOfferedTools(offered, { granted: [], ask: true });
-    expect(asking).toEqual(offered.filter((name) => dataSourceOf(name) !== 'private'));
-    for (const name of ['notes.find', 'lists.show', 'portfolio.show', 'memory.remember'] as ToolName[]) {
-      expect(asking).not.toContain(name);
-    }
+    // A turn that may ask is offered everything a local turn would be.
+    expect(smartOfferedTools(FULL_OFFER, { granted: [], ask: true })).toEqual(FULL_OFFER);
+  });
+
+  it('mirrors a local turn on the read-only try and on a voice note: private reads are offered there too', () => {
+    const readOnly = agentToolNames({ cards: false, grants: { gmail: true, tasks: true, drive: true }, readOnly: true });
+    const smartReadOnly = smartOfferedTools(readOnly);
+    for (const name of ['notes.find', 'lists.show', 'portfolio.show', 'calc.compute'] as ToolName[]) expect(smartReadOnly, name).toContain(name);
+    expect(smartReadOnly.every((name) => readOnly.includes(name))).toBe(true);
+
+    const voice = agentToolNames({ cards: true, fileCards: true, phoneReads: false });
+    const smartVoice = smartOfferedTools(voice);
+    for (const name of ['lists.add', 'notes.save', 'reminders.create', 'alarm.set'] as ToolName[]) expect(smartVoice, name).toContain(name);
   });
 
   it('never adds a tool that was not offered', () => {
@@ -239,7 +259,7 @@ describe('smart conversations', () => {
       expect(q.calls).toHaveLength(1);
     });
 
-    it('for text shared into a smart conversation: local models only, public tools only', async () => {
+    it('for text shared into a smart conversation: local models only, and only tools that never ask', async () => {
       // The conversation's first message records it smart.
       await handleInbound(smartText('שלום'), deps({ qwen: qwen([]), gemini: gemini([{ text: 'היי' }]) }));
       const q2 = qwen([{ text: 'סיכום' }]);
@@ -247,7 +267,7 @@ describe('smart conversations', () => {
       await handleInbound(smartText('תסכם לי את זה', true), deps({ qwen: q2, gemini: g2 }));
       expect(g2.calls).toHaveLength(0);
       expect(q2.calls).toHaveLength(1);
-      expect(offeredNames(q2).every((name) => PUBLIC_WIRE.has(name))).toBe(true);
+      expect(offeredNames(q2).every((name) => NO_CONSENT_WIRE.has(name))).toBe(true);
     });
 
     it('without a Gemini key: local models, and the reply says smart mode is off', async () => {
@@ -256,8 +276,8 @@ describe('smart conversations', () => {
       expect(out.action).toBe('reply');
       expect(out.action === 'reply' && out.text).toBe(`${he.smartUnavailable('he')}\n\nמקומי`);
       expect(q.calls).toHaveLength(1);
-      // Still a smart conversation: public tools, no facts.
-      expect(offeredNames(q).every((name) => PUBLIC_WIRE.has(name))).toBe(true);
+      // Still a smart conversation: only tools that never ask, no facts.
+      expect(offeredNames(q).every((name) => NO_CONSENT_WIRE.has(name))).toBe(true);
       expect(seenByModel(q)).not.toContain('אני צמחוני');
     });
 
@@ -268,7 +288,7 @@ describe('smart conversations', () => {
       expect(out).toMatchObject({ action: 'reply', text: 'קריאה בלבד' });
       expect(g.calls).toHaveLength(1);
       expect(fb.calls).toHaveLength(1);
-      expect(offeredNames(fb).every((name) => PUBLIC_WIRE.has(name))).toBe(true);
+      expect(offeredNames(fb).every((name) => NO_CONSENT_WIRE.has(name))).toBe(true);
       expect(systemOf(fb)).not.toContain(SMART_NOTE);
     });
 
@@ -286,20 +306,21 @@ describe('smart conversations', () => {
   });
 
   describe('a smart turn', () => {
-    it('asks Gemini first, with the whole public catalog, the smart note, and no facts', async () => {
+    it('asks Gemini first, with every tool that never asks, the smart note, and no facts', async () => {
       const g = gemini([{ text: 'חכם' }]);
       const q = qwen([]);
       const out = await handleInbound(smartText('מה יש לי ביומן מחר?'), deps({ qwen: q, gemini: g }));
       expect(out).toMatchObject({ action: 'reply', text: 'חכם' });
       expect(q.calls).toHaveLength(0);
-      // No selection: every public tool the turn may have, nothing else.
-      expect(new Set(offeredNames(g))).toEqual(PUBLIC_WIRE);
+      // No selection: every tool the turn may have that needs no consent (no
+      // consent store here), private and own-input writes included (2026-10-11).
+      expect(new Set(offeredNames(g))).toEqual(NO_CONSENT_WIRE);
       expect(systemOf(g)).toBe(`${SYSTEM_PROMPT}\n${SMART_NOTE}`);
       expect(seenByModel(g)).not.toContain('אני צמחוני');
       expect(seenByModel(g)).not.toContain('About the user');
     });
 
-    it("falls to qwen when Gemini has no room: today's path, narrowed to public tools", async () => {
+    it("falls to qwen when Gemini has no room: today's path, narrowed to tools that never ask", async () => {
       exhaustGemini();
       const g = gemini([]);
       const q = qwen([{ text: 'מקומי' }]);
@@ -307,7 +328,7 @@ describe('smart conversations', () => {
       expect(out).toMatchObject({ action: 'reply', text: 'מקומי' });
       expect(g.calls).toHaveLength(0);
       expect(offeredNames(q).length).toBeGreaterThan(0);
-      expect(offeredNames(q).every((name) => PUBLIC_WIRE.has(name))).toBe(true);
+      expect(offeredNames(q).every((name) => NO_CONSENT_WIRE.has(name))).toBe(true);
       expect(systemOf(q)).toBe(SYSTEM_PROMPT);
       expect(seenByModel(q)).not.toContain('אני צמחוני');
     });

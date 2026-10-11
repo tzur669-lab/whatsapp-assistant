@@ -5,7 +5,7 @@ system is, where things live, and what breaks easily, then links out. It does
 **not** repeat the rules in `CLAUDE.md` (always loaded) or the spec in
 `PLAN.md` (read by section, never whole).
 
-_Last updated: 2026-10-08 · server at migration 0027 · agent prompt a10 + smart note s1 · parser prompt v6 · app 0.12.0 · smart model gemini-3.5-flash-lite_
+_Last updated: 2026-10-11 · server at migration 0027 · agent prompt a10 + smart note s2 · parser prompt v6 · app 0.12.0 · smart model gemini-3.5-flash-lite_
 
 ## 1. What this is
 
@@ -23,8 +23,10 @@ Contacts birthdays, phone actions and reads, public lookups, notes, lists, facts
 - **Smart conversations** (2026-10-08, PLAN §6.19): a conversation opened as
   smart tries **Gemini's free tier** first (`SMART_MODELS`, `gemini-3.5-flash-lite`,
   needs `GEMINI_API_KEY`), then qwen (also while Gemini rests after a 503/500). Gemini may train on what it gets, so the
-  user's data reaches it only for a source allowed on a consent card. Local
-  conversations are unchanged and never reach Gemini.
+  user's data reaches it only for a source allowed on a consent card (writes
+  that only echo the user's own call never ask, and private tools are offered
+  but never answer to a model; 2026-10-11). Local conversations are unchanged
+  and never reach Gemini.
 
 ## 2. The one idea
 
@@ -55,7 +57,8 @@ Full map with every module: [ARCHITECTURE.md](ARCHITECTURE.md).
 |---|---|
 | a tool (`src/tools/`) | Use the `add-tool` skill. Registry → one group in `agent/tool-groups.ts` → eval cases. Changing groups changes the eval fingerprint (`test/evals/fingerprint.ts`). New Google scope = stop and ask. |
 | a tool's `dataSource` (required in `registry.ts`) | A consent source, `public` or `private`, chosen by what its replies may carry (card, candidate list, Undo included), **not** by read/write: `reminders.leave` and `nav.go` are `calendar`. It decides the consent card, the smart catalog and the history placeholder. Unsure → stop and ask. |
-| smart conversations / the consent gate | The history gate is `settleAgentResult` only (the one `history.append`): never write history elsewhere. Never offer an unconsented source on a turn that cannot suspend — voice, shared text, the read-only try. `SMART_MODELS` never joins `MODELS`. Consent taps are code only (`beginConsent`, one transaction, before any await). |
+| a tool's `consent` rule (required with a consent source, 2026-10-11) | `always`, or `exempt-own-input` — no consent card, reply kept in the smart history — **only** if every reply path (success, question, choice list, confirm card, Undo, refusals, errors) holds nothing but the call's own arguments, code-computed dates/times and fixed strings. Prove it from `resolve`/`preview`/`execute`/render code and add it to the pinned list in `test/unit/tools/data-source.test.ts` and `smart-own-input.test.ts`; a reply that names a found record, list, contact or count stays `always`. Unsure → `always`. |
+| smart conversations / the consent gate | The history gate is `settleAgentResult` only (the one `history.append`): never write history elsewhere. Never offer an unconsented source on a turn that cannot suspend — voice, shared text, the read-only try. Private tools are offered there (their replies never reach a model or the history). `SMART_MODELS` never joins `MODELS`. Consent taps are code only (`beginConsent`, one transaction, before any await). |
 | `src/agent/budget.ts` `CHARS_PER_TOKEN` | Measured, not guessed: refresh `test/fixtures/token-calibration.json` from a real run (`scripts/calibration-sample.ts` overwrites it: merge, don't replace) and keep the 99% test green. Too low and messages that name no tool group fail the turn cap. |
 | `src/agent/` prompt, catalog, models | `pnpm eval:agent` (use `--filter`; a full run can burn a model's daily 200K tokens). `canWrite` in `models.ts` changes only after a human reads an eval report. |
 | `src/nlu/` | `pnpm eval`; "no invented slots" and "missing-slot detection" must stay 100%. The parser catalog is pinned to `PARSER_TOOL_NAMES` — new tools are agent-only. |
@@ -90,7 +93,9 @@ Network on the hotspot: `NODE_OPTIONS=--dns-result-order=ipv4first` for wrangler
   a staging deploy (approval), the human sets `GEMINI_API_KEY`
   (`wrangler secret put GEMINI_API_KEY --env staging`), and only then the
   0.12.0 APK — **server first**: an older server refuses the `mode` field.
-  Open items in PLAN §13 (limits probe, Gemini calibration, consent on writes).
+  2026-10-11: private tools offered, own-input writes never ask, smart note
+  s2 — its `--filter` evals are owed. Open items in PLAN §13 (limits probe,
+  Gemini calibration, s2 evals).
 - **Next work:** [ROADMAP.md](ROADMAP.md) (Hebrew) — block H (2026-10-07):
   a smarter bot. Parts 15 (notes), 16 ("לא הבנת" capture), 17 (tool
   unions, calibrated token estimate, history fitter, named lists) and 18
@@ -125,6 +130,14 @@ Network on the hotspot: `NODE_OPTIONS=--dns-result-order=ipv4first` for wrangler
 | [SETUP.md](SETUP.md) | Setting up a new copy from zero: accounts, Groq key, models, secrets, deploy, app, AI agent. |
 
 ## 8. Session log (docs)
+
+- 2026-10-11: Smart conversations: `private` tools are offered (as in a local
+  turn; their replies never reach a model or the history); a required
+  `consent` rule per consent-source tool (`always` | `exempt-own-input`,
+  `registry.ts`; `consentNeededFor`/`echoesOwnInput` in `agent/consents.ts`):
+  six writes that only echo their call run with no card and keep their reply
+  in the history; `SMART_NOTE` s2 (TimeSpec keys), `SMART_CATALOG_POLICY` /3.
+  Groq fingerprint unchanged. No new modules or tables.
 
 - 2026-10-08: Smart model `gemini-3.5-flash` → `gemini-3.5-flash-lite` (3.5
   Flash's free tier stopped after ~25 requests a day; the user's choice);

@@ -1,0 +1,196 @@
+package com.tzur.callcompanion
+
+import java.security.MessageDigest
+
+/**
+ * Routines (0.13): a named, closed list of steps the user builds on this phone
+ * — open one app, wait for a text, tap one element, check that a text appeared.
+ * Never written by the model, never sent by the server; the server will only
+ * ever name a routine (PLAN §6.27, stage 2). These are the rules that need no
+ * Android, so the JVM tests can pin them: validation, the step hash, and which
+ * element a tap may hit.
+ *
+ * Safety boundary: there is no typing, scrolling, long press, coordinate
+ * gesture or system action, and every step acts only inside [Routine.packageName].
+ */
+object RoutineLogic {
+
+    enum class Kind {
+        /** Wait until a text is on the screen, up to [Step.seconds]. */
+        WAIT_FOR_TEXT,
+        /** Tap the one element whose text or description is exactly this. */
+        TAP_TEXT,
+        /** Tap the one element with this view id (`com.app:id/clock_in` or `clock_in`). */
+        TAP_ID,
+        /** After the taps: the text that proves it worked, up to [Step.seconds]. */
+        EXPECT_TEXT,
+        /** Pause [Step.seconds]. */
+        WAIT,
+    }
+
+    data class Step(val kind: Kind, val value: String = "", val seconds: Int = DEFAULT_SECONDS) {
+        val isTap: Boolean get() = kind == Kind.TAP_TEXT || kind == Kind.TAP_ID
+    }
+
+    data class Routine(
+        val id: String,
+        val name: String,
+        val packageName: String,
+        val appLabel: String,
+        val steps: List<Step>,
+    ) {
+        /** A routine that taps but never checks a result can only say "tapped, not verified". */
+        val verifies: Boolean get() = steps.any { it.kind == Kind.EXPECT_TEXT }
+    }
+
+    const val MAX_NAME = 40
+    const val MAX_TEXT = 60
+    const val MAX_STEPS = 10
+    const val DEFAULT_SECONDS = 15
+    const val MAX_WAIT_SECONDS = 20
+    const val MAX_PAUSE_SECONDS = 5
+
+    /** How long the app may take to come to the front after it is launched. */
+    const val OPEN_TIMEOUT_MS = 10_000L
+    /** A tap waits until the screen stopped changing for this long … */
+    const val STABLE_MS = 500L
+    /** … but no longer than this. */
+    const val STABLE_MAX_MS = 3_000L
+    /** The whole run, every step included; past it the run stops where it is. */
+    const val RUN_DEADLINE_MS = 4 * 60_000L
+
+    private val PACKAGE = Regex("^[A-Za-z][A-Za-z0-9_]*(\\.[A-Za-z0-9_]+)+$")
+    private val VIEW_ID = Regex("^([A-Za-z][A-Za-z0-9_.]*:id/)?[A-Za-z0-9_]{1,80}$")
+
+    /** Why a routine cannot be saved, or null when it can. Codes, shown by the screen. */
+    fun problem(routine: Routine): String? {
+        if (routine.name.isBlank() || routine.name.length > MAX_NAME) return "name"
+        if (!PACKAGE.matches(routine.packageName)) return "app"
+        if (routine.steps.isEmpty() || routine.steps.size > MAX_STEPS) return "steps"
+        if (routine.steps.none { it.isTap }) return "no_tap"
+        for (step in routine.steps) {
+            val ok = when (step.kind) {
+                Kind.WAIT_FOR_TEXT, Kind.TAP_TEXT, Kind.EXPECT_TEXT ->
+                    normalize(step.value).isNotEmpty() && step.value.length <= MAX_TEXT &&
+                        step.seconds in 1..MAX_WAIT_SECONDS
+                Kind.TAP_ID -> VIEW_ID.matches(step.value.trim())
+                Kind.WAIT -> step.seconds in 1..MAX_PAUSE_SECONDS
+            }
+            if (!ok) return "step"
+        }
+        val lastTap = routine.steps.indexOfLast { it.isTap }
+        val firstExpect = routine.steps.indexOfFirst { it.kind == Kind.EXPECT_TEXT }
+        if (firstExpect in 0 until lastTap) return "expect_order"
+        return null
+    }
+
+    /**
+     * SHA-256 of the canonical step list and target app. The server will store
+     * it when a run is confirmed and refuse the run if the steps changed since
+     * (stage 2). The name is not part of it: renaming changes nothing that runs.
+     */
+    fun stepHash(routine: Routine): String {
+        val canonical = buildString {
+            append("v1\n").append(routine.packageName).append('\n')
+            for (step in routine.steps) {
+                append(step.kind.name).append('\t').append(normalize(step.value))
+                    .append('\t').append(step.seconds).append('\n')
+            }
+        }
+        val digest = MessageDigest.getInstance("SHA-256").digest(canonical.toByteArray(Charsets.UTF_8))
+        return digest.joinToString("") { "%02x".format(it) }
+    }
+
+    /**
+     * Text as it is compared: no bidi marks or zero-width characters, spaces
+     * collapsed, case folded. Matching is on the whole text, never "contains":
+     * "כניסה" must not hit "כניסה מאוחרת".
+     */
+    fun normalize(text: String): String =
+        text.replace(INVISIBLE, "").replace(SPACES, " ").trim().lowercase()
+
+    private val INVISIBLE = Regex("[​-‏‪-‮⁦-⁩﻿]")
+    private val SPACES = Regex("\\s+")
+
+    /**
+     * One element of the screen as the service flattened it. [target] is the
+     * index of the element a tap on it would click: itself when clickable, else
+     * its nearest clickable ancestor, else -1.
+     */
+    data class Node(
+        val text: String?,
+        val description: String?,
+        val viewId: String?,
+        val visible: Boolean,
+        val enabled: Boolean,
+        val target: Int,
+    )
+
+    sealed class Pick {
+        data class One(val index: Int) : Pick()
+        object None : Pick()
+        data class Many(val count: Int) : Pick()
+    }
+
+    /** Whether [text] is anywhere visible on the screen, as a whole text or description. */
+    fun hasText(nodes: List<Node>, text: String): Boolean {
+        val wanted = normalize(text)
+        return nodes.any { it.visible && (matches(it.text, wanted) || matches(it.description, wanted)) }
+    }
+
+    /**
+     * The one element a tap step may click. Every visible element that matches
+     * is mapped to what a tap on it clicks; the targets must be exactly one,
+     * visible and enabled. None or several → nothing is tapped.
+     */
+    fun pickTarget(nodes: List<Node>, step: Step): Pick {
+        val wanted = normalize(step.value)
+        val wantedId = step.value.trim()
+        val hits = nodes.filter { node ->
+            node.visible && when (step.kind) {
+                Kind.TAP_TEXT -> matches(node.text, wanted) || matches(node.description, wanted)
+                Kind.TAP_ID -> node.viewId != null && idMatches(node.viewId, wantedId)
+                else -> false
+            }
+        }
+        if (hits.isEmpty()) return Pick.None
+        val targets = hits.map { it.target }.distinct()
+        if (targets.any { it < 0 }) return if (targets.size == 1) Pick.None else Pick.Many(targets.size)
+        val usable = targets.filter { nodes.getOrNull(it)?.let { t -> t.visible && t.enabled } == true }
+        return when {
+            targets.size > 1 -> Pick.Many(targets.size)
+            usable.size == 1 -> Pick.One(usable[0])
+            else -> Pick.None
+        }
+    }
+
+    private fun matches(value: String?, wanted: String): Boolean =
+        value != null && normalize(value) == wanted
+
+    /** `clock_in` matches `com.app:id/clock_in`; a full id must match whole. */
+    private fun idMatches(viewId: String, wanted: String): Boolean =
+        if (wanted.contains(":id/")) viewId == wanted else viewId.substringAfter(":id/") == wanted
+
+    /** How a run ended. Only [VERIFIED] means the app showed the expected result. */
+    enum class Outcome {
+        /** Every tap ran and the EXPECT_TEXT step saw its text. */
+        VERIFIED,
+        /** Every tap ran; the routine has no EXPECT_TEXT, so the result is not known. */
+        TAPPED_UNVERIFIED,
+        /** Stopped before any tap: nothing happened in the app. */
+        FAILED_BEFORE_TAP,
+        /** Stopped after a tap: something may have happened. */
+        FAILED_AFTER_TAP,
+        /** Dry run: everything up to the first tap was found; nothing was tapped. */
+        DRY_RUN_OK,
+        /** Refused before starting: the phone is locked or the service is off. */
+        BLOCKED,
+    }
+
+    /** Where a failure happened and why, as codes. Never screen text. */
+    data class Result(val outcome: Outcome, val step: Int = -1, val reason: String = "")
+
+    /** The outcome of a run that stopped at [reason] after [tapped] taps. */
+    fun failure(tapped: Int, step: Int, reason: String): Result =
+        Result(if (tapped > 0) Outcome.FAILED_AFTER_TAP else Outcome.FAILED_BEFORE_TAP, step, reason)
+}

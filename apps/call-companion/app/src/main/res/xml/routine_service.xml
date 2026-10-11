@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Routines (0.13). Window changes only, so the service knows when a screen has
+  settled; the package list is set at runtime to the routines' own apps, and
+  every step checks the active window's app again before it acts.
+  No gestures (canPerformGestures is off), no key events, no text input.
+-->
+<accessibility-service xmlns:android="http://schemas.android.com/apk/res/android"
+    android:accessibilityEventTypes="typeWindowStateChanged|typeWindowContentChanged"
+    android:accessibilityFeedbackType="feedbackGeneric"
+    android:accessibilityFlags="flagReportViewIds"
+    android:canRetrieveWindowContent="true"
+    android:canPerformGestures="false"
+    android:notificationTimeout="100"
+    android:packageNames="com.tzur.callcompanion"
+    android:description="@string/routine_service_description" />

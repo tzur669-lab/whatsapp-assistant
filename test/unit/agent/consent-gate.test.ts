@@ -27,7 +27,7 @@ import type { SuspendedState } from '../../../src/agent/loop.js';
 import { ConversationConsents, consentButtonId, parseConsentButton } from '../../../src/agent/consents.js';
 import { GPT_OSS_120B, QWEN, SMART_MODELS } from '../../../src/agent/models.js';
 import { toWireName } from '../../../src/agent/tools.js';
-import { dataSourceOf, TOOL_NAMES } from '../../../src/tools/registry.js';
+import { consentRuleOf, dataSourceOf, TOOL_NAMES } from '../../../src/tools/registry.js';
 import { consentText } from '../../../src/render/consent.js';
 import { stripIsolates } from '../../../src/render/bidi.js';
 import { he } from '../../../src/render/he.js';
@@ -54,6 +54,8 @@ const SECRET = 'לקנות חלב לסבתא';
 
 const PUBLIC_WIRE = new Set(TOOL_NAMES.filter((name) => dataSourceOf(name) === 'public').map(toWireName));
 const PRIVATE_WIRE = new Set(TOOL_NAMES.filter((name) => dataSourceOf(name) === 'private').map(toWireName));
+/** Writes whose replies only echo their own call: never asked for (2026-10-11). */
+const OWN_INPUT_WIRE = new Set(TOOL_NAMES.filter((name) => consentRuleOf(name) === 'exempt-own-input').map(toWireName));
 
 describe('the consent gate', () => {
   let driver: TestSqlDriver;
@@ -207,14 +209,17 @@ describe('the consent gate', () => {
       expect(lock.isHeld(PRINCIPAL)).toBe(false);
     });
 
-    it("offers a typed smart turn the tools of every consent source, never a private tool", async () => {
+    it('offers a typed smart turn the tools of every consent source, and the private tools (2026-10-11)', async () => {
       const g = gemini([{ text: 'שלום' }]);
       await handleInbound(text('שלום'), deps({ gemini: g }));
       const offered = offeredNames(g);
       for (const name of ['calendar__list_events', 'reminders__list', 'phone__sms', 'phone__calls', 'expenses__add']) {
         expect(offered, name).toContain(name);
       }
-      expect(offered.some((name) => PRIVATE_WIRE.has(name))).toBe(false);
+      // Private tools are offered as in a local turn: no reply of theirs reaches a model.
+      for (const name of ['notes__save', 'notes__find', 'lists__add', 'lists__show', 'memory__remember', 'portfolio__show']) {
+        expect(offered, name).toContain(name);
+      }
       for (const name of PUBLIC_WIRE) expect(offered).toContain(name);
     });
 
@@ -449,7 +454,7 @@ describe('the consent gate', () => {
   });
 
   describe('never asks', () => {
-    it('on a voice note: only public and granted tools, and an unoffered call is refused', async () => {
+    it('on a voice note: only tools that never ask and granted ones, and an unoffered call is refused', async () => {
       consents.grant(PRINCIPAL, SMART, 'calendar');
       const g = gemini([{ tool: 'reminders.list', args: {} }, { text: 'אין לי גישה' }]);
       const voice: InboundEvent = {
@@ -472,12 +477,25 @@ describe('the consent gate', () => {
       const offered = offeredNames(g);
       expect(offered).toContain('calendar__list_events');
       expect(offered).not.toContain('reminders__list');
-      expect(offered.every((name) => PUBLIC_WIRE.has(name) || name.startsWith('calendar__') || name === 'reminders__leave' || name === 'nav__go')).toBe(true);
+      // As a local voice turn: the private tools and the writes that never ask too (2026-10-11).
+      expect(offered).toContain('reminders__create');
+      expect(offered).toContain('lists__add');
+      expect(
+        offered.every(
+          (name) =>
+            PUBLIC_WIRE.has(name) ||
+            PRIVATE_WIRE.has(name) ||
+            OWN_INPUT_WIRE.has(name) ||
+            name.startsWith('calendar__') ||
+            name === 'reminders__leave' ||
+            name === 'nav__go',
+        ),
+      ).toBe(true);
       expect(g.calls[1]!.at(-1)).toMatchObject({ role: 'tool', content: '{"error":"unknown_tool"}' });
       expect(driver.exec('SELECT COUNT(*) AS n FROM agent_turns')[0]?.['n']).toBe(0);
     });
 
-    it('on shared text: local models, public and granted tools only', async () => {
+    it('on shared text: local models, tools that never ask and granted ones only', async () => {
       consents.grant(PRINCIPAL, SMART, 'reminders');
       const q = qwen([{ tool: 'calendar.list_events', args: {} }, { text: 'לא' }]);
       await handleInbound(text('תבדוק את זה', SMART, { forwarded: true }), deps({ qwen: q }));
@@ -487,7 +505,7 @@ describe('the consent gate', () => {
       expect(driver.exec('SELECT COUNT(*) AS n FROM agent_turns')[0]?.['n']).toBe(0);
     });
 
-    it('on the read-only try: public and granted tools only', async () => {
+    it('on the read-only try: public, private and granted reads only', async () => {
       consents.grant(PRINCIPAL, SMART, 'reminders');
       const fb = oss([{ text: 'קריאה בלבד' }]);
       const out = await handleInbound(text('ספר לי משהו'), deps({ gemini: gemini([{ error: 'timeout' }]), fallback: fb }));

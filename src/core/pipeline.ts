@@ -83,7 +83,7 @@ import { resumeAfterConsent, resumeAgentTurn, runAgentTurn } from '../agent/loop
 import type { AgentResult, ConsentDecision } from '../agent/loop.js';
 import type { SuspendedTurns } from '../agent/turns.js';
 import type { PhoneReadInput, PhoneReadResult } from '../tools/phone-reads.js';
-import { CONSENT_REVOKE_TOOL, consentSourceOf, isConsentSource, parseConsentButton, revokeButtonId } from '../agent/consents.js';
+import { CONSENT_REVOKE_TOOL, consentSourceOf, echoesOwnInput, isConsentSource, parseConsentButton, revokeButtonId } from '../agent/consents.js';
 import type { ConsentButton, ConversationConsents } from '../agent/consents.js';
 import type { ConsentSource } from '../tools/registry.js';
 import { consentButtons, consentText } from '../render/consent.js';
@@ -111,8 +111,8 @@ export type AgentServices = {
   turns?: SuspendedTurns;
   /**
    * The sources each smart conversation allowed (slice 5, 2026-10-08). Absent,
-   * or without `turns`: a smart conversation never asks, and is offered public
-   * tools only.
+   * or without `turns`: a smart conversation never asks, and is offered only
+   * the tools that never ask (public, private, own-input writes).
    */
   consents?: ConversationConsents;
   /** The turn benchmark's OLD config only (`test/evals/run-turn-evals.ts`). Never set in production. */
@@ -770,7 +770,7 @@ async function respondWithAgent(
     const conversation = event.conversationId ?? '';
     // The conversation's recorded mode (2026-10-08). Its own words may go to a
     // smart model first; shared text and the read-only try stay local. Every
-    // model in it is offered the same public tools and sees no facts.
+    // model in it is offered the same tools and sees no facts.
     const smartConversation = event.mode === 'smart';
     const smartModels = smartWanted(event) && !readOnly ? (agent.smartProviders ?? []) : [];
     const history = await agent.history.recent(principal, conversation);
@@ -927,7 +927,8 @@ async function settleAgentResult(
     // and for any reply after a tool whose data the user did not allow — a
     // card, an Undo, a list of choices built by code included. Allowed: public,
     // or a source the conversation allowed, or one approved for this very turn
-    // (its entry only; the next turn asks again). Private never is.
+    // (its entry only; the next turn asks again), or a write whose replies only
+    // echo its own call (2026-10-11, `echoesOwnInput`). Private never is.
     const shared = gate.smart && gate.foreign;
     const consents = agent.consents;
     const granted = gate.smart && consents ? consents.list(principal, conversation) : [];
@@ -937,7 +938,8 @@ async function settleAgentResult(
       gate.smart &&
       ran.some((tool) => {
         const data = dataSourceOf(tool);
-        return data !== 'public' && !(isConsentSource(data) && allowed.has(data));
+        if (data === 'public' || echoesOwnInput(tool)) return false;
+        return !(isConsentSource(data) && allowed.has(data));
       });
     // A source allowed for the conversation was used: its row stays clear of the purge.
     if (gate.smart && consents && conversation !== '') {

@@ -16,11 +16,15 @@
  * allowed one turn at a time: no row is ever written for them, and a "conv"
  * button for one is refused.
  *
+ * A write whose every reply only echoes its own call — `consent:
+ * 'exempt-own-input'` in the registry, e.g. `reminders.create` — never asks
+ * (2026-10-11): there is nothing of the source in what it shows.
+ *
  * Synchronous SQL on purpose: a "conv" tap writes its row in the same
  * transaction that takes the waiting turn (`pipeline.ts`).
  */
 import type { SqlDriver } from '../core/sql.js';
-import { CONSENT_SOURCES, dataSourceOf } from '../tools/registry.js';
+import { CONSENT_SOURCES, consentRuleOf, dataSourceOf } from '../tools/registry.js';
 import type { ConsentSource, ToolName } from '../tools/registry.js';
 
 /** Other people's words: allowed for one turn at a time, never for a conversation. */
@@ -39,6 +43,25 @@ export function mayKeepForConversation(source: ConsentSource): boolean {
 export function consentSourceOf(tool: ToolName): ConsentSource | null {
   const source = dataSourceOf(tool);
   return isConsentSource(source) ? source : null;
+}
+
+/**
+ * The source a smart conversation must have allowed before this tool runs
+ * (2026-10-11): its consent source when its rule is `always`. Null for a
+ * public or private tool, and for a write whose every reply only echoes its
+ * own call (`exempt-own-input`, `tools/registry.ts`): those never ask.
+ */
+export function consentNeededFor(tool: ToolName): ConsentSource | null {
+  return consentRuleOf(tool) === 'always' ? consentSourceOf(tool) : null;
+}
+
+/**
+ * A write whose replies hold only its own call, computed dates and times and
+ * fixed strings (2026-10-11). The history gate keeps its reply as if its
+ * source were allowed: there is nothing of the source in it.
+ */
+export function echoesOwnInput(tool: ToolName): boolean {
+  return consentRuleOf(tool) === 'exempt-own-input';
 }
 
 /** The sources one smart conversation allowed. The shared thread ('') never has any. */
