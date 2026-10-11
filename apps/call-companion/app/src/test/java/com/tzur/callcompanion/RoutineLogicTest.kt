@@ -29,6 +29,9 @@ class RoutineLogicTest {
     private fun node(text: String? = null, desc: String? = null, id: String? = null, target: Int, visible: Boolean = true, enabled: Boolean = true) =
         Node(text, desc, id, visible, enabled, target)
 
+    private fun field(text: String? = null, hint: String? = null, target: Int, focused: Boolean = false, password: Boolean = false, enabled: Boolean = true, visible: Boolean = true) =
+        Node(text, null, null, visible, enabled, target, hint = hint, editable = true, clickable = true, focused = focused, password = password)
+
     // --- Validation ---
 
     @Test fun aGoodRoutineHasNoProblem() {
@@ -72,6 +75,81 @@ class RoutineLogicTest {
         assertEquals(hash, RoutineLogic.stepHash(clockIn.copy(name = "שם אחר")))
         assertNotEquals(hash, RoutineLogic.stepHash(clockIn.copy(steps = clockIn.steps.dropLast(1))))
         assertNotEquals(hash, RoutineLogic.stepHash(clockIn.copy(packageName = "com.example.other")))
+    }
+
+    @Test fun anExistingRoutineKeepsItsHash() {
+        // Captured at HEAD before typing existed (0.13.0): a run confirmed then still matches.
+        assertEquals("97d02a79bf90006991aaa99c8ac1cee5ce99966abb29d8074e740aeacaf00a93", RoutineLogic.stepHash(clockIn))
+    }
+
+    @Test fun theTypedTextIsHashedAsWritten() {
+        val a = clockIn.copy(steps = listOf(Step(Kind.TYPE_TEXT, "Steimatzky"), Step(Kind.TAP_ID, "button_search")))
+        val b = clockIn.copy(steps = listOf(Step(Kind.TYPE_TEXT, "steimatzky"), Step(Kind.TAP_ID, "button_search")))
+        assertNotEquals(RoutineLogic.stepHash(a), RoutineLogic.stepHash(b))
+    }
+
+    // --- Typing ---
+
+    private val fidSearch = Routine("f", "חיפוש סטימצקי", "cubbbixapps.fid", "FID", listOf(
+        Step(Kind.TYPE_TEXT, "סטימצקי"),
+        Step(Kind.TAP_ID, "button_search"),
+    ))
+
+    @Test fun aTypingRoutineIsValid() {
+        assertNull(RoutineLogic.problem(fidSearch))
+        assertNull(RoutineLogic.problem(fidSearch.copy(steps = listOf(Step(Kind.TYPE_TEXT, "x"), Step(Kind.SUBMIT)))))
+        assertNull(RoutineLogic.problem(fidSearch.copy(steps = listOf(Step(Kind.TYPE_TEXT, "x")))))
+    }
+
+    @Test fun typingStepsAreChecked() {
+        assertEquals("text", RoutineLogic.stepProblem(Step(Kind.TYPE_TEXT, " ")))
+        assertEquals("text", RoutineLogic.stepProblem(Step(Kind.TYPE_TEXT, "א".repeat(61))))
+        assertEquals("text", RoutineLogic.stepProblem(Step(Kind.SUBMIT, "x")))
+        assertNull(RoutineLogic.stepProblem(Step(Kind.SUBMIT)))
+    }
+
+    @Test fun theCheckComesAfterTheTyping() {
+        val wrong = fidSearch.copy(steps = listOf(Step(Kind.EXPECT_TEXT, "תוצאות"), Step(Kind.TYPE_TEXT, "x")))
+        assertEquals("expect_order", RoutineLogic.problem(wrong))
+    }
+
+    @Test fun theFocusedFieldIsTheOneTypedInto() {
+        val nodes = listOf(field(hint = "שם", target = 0), field(hint = "עיר", target = 1, focused = true))
+        assertEquals(Pick.One(1), RoutineLogic.pickField(nodes, needFocus = false))
+        assertEquals(Pick.One(1), RoutineLogic.pickField(nodes, needFocus = true))
+    }
+
+    @Test fun aSingleFieldNeedsNoFocusToType() {
+        val nodes = listOf(node("חיפוש", target = 0), field(hint = "מה מחפשים", target = 1))
+        assertEquals(Pick.One(1), RoutineLogic.pickField(nodes, needFocus = false))
+        assertEquals(Pick.None, RoutineLogic.pickField(nodes, needFocus = true))
+    }
+
+    @Test fun twoUnfocusedFieldsTypeNothing() {
+        val nodes = listOf(field(target = 0), field(target = 1))
+        assertEquals(Pick.Many(2), RoutineLogic.pickField(nodes, needFocus = false))
+    }
+
+    @Test fun aPasswordFieldIsNeverTypedInto() {
+        assertEquals(Pick.None, RoutineLogic.pickField(listOf(field(target = 0, focused = true, password = true)), needFocus = false))
+        assertEquals(Pick.One(1), RoutineLogic.pickField(listOf(field(target = 0, password = true), field(target = 1)), needFocus = false))
+    }
+
+    @Test fun aHiddenOrDisabledFieldIsNotTypedInto() {
+        assertEquals(Pick.None, RoutineLogic.pickField(listOf(field(target = 0, visible = false)), needFocus = false))
+        assertEquals(Pick.Disabled, RoutineLogic.pickField(listOf(field(target = 0, enabled = false)), needFocus = false))
+    }
+
+    @Test fun aCheckNeverCountsTheTypedText() {
+        val nodes = listOf(field("סטימצקי", target = 0, focused = true))
+        assertFalse(RoutineLogic.hasText(nodes, "סטימצקי"))
+        assertFalse(RoutineLogic.isDisabled(listOf(field("סטימצקי", target = 0, enabled = false)), "סטימצקי"))
+    }
+
+    @Test fun aFieldIsTappedByItsHintNotItsContent() {
+        val nodes = listOf(field("סטימצקי", hint = "מה מחפשים", target = 0), node("סטימצקי", target = 1))
+        assertEquals(Pick.One(1), RoutineLogic.pickTarget(nodes, Step(Kind.TAP_TEXT, "סטימצקי")))
+        assertEquals(Pick.One(0), RoutineLogic.pickTarget(nodes, Step(Kind.TAP_TEXT, "מה מחפשים")))
     }
 
     // --- Matching ---

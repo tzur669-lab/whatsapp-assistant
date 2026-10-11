@@ -3,7 +3,8 @@
   Routines (0.13). Window changes only, so the service knows when a screen has
   settled; the package list is set at runtime to the routines' own apps, and
   every step checks the active window's app again before it acts.
-  No gestures (canPerformGestures is off), no key events, no text input.
+  No gestures (canPerformGestures is off), no key events. Text is set only
+  through ACTION_SET_TEXT, with the text written into the routine (0.13.1).
 -->
 <accessibility-service xmlns:android="http://schemas.android.com/apk/res/android"
     android:accessibilityEventTypes="typeWindowStateChanged|typeWindowContentChanged"

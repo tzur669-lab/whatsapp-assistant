@@ -100,8 +100,8 @@ export const routineText = {
 
   unverified(view: RoutineView, lang: Lang): string {
     return lang === 'he'
-      ? `${named(view)}: הלחיצות בוצעו, אבל בשגרה אין שלב אימות, ולכן לא ידוע אם הפעולה נקלטה. כדאי לבדוק באפליקציה.`
-      : `${named(view)}: the taps ran, but the routine has no check step, so it is not known whether it registered. Check the app.`;
+      ? `${named(view)}: כל השלבים בוצעו, אבל בשגרה אין שלב אימות, ולכן לא ידוע אם הפעולה נקלטה. כדאי לבדוק באפליקציה.`
+      : `${named(view)}: every step ran, but the routine has no check step, so it is not known whether it registered. Check the app.`;
   },
 
   failed(view: RoutineView, reason: RunReason, lang: Lang): string {
@@ -110,7 +110,7 @@ export const routineText = {
       : `${named(view)} did not run, and nothing changed in the app. Reason: ${reasonText(reason, lang)}.`;
   },
 
-  /** Stopped after a tap, or the phone never reported. */
+  /** Stopped after a tap or typing, or the phone never reported. */
   unknown(view: RoutineView, reason: RunReason | null, lang: Lang): string {
     const why =
       reason === null
@@ -118,8 +118,8 @@ export const routineText = {
           ? 'הטלפון לא דיווח על התוצאה'
           : 'the phone did not report back'
         : lang === 'he'
-          ? `השגרה נעצרה אחרי לחיצה (${reasonText(reason, lang)})`
-          : `it stopped after a tap (${reasonText(reason, lang)})`;
+          ? `השגרה נעצרה אחרי לחיצה או הקלדה (${reasonText(reason, lang)})`
+          : `it stopped after a tap or typing (${reasonText(reason, lang)})`;
     return lang === 'he'
       ? `לא ידוע אם ${named(view)} הופעלה: ${why}. כדאי לבדוק באפליקציה.`
       : `Not known whether ${named(view)} ran: ${why}. Check the app.`;
@@ -158,13 +158,13 @@ export function reasonText(reason: RunReason, lang: Lang): string {
     case 'not_verified':
       return he ? 'האישור שהפעולה הצליחה לא הופיע' : 'the sign that it worked did not appear';
     case 'target_not_found':
-      return he ? 'לא נמצא במסך על מה ללחוץ' : 'what to tap was not on the screen';
+      return he ? 'לא נמצא במסך על מה ללחוץ או איפה להקליד' : 'what to tap or type into was not on the screen';
     case 'target_disabled':
       return he ? 'הכפתור היה כבוי, למשל כי הפעולה כבר בוצעה' : 'the button was off, for example because it was already done';
     case 'target_ambiguous':
-      return he ? 'נמצא יותר ממקום אחד מתאים ללחיצה' : 'more than one place matched';
+      return he ? 'נמצא יותר ממקום אחד מתאים ללחיצה או להקלדה' : 'more than one place matched';
     case 'tap_refused':
-      return he ? 'הלחיצה לא התקבלה' : 'the tap was not accepted';
+      return he ? 'הלחיצה או ההקלדה לא התקבלו' : 'the tap or the typing was not accepted';
     case 'deadline':
       return he ? 'השגרה לקחה יותר מ־4 דקות' : 'it took more than 4 minutes';
     case 'changed':

@@ -4,14 +4,17 @@ import java.security.MessageDigest
 
 /**
  * Routines (0.13): a named, closed list of steps the user builds on this phone
- * — open one app, wait for a text, tap one element, check that a text appeared.
+ * — open one app, wait for a text, tap one element, type a fixed text, check
+ * that a text appeared.
  * Never written by the model, never sent by the server; the server will only
  * ever name a routine (PLAN §6.27, stage 2). These are the rules that need no
  * Android, so the JVM tests can pin them: validation, the step hash, and which
  * element a tap may hit.
  *
- * Safety boundary: there is no typing, scrolling, long press, coordinate
- * gesture or system action, and every step acts only inside [Routine.packageName].
+ * Safety boundary: the only text typed is the one the user wrote into the
+ * routine (0.13.1), never into a password field; there is no scrolling, long
+ * press, coordinate gesture or system action, and every step acts only inside
+ * [Routine.packageName].
  */
 object RoutineLogic {
 
@@ -32,11 +35,20 @@ object RoutineLogic {
         EXPECT_DISABLED,
         /** Pause [Step.seconds]. */
         WAIT,
+        /**
+         * Type this fixed text into the field (0.13.1): the focused one, else
+         * the only one on the screen. Never a password field.
+         */
+        TYPE_TEXT,
+        /** The keyboard's Enter / search key on the focused field (Android 11+). No text. */
+        SUBMIT,
     }
 
     data class Step(val kind: Kind, val value: String = "", val seconds: Int = DEFAULT_SECONDS) {
         val isTap: Boolean get() = kind == Kind.TAP_TEXT || kind == Kind.TAP_ID
         val isCheck: Boolean get() = kind == Kind.EXPECT_TEXT || kind == Kind.EXPECT_DISABLED
+        /** Changes something in the app: a tap, typing, or the keyboard's Enter. */
+        val isAction: Boolean get() = isTap || kind == Kind.TYPE_TEXT || kind == Kind.SUBMIT
     }
 
     data class Routine(
@@ -70,8 +82,10 @@ object RoutineLogic {
      * The phone makers' "allow app A to open app B?" dialogs (ColorOS/OxygenOS,
      * MIUI). Seen in front instead of the routine's app, the run waits for
      * the user and, if nobody answers, says so instead of "did not open".
+     * The service listens to these packages too, only to see the dialog in
+     * front; no step ever acts in them (every step checks the routine's app).
      */
-    private val LAUNCH_CONFIRM_PACKAGES = setOf(
+    val LAUNCH_CONFIRM_PACKAGES = setOf(
         "com.oplus.securitypermission",
         "com.coloros.securitypermission",
         "com.miui.securitycenter",
@@ -93,11 +107,11 @@ object RoutineLogic {
         if (routine.name.isBlank() || routine.name.length > MAX_NAME) return "name"
         if (!PACKAGE.matches(routine.packageName)) return "app"
         if (routine.steps.isEmpty() || routine.steps.size > MAX_STEPS) return "steps"
-        if (routine.steps.none { it.isTap }) return "no_tap"
+        if (routine.steps.none { it.isAction }) return "no_tap"
         if (routine.steps.any { stepProblem(it) != null }) return "step"
-        val lastTap = routine.steps.indexOfLast { it.isTap }
+        val lastAction = routine.steps.indexOfLast { it.isAction }
         val firstExpect = routine.steps.indexOfFirst { it.isCheck }
-        if (firstExpect in 0 until lastTap) return "expect_order"
+        if (firstExpect in 0 until lastAction) return "expect_order"
         return null
     }
 
@@ -114,18 +128,25 @@ object RoutineLogic {
         }
         Kind.TAP_ID -> if (VIEW_ID.matches(step.value.trim())) null else "id"
         Kind.WAIT -> if (step.seconds in 1..MAX_PAUSE_SECONDS) null else "seconds"
+        Kind.TYPE_TEXT ->
+            if (normalize(step.value).isEmpty() || step.value.length > MAX_TEXT) "text" else null
+        Kind.SUBMIT -> if (step.value.isEmpty()) null else "text"
     }
 
     /**
      * SHA-256 of the canonical step list and target app. The server will store
      * it when a run is confirmed and refuse the run if the steps changed since
      * (stage 2). The name is not part of it: renaming changes nothing that runs.
+     * A typed text goes in as written (trimmed), not normalized: "ABC" and
+     * "abc" are different texts typed, so a run confirmed for one never types
+     * the other. Every other kind keeps its 0.13.0 line, so its hash is unchanged.
      */
     fun stepHash(routine: Routine): String {
         val canonical = buildString {
             append("v1\n").append(routine.packageName).append('\n')
             for (step in routine.steps) {
-                append(step.kind.name).append('\t').append(normalize(step.value))
+                val value = if (step.kind == Kind.TYPE_TEXT) step.value.trim() else normalize(step.value)
+                append(step.kind.name).append('\t').append(value)
                     .append('\t').append(step.seconds).append('\n')
             }
         }
@@ -141,7 +162,7 @@ object RoutineLogic {
     fun normalize(text: String): String =
         text.replace(INVISIBLE, "").replace(SPACES, " ").trim().lowercase()
 
-    private val INVISIBLE = Regex("[​-‏‪-‮⁦-⁩﻿]")
+    private val INVISIBLE = Regex("[\u200B-\u200F\u202A-\u202E\u2066-\u2069\uFEFF]")
     private val SPACES = Regex("\\s+")
 
     /**
@@ -160,6 +181,8 @@ object RoutineLogic {
         val hint: String? = null,
         val editable: Boolean = false,
         val clickable: Boolean = false,
+        val focused: Boolean = false,
+        val password: Boolean = false,
     )
 
     sealed class Pick {
@@ -170,10 +193,14 @@ object RoutineLogic {
         data class Many(val count: Int) : Pick()
     }
 
-    /** Whether [text] is anywhere visible on the screen, as a whole text or description. */
+    /**
+     * Whether [text] is anywhere visible on the screen, as a whole text or
+     * description. A field never counts: its content may be what the routine
+     * typed, which proves nothing.
+     */
     fun hasText(nodes: List<Node>, text: String): Boolean {
         val wanted = normalize(text)
-        return nodes.any { it.visible && (matches(it.text, wanted) || matches(it.description, wanted)) }
+        return nodes.any { it.visible && !it.editable && (matches(it.text, wanted) || matches(it.description, wanted)) }
     }
 
     /**
@@ -186,7 +213,8 @@ object RoutineLogic {
         val wantedId = step.value.trim()
         val hits = nodes.filter { node ->
             node.visible && when (step.kind) {
-                Kind.TAP_TEXT -> matches(node.text, wanted) || matches(node.description, wanted) ||
+                // A field is named by its placeholder, never by what is typed in it.
+                Kind.TAP_TEXT -> (!node.editable && (matches(node.text, wanted) || matches(node.description, wanted))) ||
                     matches(node.hint, wanted)
                 Kind.TAP_ID -> node.viewId != null && idMatches(node.viewId, wantedId)
                 else -> false
@@ -204,13 +232,31 @@ object RoutineLogic {
     }
 
     /**
+     * The field a typing step types into, or SUBMIT presses Enter on: the one
+     * focused field, else (unless [needFocus]) the only field on the screen.
+     * Password fields are never candidates. None or several → nothing is typed.
+     */
+    fun pickField(nodes: List<Node>, needFocus: Boolean): Pick {
+        val fields = nodes.withIndex().filter { (_, n) -> n.visible && n.editable && !n.password }
+        val focused = fields.filter { it.value.focused }
+        val chosen = when {
+            focused.size == 1 -> focused[0]
+            focused.size > 1 -> return Pick.Many(focused.size)
+            needFocus || fields.isEmpty() -> return Pick.None
+            fields.size > 1 -> return Pick.Many(fields.size)
+            else -> fields[0]
+        }
+        return if (chosen.value.enabled) Pick.One(chosen.index) else Pick.Disabled
+    }
+
+    /**
      * Whether the one element named [text] is now switched off. Not found, or
-     * found more than once, is not proof.
+     * found more than once, is not proof; a field never counts.
      */
     fun isDisabled(nodes: List<Node>, text: String): Boolean {
         val wanted = normalize(text)
         val targets = nodes
-            .filter { it.visible && (matches(it.text, wanted) || matches(it.description, wanted)) }
+            .filter { it.visible && !it.editable && (matches(it.text, wanted) || matches(it.description, wanted)) }
             .map { if (it.target >= 0) it.target else -1 }
             .distinct()
         if (targets.size != 1 || targets[0] < 0) return false
@@ -261,13 +307,13 @@ object RoutineLogic {
     enum class Outcome {
         /** Every tap ran and the check step (EXPECT_TEXT or EXPECT_DISABLED) passed. */
         VERIFIED,
-        /** Every tap ran; the routine has no check step, so the result is not known. */
+        /** Every action ran; the routine has no check step, so the result is not known. */
         TAPPED_UNVERIFIED,
-        /** Stopped before any tap: nothing happened in the app. */
+        /** Stopped before any action (tap or typing): nothing happened in the app. */
         FAILED_BEFORE_TAP,
-        /** Stopped after a tap: something may have happened. */
+        /** Stopped after an action (tap or typing): something may have happened. */
         FAILED_AFTER_TAP,
-        /** Dry run: everything up to the first tap was found; nothing was tapped. */
+        /** Dry run: everything up to the first action was found; nothing was tapped or typed. */
         DRY_RUN_OK,
         /** Refused before starting: the phone is locked or the service is off. */
         BLOCKED,
@@ -276,7 +322,7 @@ object RoutineLogic {
     /** Where a failure happened and why, as codes. Never screen text. */
     data class Result(val outcome: Outcome, val step: Int = -1, val reason: String = "")
 
-    /** The outcome of a run that stopped at [reason] after [tapped] taps. */
+    /** The outcome of a run that stopped at [reason] after [tapped] actions. */
     fun failure(tapped: Int, step: Int, reason: String): Result =
         Result(if (tapped > 0) Outcome.FAILED_AFTER_TAP else Outcome.FAILED_BEFORE_TAP, step, reason)
 }

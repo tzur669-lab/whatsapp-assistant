@@ -7,6 +7,7 @@ import android.content.Intent
 import android.graphics.Color
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
+import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
 import android.text.InputType
@@ -102,13 +103,16 @@ class RoutinesActivity : Activity() {
                 setTextColor(Color.rgb(0x8A, 0x5A, 0x00))
             })
         }
-        val actions = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
-        actions.addView(smallButton(getString(R.string.routine_scan)) { scan(routine) })
-        actions.addView(smallButton(getString(R.string.routine_dry)) { run(routine, dryRun = true) })
-        actions.addView(smallButton(getString(R.string.routine_run)) { confirmRun(routine) })
-        actions.addView(smallButton(getString(R.string.routine_edit)) { edit(routine) })
-        actions.addView(smallButton(getString(R.string.routine_delete)) { confirmDelete(routine) })
-        box.addView(actions)
+        // Two rows: five buttons in one squeezed "מחיקה" to nothing on a phone.
+        val runRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        runRow.addView(smallButton(getString(R.string.routine_scan)) { scan(routine) })
+        runRow.addView(smallButton(getString(R.string.routine_dry)) { run(routine, dryRun = true) })
+        runRow.addView(smallButton(getString(R.string.routine_run)) { confirmRun(routine) })
+        box.addView(runRow)
+        val editRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        editRow.addView(smallButton(getString(R.string.routine_edit)) { edit(routine) })
+        editRow.addView(smallButton(getString(R.string.routine_delete)) { confirmDelete(routine) })
+        box.addView(editRow)
         return LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(0, dp(4), 0, dp(4))
@@ -338,8 +342,11 @@ class RoutinesActivity : Activity() {
     }
 
     private fun addStep(add: (RoutineLogic.Step) -> Unit) {
-        val kinds = listOf(
+        val kinds = listOfNotNull(
             RoutineLogic.Kind.TAP_TEXT to R.string.step_kind_tap_text,
+            RoutineLogic.Kind.TYPE_TEXT to R.string.step_kind_type_text,
+            // The keyboard's Enter needs Android 11; an older phone is not offered it.
+            (RoutineLogic.Kind.SUBMIT to R.string.step_kind_submit).takeIf { Build.VERSION.SDK_INT >= Build.VERSION_CODES.R },
             RoutineLogic.Kind.WAIT_FOR_TEXT to R.string.step_kind_wait_for_text,
             RoutineLogic.Kind.EXPECT_DISABLED to R.string.step_kind_expect_disabled,
             RoutineLogic.Kind.EXPECT_TEXT to R.string.step_kind_expect_text,
@@ -360,12 +367,18 @@ class RoutinesActivity : Activity() {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(20), dp(8), dp(20), dp(8))
         }
-        val needsText = kind != RoutineLogic.Kind.WAIT
+        val needsText = kind != RoutineLogic.Kind.WAIT && kind != RoutineLogic.Kind.SUBMIT
         val needsSeconds = kind == RoutineLogic.Kind.WAIT ||
             kind == RoutineLogic.Kind.WAIT_FOR_TEXT || kind == RoutineLogic.Kind.EXPECT_TEXT ||
             kind == RoutineLogic.Kind.EXPECT_DISABLED
         val text = EditText(this).apply {
-            hint = getString(if (kind == RoutineLogic.Kind.TAP_ID) R.string.step_hint_id else R.string.step_hint_text)
+            hint = getString(
+                when (kind) {
+                    RoutineLogic.Kind.TAP_ID -> R.string.step_hint_id
+                    RoutineLogic.Kind.TYPE_TEXT -> R.string.step_hint_type
+                    else -> R.string.step_hint_text
+                },
+            )
             inputType = InputType.TYPE_CLASS_TEXT
             textDirection = View.TEXT_DIRECTION_ANY_RTL
         }
@@ -375,6 +388,11 @@ class RoutinesActivity : Activity() {
         }
         if (needsText) form.addView(text)
         if (needsSeconds) form.addView(seconds)
+        // SUBMIT asks for nothing: no dialog, the step is added as it is.
+        if (!needsText && !needsSeconds && kind != RoutineLogic.Kind.WAIT) {
+            add(RoutineLogic.Step(kind, "", RoutineLogic.DEFAULT_SECONDS))
+            return
+        }
         AlertDialog.Builder(this)
             .setTitle(kindLabel(kind))
             .setView(form)
@@ -406,6 +424,8 @@ class RoutinesActivity : Activity() {
         RoutineLogic.Kind.EXPECT_TEXT -> getString(R.string.step_expect_text, quote(step.value), step.seconds)
         RoutineLogic.Kind.EXPECT_DISABLED -> getString(R.string.step_expect_disabled, quote(step.value), step.seconds)
         RoutineLogic.Kind.WAIT -> getString(R.string.step_wait, step.seconds)
+        RoutineLogic.Kind.TYPE_TEXT -> getString(R.string.step_type_text, quote(step.value))
+        RoutineLogic.Kind.SUBMIT -> getString(R.string.step_submit)
     }
 
     private fun quote(text: String) = Ui.isolate("\"$text\"")
@@ -418,6 +438,8 @@ class RoutinesActivity : Activity() {
             RoutineLogic.Kind.EXPECT_DISABLED -> R.string.step_kind_expect_disabled
             RoutineLogic.Kind.WAIT -> R.string.step_kind_wait
             RoutineLogic.Kind.TAP_ID -> R.string.step_kind_tap_id
+            RoutineLogic.Kind.TYPE_TEXT -> R.string.step_kind_type_text
+            RoutineLogic.Kind.SUBMIT -> R.string.step_kind_submit
         },
     )
 

@@ -1,5 +1,7 @@
 # Routines — multi-step phone actions, now or later, even when the phone is locked
 
+> 2026-10-11: typing was added later (app 0.13.1) — see `routines-typing.md`. The "no typing" lines below describe stage 1 as it was planned.
+
 ## Context
 
 The user wants one instruction to run several steps, now or in the future.

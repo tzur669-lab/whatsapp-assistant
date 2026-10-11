@@ -209,12 +209,14 @@ later — **deploy the server first**: an older one refuses the `mode` field.
 ## Routines (0.13, PLAN §6.27)
 
 ☰ → **⚙️ שגרות** builds a routine: a name, one app, and up to 10 steps —
-wait for a text, tap a text, tap a view id, check that a text appeared or that
-a button switched off, pause. **🔍 מה רואים** lists what the service can read
+wait for a text, tap a text, tap a view id, type a fixed text into a field,
+press the keyboard's Enter, check that a text appeared or that a button
+switched off, pause. **🔍 מה רואים** lists what the service can read
 in the app (on the phone only).
-No typing, scrolling or gestures. Saved in private preferences, excluded from
+Typing (0.13.1) sets only the text written into the routine, never into a
+password field. No scrolling or gestures. Saved in private preferences, excluded from
 backup. **בדיקה יבשה** opens the app and finds everything up to the first
-tap, then stops without tapping; **הפעלה** runs it now, phone unlocked.
+action (tap or typing), then stops without acting; **הפעלה** runs it now, phone unlocked.
 
 `RoutineAccessibilityService` runs the steps. The user turns on "שגרות של
 העוזר" in the accessibility settings (a sideloaded app may first need **App

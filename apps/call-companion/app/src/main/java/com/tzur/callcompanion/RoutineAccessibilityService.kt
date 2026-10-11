@@ -4,6 +4,8 @@ import android.accessibilityservice.AccessibilityService
 import android.app.KeyguardManager
 import android.content.Context
 import android.content.Intent
+import android.os.Build
+import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
@@ -20,8 +22,11 @@ import java.util.concurrent.Executors
  * - the phone is not locked — it never touches the lock screen;
  * - the active window belongs to the routine's own app;
  * - a tap is `ACTION_CLICK` on the one element [RoutineLogic.pickTarget]
- *   chose, re-read just before the click. No coordinates, no typing, no
- *   scrolling, no global actions.
+ *   chose, re-read just before the click;
+ * - typing (0.13.1) sets only the text written into the routine, on the one
+ *   field [RoutineLogic.pickField] chose — never a password field — and the
+ *   keyboard's Enter goes only to the focused field.
+ * No coordinates, no scrolling, no global actions.
  * Screen content is read only to match the routine's own words. It is never
  * stored, logged or sent anywhere; a result carries codes only.
  *
@@ -60,7 +65,10 @@ class RoutineAccessibilityService : AccessibilityService() {
     private fun applyPackages(extra: List<String>) {
         val packages = (RoutineStore.all(this).map { it.packageName } + extra).distinct()
         val info = serviceInfo ?: return
-        info.packageNames = packages.ifEmpty { listOf(packageName) }.toTypedArray()
+        // Plus the phone's "allow opening another app?" dialog, so a run can tell it is waiting there.
+        info.packageNames = packages.ifEmpty { listOf(packageName) }
+            .let { if (packages.isEmpty()) it else it + RoutineLogic.LAUNCH_CONFIRM_PACKAGES }
+            .toTypedArray()
         serviceInfo = info
     }
 
@@ -149,21 +157,41 @@ class RoutineAccessibilityService : AccessibilityService() {
                 }
 
                 RoutineLogic.Kind.TAP_TEXT, RoutineLogic.Kind.TAP_ID -> {
-                    waitUntilStable(deadline)
-                    val (nodes, infos) = snapshot(routine.packageName)
+                    val (nodes, pick) = findTarget(routine.packageName, deadline) { RoutineLogic.pickTarget(it, step) }
                         ?: return RoutineLogic.failure(tapped, index, guardReason(routine) ?: "app_not_front")
-                    when (val pick = RoutineLogic.pickTarget(infos, step)) {
+                    when (pick) {
                         RoutineLogic.Pick.None -> return RoutineLogic.failure(tapped, index, "target_not_found")
                         RoutineLogic.Pick.Disabled -> return RoutineLogic.failure(tapped, index, "target_disabled")
                         is RoutineLogic.Pick.Many -> return RoutineLogic.failure(tapped, index, "target_ambiguous")
                         is RoutineLogic.Pick.One -> {
-                            // A dry run stops at the first tap: everything before it was found.
+                            // A dry run stops at the first action: everything before it was found.
                             if (dryRun) return RoutineLogic.Result(RoutineLogic.Outcome.DRY_RUN_OK, index)
                             if (!click(nodes[pick.index], routine.packageName)) {
                                 return RoutineLogic.failure(tapped, index, guardReason(routine) ?: "tap_refused")
                             }
                             tapped++
                             lastChangeAt = SystemClock.uptimeMillis()
+                        }
+                    }
+                }
+
+                RoutineLogic.Kind.TYPE_TEXT, RoutineLogic.Kind.SUBMIT -> {
+                    val submit = step.kind == RoutineLogic.Kind.SUBMIT
+                    val (nodes, pick) = findTarget(routine.packageName, deadline) { RoutineLogic.pickField(it, needFocus = submit) }
+                        ?: return RoutineLogic.failure(tapped, index, guardReason(routine) ?: "app_not_front")
+                    when (pick) {
+                        RoutineLogic.Pick.None -> return RoutineLogic.failure(tapped, index, "target_not_found")
+                        RoutineLogic.Pick.Disabled -> return RoutineLogic.failure(tapped, index, "target_disabled")
+                        is RoutineLogic.Pick.Many -> return RoutineLogic.failure(tapped, index, "target_ambiguous")
+                        is RoutineLogic.Pick.One -> {
+                            if (dryRun) return RoutineLogic.Result(RoutineLogic.Outcome.DRY_RUN_OK, index)
+                            val field = nodes[pick.index]
+                            val (acted, problem) =
+                                if (submit) submit(field, routine.packageName) else type(field, step.value, routine.packageName)
+                            // The action counts once Android accepted it, even if the check after it fails.
+                            if (acted) tapped++
+                            lastChangeAt = SystemClock.uptimeMillis()
+                            problem?.let { return RoutineLogic.failure(tapped, index, guardReason(routine) ?: it) }
                         }
                     }
                 }
@@ -176,13 +204,37 @@ class RoutineAccessibilityService : AccessibilityService() {
     }
 
     /**
+     * The settled screen and what [pick] chose on it. While nothing matches
+     * yet (a page still loading), looks again for up to [TARGET_WAIT_MS];
+     * a disabled or ambiguous target is answered at once. Null when the
+     * routine's app is no longer in front.
+     */
+    private fun findTarget(
+        packageName: String,
+        deadline: Long,
+        pick: (List<RoutineLogic.Node>) -> RoutineLogic.Pick,
+    ): Pair<List<AccessibilityNodeInfo>, RoutineLogic.Pick>? {
+        val until = minOf(SystemClock.uptimeMillis() + TARGET_WAIT_MS, deadline)
+        while (true) {
+            waitUntilStable(deadline)
+            val (nodes, infos) = snapshot(packageName) ?: return null
+            val chosen = pick(infos)
+            if (chosen != RoutineLogic.Pick.None || SystemClock.uptimeMillis() >= until) return nodes to chosen
+            SystemClock.sleep(POLL_MS)
+        }
+    }
+
+    /**
      * Launches the app and waits until its window is in front: null when it
      * is, else why not. While the phone's "allow opening another app?" dialog
      * is up, the wait stretches to [RoutineLogic.CONFIRM_WAIT_MS] for the user.
      */
     private fun open(packageName: String, launch: Intent, deadline: Long): String? {
         lastChangeAt = SystemClock.uptimeMillis()
-        main.post { startActivity(launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
+        // A fresh start: the app opens on its first screen, not on whatever it was left showing
+        // (FID still showed the last search's results, with no field to type into).
+        val fresh = launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
+        main.post { startActivity(fresh) }
         val start = SystemClock.uptimeMillis()
         var sawConfirm = false
         while (true) {
@@ -208,6 +260,42 @@ class RoutineAccessibilityService : AccessibilityService() {
         if (!node.isVisibleToUser || !node.isEnabled) return false
         if (rootInActiveWindow?.packageName?.toString() != packageName) return false
         return node.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+    }
+
+    /** The checks before typing or Enter: as [click]'s, and the node is still a field, not a password. */
+    private fun fieldUsable(node: AccessibilityNodeInfo, packageName: String): Boolean {
+        if (locked()) return false
+        if (!node.refresh()) return false
+        if (node.packageName?.toString() != packageName) return false
+        if (!node.isVisibleToUser || !node.isEnabled || !node.isEditable || node.isPassword) return false
+        return rootInActiveWindow?.packageName?.toString() == packageName
+    }
+
+    /**
+     * Focuses the field and sets the routine's own text. Returns whether the
+     * text was set (the app may have changed), and why the step failed, or null.
+     */
+    private fun type(node: AccessibilityNodeInfo, text: String, packageName: String): Pair<Boolean, String?> {
+        if (!fieldUsable(node, packageName)) return false to "tap_refused"
+        if (!node.isFocused) {
+            node.performAction(AccessibilityNodeInfo.ACTION_FOCUS)
+            if (!node.refresh() || !node.isFocused) return false to "tap_refused"
+        }
+        val args = Bundle().apply {
+            putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, text)
+        }
+        if (!node.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, args)) return false to "tap_refused"
+        // Read back: an app that filtered or rewrote the text did not get what the routine says.
+        val typed = if (node.refresh()) node.text?.toString() else null
+        return true to (if (typed != null && RoutineLogic.normalize(typed) == RoutineLogic.normalize(text)) null else "tap_refused")
+    }
+
+    /** The keyboard's Enter / search key on the focused field. Android 11+ only. */
+    private fun submit(node: AccessibilityNodeInfo, packageName: String): Pair<Boolean, String?> {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) return false to "tap_refused"
+        if (!fieldUsable(node, packageName) || !node.isFocused) return false to "tap_refused"
+        val done = node.performAction(AccessibilityNodeInfo.AccessibilityAction.ACTION_IME_ENTER.id)
+        return done to (if (done) null else "tap_refused")
     }
 
     /** Why the guard would refuse now, or null if it would not. */
@@ -249,6 +337,8 @@ class RoutineAccessibilityService : AccessibilityService() {
                     hint = node.hintText?.toString(),
                     editable = node.isEditable,
                     clickable = node.isClickable,
+                    focused = node.isFocused,
+                    password = node.isPassword,
                 ),
             )
             for (i in node.childCount - 1 downTo 0) node.getChild(i)?.let { stack.addLast(it to target) }
@@ -277,6 +367,8 @@ class RoutineAccessibilityService : AccessibilityService() {
         private const val POLL_MS = 250L
         private const val MAX_NODES = 2_000
         private const val SCAN_SETTLE_MS = 2_000L
+        /** How long a tap or typing step waits for its target to appear. */
+        private const val TARGET_WAIT_MS = 10_000L
 
         @Volatile private var instance: RoutineAccessibilityService? = null
         private val worker = Executors.newSingleThreadExecutor()

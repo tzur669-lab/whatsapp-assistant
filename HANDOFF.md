@@ -5,7 +5,7 @@ system is, where things live, and what breaks easily, then links out. It does
 **not** repeat the rules in `CLAUDE.md` (always loaded) or the spec in
 `PLAN.md` (read by section, never whole).
 
-_Last updated: 2026-10-11 · server at migration 0028 · agent prompt a10 + smart note s2 · parser prompt v6 · app 0.13.0 · smart model gemini-3.5-flash-lite_
+_Last updated: 2026-10-11 · server at migration 0028 · agent prompt a10 + smart note s2 · parser prompt v6 · app 0.13.1 · smart model gemini-3.5-flash-lite_
 
 ## 1. What this is
 
@@ -85,11 +85,15 @@ Network on the hotspot: `NODE_OPTIONS=--dns-result-order=ipv4first` for wrangler
 
 - **Routines** (PLAN §6.27, plan `docs/plans/routines.md`): "open the
   attendance app in 15 minutes and tap כניסה". Stages 1–2 and the core of 3
-  are built (app 0.13.0, migration 0028, decisions D1–D4 approved): the
-  dry run passed on the real attendance app (exit, 2026-10-11). Needs, in
-  order: a staging deploy (approval), then the 0.13.0 APK — **server
-  first**, or the app's sync gets 404 — and the owed items in PLAN §13
-  (`eval:agent --filter rt-`, a first real scheduled run).
+  are built (app 0.13.0, migration 0028, decisions D1–D4 approved); app
+  0.13.1 adds typing a fixed text and the keyboard's Enter ("open FID and
+  search סטימצקי", plan `docs/plans/routines-typing.md`). Staging is deployed
+  (2026-10-11), 0.13.1 is on the phone. Next, a separate
+  plan: the bot builds a routine on request and explains it (the user's
+  wish, 2026-10-11 — it changes "never written by a model", PLAN §6.27): the
+  dry run passed on the real attendance app (exit, 2026-10-11). Server
+  and app are deployed (staging, 0.13.1). Owed in PLAN §13: a first real
+  scheduled run.
 - **Smart conversations** (PLAN §6.19, plan
   `~/.claude/plans/abundant-wobbling-sparkle.md`): built, slices 1–6, server
   and app 0.12.0. Model `gemini-3.5-flash-lite` since 2026-10-08, the
@@ -98,7 +102,7 @@ Network on the hotspot: `NODE_OPTIONS=--dns-result-order=ipv4first` for wrangler
   `minuteRequests` 15 / `dayRequests` 500 are unmeasured guesses. Needs, in
   order: the human confirms the Gemini model id in AI Studio,
   `pnpm eval:agent --model gemini-3.5-flash-lite` and a human read of it,
-  a staging deploy (approval), the human sets `GEMINI_API_KEY`
+  a staging deploy (done 2026-10-11), the human sets `GEMINI_API_KEY`
   (`wrangler secret put GEMINI_API_KEY --env staging`), and only then the
   0.12.0 APK — **server first**: an older server refuses the `mode` field.
   2026-10-11: private tools offered, own-input writes never ask, smart note
@@ -109,7 +113,7 @@ Network on the hotspot: `NODE_OPTIONS=--dns-result-order=ipv4first` for wrangler
   unions, calibrated token estimate, history fitter, named lists) and 18
   (facts the model sees, PLAN §6.26) and 19 (the stock portfolio, PLAN
   §6.24: Finnhub for US with `QUOTES_API_KEY`, set on staging; Yahoo for
-  TASE) are done. Block H is built; it needs a staging deploy. Open: the
+  TASE) are done. Block H is built and on staging (2026-10-11). Open: the
   full catalog has ~100 tokens of headroom left (PLAN §13 — decide before
   adding tools), and evals on prompt a10 are owed (PLAN §13). The full reviewed plan: `docs/plans/block-h.md` (read
   the part you build). Block G waits behind it.
@@ -139,6 +143,13 @@ Network on the hotspot: `NODE_OPTIONS=--dns-result-order=ipv4first` for wrangler
 | [SETUP.md](SETUP.md) | Setting up a new copy from zero: accounts, Groq key, models, secrets, deploy, app, AI agent. |
 
 ## 8. Session log (docs)
+
+- 2026-10-11: Routines, typing (app 0.13.1): `TYPE_TEXT`, `SUBMIT`,
+  `RoutineLogic.pickField`; checks skip fields; server wording only
+  (`render/routines.ts`). A run starts the app fresh; taps wait up to 10 s
+  for their target; the routines screen shows its buttons on two rows.
+  Staging deployed (version c3b2cffb). No new modules, tools, tables or
+  reason codes.
 
 - 2026-10-11: Routines, stage 2 (+ the core of stage 3): `routine.run`
   (`tools/routines.ts`, Tier 2, private, `refusesTainted`), `tools/routine-store.ts`,

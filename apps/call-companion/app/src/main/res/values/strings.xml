@@ -179,14 +179,14 @@
     <!-- Routines (0.13): steps the user builds, run inside one app -->
     <string name="routines_open">⚙️ שגרות</string>
     <string name="routines_title">שגרות</string>
-    <string name="routines_intro">שגרה היא רצף קבוע של לחיצות בתוך אפליקציה אחת. למשל: לפתוח את שעון הנוכחות וללחוץ על \"כניסה\". בונים אותה כאן פעם אחת. בשלב הבא אפשר יהיה לבקש מהעוזר להפעיל אותה, גם בעוד זמן מה.
+    <string name="routines_intro">שגרה היא רצף קבוע של פעולות בתוך אפליקציה אחת: לחיצות, והקלדה של טקסט קבוע. למשל: לפתוח את שעון הנוכחות וללחוץ על \"כניסה\", או לפתוח אפליקציית קניות ולחפש בה \"סטימצקי\". בונים אותה כאן פעם אחת. בשלב הבא אפשר יהיה לבקש מהעוזר להפעיל אותה, גם בעוד זמן מה.
 
-השגרה רואה רק את האפליקציה שנבחרה לה, לא מקלידה כלום ולא נוגעת במסך הנעילה. מה שמופיע במסך לא נשמר ולא יוצא מהטלפון.</string>
+השגרה רואה רק את האפליקציה שנבחרה לה, מקלידה רק את הטקסט שנכתב בה (אף פעם לא בשדה סיסמה) ולא נוגעת במסך הנעילה. מה שמופיע במסך לא נשמר ולא יוצא מהטלפון.</string>
     <string name="routines_service_on">✓ שירות הנגישות של השגרות פועל.</string>
     <string name="routines_service_off">שירות הנגישות כבוי, ולכן שגרות לא יכולות לפעול. יש להפעיל את \"שגרות של העוזר\" בהגדרות הנגישות.</string>
     <string name="routines_service_open">פתיחת הגדרות הנגישות</string>
     <string name="routine_service_label">שגרות של העוזר</string>
-    <string name="routine_service_description">מאפשר לעוזר להריץ שגרות שבנית: לפתוח אפליקציה שבחרת וללחוץ בה על מה שהגדרת. השירות רואה רק את האפליקציות של השגרות, לא מקליד ולא נוגע במסך הנעילה. תוכן המסך לא נשמר ולא יוצא מהטלפון.</string>
+    <string name="routine_service_description">מאפשר לעוזר להריץ שגרות שבנית: לפתוח אפליקציה שבחרת, ללחוץ בה על מה שהגדרת ולהקליד את הטקסט שכתבת בשגרה. השירות רואה רק את האפליקציות של השגרות, לא מקליד בשדות סיסמה ולא נוגע במסך הנעילה. תוכן המסך לא נשמר ולא יוצא מהטלפון.</string>
     <string name="routines_list_title">השגרות שלי</string>
     <string name="routines_empty">עוד אין שגרות.</string>
     <string name="routines_new">＋ שגרה חדשה</string>
@@ -235,6 +235,11 @@
     <string name="step_kind_expect_text">לוודא שהופיע טקסט (אישור שהפעולה הצליחה)</string>
     <string name="step_kind_wait">להמתין כמה שניות</string>
     <string name="step_kind_tap_id">ללחוץ לפי מזהה טכני באנגלית (מתקדם)</string>
+    <string name="step_kind_type_text">להקליד טקסט בשדה</string>
+    <string name="step_kind_submit">ללחוץ על &#x2068;Enter&#x2069; או חיפוש במקלדת</string>
+    <string name="step_hint_type">הטקסט להקלדה, למשל: סטימצקי</string>
+    <string name="step_type_text">להקליד %1$s</string>
+    <string name="step_submit">ללחוץ על &#x2068;Enter&#x2069; במקלדת</string>
     <string name="step_problem_text">צריך טקסט, עד 60 תווים.</string>
     <string name="step_problem_seconds">הזמן מחוץ לטווח: עד 20 שניות כשמחכים לטקסט, ועד 5 שניות בהמתנה רגילה.</string>
     <string name="step_problem_id">מזהה הוא שם טכני באנגלית בלי רווחים, כמו &#x2068;clock_in&#x2069;. כדי ללחוץ על מילים שמופיעות במסך, יש לבחור \"ללחוץ על טקסט\".</string>
@@ -251,18 +256,18 @@
     <string name="routine_problem_name">צריך שם לשגרה, עד 40 תווים.</string>
     <string name="routine_problem_app">צריך לבחור אפליקציה.</string>
     <string name="routine_problem_steps">צריך בין שלב אחד ל־10 שלבים.</string>
-    <string name="routine_problem_no_tap">צריך לפחות שלב לחיצה אחד.</string>
+    <string name="routine_problem_no_tap">צריך לפחות שלב פעולה אחד: לחיצה או הקלדה.</string>
     <string name="routine_problem_step">אחד השלבים לא תקין: טקסט ריק או ארוך מ־60 תווים, או זמן מחוץ לטווח.</string>
-    <string name="routine_problem_expect_order">שלב אימות צריך לבוא אחרי כל הלחיצות.</string>
+    <string name="routine_problem_expect_order">שלב אימות צריך לבוא אחרי כל הלחיצות וההקלדות.</string>
 
     <string name="routine_result_title">תוצאת השגרה</string>
     <string name="routine_result_verified">✓ הושלם, והטקסט שמאשר את הפעולה הופיע.</string>
-    <string name="routine_result_unverified">הלחיצות בוצעו. אין בשגרה שלב אימות, ולכן לא ידוע אם הפעולה נקלטה. כדאי לבדוק באפליקציה.</string>
-    <string name="routine_result_failed_before">נעצר לפני כל לחיצה, ולכן שום דבר לא השתנה באפליקציה.
+    <string name="routine_result_unverified">כל השלבים בוצעו. אין בשגרה שלב אימות, ולכן לא ידוע אם הפעולה נקלטה. כדאי לבדוק באפליקציה.</string>
+    <string name="routine_result_failed_before">נעצר לפני כל לחיצה או הקלדה, ולכן שום דבר לא השתנה באפליקציה.
 %1$s: %2$s</string>
-    <string name="routine_result_failed_after">נעצר אחרי שכבר בוצעה לחיצה. ייתכן שמשהו השתנה באפליקציה, כדאי לבדוק.
+    <string name="routine_result_failed_after">נעצר אחרי שכבר בוצעה לחיצה או הקלדה. ייתכן שמשהו השתנה באפליקציה, כדאי לבדוק.
 %1$s: %2$s</string>
-    <string name="routine_result_dry_ok">✓ הבדיקה היבשה עברה: כל השלבים עד הלחיצה הראשונה עברו, ומה שצריך ללחוץ עליו נמצא במסך פעם אחת בדיוק. שום דבר לא נלחץ.</string>
+    <string name="routine_result_dry_ok">✓ הבדיקה היבשה עברה: כל השלבים עד הפעולה הראשונה עברו, ומה שצריך ללחוץ עליו או להקליד בו נמצא במסך פעם אחת בדיוק. שום דבר לא נלחץ ולא הוקלד.</string>
     <string name="routine_result_blocked">השגרה לא התחילה, כי הטלפון נעול.</string>
     <string name="routine_where_open">בפתיחת האפליקציה</string>
     <string name="routine_where_step">בשלב %1$d</string>
@@ -273,9 +278,9 @@
     <string name="routine_reason_app_left">האפליקציה כבר לא במסך</string>
     <string name="routine_reason_text_not_found">הטקסט לא הופיע בזמן</string>
     <string name="routine_reason_not_verified">טקסט האישור לא הופיע</string>
-    <string name="routine_reason_target_not_found">לא נמצא במסך על מה ללחוץ</string>
-    <string name="routine_reason_target_ambiguous">נמצא יותר ממקום אחד מתאים, ולכן לא נלחץ כלום</string>
-    <string name="routine_reason_tap_refused">הלחיצה לא התקבלה</string>
+    <string name="routine_reason_target_not_found">לא נמצא במסך על מה ללחוץ או איפה להקליד</string>
+    <string name="routine_reason_target_ambiguous">נמצא יותר ממקום אחד מתאים, ולכן לא נלחץ ולא הוקלד כלום</string>
+    <string name="routine_reason_tap_refused">הלחיצה או ההקלדה לא התקבלו</string>
     <string name="routine_reason_deadline">עברו 4 דקות</string>
     <string name="routine_reason_error">תקלה בטלפון</string>
 </resources>
