@@ -162,6 +162,12 @@ class RoutineLogicTest {
         assertTrue(r.verifies)
     }
 
+    @Test fun thePhonesLaunchQuestionIsRecognised() {
+        assertTrue(RoutineLogic.isLaunchConfirm("com.oplus.securitypermission"))
+        assertFalse(RoutineLogic.isLaunchConfirm("com.ok2go.ok2go"))
+        assertFalse(RoutineLogic.isLaunchConfirm(null))
+    }
+
     // --- Outcomes ---
 
     @Test fun aFailureAfterATapIsNotCalledSafe() {

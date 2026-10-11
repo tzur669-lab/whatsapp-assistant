@@ -268,6 +268,7 @@
     <string name="routine_reason_locked">הטלפון נעול</string>
     <string name="routine_reason_app_missing">האפליקציה לא מותקנת</string>
     <string name="routine_reason_app_not_front">האפליקציה לא נפתחה בזמן</string>
+    <string name="routine_reason_launch_confirm">הטלפון שאל אם לאפשר לעוזר לפתוח את האפליקציה, ואף אחד לא אישר. בפעם הבאה יש לאשר ולבחור לאפשר תמיד. אחרת שגרה מתוזמנת לא תוכל לפעול.</string>
     <string name="routine_reason_app_left">האפליקציה כבר לא במסך</string>
     <string name="routine_reason_text_not_found">הטקסט לא הופיע בזמן</string>
     <string name="routine_reason_not_verified">טקסט האישור לא הופיע</string>

@@ -59,6 +59,21 @@ object RoutineLogic {
 
     /** How long the app may take to come to the front after it is launched. */
     const val OPEN_TIMEOUT_MS = 10_000L
+    /** While the phone asks "allow this app to open that one?", wait this long for the user. */
+    const val CONFIRM_WAIT_MS = 30_000L
+
+    /**
+     * The phone makers' "allow app A to open app B?" dialogs (ColorOS/OxygenOS,
+     * MIUI). Seen in front instead of the routine's app, the run waits for
+     * the user and, if nobody answers, says so instead of "did not open".
+     */
+    private val LAUNCH_CONFIRM_PACKAGES = setOf(
+        "com.oplus.securitypermission",
+        "com.coloros.securitypermission",
+        "com.miui.securitycenter",
+    )
+
+    fun isLaunchConfirm(packageName: String?): Boolean = packageName in LAUNCH_CONFIRM_PACKAGES
     /** A tap waits until the screen stopped changing for this long … */
     const val STABLE_MS = 500L
     /** … but no longer than this. */

@@ -101,11 +101,9 @@ class RoutineAccessibilityService : AccessibilityService() {
     private fun scanNow(packageName: String): List<RoutineLogic.ScanLine>? {
         if (locked()) return null
         val launch = packageManager.getLaunchIntentForPackage(packageName) ?: return null
-        val deadline = SystemClock.uptimeMillis() + RoutineLogic.OPEN_TIMEOUT_MS + SCAN_SETTLE_MS
+        val deadline = SystemClock.uptimeMillis() + RoutineLogic.CONFIRM_WAIT_MS + SCAN_SETTLE_MS
         runningPackage = packageName
-        lastChangeAt = SystemClock.uptimeMillis()
-        main.post { startActivity(launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
-        if (!waitFor(RoutineLogic.OPEN_TIMEOUT_MS, deadline) { snapshot(packageName) != null }) return null
+        if (open(packageName, launch, deadline) != null) return null
         // A web page inside the app keeps loading after its window appears.
         SystemClock.sleep(SCAN_SETTLE_MS)
         waitUntilStable(deadline + RoutineLogic.STABLE_MAX_MS)
@@ -120,11 +118,7 @@ class RoutineAccessibilityService : AccessibilityService() {
         val launch = packageManager.getLaunchIntentForPackage(routine.packageName)
             ?: return RoutineLogic.failure(0, -1, "app_missing")
         runningPackage = routine.packageName
-        lastChangeAt = SystemClock.uptimeMillis()
-        main.post { startActivity(launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
-        if (!waitFor(RoutineLogic.OPEN_TIMEOUT_MS, deadline) { snapshot(routine.packageName) != null }) {
-            return RoutineLogic.failure(0, -1, if (locked()) "locked" else "app_not_front")
-        }
+        open(routine.packageName, launch, deadline)?.let { return RoutineLogic.failure(0, -1, it) }
 
         var tapped = 0
         routine.steps.forEachIndexed { index, step ->
@@ -179,6 +173,31 @@ class RoutineAccessibilityService : AccessibilityService() {
         return RoutineLogic.Result(
             if (routine.verifies) RoutineLogic.Outcome.VERIFIED else RoutineLogic.Outcome.TAPPED_UNVERIFIED,
         )
+    }
+
+    /**
+     * Launches the app and waits until its window is in front: null when it
+     * is, else why not. While the phone's "allow opening another app?" dialog
+     * is up, the wait stretches to [RoutineLogic.CONFIRM_WAIT_MS] for the user.
+     */
+    private fun open(packageName: String, launch: Intent, deadline: Long): String? {
+        lastChangeAt = SystemClock.uptimeMillis()
+        main.post { startActivity(launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
+        val start = SystemClock.uptimeMillis()
+        var sawConfirm = false
+        while (true) {
+            if (snapshot(packageName) != null) return null
+            if (RoutineLogic.isLaunchConfirm(rootInActiveWindow?.packageName?.toString())) sawConfirm = true
+            val limit = if (sawConfirm) RoutineLogic.CONFIRM_WAIT_MS else RoutineLogic.OPEN_TIMEOUT_MS
+            val now = SystemClock.uptimeMillis()
+            if (now - start >= limit || now >= deadline) break
+            SystemClock.sleep(POLL_MS)
+        }
+        return when {
+            locked() -> "locked"
+            sawConfirm -> "launch_confirm"
+            else -> "app_not_front"
+        }
     }
 
     /** The click, after the last checks: still unlocked, still the routine's app, still usable. */

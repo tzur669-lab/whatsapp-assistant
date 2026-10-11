@@ -223,6 +223,7 @@ class RoutinesActivity : Activity() {
             "locked" -> R.string.routine_reason_locked
             "app_missing" -> R.string.routine_reason_app_missing
             "app_not_front" -> R.string.routine_reason_app_not_front
+            "launch_confirm" -> R.string.routine_reason_launch_confirm
             "app_left" -> R.string.routine_reason_app_left
             "text_not_found" -> R.string.routine_reason_text_not_found
             "not_verified" -> R.string.routine_reason_not_verified
