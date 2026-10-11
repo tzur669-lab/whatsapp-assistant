@@ -51,6 +51,14 @@ class RoutineLogicTest {
         assertEquals("step", RoutineLogic.problem(clockIn.copy(steps = listOf(Step(Kind.TAP_ID, "../etc")))))
     }
 
+    @Test fun screenWordsAreNotAViewId() {
+        assertEquals("id", RoutineLogic.stepProblem(Step(Kind.TAP_ID, "אולפנה רבבה-2711")))
+        assertNull(RoutineLogic.stepProblem(Step(Kind.TAP_TEXT, "אולפנה רבבה-2711")))
+        assertNull(RoutineLogic.stepProblem(Step(Kind.TAP_ID, "clock_in")))
+        assertEquals("text", RoutineLogic.stepProblem(Step(Kind.TAP_TEXT, " ")))
+        assertEquals("seconds", RoutineLogic.stepProblem(Step(Kind.WAIT, seconds = 9)))
+    }
+
     @Test fun theCheckComesAfterEveryTap() {
         val wrong = clockIn.copy(steps = listOf(Step(Kind.TAP_TEXT, "כניסה"), Step(Kind.EXPECT_TEXT, "נקלט"), Step(Kind.TAP_TEXT, "אישור")))
         assertEquals("expect_order", RoutineLogic.problem(wrong))

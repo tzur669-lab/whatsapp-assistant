@@ -331,7 +331,15 @@ class RoutinesActivity : Activity() {
                     value = if (needsText) text.text.toString().trim() else "",
                     seconds = seconds.text.toString().toIntOrNull() ?: default,
                 )
-                add(step)
+                val problem = RoutineLogic.stepProblem(step)
+                if (problem == null) {
+                    add(step)
+                } else {
+                    AlertDialog.Builder(this)
+                        .setMessage(stepProblemText(problem))
+                        .setPositiveButton(android.R.string.ok, null)
+                        .show()
+                }
             }
             .setNegativeButton(R.string.chat_keep, null)
             .show()
@@ -354,6 +362,14 @@ class RoutinesActivity : Activity() {
             RoutineLogic.Kind.EXPECT_TEXT -> R.string.step_kind_expect_text
             RoutineLogic.Kind.WAIT -> R.string.step_kind_wait
             RoutineLogic.Kind.TAP_ID -> R.string.step_kind_tap_id
+        },
+    )
+
+    private fun stepProblemText(code: String): String = getString(
+        when (code) {
+            "id" -> R.string.step_problem_id
+            "seconds" -> R.string.step_problem_seconds
+            else -> R.string.step_problem_text
         },
     )
 

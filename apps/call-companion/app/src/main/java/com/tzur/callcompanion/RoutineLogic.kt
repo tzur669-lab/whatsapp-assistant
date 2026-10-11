@@ -68,20 +68,26 @@ object RoutineLogic {
         if (!PACKAGE.matches(routine.packageName)) return "app"
         if (routine.steps.isEmpty() || routine.steps.size > MAX_STEPS) return "steps"
         if (routine.steps.none { it.isTap }) return "no_tap"
-        for (step in routine.steps) {
-            val ok = when (step.kind) {
-                Kind.WAIT_FOR_TEXT, Kind.TAP_TEXT, Kind.EXPECT_TEXT ->
-                    normalize(step.value).isNotEmpty() && step.value.length <= MAX_TEXT &&
-                        step.seconds in 1..MAX_WAIT_SECONDS
-                Kind.TAP_ID -> VIEW_ID.matches(step.value.trim())
-                Kind.WAIT -> step.seconds in 1..MAX_PAUSE_SECONDS
-            }
-            if (!ok) return "step"
-        }
+        if (routine.steps.any { stepProblem(it) != null }) return "step"
         val lastTap = routine.steps.indexOfLast { it.isTap }
         val firstExpect = routine.steps.indexOfFirst { it.kind == Kind.EXPECT_TEXT }
         if (firstExpect in 0 until lastTap) return "expect_order"
         return null
+    }
+
+    /**
+     * Why one step is not valid, or null: `text` (empty or too long), `id`
+     * (not a view id — usually words from the screen, which belong in
+     * TAP_TEXT), `seconds` (out of range). Checked as the step is added.
+     */
+    fun stepProblem(step: Step): String? = when (step.kind) {
+        Kind.WAIT_FOR_TEXT, Kind.TAP_TEXT, Kind.EXPECT_TEXT -> when {
+            normalize(step.value).isEmpty() || step.value.length > MAX_TEXT -> "text"
+            step.seconds !in 1..MAX_WAIT_SECONDS -> "seconds"
+            else -> null
+        }
+        Kind.TAP_ID -> if (VIEW_ID.matches(step.value.trim())) null else "id"
+        Kind.WAIT -> if (step.seconds in 1..MAX_PAUSE_SECONDS) null else "seconds"
     }
 
     /**

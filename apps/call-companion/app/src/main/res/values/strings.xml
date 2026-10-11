@@ -220,7 +220,10 @@
     <string name="step_kind_wait_for_text">לחכות שיופיע טקסט</string>
     <string name="step_kind_expect_text">לוודא שהופיע טקסט (אישור שהפעולה הצליחה)</string>
     <string name="step_kind_wait">להמתין כמה שניות</string>
-    <string name="step_kind_tap_id">ללחוץ לפי מזהה (מתקדם)</string>
+    <string name="step_kind_tap_id">ללחוץ לפי מזהה טכני באנגלית (מתקדם)</string>
+    <string name="step_problem_text">צריך טקסט, עד 60 תווים.</string>
+    <string name="step_problem_seconds">הזמן מחוץ לטווח: עד 20 שניות כשמחכים לטקסט, ועד 5 שניות בהמתנה רגילה.</string>
+    <string name="step_problem_id">מזהה הוא שם טכני באנגלית בלי רווחים, כמו &#x2068;clock_in&#x2069;. כדי ללחוץ על מילים שמופיעות במסך, יש לבחור \"ללחוץ על טקסט\".</string>
     <string name="step_hint_text">הטקסט בדיוק כמו שהוא מופיע במסך</string>
     <string name="step_hint_id">מזהה, למשל clock_in</string>
     <string name="step_hint_seconds">כמה שניות לחכות, עד 20</string>
