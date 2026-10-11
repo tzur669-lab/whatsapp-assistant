@@ -5,7 +5,7 @@ system is, where things live, and what breaks easily, then links out. It does
 **not** repeat the rules in `CLAUDE.md` (always loaded) or the spec in
 `PLAN.md` (read by section, never whole).
 
-_Last updated: 2026-10-11 · server at migration 0027 · agent prompt a10 + smart note s2 · parser prompt v6 · app 0.12.0 · smart model gemini-3.5-flash-lite_
+_Last updated: 2026-10-11 · server at migration 0027 · agent prompt a10 + smart note s2 · parser prompt v6 · app 0.13.0 · smart model gemini-3.5-flash-lite_
 
 ## 1. What this is
 
@@ -82,6 +82,11 @@ Network on the hotspot: `NODE_OPTIONS=--dns-result-order=ipv4first` for wrangler
 
 ## 6. Where the current work is
 
+- **Routines** (PLAN §6.27, plan `docs/plans/routines.md`): "open the
+  attendance app in 15 minutes and tap כניסה". Stage 1 is built (app 0.13.0,
+  phone only: build, dry run, run now with the phone unlocked). Next: the
+  user tests a dry run on the real app; then stage 2 (server: `routine.run`,
+  one-shot claim, cancel) after the user approves D1–D4 in the plan.
 - **Smart conversations** (PLAN §6.19, plan
   `~/.claude/plans/abundant-wobbling-sparkle.md`): built, slices 1–6, server
   and app 0.12.0. Model `gemini-3.5-flash-lite` since 2026-10-08, the
@@ -122,6 +127,7 @@ Network on the hotspot: `NODE_OPTIONS=--dns-result-order=ipv4first` for wrangler
 | [ARCHITECTURE.md](ARCHITECTURE.md) | Before changing code across modules; to find where something lives. |
 | `PLAN.md` | Only the section you need. §6.x = component spec, §7 = security, §11 = tests/evals, §13 = open, §14 = decisions log. ~2,900 lines: never read whole. |
 | [ROADMAP.md](ROADMAP.md) | Starting the next feature block. |
+| `docs/plans/routines.md` | Routines (PLAN §6.27): the reviewed plan, stages and decisions D1–D4. |
 | `docs/plans/block-h.md` | Building a block H part: the reviewed plan, by part. |
 | `ops/runbook.md` | Routes, crons, chat commands, deploy, diagnosing. Other `ops/*.md`: secret rotation, token revoke, restore. |
 | `apps/call-companion/README.md` | Anything in the Android app or the app ↔ server protocol. |
@@ -130,6 +136,10 @@ Network on the hotspot: `NODE_OPTIONS=--dns-result-order=ipv4first` for wrangler
 | [SETUP.md](SETUP.md) | Setting up a new copy from zero: accounts, Groq key, models, secrets, deploy, app, AI agent. |
 
 ## 8. Session log (docs)
+
+- 2026-10-11: Routines, stage 1 (app 0.13.0): `RoutineLogic.kt`,
+  `RoutineStore.kt`, `RoutineAccessibilityService.kt`, `RoutinesActivity.kt`,
+  PLAN §6.27. App only; no server modules, tools or tables changed.
 
 - 2026-10-11: Smart conversations: `private` tools are offered (as in a local
   turn; their replies never reach a model or the history); a required

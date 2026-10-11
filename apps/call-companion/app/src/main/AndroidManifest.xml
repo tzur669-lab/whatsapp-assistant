@@ -154,6 +154,30 @@
             </intent-filter>
         </service>
 
+        <!-- Routines (0.13): build, test and run them. Opened by the app only. -->
+        <activity
+            android:name=".RoutinesActivity"
+            android:exported="false"
+            android:launchMode="singleTop" />
+
+        <!--
+          Routines (0.13): runs the user's own steps inside the one app each
+          routine names. Off until the user turns it on in the accessibility
+          settings; only the system can bind it. Screen content stays on the phone.
+        -->
+        <service
+            android:name=".RoutineAccessibilityService"
+            android:exported="false"
+            android:label="@string/routine_service_label"
+            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
+            <intent-filter>
+                <action android:name="android.accessibilityservice.AccessibilityService" />
+            </intent-filter>
+            <meta-data
+                android:name="android.accessibilityservice"
+                android:resource="@xml/routine_service" />
+        </service>
+
         <service
             android:name=".CompanionMessagingService"
             android:exported="false">

@@ -206,6 +206,22 @@ The chat database is version 4: the `mode` column, with every existing
 conversation `local`. Needs the server from 2026-10-08 (migration 0027) or
 later — **deploy the server first**: an older one refuses the `mode` field.
 
+## Routines (0.13, PLAN §6.27)
+
+☰ → **⚙️ שגרות** builds a routine: a name, one app, and up to 10 steps —
+wait for a text, tap a text, tap a view id, check that a text appeared, pause.
+No typing, scrolling or gestures. Saved in private preferences, excluded from
+backup. **בדיקה יבשה** opens the app and finds everything up to the first
+tap, then stops without tapping; **הפעלה** runs it now, phone unlocked.
+
+`RoutineAccessibilityService` runs the steps. The user turns on "שגרות של
+העוזר" in the accessibility settings (a sideloaded app may first need **App
+info → ⋮ → Allow restricted settings**). Before every step it checks that the
+phone is unlocked and that the routine's own app is in front; a tap is
+`ACTION_CLICK` on exactly one visible, enabled element, matched on its whole
+text. Screen content is never stored or sent. The server does not know about
+routines yet (stage 2).
+
 ## Setup
 
 1. **Firebase**: project `tzur-call-companion`, Android app
@@ -258,6 +274,7 @@ recorder all come from the platform.
 - **The chat's rules** (`ChatLogicTest`): what `/` offers, conversation
   titles, where a row goes, and that only a real conversation id is sent.
 - **Matching rules**, for calls (`ContactMatcherTest`), cards (`CardLogicTest`)
+  routines (`RoutineLogicTest`: validation, the step hash, one exact target),
   and phone reads (`PhoneReadLogicTest`: the query's shape, one-time codes,
   names never numbers, the caps).
 - **The wire protocol** (`ProtocolTest`), pinned against vectors from the

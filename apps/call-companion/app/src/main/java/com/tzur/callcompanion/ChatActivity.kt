@@ -481,6 +481,14 @@ class ChatActivity : Activity(), ChatEvents.Listener {
             }
         })
         panel.addView(Button(this).apply {
+            text = getString(R.string.routines_open)
+            isAllCaps = false
+            setOnClickListener {
+                closeDrawer()
+                startActivity(Intent(this@ChatActivity, RoutinesActivity::class.java))
+            }
+        })
+        panel.addView(Button(this).apply {
             text = getString(R.string.assistant_default)
             isAllCaps = false
             setOnClickListener {
