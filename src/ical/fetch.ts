@@ -36,9 +36,15 @@ export async function fetchFeed(params: {
   url: string;
   etag?: string | null;
   fetchImpl?: typeof fetch;
+  /**
+   * An agent turn's deadline, combined with the feed's own. No tool fetches a
+   * feed today (reads use the cache); kept so one never would unbounded.
+   */
+  signal?: AbortSignal;
 }): Promise<FeedFetch> {
   const doFetch = params.fetchImpl ?? fetch;
-  const deadline = AbortSignal.timeout(FETCH_TIMEOUT_MS);
+  const own = AbortSignal.timeout(FETCH_TIMEOUT_MS);
+  const deadline = params.signal ? AbortSignal.any([params.signal, own]) : own;
 
   let target = params.url;
 

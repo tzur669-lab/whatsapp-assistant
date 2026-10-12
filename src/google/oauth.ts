@@ -105,6 +105,8 @@ export async function exchangeCode(
 export async function refreshAccessToken(
   params: { refreshToken: string; clientId: string; clientSecret: string },
   fetchImpl: typeof fetch = fetch,
+  /** An agent turn's deadline (`api.ts`), combined with the refresh's own timeout. */
+  signal?: AbortSignal,
 ): Promise<TokenResult> {
   return postToken(
     {
@@ -114,6 +116,7 @@ export async function refreshAccessToken(
       client_secret: params.clientSecret,
     },
     fetchImpl,
+    signal,
   );
 }
 
@@ -135,6 +138,7 @@ export async function revokeToken(token: string, fetchImpl: typeof fetch = fetch
 async function postToken(
   form: Record<string, string>,
   fetchImpl: typeof fetch,
+  turn?: AbortSignal,
 ): Promise<TokenResult> {
   let response: Response;
   try {
@@ -142,7 +146,7 @@ async function postToken(
       method: 'POST',
       headers: { 'content-type': 'application/x-www-form-urlencoded' },
       body: new URLSearchParams(form).toString(),
-      signal: AbortSignal.timeout(TOKEN_TIMEOUT_MS),
+      signal: turn ? AbortSignal.any([turn, AbortSignal.timeout(TOKEN_TIMEOUT_MS)]) : AbortSignal.timeout(TOKEN_TIMEOUT_MS),
     });
   } catch {
     return { ok: false, error: { code: 'network_error' } };

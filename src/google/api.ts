@@ -29,6 +29,26 @@ export type GoogleFailure =
 
 export type GoogleResult<T> = { ok: true; value: T } | { ok: false; error: GoogleFailure };
 
+/**
+ * What a Google client needs of the API: one call. A `GoogleApi`, or a view of
+ * it bound to an agent turn's abort signal (`withSignal`).
+ */
+export interface GoogleCaller {
+  call(url: string, init?: RequestInit): Promise<GoogleResult<unknown>>;
+}
+
+/**
+ * The same caller, with every request (and the token refresh it chains) also
+ * cut when `signal` fires — an agent turn's deadline (Improvement plan §3 T3).
+ * A read's resolve and execute get one; a write's `execute` never does.
+ */
+export function withSignal(api: GoogleCaller, signal: AbortSignal): GoogleCaller {
+  return {
+    call: (url, init = { method: 'GET' }) =>
+      api.call(url, { ...init, signal: init.signal ? AbortSignal.any([init.signal, signal]) : signal }),
+  };
+}
+
 export type GoogleApiConfig = {
   store: GoogleStore;
   clientId: string;
@@ -40,7 +60,7 @@ export type GoogleApiConfig = {
   label: string;
 };
 
-export class GoogleApi {
+export class GoogleApi implements GoogleCaller {
   private accessToken: string | null = null;
   private expiresAt = 0;
   private readonly fetchImpl: typeof fetch;
@@ -55,10 +75,14 @@ export class GoogleApi {
   /**
    * One call, with a single 401 retry: a cached token can be revoked between
    * the expiry check and the request, and only the 401 says so.
+   *
+   * `init.signal`, when given, is a turn's deadline: combined with each
+   * request's own timeout, and passed to the refresh.
    */
   async call(url: string, init: RequestInit = { method: 'GET' }): Promise<GoogleResult<unknown>> {
+    const turn = init.signal ?? undefined;
     for (let attempt = 0; attempt < 2; attempt++) {
-      const token = await this.token(attempt > 0);
+      const token = await this.token(attempt > 0, turn);
       if (!token.ok) return token;
 
       let response: Response;
@@ -70,7 +94,7 @@ export class GoogleApi {
             'content-type': 'application/json',
             ...(init.headers as Record<string, string> | undefined),
           },
-          signal: AbortSignal.timeout(TIMEOUT_MS),
+          signal: turn ? AbortSignal.any([turn, AbortSignal.timeout(TIMEOUT_MS)]) : AbortSignal.timeout(TIMEOUT_MS),
         });
       } catch {
         return { ok: false, error: { code: 'network_error' } };
@@ -101,7 +125,7 @@ export class GoogleApi {
     return { ok: false, error: { code: 'provider_error', status: 401 } };
   }
 
-  private async token(force: boolean): Promise<GoogleResult<string>> {
+  private async token(force: boolean, signal?: AbortSignal): Promise<GoogleResult<string>> {
     if (!force && this.accessToken && this.config.now() < this.expiresAt - REFRESH_MARGIN_MS) {
       return { ok: true, value: this.accessToken };
     }
@@ -112,6 +136,7 @@ export class GoogleApi {
     const result = await refreshAccessToken(
       { refreshToken, clientId: this.config.clientId, clientSecret: this.config.clientSecret },
       this.fetchImpl,
+      signal,
     );
 
     if (!result.ok) {

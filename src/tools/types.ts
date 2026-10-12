@@ -209,6 +209,13 @@ export type ToolContext = {
    * for the one tool that sends the model's words out: Wikipedia (2026-10-05).
    */
   tainted?: boolean;
+  /**
+   * An agent turn's deadline (Improvement plan §3 T3), set only by
+   * `withTurnSignal` (`tools/turn-signal.ts`), which also binds every network
+   * client above to it. A resolve gets it, and a read's execute; a write's
+   * `execute` never does: a write that started finishes.
+   */
+  signal?: AbortSignal;
 };
 
 export type ExecuteResult = {

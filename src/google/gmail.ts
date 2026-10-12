@@ -7,7 +7,8 @@
  * is the sender's display name, the subject, the date and the text, which the
  * agent then scrubs on its way to the model (§6.19).
  */
-import type { GoogleApi, GoogleResult } from './api.js';
+import { withSignal } from './api.js';
+import type { GoogleCaller, GoogleResult } from './api.js';
 
 const BASE = 'https://gmail.googleapis.com/gmail/v1/users/me';
 const MAX_BODY_CHARS = 4_000;
@@ -138,7 +139,12 @@ export function draftRaw(draft: { to: string | null; subject: string; body: stri
 }
 
 export class GmailClient {
-  constructor(private readonly api: GoogleApi) {}
+  constructor(private readonly api: GoogleCaller) {}
+
+  /** This client, its requests cut when an agent turn's deadline fires (`api.ts`). */
+  withSignal(signal: AbortSignal): GmailClient {
+    return new GmailClient(withSignal(this.api, signal));
+  }
 
   /** Up to `max` messages matching a Gmail query that code built. Newest first. */
   async search(query: string, max: number): Promise<GoogleResult<MailSummary[]>> {

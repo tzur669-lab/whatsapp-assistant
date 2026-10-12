@@ -1,9 +1,11 @@
 /**
- * The turn deadline (Improvement plan §3 T3, Batch 06), end to end through the
- * pipeline with a scripted clock.
+ * The turn deadline (Improvement plan §3 T3, Batches 06–07), end to end through
+ * the pipeline: a scripted clock for the checks between steps, fake timers for
+ * the abort signal that cuts a step in flight.
  *
  * What is pinned: after the deadline no model call of any kind starts — not
- * the agent's next call, not the parser, not the read-only try — and a write
+ * the agent's next call, not the parser, not the read-only try — no write
+ * starts, no data of a read the deadline may have cut is shown, and a write
  * whose `execute` started before it answers with its own reply.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -24,6 +26,7 @@ import { TURN_DEADLINE_MS } from '../../../src/agent/limits.js';
 import { QWEN } from '../../../src/agent/models.js';
 import type { AgentProvider, AgentResponse } from '../../../src/agent/provider.js';
 import type { InboundEvent } from '../../../src/channels/types.js';
+import type { ToolContext } from '../../../src/tools/types.js';
 import { he } from '../../../src/render/he.js';
 import { stripIsolates } from '../../../src/render/bidi.js';
 import { TestSqlDriver } from '../../integration/sqlite-driver.js';
@@ -82,6 +85,24 @@ describe('the turn deadline', () => {
 
   const outcomeOf = (wamid: string): unknown =>
     driver.exec('SELECT error_code FROM inbound_messages WHERE wamid = ?', wamid)[0]?.['error_code'];
+  const audits = (tool: string): unknown[] =>
+    driver.exec('SELECT outcome FROM audit_log WHERE tool = ?', tool).map((row) => row['outcome']);
+
+  /** A promise that settles, with `value()`, when the turn's signal fires. */
+  const onAbort = <T,>(signal: AbortSignal | null | undefined, value: () => T | Promise<T>): Promise<T> => {
+    expect(signal).toBeInstanceOf(AbortSignal);
+    return new Promise<T>((resolve, reject) => {
+      signal!.addEventListener('abort', () => {
+        Promise.resolve().then(value).then(resolve, reject);
+      });
+    });
+  };
+
+  /** Start the message, then let the turn's deadline timer fire. */
+  const pastTheDeadline = async (pending: Promise<unknown>, extraMs = 0): Promise<unknown> => {
+    await vi.advanceTimersByTimeAsync(TURN_DEADLINE_MS + extraMs);
+    return pending;
+  };
 
   beforeEach(() => {
     driver = new TestSqlDriver();
@@ -108,7 +129,9 @@ describe('the turn deadline', () => {
     };
   });
   afterEach(() => {
+    vi.useRealTimers();
     vi.restoreAllMocks();
+    delete (REMINDER_TOOLS['reminders.create'] as { resolveAsync?: unknown }).resolveAsync;
     driver.close();
   });
 
@@ -200,6 +223,154 @@ describe('the turn deadline', () => {
     });
     await handleInbound(text('מה התזכורות שלי?'), deps([model]));
     expect(model.calls).toHaveLength(1);
+  });
+
+  describe('a step in flight at the deadline (T3-4, fake timers)', () => {
+    beforeEach(() => {
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    });
+
+    const create = REMINDER_TOOLS['reminders.create'];
+    const list = REMINDER_TOOLS['reminders.list'];
+    /** `reminders.create` resolves synchronously; these cases give it a network resolve. */
+    const giveResolveAsync = (fn: (slots: unknown, ctx: ToolContext) => Promise<unknown>) => {
+      (create as { resolveAsync?: unknown }).resolveAsync = fn;
+    };
+
+    it('(c) W1: a resolve read in flight is cut, nothing executes, and the audit says deadline', async () => {
+      // Even a question built from the cut read is not what the user gets.
+      giveResolveAsync((_slots, ctx) => onAbort(ctx.signal, () => ({ kind: 'clarify', clarify: { code: 'not_found' } })));
+      const execute = vi.spyOn(create, 'execute');
+      const model = timedModel([{ tool: 'reminders.create', args: CREATE }, { text: 'never asked' }], {});
+
+      const out = await pastTheDeadline(handleInbound(text('תזכיר לי מחר בשמונה בערב להתקשר'), deps([model])));
+
+      expect(execute).not.toHaveBeenCalled();
+      expect(reminders.listUpcoming(PRINCIPAL)).toHaveLength(0);
+      expect(out).toMatchObject({ action: 'reply', text: he.agentFailed('deadline') });
+      expect(audits('reminders.create')).toEqual(['deadline']);
+      expect(model.calls).toHaveLength(1);
+      expect(nlu.inputs).toHaveLength(0);
+      expect(readOnly.calls).toHaveLength(0);
+      expect(outcomeOf('wamid.dl.1')).toBe('E_AGENT_DEADLINE');
+    });
+
+    it('(c2) W2: a resolve that completes 1 ms after the deadline executes nothing', async () => {
+      giveResolveAsync(
+        () => new Promise((resolve) => setTimeout(() => resolve({ kind: 'ready', input: { never: 'run' } }), TURN_DEADLINE_MS + 1)),
+      );
+      const execute = vi.spyOn(create, 'execute');
+      const model = timedModel([{ tool: 'reminders.create', args: CREATE }, { text: 'never asked' }], {});
+
+      const out = await pastTheDeadline(handleInbound(text('תזכיר לי מחר בשמונה בערב להתקשר'), deps([model])), 1);
+
+      expect(execute).not.toHaveBeenCalled();
+      expect(out).toMatchObject({ action: 'reply', text: he.agentFailed('deadline') });
+      expect(audits('reminders.create')).toEqual(['deadline']);
+      expect(nlu.inputs).toHaveLength(0);
+      expect(readOnly.calls).toHaveLength(0);
+    });
+
+    it("a write's execute never gets the signal, and a read's does", async () => {
+      const signals: Record<string, AbortSignal | undefined> = {};
+      for (const tool of [create, list]) {
+        const original = tool.execute.bind(tool);
+        vi.spyOn(tool, 'execute').mockImplementation(async (input, ctx) => {
+          signals[tool.name] = ctx.signal;
+          return original(input, ctx);
+        });
+      }
+      await handleInbound(text('תזכיר לי מחר בשמונה בערב להתקשר'), deps([timedModel([{ tool: 'reminders.create', args: CREATE }], {})]));
+      await handleInbound(
+        { ...text('מה התזכורות שלי?'), wamid: 'wamid.dl.2' } as InboundEvent,
+        deps([timedModel([{ tool: 'reminders.list', args: {} }, { text: 'יש אחת' }], {})]),
+      );
+
+      expect(Object.keys(signals).sort()).toEqual(['reminders.create', 'reminders.list']);
+      expect(signals['reminders.create']).toBeUndefined();
+      expect(signals['reminders.list']).toBeInstanceOf(AbortSignal);
+    });
+
+    it('(d2) R1: a read whose request is pending at the deadline shows nothing of it', async () => {
+      const seen: AbortSignal[] = [];
+      services.fetchImpl = ((_input: string | URL | Request, init?: RequestInit) => {
+        seen.push(init!.signal!);
+        return onAbort(init?.signal, () => Promise.reject(new DOMException('aborted', 'AbortError')));
+      }) as unknown as typeof fetch;
+      vi.spyOn(list, 'execute').mockImplementation(async (_input, ctx) => {
+        try {
+          await ctx.fetchImpl!('https://example.com/data');
+          return { text: 'DATA-FETCHED' };
+        } catch {
+          return { text: 'FETCH-FAILED' };
+        }
+      });
+      const model = timedModel([{ tool: 'reminders.list', args: {} }, { text: 'never asked' }], {});
+
+      const out = await pastTheDeadline(handleInbound(text('מה התזכורות שלי?'), deps([model])));
+
+      expect(seen).toHaveLength(1);
+      expect(out).toMatchObject({ action: 'reply', text: he.agentIncomplete });
+      expect(model.calls).toHaveLength(1);
+      expect(nlu.inputs).toHaveLength(0);
+      expect(readOnly.calls).toHaveLength(0);
+      expect(audits('reminders.list')).toEqual(['deadline']);
+    });
+
+    it('(d2) R3: data that arrives in the same tick as the abort is not shown either', async () => {
+      vi.spyOn(list, 'execute').mockImplementation((_input, ctx) => onAbort(ctx.signal, () => ({ text: 'DATA-RACED' })));
+      const model = timedModel([{ tool: 'reminders.list', args: {} }, { text: 'never asked' }], {});
+
+      const out = await pastTheDeadline(handleInbound(text('מה התזכורות שלי?'), deps([model])));
+
+      expect(out).toMatchObject({ action: 'reply', text: he.agentIncomplete });
+      expect(JSON.stringify(out)).not.toContain('DATA-RACED');
+      expect(model.calls).toHaveLength(1);
+      expect(nlu.inputs).toHaveLength(0);
+      expect(readOnly.calls).toHaveLength(0);
+    });
+
+    it('(f) a model call in flight at the deadline ends `deadline`, not timeout: no parser, no read-only try', async () => {
+      const signals: (AbortSignal | undefined)[] = [];
+      const model: AgentProvider = {
+        model: QWEN,
+        role: 'primary',
+        complete: (_messages, _tools, options) => {
+          signals.push(options?.signal);
+          // What the real provider answers when its fetch is aborted.
+          return onAbort(options?.signal, (): AgentResponse => ({ ok: false, error: { code: 'timeout' } }));
+        },
+      };
+
+      const out = await pastTheDeadline(handleInbound(text('היי'), deps([model])));
+
+      expect(signals).toHaveLength(1);
+      expect(out).toMatchObject({ action: 'reply', text: he.agentFailed('deadline') });
+      expect(outcomeOf('wamid.dl.1')).toBe('E_AGENT_DEADLINE');
+      expect(nlu.inputs).toHaveLength(0);
+      expect(readOnly.calls).toHaveLength(0);
+      const turn = log.captured.find((entry) => entry.event === 'agent_turn');
+      expect(turn?.fields).toMatchObject({ modelCalls: 1, deadlineHit: true });
+    });
+
+    it('(a) still holds with the timer running: a write that started before the deadline finishes', async () => {
+      const original = create.execute.bind(create);
+      vi.spyOn(create, 'execute').mockImplementation(async (input, ctx) => {
+        await new Promise((resolve) => setTimeout(resolve, 5_000)); // runs past the deadline
+        return original(input, ctx);
+      });
+      const model = timedModel([{ tool: 'reminders.create', args: CREATE }, { text: 'never asked' }], {});
+      const pending = handleInbound(text('תזכיר לי מחר בשמונה בערב להתקשר'), deps([model]));
+      // The write starts 1 s before the deadline.
+      await vi.advanceTimersByTimeAsync(0);
+      const out = await pastTheDeadline(pending, 5_000);
+
+      expect(reminders.listUpcoming(PRINCIPAL)).toHaveLength(1);
+      expect(stripIsolates((out as { text: string }).text)).not.toBe(stripIsolates(he.agentFailed('deadline')));
+      expect(audits('reminders.create')).toEqual(['ok']);
+      expect(nlu.inputs).toHaveLength(0);
+      expect(readOnly.calls).toHaveLength(0);
+    });
   });
 
   describe('the agent_turn record', () => {

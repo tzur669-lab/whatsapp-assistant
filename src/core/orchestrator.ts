@@ -49,6 +49,7 @@ import type { PhoneReadInput } from '../tools/phone-reads.js';
 import { cardReply } from '../render/phone.js';
 import type { CardInput } from '../render/phone.js';
 import type { Clarify, ExecuteResult, ResolveOutcome, ToolContext, ToolDefinition } from '../tools/types.js';
+import { withTurnSignal } from '../tools/turn-signal.js';
 import { ToolInputError } from '../tools/types.js';
 import { AppError } from './errors.js';
 import { buttonId, parseButtonId } from '../confirm/pending.js';
@@ -106,6 +107,13 @@ export type Reply = {
    * turn and the phone answers this query. `text` is empty and never sent.
    */
   deviceQuery?: PhoneReadInput;
+  /**
+   * The agent turn's deadline fired (Improvement plan §3 T3): `not_started`,
+   * nothing was executed (W1, W2); `read_cut`, a read's result was dropped, as
+   * it may come from a request the deadline cut (R1, R3). The agent loop ends
+   * the turn `deadline`; `text` is what anything else would show.
+   */
+  deadline?: 'not_started' | 'read_cut';
 };
 
 /**
@@ -141,6 +149,12 @@ export type TurnContext = {
    * never stored, never set by the parser path.
    */
   backupModel?: boolean;
+  /**
+   * The agent turn's deadline, set per call by the agent loop, never stored.
+   * Cuts the resolve's network reads and a read's; stops any execute that has
+   * not started; never reaches a write's execute (`tools/turn-signal.ts`).
+   */
+  signal?: AbortSignal;
 };
 
 /** The tools with an executable body. The rest parse but cannot yet run. */
@@ -227,7 +241,8 @@ async function runIntentInner(
   // 1. Resolve. Everything the model left out is decided here or asked about.
   // A tool that refuses a tainted turn sees the taint here (`refusesTainted`):
   // the confirmation tap that would reach execute is a clean turn of its own.
-  const resolveCtx = turn.tainted && REGISTRY[draft.intent].refusesTainted ? { ...ctx, tainted: true } : ctx;
+  const taintedCtx = turn.tainted && REGISTRY[draft.intent].refusesTainted ? { ...ctx, tainted: true } : ctx;
+  const resolveCtx = turn.signal ? withTurnSignal(taintedCtx, turn.signal) : taintedCtx;
   let resolved: ResolveOutcome;
   try {
     // A tool whose target lives behind the network resolves asynchronously; the
@@ -236,12 +251,16 @@ async function runIntentInner(
       ? await tool.resolveAsync(draft.slots, resolveCtx)
       : tool.resolve(draft.slots, resolveCtx);
   } catch (error) {
+    if (turn.signal?.aborted) return deadlineReply(turn, draft.intent, null);
     ctx.log.error('resolve_failed', {
       tool: draft.intent,
       errorCode: errorCodeOf(error),
     });
     return { text: he.internalError };
   }
+  // W1, W2: whatever a resolve cut or finished late returned — a question
+  // built from the failure included — nothing past the deadline acts on it.
+  if (turn.signal?.aborted) return deadlineReply(turn, draft.intent, null);
 
   const reply = await decideAndAct(draft, resolved, tool, turn);
   return resolved.tainting ? { ...reply, tainting: true } : reply;
@@ -469,17 +488,30 @@ async function execute(
   turn: TurnContext,
 ): Promise<Reply> {
   // The turn's taint rides along for a read that sends words out (Wikipedia).
-  const ctx = turn.tainted ? { ...turn.tool, tainted: true } : turn.tool;
+  const base = turn.tainted ? { ...turn.tool, tainted: true } : turn.tool;
+  // Only a read is cut by the deadline: a write that started finishes (W3).
+  const read = decision.decision === 'ALLOW' && decision.tier === 0;
+  const signal = turn.signal;
+  const ctx = read && signal ? withTurnSignal(base, signal) : base;
+
+  // Nothing starts after the deadline (W2).
+  if (signal?.aborted) return deadlineReply(turn, tool.name, decision);
 
   let result: ExecuteResult;
   try {
     result = await tool.execute(input, ctx);
   } catch (error) {
+    // A read the deadline cut: what it threw is the abort, not a fault.
+    if (read && signal?.aborted) return deadlineReply(turn, tool.name, decision, 'read_cut');
     const code = error instanceof ToolInputError ? error.message : 'E_TOOL_FAILED';
     ctx.log.error('execute_failed', { tool: tool.name, errorCode: code });
     audit(turn, tool.name, decision, 'ALLOW', 'error');
     return { text: he.internalError };
   }
+
+  // R1, R3: a read that returned once the deadline fired may hold what a cut
+  // request made of it, or data that raced the abort. Never shown as data.
+  if (read && signal?.aborted) return deadlineReply(turn, tool.name, decision, 'read_cut');
 
   // A dispatch is not an execution: the phone still has to ask. The audit row
   // says so, and names the dispatch rather than anything about the call.
@@ -509,6 +541,24 @@ async function execute(
     ...(result.rescheduleAlarm ? { rescheduleAlarm: true } : {}),
     ...(decision.decision === 'ALLOW' && decision.tier === 0 ? { read: true } : {}),
     ...(result.tainting ? { tainting: true as const } : {}),
+  };
+}
+
+/**
+ * The agent turn's deadline stopped this tool (Improvement plan §3 T3, step
+ * 3b). Audited `deadline`, never `ok`, so it counts toward no rate limit.
+ */
+function deadlineReply(
+  turn: TurnContext,
+  tool: string,
+  decision: PolicyResult | null,
+  kind: 'not_started' | 'read_cut' = 'not_started',
+): Reply {
+  turn.tool.log.info('tool_deadline', { tool, kind });
+  audit(turn, tool, decision, 'DEADLINE', 'deadline');
+  return {
+    text: kind === 'not_started' ? he.agentFailed('deadline') : he.agentIncomplete,
+    deadline: kind,
   };
 }
 

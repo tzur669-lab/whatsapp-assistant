@@ -335,6 +335,8 @@ type Loop = {
   historySources: ConsentSource[];
   /** The tools that ran so far, in order. */
   ran: ToolName[];
+  /** This drive's deadline signal (`driveSteps`); never stored. */
+  signal?: AbortSignal;
 };
 
 /** One way to start the turn: its catalog, its first call's messages and their estimate. */
@@ -759,13 +761,35 @@ async function drive(loop: Loop, deps: AgentDeps, approved?: ToolCall): Promise<
 }
 
 async function driveSteps(loop: Loop, deps: AgentDeps, approved?: ToolCall): Promise<AgentResult> {
-  const { log, budget } = deps;
-  const model = loop.provider.model;
   // Nothing awaits before this in any entry, so this is the turn's start —
   // a resume's own (Improvement plan §3 T3).
   const now = deps.now ?? Date.now;
   const deadlineAt = now() + TURN_DEADLINE_MS;
-  const pastDeadline = (): boolean => now() >= deadlineAt;
+  // The deadline as a signal (T3-3): it cuts a model call or a read in flight.
+  // The clock check fires it too, so every stage sees the same deadline.
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), TURN_DEADLINE_MS);
+  loop.signal = controller.signal;
+  const pastDeadline = (): boolean => {
+    if (!controller.signal.aborted && now() >= deadlineAt) controller.abort();
+    return controller.signal.aborted;
+  };
+  try {
+    return await steps(loop, deps, pastDeadline, approved);
+  } finally {
+    clearTimeout(timer);
+    delete loop.signal;
+  }
+}
+
+async function steps(
+  loop: Loop,
+  deps: AgentDeps,
+  pastDeadline: () => boolean,
+  approved?: ToolCall,
+): Promise<AgentResult> {
+  const { log, budget } = deps;
+  const model = loop.provider.model;
 
   const ranTools = () => ({
     ...(loop.ran.length > 0 ? { tools: [...loop.ran] } : {}),
@@ -842,6 +866,17 @@ async function driveSteps(loop: Loop, deps: AgentDeps, approved?: ToolCall): Pro
     }
 
     const reply = outcome.reply;
+    if (reply.deadline) {
+      // T3-4: nothing executed (W1, W2), or a read the deadline may have cut
+      // (R1, R3), whose result is dropped. The read still ran, and may have
+      // read someone else's words; nothing of it is kept.
+      if (reply.deadline === 'read_cut') {
+        loop.toolRan = true;
+        loop.ran.push(outcome.tool);
+        if (TAINTING_TOOLS.has(outcome.tool)) loop.tainted = true;
+      }
+      return deadlineHit();
+    }
     if (reply.deviceQuery) {
       // Nothing ran: the phone answers this, and the turn waits for it (§6.21).
       return { kind: 'suspend', state: { ...paused(toolCall, outcome.tool, isApproved), query: reply.deviceQuery } };
@@ -909,10 +944,18 @@ async function driveSteps(loop: Loop, deps: AgentDeps, approved?: ToolCall): Pro
 
     let response: AgentResponse;
     try {
-      response = await loop.provider.complete(loop.messages, tools);
+      response = await loop.provider.complete(loop.messages, tools, loop.signal ? { signal: loop.signal } : {});
     } catch (error) {
       budget.chargeUnanswered(reservation);
       throw error;
+    }
+    if (!response.ok && pastDeadline()) {
+      // T3-4 (f): whatever the provider called it — an abort reads as
+      // `timeout` or `network_error` — the deadline ended it. Charged as sent,
+      // like a timeout; the model did not refuse it.
+      budget.chargeUnanswered(reservation);
+      log.warn('agent_call_failed', { model, call, errorCode: 'deadline', status: response.error.status });
+      return deadlineHit();
     }
     if (!response.ok) {
       if (response.error.code === 'rate_limited') {
@@ -1039,7 +1082,12 @@ async function runToolCall(call: ToolCall, loop: Loop, log: Logger, approved: bo
   const backupModel = loop.provider.role !== 'primary';
   const reply = await runIntent(
     checked.draft,
-    { ...loop.turn, tainted: loop.tainted, ...(backupModel ? { backupModel: true } : {}) },
+    {
+      ...loop.turn,
+      tainted: loop.tainted,
+      ...(backupModel ? { backupModel: true } : {}),
+      ...(loop.signal ? { signal: loop.signal } : {}),
+    },
     { dayInDoubt: checked.mismatched },
   );
   return { kind: 'ran', tool, reply };

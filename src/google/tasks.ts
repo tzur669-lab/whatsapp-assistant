@@ -6,7 +6,8 @@
  * Tasks has no time of day — a due date only (PLAN §2) — which is why timed
  * reminders stay reminders.
  */
-import type { GoogleApi, GoogleResult } from './api.js';
+import { withSignal } from './api.js';
+import type { GoogleCaller, GoogleResult } from './api.js';
 
 const BASE = 'https://tasks.googleapis.com/tasks/v1';
 const MAX_TASKS = 100;
@@ -18,7 +19,12 @@ export type Task = { id: string; title: string; due: string | null };
 const asString = (value: unknown, max: number) => (typeof value === 'string' && value.length > 0 ? value.slice(0, max) : null);
 
 export class TasksClient {
-  constructor(private readonly api: GoogleApi) {}
+  constructor(private readonly api: GoogleCaller) {}
+
+  /** This client, its requests cut when an agent turn's deadline fires (`api.ts`). */
+  withSignal(signal: AbortSignal): TasksClient {
+    return new TasksClient(withSignal(this.api, signal));
+  }
 
   async lists(): Promise<GoogleResult<TaskList[]>> {
     const result = await this.api.call(`${BASE}/users/@me/lists?maxResults=100`);

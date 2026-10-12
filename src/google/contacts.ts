@@ -7,7 +7,8 @@
  * else. A birthday Google holds only as free text ("early March") is skipped:
  * code cannot put it on a day.
  */
-import type { GoogleApi, GoogleResult } from './api.js';
+import { withSignal } from './api.js';
+import type { GoogleCaller, GoogleResult } from './api.js';
 import { isRealDayOfYear } from '../core/birthdays.js';
 
 const BASE = 'https://people.googleapis.com/v1/people/me/connections';
@@ -19,7 +20,12 @@ const MAX_NAME_CHARS = 60;
 export type ContactBirthday = { name: string; day: number; month: number; year: number | null };
 
 export class ContactsClient {
-  constructor(private readonly api: GoogleApi) {}
+  constructor(private readonly api: GoogleCaller) {}
+
+  /** This client, its requests cut when an agent turn's deadline fires (`api.ts`). */
+  withSignal(signal: AbortSignal): ContactsClient {
+    return new ContactsClient(withSignal(this.api, signal));
+  }
 
   async birthdays(): Promise<GoogleResult<ContactBirthday[]>> {
     const out: ContactBirthday[] = [];

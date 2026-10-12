@@ -14,8 +14,8 @@
  * attendees are rendered by code and matched by code (CLAUDE.md invariants 2
  * and 5).
  */
-import { GoogleApi } from './api.js';
-import type { GoogleFailure } from './api.js';
+import { GoogleApi, withSignal } from './api.js';
+import type { GoogleCaller, GoogleFailure } from './api.js';
 import type { GoogleStore } from './store.js';
 import type { Logger } from '../security/redact.js';
 import { ZONE } from '../time/tz.js';
@@ -84,10 +84,19 @@ export type CalendarConfig = {
 };
 
 export class CalendarClient {
-  private readonly api: GoogleApi;
+  private readonly api: GoogleCaller;
 
-  constructor(private readonly config: CalendarConfig) {
-    this.api = new GoogleApi({ ...config, label: 'calendar' });
+  /** `api`: only `withSignal`'s view of this client's own. */
+  constructor(private readonly config: CalendarConfig, api?: GoogleCaller) {
+    this.api = api ?? new GoogleApi({ ...config, label: 'calendar' });
+  }
+
+  /**
+   * This client, its requests cut when an agent turn's deadline fires
+   * (`api.ts`). It shares this client's token, so nothing is refreshed twice.
+   */
+  withSignal(signal: AbortSignal): CalendarClient {
+    return new CalendarClient(this.config, withSignal(this.api, signal));
   }
 
   /** Events overlapping a window, in time order. */

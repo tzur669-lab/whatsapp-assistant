@@ -87,7 +87,16 @@ export interface AgentProvider {
   /** What the request asks for, and so what is reserved before it is sent. */
   readonly maxCompletionTokens?: number;
   /** An empty tool list means a text-only call: no `tools`, no `tool_choice` on the wire. */
-  complete(messages: readonly AgentMessage[], tools: readonly WireTool[]): Promise<AgentResponse>;
+  /**
+   * `options.signal`: the agent turn's deadline (Improvement plan §3 T3),
+   * combined with the call's own timeout. An abort answers like a timeout; the
+   * loop, which knows the deadline fired, calls it `deadline`.
+   */
+  complete(
+    messages: readonly AgentMessage[],
+    tools: readonly WireTool[],
+    options?: { signal?: AbortSignal },
+  ): Promise<AgentResponse>;
 }
 
 export type AgentProviderConfig = {
@@ -125,9 +134,11 @@ export function createOpenAiCompatibleAgentProvider(config: AgentProviderConfig 
     ...(config.role ? { role: config.role } : {}),
     maxCompletionTokens,
 
-    async complete(messages, tools): Promise<AgentResponse> {
+    async complete(messages, tools, options): Promise<AgentResponse> {
       if (!config.apiKey) return { ok: false, error: { code: 'not_configured' } };
 
+      const own = AbortSignal.timeout(config.timeoutMs ?? TIMEOUT_MS);
+      const turn = options?.signal;
       let response: Response;
       try {
         response = await doFetch(config.endpoint, {
@@ -143,7 +154,7 @@ export function createOpenAiCompatibleAgentProvider(config: AgentProviderConfig 
             ...(tools.length > 0 ? { tools, tool_choice: 'auto' } : {}),
             messages,
           }),
-          signal: AbortSignal.timeout(config.timeoutMs ?? TIMEOUT_MS),
+          signal: turn ? AbortSignal.any([turn, own]) : own,
         });
       } catch (error) {
         const name = error instanceof Error ? error.name : '';

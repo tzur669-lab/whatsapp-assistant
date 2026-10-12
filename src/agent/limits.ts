@@ -34,8 +34,8 @@ export const GOOGLE_CALL_MAX_MS = 2 * (TOKEN_TIMEOUT_MS + GOOGLE_REQUEST_MS);
  * - `tasks.complete` (`tools/tasks.ts` execute): `setDone` — 1 call.
  *
  * A write tool's network read in `resolveAsync` (`reminders.leave`, `nav.go`)
- * runs before `execute`, and is bounded by the deadline only once the turn's
- * abort signal reaches it (T3-4).
+ * runs before `execute` and is cut by the turn's abort signal; nothing
+ * executes after the deadline (`tools/turn-signal.ts`, the orchestrator).
  */
 export const MAX_WRITE_CALLS = 3;
 export const MAX_WRITE_MS = MAX_WRITE_CALLS * GOOGLE_CALL_MAX_MS;

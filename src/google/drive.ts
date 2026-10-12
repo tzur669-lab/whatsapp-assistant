@@ -2,7 +2,8 @@
  * Google Drive file search (2026-10-01), through the `drive` grant with
  * `drive.metadata.readonly`: names, kinds and dates, never contents.
  */
-import type { GoogleApi, GoogleResult } from './api.js';
+import { withSignal } from './api.js';
+import type { GoogleCaller, GoogleResult } from './api.js';
 
 const BASE = 'https://www.googleapis.com/drive/v3/files';
 const MAX_FILES = 10;
@@ -49,7 +50,12 @@ export function buildDriveQuery(params: { words: string | null; kind: DriveKind 
 }
 
 export class DriveClient {
-  constructor(private readonly api: GoogleApi) {}
+  constructor(private readonly api: GoogleCaller) {}
+
+  /** This client, its requests cut when an agent turn's deadline fires (`api.ts`). */
+  withSignal(signal: AbortSignal): DriveClient {
+    return new DriveClient(withSignal(this.api, signal));
+  }
 
   async search(query: string): Promise<GoogleResult<DriveFile[]>> {
     const url =

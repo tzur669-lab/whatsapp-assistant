@@ -37,7 +37,8 @@ export type SourceResult =
   | { kind: 'error' };
 
 export interface QuoteSources {
-  quote(symbol: string, market: Market): Promise<SourceResult>;
+  /** `signal`: an agent turn's deadline, combined with the request's own timeout. */
+  quote(symbol: string, market: Market, signal?: AbortSignal): Promise<SourceResult>;
 }
 
 const TIMEOUT_MS = 8_000;
@@ -52,10 +53,11 @@ export const SYMBOL_PATTERN = /^[A-Z0-9][A-Z0-9.-]{0,11}$/;
 
 type Got = { ok: true; value: unknown } | { ok: false; notFound: boolean };
 
-async function getJson(fetchImpl: typeof fetch, url: string, headers: Record<string, string>): Promise<Got> {
+async function getJson(fetchImpl: typeof fetch, url: string, headers: Record<string, string>, turn?: AbortSignal): Promise<Got> {
   let response: Response;
   try {
-    response = await fetchImpl(url, { signal: AbortSignal.timeout(TIMEOUT_MS), headers: { accept: 'application/json', ...headers } });
+    const signal = turn ? AbortSignal.any([turn, AbortSignal.timeout(TIMEOUT_MS)]) : AbortSignal.timeout(TIMEOUT_MS);
+    response = await fetchImpl(url, { signal, headers: { accept: 'application/json', ...headers } });
   } catch {
     return { ok: false, notFound: false };
   }
@@ -107,11 +109,12 @@ export function marketOpenAt(market: Market, nowMs: number, asOf: number): boole
 export function createQuoteSources(fetchImpl: typeof fetch, finnhubKey: string | undefined, now: () => number): QuoteSources {
   const key = (finnhubKey ?? '').trim();
   // A closure, never a method call on a stored fetch: Workers throws "Illegal invocation".
-  const get = (url: string, headers: Record<string, string>) => getJson((input, init) => fetchImpl(input, init), url, headers);
+  const get = (url: string, headers: Record<string, string>, signal?: AbortSignal) =>
+    getJson((input, init) => fetchImpl(input, init), url, headers, signal);
 
-  async function us(symbol: string): Promise<SourceResult> {
+  async function us(symbol: string, signal?: AbortSignal): Promise<SourceResult> {
     if (!key) return { kind: 'error' };
-    const got = await get(`${FINNHUB}/quote?symbol=${encodeURIComponent(symbol)}`, { 'X-Finnhub-Token': key });
+    const got = await get(`${FINNHUB}/quote?symbol=${encodeURIComponent(symbol)}`, { 'X-Finnhub-Token': key }, signal);
     if (!got.ok) return { kind: 'error' };
     const body = got.value as Record<string, unknown> | null;
     const price = num(body?.['c']);
@@ -136,9 +139,9 @@ export function createQuoteSources(fetchImpl: typeof fetch, finnhubKey: string |
     };
   }
 
-  async function tase(symbol: string): Promise<SourceResult> {
+  async function tase(symbol: string, signal?: AbortSignal): Promise<SourceResult> {
     const wanted = `${symbol}.TA`;
-    const got = await get(`${YAHOO}/${encodeURIComponent(wanted)}?range=1d&interval=1d`, { 'user-agent': YAHOO_AGENT });
+    const got = await get(`${YAHOO}/${encodeURIComponent(wanted)}?range=1d&interval=1d`, { 'user-agent': YAHOO_AGENT }, signal);
     if (!got.ok) return got.notFound ? { kind: 'unknown' } : { kind: 'error' };
     const result = (got.value as { chart?: { result?: unknown[] } } | null)?.chart?.result?.[0] as
       | { meta?: Record<string, unknown> }
@@ -171,9 +174,9 @@ export function createQuoteSources(fetchImpl: typeof fetch, finnhubKey: string |
   }
 
   return {
-    quote(symbol, market) {
+    quote(symbol, market, signal) {
       if (!SYMBOL_PATTERN.test(symbol)) return Promise.resolve({ kind: 'unknown' });
-      return market === 'us' ? us(symbol) : tase(symbol);
+      return market === 'us' ? us(symbol, signal) : tase(symbol, signal);
     },
   };
 }
