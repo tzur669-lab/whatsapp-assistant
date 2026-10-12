@@ -248,6 +248,23 @@ describe('rate/budget failover', () => {
       expect(budget.snapshot([gemini.model])[0]?.blockedUntil).toBe(Date.parse('2026-09-25T07:00:00Z'));
     });
 
+    for (const status of [500, 503]) {
+      it(`a Groq ${status} marks nothing exhausted: the next message asks the primary again (T9)`, async () => {
+        const primary = qwen([{ error: 'provider_error', status }, { text: 'שלום' }]);
+        await handleInbound(text('שלום'), deps({ providers: [primary] }));
+        expect(primary.calls).toHaveLength(1);
+        expect(budget.isExhausted(QWEN)).toBe(false);
+        expect(budget.snapshot([QWEN])[0]?.blockedUntil ?? null).toBeNull();
+        expect(budget.reservedFor(QWEN)).toBe(0);
+
+        // The failed call was charged as sent, to this minute's window; past it,
+        // nothing holds the model back.
+        clockMs = NOW + 61_000;
+        await handleInbound(text('שלום'), deps({ providers: [primary] }));
+        expect(primary.calls).toHaveLength(2);
+      });
+    }
+
     it('leaves no reservation open after a 429', async () => {
       const primary = qwen([{ error: 'rate_limited', retryAfterSeconds: 2 }]);
       await handleInbound(text('שלום'), deps({ providers: [primary] }));

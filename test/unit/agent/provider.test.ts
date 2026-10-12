@@ -50,4 +50,23 @@ describe('agent provider', () => {
     const response = await createGroqAgentProvider({ apiKey: 'k', model: 'm', fetchImpl }).complete(messages, []);
     expect(response.ok && response.usage).toEqual({ promptTokens: 0, completionTokens: 0 });
   });
+
+  describe('failure paths (Improvement plan §3 T9)', () => {
+    const answering = (status: number, body: string) =>
+      (async () => new Response(body, { status, headers: { 'content-type': 'application/json' } })) as unknown as typeof fetch;
+
+    for (const status of [500, 503]) {
+      it(`a ${status} is a provider error with its status, never a rate limit`, async () => {
+        const fetchImpl = answering(status, '{"error":{"message":"overloaded"}}');
+        const response = await createGroqAgentProvider({ apiKey: 'k', model: 'm', fetchImpl }).complete(messages, []);
+        expect(response).toEqual({ ok: false, error: { code: 'provider_error', status } });
+      });
+    }
+
+    it('a 200 whose body is not JSON is invalid_json', async () => {
+      const fetchImpl = answering(200, '<html>gateway</html>');
+      const response = await createGroqAgentProvider({ apiKey: 'k', model: 'm', fetchImpl }).complete(messages, []);
+      expect(response).toEqual({ ok: false, error: { code: 'invalid_json' } });
+    });
+  });
 });
