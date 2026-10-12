@@ -146,6 +146,8 @@ Network on the hotspot: `NODE_OPTIONS=--dns-result-order=ipv4first` for wrangler
 
 ## 8. Session log (docs)
 
+- 2026-10-12: Staging deployed (df45a4c6) with Batches 09 (server text) and 14.
+
 - 2026-10-12: Staging deployed (1cf2b868) with Batches 07, 08, 11, 12, 13.
   Batch 09: app 0.13.5 types through the field anchor (`field_changed`),
   «שיחה רגילה» replaces «שיחה מקומית»; APK in Downloads, phone check (M4)
