@@ -19,7 +19,8 @@ import type { ToolContext } from '../../../src/tools/types.js';
 import { decide, DEFAULT_LIMITS } from '../../../src/policy/engine.js';
 import { agentToolNames } from '../../../src/agent/tools.js';
 import { selectTools } from '../../../src/agent/tool-groups.js';
-import { routineText } from '../../../src/render/routines.js';
+import { reasonText, routineText, RUN_REASONS } from '../../../src/render/routines.js';
+import { z } from 'zod';
 import { handleInbound, namesRoutine } from '../../../src/core/pipeline.js';
 import type { PipelineDeps, Services } from '../../../src/core/pipeline.js';
 import { PendingActions } from '../../../src/confirm/pending.js';
@@ -215,6 +216,30 @@ describe('the run lifecycle', () => {
     expect(store.takeStaleClaims(NOW + ROUTINE_STALE_CLAIM_MS).map((r) => r.runId)).toEqual([run.runId]);
     const late = store.settle(run.runId, PRINCIPAL, 'verified', null);
     expect(late).toMatchObject({ status: 'done', wasUnknown: true });
+  });
+
+  it('field_changed, mixed versions: an old server refuses it, and the re-sent report settles the run from unknown', () => {
+    const bytes = (value: unknown) => new TextEncoder().encode(JSON.stringify(value));
+    const report = { runId: '', outcome: 'failed_after_tap', reason: 'field_changed' };
+    const run = schedule(NOW);
+    store.takeDue(NOW);
+    store.claim(run.runId, PRINCIPAL);
+    report.runId = run.runId;
+
+    // A server from before the code: the same closed enum without it rejects the
+    // result (the route answers 400), and the app keeps the report to re-send.
+    const oldReasons = RUN_REASONS.filter((r) => r !== 'field_changed') as [string, ...string[]];
+    expect(z.enum(oldReasons).safeParse(report.reason).success).toBe(false);
+    // Meanwhile the claim goes stale: unknown.
+    expect(store.takeStaleClaims(NOW + ROUTINE_STALE_CLAIM_MS).map((r) => r.runId)).toEqual([run.runId]);
+
+    // The upgraded server reads the re-sent report and settles the run.
+    const parsed = parseRoutineResult(bytes(report));
+    expect(parsed).toEqual(report);
+    const settled = store.settle(run.runId, PRINCIPAL, parsed!.outcome, parsed!.reason ?? null);
+    expect(settled).toMatchObject({ status: 'unknown', wasUnknown: true, run: { reason: 'field_changed' } });
+    // A second copy of the report changes nothing.
+    expect(store.settle(run.runId, PRINCIPAL, parsed!.outcome, parsed!.reason ?? null)?.status).toBe('unknown');
   });
 
   it('a locked phone settles a pushed run as failed, without a claim', () => {
@@ -427,6 +452,16 @@ describe('the wire', () => {
     expect(parseRoutineResult(bytes({ runId: 'a'.repeat(32), outcome: 'failed_before_tap', reason: 'target_disabled' }))).not.toBeNull();
     expect(parseRoutineResult(bytes({ runId: 'a'.repeat(32), outcome: 'verified', screen: 'שלום' }))).toBeNull();
     expect(parseRoutineResult(bytes({ runId: 'a'.repeat(32), outcome: 'failed_before_tap', reason: 'free text' }))).toBeNull();
+    expect(parseRoutineResult(bytes({ runId: 'a'.repeat(32), outcome: 'failed_after_tap', reason: 'field_changed' }))).not.toBeNull();
+  });
+
+  it('every reason has its own wording in both languages', () => {
+    for (const reason of RUN_REASONS) {
+      for (const lang of ['he', 'en'] as const) expect(reasonText(reason, lang).length).toBeGreaterThan(5);
+    }
+    expect(reasonText('field_changed', 'he')).toBe('הסמן כבר לא היה בשדה שהשגרה לחצה עליו, ולכן לא הוקלד דבר');
+    const view = { name: 'כניסה', appLabel: 'clock2go2020', dueAtUtc: NOW, tz: 'Asia/Jerusalem', now: true };
+    expect(plain(routineText.unknown(view, 'field_changed', 'he'))).toContain('הסמן כבר לא היה בשדה');
   });
 
   it('the Worker lets the three routes through, on the app channel only, size-capped', () => {

@@ -192,6 +192,11 @@ object RoutineLogic {
         /** Found once, but switched off right now — nothing is tapped. */
         object Disabled : Pick()
         data class Many(val count: Int) : Pick()
+        /**
+         * Typing only (the field anchor, [anchoredField]): the field the routine
+         * tapped is gone, or no longer has the cursor. Nothing is typed.
+         */
+        object FieldChanged : Pick()
     }
 
     /**
@@ -248,6 +253,40 @@ object RoutineLogic {
             else -> fields[0]
         }
         return if (chosen.value.enabled) Pick.One(chosen.index) else Pick.Disabled
+    }
+
+    /**
+     * The field anchor (Improvement plan §3 T4): the tap step that put the
+     * cursor in a field, so a later TYPE_TEXT or SUBMIT types only there.
+     * A tap that hit an editable field becomes the anchor; any other tap
+     * clears it. WAIT, WAIT_FOR_TEXT, TYPE_TEXT and SUBMIT keep it (a pause
+     * between the tap and the typing is ordinary); checks come after every
+     * action and keep it too. No node is kept: the anchor is the step, whose
+     * own words or id are re-resolved on the screen at typing time.
+     */
+    fun anchorAfter(anchor: Step?, step: Step, tappedEditable: Boolean): Step? =
+        if (step.isTap) (if (tappedEditable) step else null) else anchor
+
+    /**
+     * The field a TYPE_TEXT or SUBMIT acts on. With no [anchor], today's rule
+     * ([pickField]). With one, the anchor step's selector is found again
+     * ([pickTarget]): one match that has the cursor → that field; one that
+     * lost it, or none at all → [Pick.FieldChanged] (never a fall-back to
+     * whatever field is focused); several → [Pick.Many].
+     */
+    fun anchoredField(nodes: List<Node>, anchor: Step?, needFocus: Boolean): Pick {
+        if (anchor == null) return pickField(nodes, needFocus)
+        return when (val found = pickTarget(nodes, anchor)) {
+            Pick.None -> Pick.FieldChanged
+            is Pick.One -> {
+                val field = nodes[found.index]
+                when {
+                    !field.editable || field.password || !field.focused -> Pick.FieldChanged
+                    else -> found
+                }
+            }
+            else -> found
+        }
     }
 
     /**

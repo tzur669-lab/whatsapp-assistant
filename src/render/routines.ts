@@ -31,6 +31,8 @@ export const RUN_REASONS = [
   'target_not_found',
   'target_disabled',
   'target_ambiguous',
+  /** The field the routine tapped no longer had the cursor when it came to type (2026-10-12). */
+  'field_changed',
   'tap_refused',
   'deadline',
   'changed',
@@ -178,6 +180,10 @@ export function reasonText(reason: RunReason, lang: Lang): string {
       return he ? 'הכפתור היה כבוי, למשל כי הפעולה כבר בוצעה' : 'the button was off, for example because it was already done';
     case 'target_ambiguous':
       return he ? 'נמצא יותר ממקום אחד מתאים ללחיצה או להקלדה' : 'more than one place matched';
+    case 'field_changed':
+      return he
+        ? 'הסמן כבר לא היה בשדה שהשגרה לחצה עליו, ולכן לא הוקלד דבר'
+        : 'the cursor was no longer in the field the routine tapped, so nothing was typed';
     case 'tap_refused':
       return he ? 'הלחיצה או ההקלדה לא התקבלו' : 'the tap or the typing was not accepted';
     case 'deadline':

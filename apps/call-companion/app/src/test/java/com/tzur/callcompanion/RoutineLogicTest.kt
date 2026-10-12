@@ -246,6 +246,100 @@ class RoutineLogicTest {
         assertFalse(RoutineLogic.isLaunchConfirm(null))
     }
 
+    // --- The field anchor (Improvement plan §3 T4) ---
+
+    private val tapSearch = Step(Kind.TAP_TEXT, "חיפוש")
+    private val typeText = Step(Kind.TYPE_TEXT, "סטימצקי")
+
+    /** Runs the steps' anchor bookkeeping, as the runner will: [tappedEditable] per tap, in order. */
+    private fun anchorThrough(steps: List<Step>, vararg tappedEditable: Boolean): Step? {
+        var anchor: Step? = null
+        var tap = 0
+        for (step in steps) anchor = RoutineLogic.anchorAfter(anchor, step, step.isTap && tappedEditable[tap++])
+        return anchor
+    }
+
+    @Test fun aTapOnAnEditableFieldBecomesTheAnchor() {
+        assertEquals(tapSearch, anchorThrough(listOf(tapSearch), true))
+        assertNull(anchorThrough(listOf(tapSearch), false))
+    }
+
+    @Test fun theAnchorSurvivesPausesTypingAndSubmit() {
+        val steps = listOf(
+            tapSearch,
+            Step(Kind.WAIT, seconds = 2),
+            Step(Kind.WAIT_FOR_TEXT, "תוצאות", 15),
+            typeText,
+            Step(Kind.SUBMIT),
+        )
+        assertEquals(tapSearch, anchorThrough(steps, true))
+    }
+
+    @Test fun aNonFieldTapClearsTheAnchor() {
+        assertNull(anchorThrough(listOf(tapSearch, Step(Kind.TAP_TEXT, "המשך")), true, false))
+    }
+
+    @Test fun theAnchoredFieldStillFocusedIsTypedInto() {
+        val nodes = listOf(node("כותרת", target = -1), field(hint = "חיפוש", target = 1, focused = true))
+        assertEquals(Pick.One(1), RoutineLogic.anchoredField(nodes, tapSearch, needFocus = false))
+    }
+
+    @Test fun tapWaitTypeWithTheFocusMovedIsFieldChanged() {
+        // TAP field → WAIT → TYPE: during the wait the app moved the cursor to another field.
+        val anchor = anchorThrough(listOf(tapSearch, Step(Kind.WAIT, seconds = 2)), true)
+        val nodes = listOf(field(hint = "חיפוש", target = 0), field(hint = "עיר", target = 1, focused = true))
+        assertEquals(Pick.FieldChanged, RoutineLogic.anchoredField(nodes, anchor, needFocus = false))
+        // Today's rule would have typed into the other, focused field.
+        assertEquals(Pick.One(1), RoutineLogic.pickField(nodes, needFocus = false))
+    }
+
+    @Test fun tapWaitForTextTypeSubmitWithTheFocusKeptRuns() {
+        val anchor = anchorThrough(listOf(tapSearch, Step(Kind.WAIT_FOR_TEXT, "תוצאות", 15), typeText), true)
+        val nodes = listOf(node("תוצאות", target = -1), field(text = "סטימצקי", hint = "חיפוש", target = 1, focused = true))
+        assertEquals(Pick.One(1), RoutineLogic.anchoredField(nodes, anchor, needFocus = false))
+        assertEquals(Pick.One(1), RoutineLogic.anchoredField(nodes, anchor, needFocus = true))
+    }
+
+    @Test fun theAnchoredFieldGoneWhileAnotherIsFocusedIsFieldChanged() {
+        // The app navigated: the tapped field is gone, a different one has the cursor.
+        val nodes = listOf(node("מסך אחר", target = -1), field(hint = "הערה", target = 1, focused = true))
+        assertEquals(Pick.FieldChanged, RoutineLogic.anchoredField(nodes, tapSearch, needFocus = false))
+    }
+
+    @Test fun aNonEditableLauncherLeavesTodaysRule() {
+        // A "fake" search box: a clickable label, not a field. Its tap sets no anchor…
+        val launcher = listOf(node("חיפוש", target = 0))
+        assertEquals(Pick.One(0), RoutineLogic.pickTarget(launcher, tapSearch))
+        val anchor = anchorThrough(listOf(tapSearch), launcher[0].editable)
+        assertNull(anchor)
+        // …so the new screen's one focused field is typed into, as today.
+        val next = listOf(field(hint = "מה לחפש?", target = 0, focused = true))
+        assertEquals(Pick.One(0), RoutineLogic.anchoredField(next, anchor, needFocus = false))
+    }
+
+    @Test fun typingWithNoTapKeepsTodaysRule() {
+        // FID: TYPE_TEXT into the first screen's only field, with no tap before it.
+        val anchor = anchorThrough(listOf(typeText, Step(Kind.TAP_ID, "button_search")), false)
+        assertNull(anchor)
+        val nodes = listOf(field(hint = "חיפוש", target = 0))
+        assertEquals(Pick.One(0), RoutineLogic.anchoredField(nodes, null, needFocus = false))
+    }
+
+    @Test fun anAnchorPresentButUnfocusedIsFieldChanged() {
+        val nodes = listOf(field(hint = "חיפוש", target = 0), field(hint = "עיר", target = 1))
+        assertEquals(Pick.FieldChanged, RoutineLogic.anchoredField(nodes, tapSearch, needFocus = false))
+    }
+
+    @Test fun anAnchorMatchingTwoFieldsStops() {
+        val nodes = listOf(field(hint = "חיפוש", target = 0, focused = true), field(hint = "חיפוש", target = 1))
+        assertEquals(Pick.Many(2), RoutineLogic.anchoredField(nodes, tapSearch, needFocus = false))
+    }
+
+    @Test fun anAnchoredPasswordFieldIsNeverTypedInto() {
+        val nodes = listOf(field(hint = "חיפוש", target = 0, focused = true, password = true))
+        assertEquals(Pick.FieldChanged, RoutineLogic.anchoredField(nodes, tapSearch, needFocus = false))
+    }
+
     // --- Outcomes ---
 
     @Test fun aFailureAfterATapIsNotCalledSafe() {

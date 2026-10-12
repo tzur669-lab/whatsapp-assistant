@@ -163,6 +163,8 @@ class RoutineAccessibilityService : AccessibilityService() {
                         RoutineLogic.Pick.None -> return RoutineLogic.failure(tapped, index, "target_not_found")
                         RoutineLogic.Pick.Disabled -> return RoutineLogic.failure(tapped, index, "target_disabled")
                         is RoutineLogic.Pick.Many -> return RoutineLogic.failure(tapped, index, "target_ambiguous")
+                        // Only the field anchor answers it; not wired into runs yet (T4-3).
+                        RoutineLogic.Pick.FieldChanged -> return RoutineLogic.failure(tapped, index, "field_changed")
                         is RoutineLogic.Pick.One -> {
                             // A dry run stops at the first action: everything before it was found.
                             if (dryRun) return RoutineLogic.Result(RoutineLogic.Outcome.DRY_RUN_OK, index)
@@ -183,6 +185,8 @@ class RoutineAccessibilityService : AccessibilityService() {
                         RoutineLogic.Pick.None -> return RoutineLogic.failure(tapped, index, "target_not_found")
                         RoutineLogic.Pick.Disabled -> return RoutineLogic.failure(tapped, index, "target_disabled")
                         is RoutineLogic.Pick.Many -> return RoutineLogic.failure(tapped, index, "target_ambiguous")
+                        // Only the field anchor answers it; not wired into runs yet (T4-3).
+                        RoutineLogic.Pick.FieldChanged -> return RoutineLogic.failure(tapped, index, "field_changed")
                         is RoutineLogic.Pick.One -> {
                             if (dryRun) return RoutineLogic.Result(RoutineLogic.Outcome.DRY_RUN_OK, index)
                             val field = nodes[pick.index]
