@@ -70,7 +70,8 @@ object RoutineLogic {
     /** As many as the server keeps (stage 2). */
     const val MAX_ROUTINES = 20
     const val DEFAULT_SECONDS = 15
-    const val MAX_WAIT_SECONDS = 20
+    /** 60, not 20 (2026-10-12): an app that loads results from the internet took longer. */
+    const val MAX_WAIT_SECONDS = 60
     const val MAX_PAUSE_SECONDS = 5
 
     /** How long the app may take to come to the front after it is launched. */

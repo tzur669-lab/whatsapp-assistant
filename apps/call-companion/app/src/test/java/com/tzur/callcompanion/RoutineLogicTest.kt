@@ -50,7 +50,7 @@ class RoutineLogicTest {
         assertEquals("steps", RoutineLogic.problem(clockIn.copy(steps = List(11) { Step(Kind.TAP_TEXT, "x") })))
         assertEquals("step", RoutineLogic.problem(clockIn.copy(steps = listOf(Step(Kind.TAP_TEXT, "")))))
         assertEquals("step", RoutineLogic.problem(clockIn.copy(steps = listOf(Step(Kind.TAP_TEXT, "x"), Step(Kind.WAIT, seconds = 6)))))
-        assertEquals("step", RoutineLogic.problem(clockIn.copy(steps = listOf(Step(Kind.WAIT_FOR_TEXT, "x", 21), Step(Kind.TAP_TEXT, "x")))))
+        assertEquals("step", RoutineLogic.problem(clockIn.copy(steps = listOf(Step(Kind.WAIT_FOR_TEXT, "x", 61), Step(Kind.TAP_TEXT, "x")))))
         assertEquals("step", RoutineLogic.problem(clockIn.copy(steps = listOf(Step(Kind.TAP_ID, "../etc")))))
     }
 

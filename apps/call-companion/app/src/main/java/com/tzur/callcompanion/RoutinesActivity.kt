@@ -90,7 +90,9 @@ class RoutinesActivity : Activity() {
             text = getString(R.string.routine_numbered, number, Ui.isolate(routine.name))
             textSize = 17f
             setTypeface(typeface, Typeface.BOLD)
-            textDirection = View.TEXT_DIRECTION_ANY_RTL
+            // RTL always: the name is isolated, so nothing outside it is a strong
+            // letter, and "any RTL" fell back to LTR — the number went left.
+            textDirection = View.TEXT_DIRECTION_RTL
         })
         box.addView(TextView(this).apply {
             text = resources.getQuantityString(
