@@ -44,7 +44,9 @@ Current as of 2026-10-11 (migration 0028).
    question. No LLM. Confirmations execute the *stored* input (inv. 7).
 3. **Agent** (`agent/loop.ts`, when `AGENT=on`) — per-sender lock
    (`lock.ts`, its TTL derived from the turn deadline in `limits.ts`; no
-   model call or tool starts past it, and then no parser either), encrypted short history (`history.ts`), code picks a tool
+   model call or tool starts past it, and then no parser either; as an
+   `AbortSignal` it cuts the model call and a resolve's or read's requests in
+   flight, bound by `tools/turn-signal.ts` — never a write's `execute`), encrypted short history (`history.ts`), code picks a tool
    group (`tool-groups.ts`), budget reserves tokens before each call
    (`budget.ts`, `models.ts`). Each tool call → `fillUnstatedTime`
    (`tools.ts`: a TimeSpec's missing `meridiem`/`part_of_day` → 'unspecified'
@@ -131,7 +133,7 @@ Special shapes:
 | `core/` | `pipeline` (inbound order; `settleAgentResult` is the history gate), `router` (commands), `orchestrator` (resolve→policy→act), `repo`/`sql` (data access; conversation modes), `exchanges` ("לא הבנת" capture, never given to the agent), `digest`, `birthdays`, `missed-calls`, `scheduled-read`, `quota` (also `SqlDayRequestCounter`: requests per model per Pacific day), `timing`, `env` | §6.4, §6.12 |
 | `agent/` | Bounded tool loop, prompt (a10, plus `SMART_NOTE` s2 for smart models), compact catalog (`smartOfferedTools` for smart conversations), tool groups (1–3 → union), history fitter, model table (`MODELS`, `SMART_MODELS`), token and request budget, Groq and Gemini providers, history, lock, suspended turns (phone or consent), `consents.ts` (consent sources, `consentNeededFor`/`echoesOwnInput` from each tool's `consent` rule, `conversation_consents`, `cs:`/`cr:` button ids) | §6.19 |
 | `nlu/` | Fallback parser: prompt (v6), `IntentDraft` schema, slot schemas, Groq provider, rules fallback, weekday check, clarification answers | §6.2, §6.11 |
-| `tools/` | `registry.ts` (single source of truth: name, tier, slots, scopes, flags, required `dataSource`, and `consent` rule for a consent source) + one file per area; `*-store.ts` hold SQL; `match.ts` finds targets; `routines.ts` + `routine-store.ts`: `routine.run` and the run lifecycle (synced names, one claim per run) | §6.4, §6.19, §6.27 |
+| `tools/` | `registry.ts` (single source of truth: name, tier, slots, scopes, flags, required `dataSource`, and `consent` rule for a consent source) + one file per area; `*-store.ts` hold SQL; `turn-signal.ts` binds a context's network clients to the turn deadline; `match.ts` finds targets; `routines.ts` + `routine-store.ts`: `routine.run` and the run lifecycle (synced names, one claim per run) | §6.4, §6.19, §6.27 |
 | `policy/` | Pure tier decision; WhatsApp 24 h window/budget | §6.4 |
 | `confirm/` | Pending confirmations, Undo offers, open questions | §6.5, §6.11 |
 | `time/` | `resolve` (R1–R12), `tz`, Hebrew lexicon (and `timeWordsNamed`, the am/pm and part-of-day check), ranges, recurrence, past days, sunset, Shabbat/chag | §6.3, §6.13 |
@@ -189,6 +191,7 @@ the same code on Node SQLite (`test/integration/sqlite-driver.ts`).
 - `tools/registry.ts` `dataSource` and `consent` ↔ `agent/consents.ts` ↔ `render/consent.ts` ↔ the history gate in `pipeline.ts` ↔ the smart fingerprint (`SMART_CATALOG_POLICY`).
 - `channels/app/parse.ts` + `verify.ts` ↔ app's `Protocol.kt` (shared test vectors).
 - `migrations/*.sql` ↔ `platform/migrations.ts`.
+- A network client on `ToolContext` ↔ `tools/turn-signal.ts` `withTurnSignal` (bind it to the turn deadline) ↔ the fetch inventory in `test/security/turn-signal-fetch.test.ts`.
 - Routines: `tools/routine-store.ts` ↔ `channels/app/parse.ts` (`/app/routines`, `/app/routine/claim`, `/app/routine/result`) ↔ `channels/app/ingress.ts` ↔ the app's `RoutineRunner.kt`/`RoutineLogic.stepHash`; `render/routines.ts` `RUN_REASONS` ↔ the app's reason codes; `core/pipeline.ts` `namesRoutine` ↔ `agent/tools.ts` `routines` offer ↔ `agent/tool-groups.ts` (routine kept in any selection).
 - `nlu/slot-schemas.ts` `DateSpec`/`TimeSpec` ↔ `time/resolve.ts` types.
 - Agent prompt version ↔ eval recordings.
@@ -196,7 +199,7 @@ the same code on Node SQLite (`test/integration/sqlite-driver.ts`).
 ## 6. Tests (`test/`)
 
 `unit/` (mirrors `src/`), `integration/` (fakes: Groq, NLU, agent, phone,
-DO state, logger; Workers-strict `fetch`; Node SQLite driver), `security/` (ingress, log canaries, ban-list,
+DO state, logger; Workers-strict `fetch`; Node SQLite driver), `security/` (ingress, log canaries, ban-list, the fetch inventory for the turn signal,
 secret scan), `evals/` (YAML corpora `cases.he|en|phone.yaml`, runners for
 parser, agent and turn evals; recordings are git-ignored). Clocks are frozen;
 no network in unit tests.

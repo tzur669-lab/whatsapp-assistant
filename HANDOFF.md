@@ -69,7 +69,7 @@ Full map with every module: [ARCHITECTURE.md](ARCHITECTURE.md).
 | a migration | Add `migrations/00NN_*.sql` **and** register it in `src/platform/migrations.ts`. Backward-compatible for one version. |
 | `src/channels/app/parse.ts` or the wire protocol | The app has a matching `Protocol.kt` with test vectors. **Deploy the server before installing a new APK**, or the old server rejects the new app. |
 | a Tier 0–1 write's `execute` that calls Google (or the turn deadline) | The enumeration in `src/agent/limits.ts`: more sequential `GoogleApi.call`s than `MAX_WRITE_CALLS` means raising it, or the lock can expire under a running write. `TURN_DEADLINE_MS` is provisional (M6). |
-| outbound `fetch` | Call `fetch` through a closure, never `this.fetchImpl(...)` — Workers throws "Illegal invocation" (tests use `test/integration/workers-fetch.ts` to catch it). |
+| outbound `fetch` | Call `fetch` through a closure, never `this.fetchImpl(...)` — Workers throws "Illegal invocation" (tests use `test/integration/workers-fetch.ts` to catch it). A new call site must be placed in `test/security/turn-signal-fetch.test.ts`; one a tool reaches takes the turn signal (`AbortSignal.any`), and a new network client on `ToolContext` is bound in `tools/turn-signal.ts`. |
 | Cloudflare APIs | Only inside `src/platform/`. The ban-list test enforces it. |
 | logging | Only `src/security/redact.ts`. Log canary tests must stay green. |
 | Groq budget | 8K tokens/min, 200K/day **per model**; the daily limit is in no header. Measured, not guessed: `scripts/bench-tokens.ts`. |
@@ -145,6 +145,33 @@ Network on the hotspot: `NODE_OPTIONS=--dns-result-order=ipv4first` for wrangler
 | [SETUP.md](SETUP.md) | Setting up a new copy from zero: accounts, Groq key, models, secrets, deploy, app, AI agent. |
 
 ## 8. Session log (docs)
+
+- 2026-10-12: Batch 13 done: `/wa/webhook` reads through `readCapped`
+  (bytes, streamed, cancelled at the cap) and signs the bytes; decoded only
+  after the HMAC. No new modules or tables.
+
+- 2026-10-12: Batch 12 done: `scrubForModel`/`containsPrivateData` catch
+  phones with `.` `/` `()` and non-ASCII email local parts, with dates and
+  times masked first (`security/scrub.ts`); provider 500/503/non-JSON tests.
+  No new modules or tables.
+
+- 2026-10-12: Batch 11 done: `AgentLock.heldBy`; a `running` turn with no
+  live lock answers `unknown` (`duplicateStatus`, `appDeviceResult`); three
+  failed pushes in a row set `lastErrorCode` (`Repository.bumpPushFailures`).
+  No tables or migrations.
+
+- 2026-10-12: Batch 08 done: run reason `field_changed` on the server
+  (`render/routines.ts`); `RoutineLogic.anchorAfter`/`anchoredField` and
+  `Pick.FieldChanged` in the app, tested, not wired into runs (Batch 09,
+  server deployed first). No tables, migrations or version bump.
+
+- 2026-10-12: Batch 07 done: the turn deadline is an `AbortSignal` that cuts
+  the model call and a resolve's or read's requests in flight (new
+  `src/tools/turn-signal.ts`, `withSignal` on the Google clients,
+  `complete(…, { signal })`); no execute starts after it, a read returned
+  after it is dropped, and a write's `execute` never sees it. New
+  `test/security/turn-signal-fetch.test.ts` places every `fetch` call site.
+  No tables or migrations.
 
 - 2026-10-12: Staging deployed (db0fe6f4) with Batches 05–06 and the calendar's
   past reads. No migration, no app change.

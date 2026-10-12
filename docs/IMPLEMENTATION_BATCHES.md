@@ -365,6 +365,15 @@ Order: T3-3, then T3-4. T3-4 relies on the signal T3-3 provides.
 - Tests and checks: test first. Full suite green. The log canaries stay green.
 - Completion boundary: all T3 boundary cases (a)–(f) pass together.
 - Plan ref: §3 T3 step 3b.
+- Carry forward: done 2026-10-12. The binding lives in one place, `withTurnSignal`
+  (`src/tools/turn-signal.ts`); the Google clients gained `withSignal` instead of a signal
+  argument per method. The loop's signal is a timer that the clock check also fires.
+  W1/W2 end `deadline` with `toolRan` unchanged, so the reply is `he.agentFailed('deadline')`
+  through the pipeline's existing path (`E_AGENT_DEADLINE`); R1/R3 count the read as run and
+  answer `he.agentIncomplete`. The `lv-` eval on `gpt-oss-120b` reached Groq through the new
+  transport (3/4 scored, one `network_error` on the hotspot; tool choice 1/3 on prompt a10, a
+  prompt matter, owed in PLAN §13). qwen's eval budget for the day was spent: a qwen
+  `--filter` run is still owed.
 
 ### Batch 08: routine typing anchor, server and logic (P2)
 
@@ -408,6 +417,12 @@ Order: T4-1, then T4-2.
   - a non-field tap clears the anchor.
 - Completion boundary: pure logic and tests only. Not wired into the service yet.
 - Plan ref: §3 T4, "Proposed", "Screen and window changes".
+- Carry forward: done 2026-10-12. Server: `field_changed` in `RUN_REASONS`, wording «הסמן כבר לא היה
+  בשדה שהשגרה לחצה עליו, ולכן לא הוקלד דבר». App: `RoutineLogic.anchorAfter(anchor, step,
+  tappedEditable)` and `anchoredField(nodes, anchor, needFocus)` → `Pick.FieldChanged`. Adding the
+  `Pick` variant made the runner's two exhaustive `when`s need a branch: an unreachable one that
+  returns `field_changed`. T4-3 replaces `pickField` with `anchoredField`, tracks the anchor from each
+  tap's clicked node (`editable`), and adds `field_changed` to the app's `REASONS`.
 
 ### Batch 09: app release, typing anchor and mode notes (P2)
 
@@ -501,6 +516,9 @@ Order: T8-1, then F17-1.
 - Acceptance: N consecutive failures set `lastErrorCode`, and a success clears the streak.
 - Tests and checks: full suite green.
 - Plan ref: §2 F17.
+- Carry forward (Batch 11, done 2026-10-12): N = 3, the streak in the `push_fail_streak` setting;
+  an `unregistered` push still sets `E_PUSH_UNREGISTERED` at once. `heldBy` is keyed by the wamid,
+  the id a resume locks under.
 
 ### Batch 12: provider failure tests and scrub separators (optional)
 
@@ -518,6 +536,9 @@ Order: T8-1, then F17-1.
   - Times and dates are not.
 - Tests and checks: full suite green, canaries green.
 - Plan ref: §3 T10.
+- Carry forward (Batch 12, done 2026-10-12): dates and times are masked before the phone pattern
+  runs (`withDatesMasked`), in `containsPrivateData` too, so a fact may hold a date. A Hebrew prefix
+  glued to a Hebrew address is scrubbed with it.
 
 ### Batch 13: webhook byte cap (optional, a single-task exception)
 
@@ -533,6 +554,8 @@ production `CHANNEL=whatsapp` is live (Plan §7).
   - Invariant 9's order is unchanged.
 - Tests and checks: full suite green.
 - Plan ref: §3 T7.
+- Carry forward: done 2026-10-12. The vector is RFC 4231 case 2 (no published Meta vector exists in
+  the repo); the existing signature cases stay.
 
 ### Batch 14: retention of terminal rows (optional, a single-task exception, blocked by D3)
 
