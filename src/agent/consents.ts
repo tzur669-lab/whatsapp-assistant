@@ -8,9 +8,19 @@
  * the user gets a card. The answer is a button, handled in code only
  * (invariant 7):
  *
- *   once  this turn may read the source; nothing is kept
+ *   once  this turn may read the source; nothing is kept for later turns
  *   conv  this conversation may read it from now on: a row here
  *   no    nothing is read; the model is told and answers in words
+ *
+ * The boundary of "once" (2026-10-12, the user's decision D1): one tool read,
+ * whose result the turn's single model sees for the rest of that one turn —
+ * possibly in several of its calls, and across that turn's own resumes. Never
+ * "sent once". The reply is stored tagged with the source (`history.ts`
+ * `src`), and since a "once" source is never in `list`, every later turn
+ * replays it as the placeholder (`replayByConsent`). A revoke works the same
+ * way on replies stored under a "conv" grant, and a suspended turn whose
+ * stored messages hold a source no longer allowed is not resumed
+ * (`mayResend` in `loop.ts`).
  *
  * Mail, SMS, contacts and notifications hold other people's words, and are
  * allowed one turn at a time: no row is ever written for them, and a "conv"

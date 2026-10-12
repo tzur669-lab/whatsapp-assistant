@@ -440,6 +440,9 @@ describe('smart conversations', () => {
       model,
       conversation: SMART,
       ...(mode ? { mode } : {}),
+      // A smart phone read runs only after a "this time" tap, and a smart state
+      // records its history sources (2026-10-12), or the resume is refused.
+      ...(mode === 'smart' ? { once: ['sms' as const], historySources: [] } : {}),
       messages: [
         { role: 'user', content: 'מה כתבו לי ב-SMS?' },
         { role: 'assistant', content: null, tool_calls: [{ id: 'call_1', type: 'function', function: { name: 'phone__sms', arguments: '{}' } }] },
@@ -478,9 +481,10 @@ describe('smart conversations', () => {
       expect(out).toMatchObject({ action: 'reply', text: 'יש הודעה מהבנק' });
       expect(g.calls).toHaveLength(1);
       expect(systemOf(g)).toBe(`${SYSTEM_PROMPT}\n${SMART_NOTE}`);
-      // Not public, so its reply is a placeholder in the smart history.
+      // Approved for this turn: kept, tagged with its source, so the next turn
+      // replays it as a placeholder (D1, 2026-10-12).
       const kept = await history.recent(PRINCIPAL, SMART);
-      expect(kept.at(-1)).toMatchObject({ user: 'מה כתבו לי ב-SMS?', reply: he.withheldPlaceholder });
+      expect(kept.at(-1)).toMatchObject({ user: 'מה כתבו לי ב-SMS?', reply: 'יש הודעה מהבנק', src: ['sms'] });
     });
 
     it('resumes qwen in a smart conversation with the plain prompt', async () => {

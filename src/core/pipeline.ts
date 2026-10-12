@@ -80,6 +80,7 @@ import type { AgentProvider } from '../agent/provider.js';
 import type { MessageScope, TokenBudget } from '../agent/budget.js';
 import { meterParsers, newMessageScope } from '../agent/budget.js';
 import type { ConversationHistory } from '../agent/history.js';
+import { provenanceOf, replayByConsent } from '../agent/history.js';
 import type { AgentLock } from '../agent/lock.js';
 import { resumeAfterConsent, resumeAgentTurn, runAgentTurn } from '../agent/loop.js';
 import type { AgentResult, ConsentDecision } from '../agent/loop.js';
@@ -777,7 +778,6 @@ async function respondWithAgent(
     // model in it is offered the same tools and sees no facts.
     const smartConversation = event.mode === 'smart';
     const smartModels = smartWanted(event) && !readOnly ? (agent.smartProviders ?? []) : [];
-    const history = await agent.history.recent(principal, conversation);
     // Facts about the user (§6.26): the agent's own read; never the misses or
     // notes, and never in a smart conversation.
     const facts =
@@ -788,6 +788,13 @@ async function respondWithAgent(
     // read-only try, or someone else's text.
     const consents = agent.consents;
     const granted = smartConversation && consents ? consents.list(principal, conversation) : [];
+    // The history, by what the conversation allows now (2026-10-12): after a
+    // revoke, a reply that carried the source — or one written before replies
+    // were tagged — is replayed as the placeholder. A local one replays as is.
+    const stored = await agent.history.recent(principal, conversation);
+    const { entries: history, sources: historySources } = smartConversation
+      ? replayByConsent(stored, granted, he.withheldPlaceholder)
+      : { entries: stored, sources: provenanceOf(stored) };
     const ask =
       smartConversation &&
       !readOnly &&
@@ -823,7 +830,7 @@ async function respondWithAgent(
             source.kind === 'text' &&
             deps.channel === 'app' &&
             (deps.deviceCaps ?? []).includes('device_query'),
-          ...(smartConversation ? { smart: true, consent: { granted, ask } } : {}),
+          ...(smartConversation ? { smart: true, consent: { granted, ask }, historySources } : {}),
           // Only when the words name a synced routine (§6.27, decision D4).
           ...(deps.channel === 'app' && namesRoutine(text, deps.services?.routines, principal) ? { routines: true } : {}),
         },
@@ -868,7 +875,7 @@ async function respondWithAgent(
       deps,
       now,
       conversation,
-      { smart: smartConversation, foreign: event.forwarded },
+      { smart: smartConversation, foreign: event.forwarded, historySources },
       readOnly,
     );
     if (settled) return settled;
@@ -891,8 +898,12 @@ async function settleAgentResult(
   now: number,
   /** The app's conversation, '' for the shared thread. */
   conversation: string,
-  /** A smart conversation's turn, and whether its words were someone else's (2026-10-08). */
-  gate: { smart: boolean; foreign: boolean },
+  /**
+   * A smart conversation's turn, whether its words were someone else's
+   * (2026-10-08), and the sources of the history the model saw in full
+   * (2026-10-12), which its reply may repeat.
+   */
+  gate: { smart: boolean; foreign: boolean; historySources: readonly ConsentSource[] },
   /** The read-only second try: the first already counted the fallback and its code. */
   secondTry = false,
 ): Promise<PipelineOutcome | null> {
@@ -952,6 +963,18 @@ async function settleAgentResult(
       const used = ran.map(consentSourceOf).filter((data): data is ConsentSource => data !== null && granted.includes(data));
       if (used.length > 0) consents.touch(principal, conversation, used);
     }
+    // Where the kept reply's data may come from (2026-10-12): this turn's
+    // consent-source tools, own-input writes aside, and the history it saw.
+    // A placeholder carries nothing. Replayed only while all are allowed.
+    const placeholder = kept || shared || withheld;
+    const src = placeholder
+      ? []
+      : [
+          ...new Set([
+            ...gate.historySources,
+            ...ran.filter((tool) => !echoesOwnInput(tool)).flatMap((tool) => consentSourceOf(tool) ?? []),
+          ]),
+        ];
     await agent.history.append(
       principal,
       {
@@ -965,6 +988,7 @@ async function settleAgentResult(
               ? he.withheldPlaceholder
               : outcome.text,
         tainted: result.tainted,
+        src,
       },
       conversation,
     );
@@ -1027,6 +1051,7 @@ export async function resumeFromPhone(
     const settled = await settleAgentResult(result, state.text, request.wamid, deps, now, state.conversation ?? '', {
       smart,
       foreign: state.foreign === true,
+      historySources: state.historySources ?? [],
     });
     // No fallback here: the parser never sees a turn the phone has answered.
     const outcome: PipelineOutcome = settled ?? { action: 'reply', text: he.agentIncomplete };
@@ -1135,6 +1160,7 @@ async function consentAnswer(
     const settled = await settleAgentResult(result, state.text, event.wamid, deps, now, conversation, {
       smart: true,
       foreign: state.foreign === true,
+      historySources: state.historySources ?? [],
     });
     // No fallback: the parser never sees a turn the user has answered a card on.
     if (!settled) repo.markInboundOutcome(event.wamid, { intent: 'agent', decision: 'ALLOW', errorCode: 'E_AGENT_PARTIAL' });

@@ -30,7 +30,6 @@ import { toWireName } from '../../../src/agent/tools.js';
 import { consentRuleOf, dataSourceOf, TOOL_NAMES } from '../../../src/tools/registry.js';
 import { consentText } from '../../../src/render/consent.js';
 import { stripIsolates } from '../../../src/render/bidi.js';
-import { he } from '../../../src/render/he.js';
 import type { InboundEvent } from '../../../src/channels/types.js';
 import type { GmailClient } from '../../../src/google/gmail.js';
 import type { VoiceOutcome } from '../../../src/voice/transcribe.js';
@@ -522,6 +521,7 @@ describe('the consent gate', () => {
       model: GEMINI,
       conversation: SMART,
       mode: 'smart',
+      historySources: [],
       ...(once ? { once: ['sms' as const], suspends: 2 } : {}),
       messages: [
         { role: 'user', content: 'מה כתבו לי ב-SMS?' },
@@ -549,9 +549,11 @@ describe('the consent gate', () => {
       );
     };
 
-    it('withholds a reply whose source was not approved, and keeps one approved for that turn', async () => {
+    it('never resends a source that was not approved, and keeps a reply approved for that turn', async () => {
+      // Its SMS were never allowed: the resume ends before any model, and
+      // nothing is kept (2026-10-12, T1-3).
       await resume(smsState(false), 'הבנק כתב');
-      expect((await history.recent(PRINCIPAL, SMART)).at(-1)).toMatchObject({ reply: he.withheldPlaceholder });
+      expect(await history.recent(PRINCIPAL, SMART)).toEqual([]);
       await resume(smsState(true), 'הבנק כתב שוב');
       expect((await history.recent(PRINCIPAL, SMART)).at(-1)).toMatchObject({ reply: 'הבנק כתב שוב' });
     });

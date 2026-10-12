@@ -49,7 +49,7 @@ import { languageLine, nowLine, READ_ONLY_NOTE, SMART_NOTE, SYSTEM_PROMPT } from
 import type { AgentMessage, AgentProvider, AgentResponse, ToolCall, WireTool } from './provider.js';
 import { wireToolCall } from './provider.js';
 import { agentToolNames, conversationText, fillUnstatedTime, fromWireName, smartOfferedTools, TAINTING_TOOLS, wireTools } from './tools.js';
-import { consentNeededFor } from './consents.js';
+import { consentNeededFor, consentSourceOf, echoesOwnInput } from './consents.js';
 import { MAX_SUSPENDS } from './turns.js';
 
 export const MAX_MODEL_CALLS = 3;
@@ -171,6 +171,12 @@ export type AgentTurnInput = {
   consent?: { granted: readonly ConsentSource[]; ask: boolean };
   /** The message names a synced routine, so `routine.run` is offered (§6.27, D4). */
   routines?: boolean;
+  /**
+   * The consent sources of the history entries replayed in full (2026-10-12,
+   * `replayByConsent`). A smart turn that pauses keeps them, so a resume can
+   * refuse to resend data whose source was revoked meanwhile.
+   */
+  historySources?: readonly ConsentSource[];
 };
 
 /** The user's answer on a consent card (slice 5). */
@@ -234,6 +240,11 @@ type SuspendedCommon = {
   suspends?: number;
   /** A smart turn's app saves files (slice 5): an approved export is still offered. */
   fileCards?: boolean;
+  /**
+   * The sources of the history the turn began with (2026-10-12, smart turns
+   * only). Absent in a smart state stored before it: unknown, so not resumed.
+   */
+  historySources?: ConsentSource[];
 };
 
 export type AgentResult =
@@ -317,6 +328,8 @@ type Loop = {
   grants?: { gmail?: boolean; tasks?: boolean; drive?: boolean };
   /** The conversation's mode, kept in a suspended state. */
   mode: 'smart' | 'local';
+  /** The sources of the history replayed in full, kept in a smart suspended state. */
+  historySources: ConsentSource[];
   /** The tools that ran so far, in order. */
   ran: ToolName[];
 };
@@ -474,6 +487,7 @@ export async function runAgentTurn(input: AgentTurnInput, deps: AgentDeps): Prom
       fileCards: cards && input.fileCards === true,
       ...(input.grants ? { grants: input.grants } : {}),
       mode: smartConversation ? 'smart' : 'local',
+      historySources: [...(input.historySources ?? [])],
       ran: [],
     },
     { ...deps, scope },
@@ -514,7 +528,9 @@ export async function resumeAgentTurn(
   // What ran before the phone was asked, the phone read included: from the
   // stored calls, for the history gate.
   const ran = ranIn(state.messages);
-  const resumed = resumeOn(state, deps, [...granted, ...once]);
+  // The phone read's own result is resent too, so its source is checked with the rest.
+  const allowed = [...granted, ...once];
+  const resumed = mayResend(state, ran, allowed) ? resumeOn(state, deps, allowed) : null;
   if (!resumed) {
     return {
       kind: 'failed',
@@ -550,6 +566,7 @@ export async function resumeAgentTurn(
       cards: state.cards,
       fileCards: state.fileCards === true,
       ...(state.grants ? { grants: state.grants } : {}),
+      historySources: [...(state.historySources ?? [])],
       ran,
     },
     deps,
@@ -584,7 +601,7 @@ export async function resumeAfterConsent(
   const ran = ranIn(state.messages.slice(0, -1));
   const toolRan = state.readText !== undefined;
 
-  const resumed = resumeOn(state, deps, allowed);
+  const resumed = mayResend(state, ran, allowed) ? resumeOn(state, deps, allowed) : null;
   if (!resumed) {
     return {
       kind: 'failed',
@@ -620,6 +637,7 @@ export async function resumeAfterConsent(
     cards: state.cards,
     fileCards: state.fileCards === true,
     ...(state.grants ? { grants: state.grants } : {}),
+    historySources: [...(state.historySources ?? [])],
     ran,
   };
 
@@ -677,6 +695,24 @@ function resumeOn(
     allowed: new Set(mode === 'smart' ? allowed : []),
     ask: false,
   };
+}
+
+/**
+ * Whether a stored smart turn may be sent to a model again (2026-10-12,
+ * docs/IMPROVEMENT_PLAN.md T1 step 3). Its messages hold the history it began
+ * with and every tool result of the turn so far; each of their consent sources
+ * (own-input writes and public tools aside) must still be allowed — the
+ * conversation's grants now, the turn's "this time" sources, the source just
+ * approved. Otherwise the turn ends unanswered: rewriting stored tool results
+ * could leave the model a malformed or misleading conversation (reject, not
+ * redact). A smart state stored before `historySources` is unknown: it ends.
+ * A local turn has no consent gate and resumes as before.
+ */
+function mayResend(state: SuspendedState, ran: readonly ToolName[], allowed: readonly ConsentSource[]): boolean {
+  if ((state.mode ?? 'local') !== 'smart') return true;
+  if (state.historySources === undefined) return false;
+  const fromTools = ran.filter((tool) => !echoesOwnInput(tool)).flatMap((tool) => consentSourceOf(tool) ?? []);
+  return [...state.historySources, ...fromTools].every((source) => allowed.includes(source));
 }
 
 /** The registry tools a stored conversation called, in order. */
@@ -739,6 +775,8 @@ async function drive(loop: Loop, deps: AgentDeps, approved?: ToolCall): Promise<
       ...(suspends > 1 ? { suspends } : {}),
       // Only a smart turn keeps it: a local turn's stored state is as before.
       ...(loop.mode === 'smart' && loop.fileCards ? { fileCards: true } : {}),
+      // A local turn's stored state is as before (2026-10-12).
+      ...(loop.mode === 'smart' ? { historySources: [...loop.historySources] } : {}),
     };
   };
 

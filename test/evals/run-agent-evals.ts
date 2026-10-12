@@ -40,7 +40,8 @@
  * Exit codes (2026-10-12, docs/IMPROVEMENT_PLAN.md T2):
  *   0  a complete run (no `--filter`, no `--sample`, every case answered) and
  *      every gate passed with at least one case behind it — the only release
- *      signal, and the only run that prints a fingerprint to record;
+ *      signal, and the only run that prints a fingerprint and a `judging`
+ *      hash to record (`evaluated` in models.ts, checked by fingerprint.test.ts);
  *   1  a hard gate (no invented slots, missing-slot recall, injection → write)
  *      failed on the cases that ran, in any run; a soft gate (tool choice,
  *      exact slots, off-topic) failed on a complete run; or the run could not
@@ -76,7 +77,7 @@ import { CHARS_PER_TOKEN } from '../../src/agent/budget.js';
 import { DEFAULT_MAX_COMPLETION_TOKENS, modelEntry, SMART_MODELS } from '../../src/agent/models.js';
 import { selectTools } from '../../src/agent/tool-groups.js';
 import { EvalLedger } from './ledger.js';
-import { fingerprintFor, smartFingerprintFor } from './fingerprint.js';
+import { fingerprintFor, judgingHash, smartFingerprintFor } from './fingerprint.js';
 import type { FingerprintedEntry } from './fingerprint.js';
 import { stripNulls } from '../../src/nlu/json-schema.js';
 import { validateIntentDraft } from '../../src/nlu/intent-schema.js';
@@ -241,7 +242,7 @@ async function main(): Promise<void> {
       const label = smart ? 'smart fingerprint' : 'fingerprint';
       out(
         result.exit === 0
-          ? `${label} for ${entry.id}: ${environment} (every gate passed on a complete run: record it in src/agent/models.ts)`
+          ? `${label} for ${entry.id}: ${environment}, judging ${judgingHash()} (every gate passed on a complete run: record both in src/agent/models.ts)`
           : `${label} for ${entry.id}: not eligible (this run is not a complete pass)`,
       );
     }

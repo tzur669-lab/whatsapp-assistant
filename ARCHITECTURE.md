@@ -77,7 +77,12 @@ Special shapes:
   `conversation_consents`. A write whose replies only echo its own call
   (`exempt-own-input`, e.g. `reminders.create`) never asks. `settleAgentResult`
   is the history gate: a reply after a source not allowed is stored as a
-  placeholder; an own-input write's reply is kept. `/consents` lists and
+  placeholder; an own-input write's reply is kept. Each entry carries `src`
+  (its sources, inherited from the history it saw); the read replays a reply
+  whose source is not allowed now, or an untagged one, as the placeholder
+  (`replayByConsent`, 2026-10-12). A smart suspended turn keeps
+  `historySources`; a resume holding a source no longer allowed ends
+  (`mayResend` in `loop.ts`). `/consents` lists and
   revokes. `GET /app/outbox` carries `smart` (agent on and both keys set).
 - **Phone reads** (contacts, notifications, SMS, call log): the turn is suspended,
   encrypted, in `agent_turns` (`agent/turns.ts`); the phone's signed

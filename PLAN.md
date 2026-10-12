@@ -1545,7 +1545,13 @@ minute); reply text ≤ 1,500 characters, markdown removed.
   prompt, the full wire catalog, the entry's request params, `ADAPTER_VERSION`,
   and what selection offers on every corpus and fixture phrase). A unit test
   fails a backup that may write with a stale fingerprint; for the primary it
-  reports until its `--select-tools` run is recorded.
+  reports until its `--select-tools` run is recorded. Every recorded
+  `evaluated` also holds `judging` (2026-10-12): a hash of every case's
+  `expect`, `run-agent-evals.ts` and `run-evals.ts` (`judgingHash`). A changed
+  expectation, scoring or threshold fails the test until `--report --resume`
+  re-scores the saved recording (no provider call) and `judging` is updated.
+  `pnpm deploy:staging` runs this test and the release-gate config test first
+  (ops/runbook.md, "Release gate").
 - **Measured** (`tsx scripts/bench-tokens.ts`, estimates over 321 corpus and
   fixture phrases): 68% narrowed; first call median **6,220 → 2,834** tokens; a
   read turn (two calls) median **12,631 → 4,117**. Real calls (smoke run,
@@ -1826,6 +1832,34 @@ the user allowed its source on a card. Everything else stays exactly as before.
   qwen in a smart conversation passes the same gate. Every replayed reply
   passes `scrubForModel` in every mode. The parser path writes no history;
   `last_exchange`, misses, suspended turns and the outbox reach no model.
+- **Replay by current consent** (2026-10-12, the user's decisions D1 and D2;
+  `docs/IMPROVEMENT_PLAN.md` T1). Every entry the gate writes carries `src`
+  (encrypted with it): the consent sources of this turn's tools (not public,
+  not own-input writes) and the `src` of every entry the model saw in full, so
+  a tool-less follow-up that repeats a calendar title inherits `calendar`. A
+  placeholder reply carries none. At the read (`replayByConsent`, right after
+  `history.recent` in `pipeline.ts`), a smart conversation replays an entry
+  whose `src` holds a source not allowed **now** with `[מידע אישי]` for the
+  reply and the user's words intact; so does an entry written before `src`
+  (one-time loss of up to 12 h of smart context at deploy, D2). "This time"
+  sources are never in the conversation's grants, so a one-time read's reply
+  is a placeholder from the next turn on (D1: not retained). Local
+  conversations replay as before. **Limits:** only data that came through a
+  tool reply is covered — the user's own typed words are always sent
+  (invariant 2); provenance is per turn, so it may over-redact, never
+  under-redact. **"This time"** (D1) is one tool read whose result the turn's
+  single model sees for the rest of that one turn — possibly in several of its
+  calls and across the turn's own resumes, never "sent once"; from the next
+  turn on its reply is a placeholder. **A suspended smart turn** stores
+  `historySources`; on resume (`mayResend` in `loop.ts`, both paths) every
+  source of that set and of the turn's tool calls so far (own-input writes
+  and public aside) must still be allowed — the grants now, the turn's `once`,
+  the source just approved — or the turn ends `model_unavailable` with no
+  model call and no history entry (reject, not redact: rewriting stored tool
+  results could mislead the model). A smart state stored before the field
+  ends the same way (at most 3 min of in-flight turns, once); local states
+  resume as before. Rollback: an older build refuses a state with the field
+  (`E_AGENT_STATE`), again at most 3 min of turns.
 - **`/consents`** in a smart conversation lists the allowed sources, each with
   a one-shot revoke button (`cr:<offer id>:<nonce>:ok`, stored in
   `undo_actions` as `consents.revoke`). Anywhere else it says consents exist
@@ -2096,7 +2130,7 @@ The user's request: one instruction that runs several steps, now or later, even 
 | Prompt injection (my text, forwarded text, event titles, future email) | Until 2026-10-01: LLM sees no data. Since the agent (§6.19): the model sees scrubbed read results, but text someone else wrote **taints** the turn and every write it leads to is CONFIRM, rendered by code; taint carries through the open question and history. A write ends the turn, so injected text cannot chain actions. Tier 4 doesn't exist. No permission-changing tool. Forwarded → confirm all writes |
 | Data exfiltration through the agent | No tool sends anything anywhere except through a code-rendered confirmation (Phase B cards, calls on the phone screen). Links in every outbound message are defanged, so a reply cannot carry data out in one tap. The model never sees numbers, addresses or codes: `scrubForModel` replaces them before a result reaches it (§6.19) |
 | Data sent to Groq | Since the agent: calendar titles from reads and the short history; since Phase C, a phone read the user asked for, scrubbed (§6.21). Groq does not train on inputs; **Zero Data Retention must be on before `AGENT=on`** (§2, §13). Tokens, ids, numbers, addresses never |
-| Data sent to Gemini (smart conversations, 2026-10-08) | Gemini's free tier may train on what it is sent and human reviewers may read it — accepted by the user for smart conversations only (§6.19). A local conversation, the shared thread, cron, shared text and the read-only try never reach it: `SMART_MODELS` is a table of its own, and the loop drops smart providers from any other turn. In a smart conversation the user's data reaches the model, or the history it replays, only for a source the user allowed on a consent card; anything else is stored as a placeholder. Facts (§6.26) are not sent. `private` tools are offered (2026-10-11), but no reply of theirs reaches a model or the history; a write whose every reply only echoes its own call (`consent: 'exempt-own-input'`) runs without a card. The key is server-side only: never in the app, a reply or a log |
+| Data sent to Gemini (smart conversations, 2026-10-08) | Gemini's free tier may train on what it is sent and human reviewers may read it — accepted by the user for smart conversations only (§6.19). A local conversation, the shared thread, cron, shared text and the read-only try never reach it: `SMART_MODELS` is a table of its own, and the loop drops smart providers from any other turn. In a smart conversation the user's data reaches the model, or the history it replays, only for a source the user allowed on a consent card; anything else is stored as a placeholder, and a stored reply whose source is no longer allowed (a revoke, a one-time approval, an untagged legacy entry) is replayed as one; a suspended turn holding such data is not resumed (2026-10-12, §6.19 "Replay by current consent"; limits there). Facts (§6.26) are not sent. `private` tools are offered (2026-10-11), but no reply of theirs reaches a model or the history; a write whose every reply only echoes its own call (`consent: 'exempt-own-input'`) runs without a card. The key is server-side only: never in the app, a reply or a log |
 | Conversation history at rest | AES-GCM per row, bound to table and sender; 12 h, 1 h when tainted; last 6 exchanges; never a tool result or a transcript; `/forget` and `/pair off` wipe it; never logged (`history`, `reply`, `args`, `result` are on the ban list) (§6.19) |
 | Two agent turns interleaving while one awaits the model | `agent_lock`, taken synchronously before the first await, released at the end, 60 s expiry. A second message is answered "busy" and must be resent (§6.19) |
 | A fallback running a message twice | The parser runs only when no tool ran in the agent turn (§6.19) |
@@ -3111,6 +3145,9 @@ measured on the app channel. To finish with `--resume`.
 | 2026-10-11 | **Routines: typing, app 0.13.1** (§6.27; plan `docs/plans/routines-typing.md`). The user's decision: a routine may type a fixed text it holds (`TYPE_TEXT`) and press the keyboard's Enter (`SUBMIT`) — e.g. "open FID and search סטימצקי". Never text from the model or the message, never a password field. Checks no longer count a field's content, and `TAP_TEXT` matches a field only by its placeholder: a stored check or tap that matched a field's content would now fail (none of the stored routines does). Server: wording only ("לחיצה או הקלדה"), no new codes. Out of scope, a later plan: the bot building a routine on request. |
 | 2026-10-11 | **Routines, stage 2 and the core of stage 3: `routine.run`, migration 0028, app 0.13.0** (§6.27; the user's decisions D1–D4). A confirmed run executes at its time with no further tap after a two-minute notice with a cancel button (D1, a deliberate exception to every future write needing a tap; one run, one claim, a 10-minute window, never late). UI automation through a closed, user-built step list is not code execution (D2). Several steps in one instruction are a routine; chaining server tools stays forbidden (D3). Up to 7 days ahead (D4). `routine.run` is private, refuses a tainted turn at resolve (`refusesTainted`), and is offered only when the words name a synced routine — the full catalog and the Groq fingerprint are unchanged. Runs live in their own table (`routine_runs`), not in `reminders`, so no reminder path sees one; `reminders.cancel` does not cancel them — the notice's button does. |
 | 2026-10-12 | **The agent eval can fail; the fingerprint names its model** (§6.19, §11.2; `docs/IMPROVEMENT_PLAN.md` T2, Batch 01). `pnpm eval:agent` exits 1 when a hard gate (no invented slots, missing-slot recall, injection → write) misses on the cases that ran, or a soft gate misses on a complete run; 2 when the run is incomplete (filtered, sampled, stopped by the budget, cases unanswered) or a gate had no cases (`n/a (0 cases)`, never a pass); 0 only for a complete pass, the only run that prints a fingerprint to record. p95 latency is a warning. Both fingerprints now hash the entry's `id` and `provider`, so another model under the same entry is not covered by an old pass; the Groq values became one per model (`601e8e9de1ad4a90` qwen, `b384921176e3c34c` gpt-oss) — no entry had recorded `evaluated`, so nothing recorded moved. A recording stores the fingerprint it was made in and, per answer, the response's `model` / `system_fingerprint` (read on the side through `fetchImpl`, nothing else of the body); `--resume` / `--report` refuse a recording from another environment or one made before this, which needs a new run. `--report` no longer needs an API key. |
+| 2026-10-12 | **The release gate is enforced where it can be** (§6.19, §11.2; `docs/IMPROVEMENT_PLAN.md` T2, Batch 02). `evaluated` gains `judging`, a hash of every case's `expect` and the scoring sources (`run-agent-evals.ts` with its `THRESHOLDS`, and `run-evals.ts` for `score`), line endings normalized; `fingerprint.test.ts` fails a recorded entry whose `judging` differs and names the free remedy (`--report --resume`, then update `judging`). A complete pass prints the `judging` hash next to the fingerprint. `pnpm deploy:staging` now runs `fingerprint.test.ts` and the new `test/unit/config/release-gate.test.ts` before `wrangler deploy`; the config test fails production `AGENT: "on"` unless the primary's `evaluated` matches both fingerprint and `judging`. The primary's missing `evaluated` still only warns until the owed qwen run (T2-5). Production deploys stay human-only, so nothing forces the human to run the gate there (runbook, "Release gate"). No bot behaviour changed. |
+| 2026-10-12 | **History replay respects current consent** (§6.19, §7.1; `docs/IMPROVEMENT_PLAN.md` T1-1/T1-2, Batch 03; the user's decisions D1 = placeholder, D2 = yes). After a revoke, earlier smart-conversation replies carrying that source kept reaching Gemini until their TTL. Each history entry now stores `src` (its turn's consent-source tools, own-input writes and public excluded, ∪ the `src` of the entries replayed in full); a smart conversation replays an entry with a source not allowed now, or an untagged legacy entry, with `[מידע אישי]` for the reply and the user's words kept. A one-time ("this time") reply is therefore a placeholder from the next turn on. Local conversations unchanged; `loop.ts` unchanged. Over-redacts by design (per turn, not per sentence). Resumed turns use the stored entries' sources until T1-3 adds them to the suspended state, which is also when a resume after a revoke is refused. |
+| 2026-10-12 | **A resumed turn never resends a revoked source; "this time" is one turn** (§6.19, §7.1; `docs/IMPROVEMENT_PLAN.md` T1-3/T1-4, Batch 04; D1 = placeholder). A suspended state holds the replayed history and every earlier tool result of the turn, and both resume paths resent them while re-checking only the offered tools: a calendar read before a mail-consent pause reached the model after a calendar revoke. A smart state now stores `historySources`; `mayResend` (`loop.ts`) requires every source of it and of the turn's calls so far (own-input and public aside) to be allowed now — grants, the turn's `once`, the source just approved — else the turn ends `model_unavailable` with no model call and no history entry. Reject, not redact. Legacy smart states end (≤ 3 min of turns, once); local states unchanged. Rollback: an older build refuses the new field (`E_AGENT_STATE`, ≤ 3 min). D1: a "this time" reply is tagged and replayed as the placeholder from the next turn; the boundary (one read, that turn's single model, possibly several calls) is written in `consents.ts` and §6.19. Card copy unchanged on purpose. |
 ---
 
 ## 15. Sources (checked 2026-09-24)

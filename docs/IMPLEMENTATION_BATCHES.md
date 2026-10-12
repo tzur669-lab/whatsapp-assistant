@@ -31,8 +31,8 @@ The execution order for `docs/IMPROVEMENT_PLAN.md`, the evidence and design refe
 
 | ID | Question | Recommendation | Blocks |
 |---|---|---|---|
-| D1 | Should a "this time" approval's reply stay in the smart history for follow-ups (today), or become a placeholder? | Placeholder | T1-4 |
-| D2 | At T1 deploy, accept losing up to 12 h of smart-conversation context once, since legacy entries are replayed as placeholders? | Yes | T1-2 |
+| D1 | Should a "this time" approval's reply stay in the smart history for follow-ups (today), or become a placeholder? | Placeholder — **decided 2026-10-12: placeholder** (Batch 03's filter already does it; T1-4 adds its test and docs) | T1-4 |
+| D2 | At T1 deploy, accept losing up to 12 h of smart-conversation context once, since legacy entries are replayed as placeholders? | Yes — **decided 2026-10-12: yes** | T1-2 |
 | D3 | How many days to keep delivered or cancelled reminders (and old audit rows)? | — | T11-1 (optional) |
 | D4 | Keep the regular mode's label "local", explained by its note, or rename it? | Rename | the label part of T6b-1 (the note text is not blocked) |
 

@@ -139,6 +139,8 @@ const stateSchema = z
     once: z.array(z.enum(CONSENT_SOURCES)).max(CONSENT_SOURCES.length).optional(),
     suspends: z.number().int().min(1).max(MAX_SUSPENDS).optional(),
     fileCards: z.boolean().optional(),
+    // A smart turn's history sources (2026-10-12, T1-3): checked again on resume.
+    historySources: z.array(z.enum(CONSENT_SOURCES)).max(CONSENT_SOURCES.length).optional(),
   })
   .strict()
   .refine((state) =>

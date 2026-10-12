@@ -89,6 +89,44 @@ pnpm deploy:staging
 
 Production deploys are manual and human-only (PLAN §9).
 
+## Release gate
+
+What stops a release, and what only a person can check (PLAN §6.19, "The
+write gate"; `docs/IMPROVEMENT_PLAN.md` T2).
+
+**Enforced by code:**
+
+- `pnpm test` (CI too) fails when a model that may write has an `evaluated`
+  record whose fingerprint or `judging` hash no longer matches
+  (`test/unit/agent/fingerprint.test.ts`). The primary without any `evaluated`
+  only warns until its owed `--select-tools` run is recorded.
+- `pnpm deploy:staging` runs that test and `test/unit/config/release-gate.test.ts`
+  first; a failure stops it before `wrangler deploy`.
+- The config test fails when `wrangler.jsonc` sets production `AGENT` to
+  `"on"` while the primary has no `evaluated` matching both values.
+- `pnpm eval:agent` exits 0 only for a complete pass (1 a gate failed, 2
+  incomplete) and only then prints the fingerprint and `judging` to record.
+
+**When the fingerprint test fails:**
+
+- On `judging` only (an expectation, the scoring or a threshold changed):
+  `pnpm eval:agent --model <id> --select-tools --report --resume` re-scores
+  the saved recording with no provider call. Exit 0 → copy the printed
+  `judging` into `evaluated` in `src/agent/models.ts`. Exit 1 → the gate is
+  closed until a new live pass. A lost recording needs a new live run.
+- On the fingerprint (prompt, catalog, request, selection or model): a new
+  live run, a human read of the report, then record both values.
+
+**Manual, not enforced:**
+
+- The `--filter` evals owed after a change (CLAUDE.md): `pnpm eval` for
+  `src/nlu/`, `pnpm eval:agent --filter …` for the agent prompt, catalog or
+  provider. Live evals never run in CI (they spend the bot's own quota).
+- Server before APK, whenever the wire protocol changes.
+- Production deploys: a person runs them, so nothing forces `pnpm test`
+  first, and the config test sees only the committed `wrangler.jsonc`, not a
+  deploy from a dirty tree.
+
 ## Required configuration
 
 Secrets: see PLAN §7.2, set with `wrangler secret put <NAME> --env <env>`.

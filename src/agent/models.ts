@@ -45,8 +45,12 @@ export type ModelEntry = {
   dayRequests?: number;
   /** May run an agent turn that writes. Backups' writes still always confirm (§6). */
   canWrite: boolean;
-  /** The environment the write gate was passed in (PLAN §6.19, "Failover and tokens"). */
-  evaluated?: { fingerprint: string; date: string };
+  /**
+   * The environment the write gate was passed in (PLAN §6.19, "Failover and tokens"),
+   * and `judging`: what the pass was judged by (2026-10-12). The fingerprint test
+   * requires `judging` on every recorded entry; a mismatch is re-scored for free.
+   */
+  evaluated?: { fingerprint: string; date: string; judging?: string };
 };
 
 /**

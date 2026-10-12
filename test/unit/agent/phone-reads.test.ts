@@ -208,7 +208,7 @@ describe('phone reads', () => {
       const { out } = await suspendOn([{ tool: 'phone.sms', args: {} }]);
       await answer(out.queryId, SMS, [{ text: 'אמא ביקשה שתתקשר.' }]);
       const remembered = await history.recent(PRINCIPAL);
-      expect(remembered).toEqual([{ user: 'מה כתבו לי ב-SMS היום?', reply: 'אמא ביקשה שתתקשר.', tainted: true }]);
+      expect(remembered).toEqual([{ user: 'מה כתבו לי ב-SMS היום?', reply: 'אמא ביקשה שתתקשר.', tainted: true, src: ['sms'] }]);
     });
 
     it('puts a write the SMS led to behind a confirmation, and runs nothing', async () => {

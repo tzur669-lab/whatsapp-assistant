@@ -58,7 +58,7 @@ Full map with every module: [ARCHITECTURE.md](ARCHITECTURE.md).
 | a tool (`src/tools/`) | Use the `add-tool` skill. Registry → one group in `agent/tool-groups.ts` → eval cases. Changing groups changes the eval fingerprint (`test/evals/fingerprint.ts`). New Google scope = stop and ask. |
 | a tool's `dataSource` (required in `registry.ts`) | A consent source, `public` or `private`, chosen by what its replies may carry (card, candidate list, Undo included), **not** by read/write: `reminders.leave` and `nav.go` are `calendar`. It decides the consent card, the smart catalog and the history placeholder. Unsure → stop and ask. |
 | a tool's `consent` rule (required with a consent source, 2026-10-11) | `always`, or `exempt-own-input` — no consent card, reply kept in the smart history — **only** if every reply path (success, question, choice list, confirm card, Undo, refusals, errors) holds nothing but the call's own arguments, code-computed dates/times and fixed strings. Prove it from `resolve`/`preview`/`execute`/render code and add it to the pinned list in `test/unit/tools/data-source.test.ts` and `smart-own-input.test.ts`; a reply that names a found record, list, contact or count stays `always`. Unsure → `always`. |
-| smart conversations / the consent gate | The history gate is `settleAgentResult` only (the one `history.append`): never write history elsewhere. Never offer an unconsented source on a turn that cannot suspend — voice, shared text, the read-only try. Private tools are offered there (their replies never reach a model or the history). `SMART_MODELS` never joins `MODELS`. Consent taps are code only (`beginConsent`, one transaction, before any await). |
+| smart conversations / the consent gate | History is written only by `settleAgentResult` (the one `history.append`, which tags each entry's `src`) and filtered by current consent at the one read (`replayByConsent` in `pipeline.ts`, 2026-10-12): never write or replay history elsewhere. A smart suspended state carries `historySources`, and a resume goes through `mayResend` (`loop.ts`): a new resume path must too. Never offer an unconsented source on a turn that cannot suspend — voice, shared text, the read-only try. Private tools are offered there (their replies never reach a model or the history). `SMART_MODELS` never joins `MODELS`. Consent taps are code only (`beginConsent`, one transaction, before any await). |
 | `src/agent/budget.ts` `CHARS_PER_TOKEN` | Measured, not guessed: refresh `test/fixtures/token-calibration.json` from a real run (`scripts/calibration-sample.ts` overwrites it: merge, don't replace) and keep the 99% test green. Too low and messages that name no tool group fail the turn cap. |
 | `src/agent/` prompt, catalog, models | `pnpm eval:agent` (use `--filter`; a full run can burn a model's daily 200K tokens). `canWrite` in `models.ts` changes only after a human reads an eval report. |
 | `src/nlu/` | `pnpm eval`; "no invented slots" and "missing-slot detection" must stay 100%. The parser catalog is pinned to `PARSER_TOOL_NAMES` — new tools are agent-only. |
@@ -144,6 +144,21 @@ Network on the hotspot: `NODE_OPTIONS=--dns-result-order=ipv4first` for wrangler
 | [SETUP.md](SETUP.md) | Setting up a new copy from zero: accounts, Groq key, models, secrets, deploy, app, AI agent. |
 
 ## 8. Session log (docs)
+
+- 2026-10-12: Batch 04 done: a smart suspended turn stores `historySources`
+  (`turns.ts`); `mayResend` in `loop.ts` ends a resume whose history or tool
+  results hold a source not allowed now (no model call). "This time" = one
+  turn (D1), written in `consents.ts` and PLAN §6.19. No new modules or tables.
+
+- 2026-10-12: Batch 03 done (decisions D1 = placeholder, D2 = yes): history
+  entries carry `src` (`history.ts` `provenanceOf`, `replayByConsent`); a
+  smart conversation replays a revoked or untagged reply as `[מידע אישי]`.
+  No new modules or tables.
+
+- 2026-10-12: Batch 02 done: `evaluated.judging` (`judgingHash` in
+  `test/evals/fingerprint.ts`), `deploy:staging` runs the fingerprint and
+  new `test/unit/config/release-gate.test.ts` first, runbook "Release gate".
+  Eval tooling and config tests only; no bot behaviour change.
 
 - 2026-10-12: `docs/IMPROVEMENT_PLAN.md` + `docs/IMPLEMENTATION_BATCHES.md`
   (review and batches). Batch 01 done: eval exit codes, model id/provider in

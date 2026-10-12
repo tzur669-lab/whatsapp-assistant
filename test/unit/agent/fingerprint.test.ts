@@ -4,7 +4,7 @@
  */
 import { describe, expect, it } from 'vitest';
 import { MODELS, SMART_MODELS } from '../../../src/agent/models.js';
-import { fingerprintFor, smartFingerprintFor } from '../../evals/fingerprint.js';
+import { fingerprintFor, judgingHash, judgingHashOf, judgingParts, smartFingerprintFor } from '../../evals/fingerprint.js';
 
 describe('the eval fingerprint', () => {
   it('matches for every backup that may write', () => {
@@ -62,5 +62,30 @@ describe('the eval fingerprint', () => {
     for (const entry of SMART_MODELS.filter((e) => e.canWrite)) {
       expect(entry.evaluated?.fingerprint, `${entry.id}: run pnpm eval:agent --model ${entry.id}`).toBe(smartFingerprintFor(entry));
     }
+  });
+
+  it('judges every evaluated model by the current expectations, scoring and thresholds (2026-10-12)', () => {
+    const current = judgingHash();
+    for (const entry of [...MODELS, ...SMART_MODELS].filter((e) => e.evaluated)) {
+      expect(
+        entry.evaluated?.judging,
+        `${entry.id}: the judging changed since its eval. Re-score for free with ` +
+          `pnpm eval:agent --model ${entry.id}${entry.role === 'smart' ? '' : ' --select-tools'} --report --resume; ` +
+          `if it still passes, set evaluated.judging to ${current} in src/agent/models.ts`,
+      ).toBe(current);
+    }
+  });
+
+  it('moves the judging hash with a threshold or an expectation, not with line endings', () => {
+    const parts = judgingParts();
+    const base = judgingHashOf(parts);
+    expect(base).toMatch(/^[0-9a-f]{16}$/);
+    const scoring = parts.sources.map((source) => source.replace('toolChoice: 0.97', 'toolChoice: 0.98'));
+    expect(scoring).not.toEqual(parts.sources);
+    expect(judgingHashOf({ ...parts, sources: scoring })).not.toBe(base);
+    const [first, ...rest] = parts.expects;
+    expect(judgingHashOf({ ...parts, expects: [{ ...first!, expect: { intent: 'other' } }, ...rest] })).not.toBe(base);
+    // A checkout with CRLF judges exactly like one with LF.
+    expect(judgingHashOf({ ...parts, sources: parts.sources.map((s) => s.replace(/\r?\n/g, '\r\n')) })).toBe(base);
   });
 });

@@ -14,6 +14,8 @@
 import type { SqlDriver } from '../core/sql.js';
 import type { Keyring } from '../security/crypto.js';
 import { decryptToken, encryptToken } from '../security/crypto.js';
+import type { ConsentSource } from '../tools/registry.js';
+import { isConsentSource } from './consents.js';
 
 export const HISTORY_TTL_MS = 12 * 60 * 60 * 1000;
 /** A turn that read text someone else wrote is remembered for less time. */
@@ -24,7 +26,38 @@ export const MAX_HISTORY_CHARS = 2_400;
 
 const AAD_PROVIDER = 'agent-history';
 
-export type HistoryEntry = { user: string; reply: string; tainted: boolean };
+/**
+ * `src` (2026-10-12, PLAN §6.19): the consent sources whose data the reply may
+ * carry — its turn's tools and the history that turn saw in full. Absent on an
+ * entry written before it existed, which a smart conversation therefore
+ * replays without its reply (`replayByConsent`).
+ */
+export type HistoryEntry = { user: string; reply: string; tainted: boolean; src?: ConsentSource[] };
+
+/** The sources behind these entries, in first-seen order. An untagged entry adds none. */
+export function provenanceOf(entries: readonly HistoryEntry[]): ConsentSource[] {
+  return [...new Set(entries.flatMap((entry) => entry.src ?? []))];
+}
+
+/**
+ * What a smart conversation replays (2026-10-12): an entry whose reply may
+ * carry a source the conversation does not allow now, or whose sources are
+ * unknown (written before `src`), keeps the user's words and loses its reply
+ * to the placeholder. `sources` are those of the entries replayed in full —
+ * what the new reply may inherit.
+ */
+export function replayByConsent(
+  entries: readonly HistoryEntry[],
+  allowed: readonly ConsentSource[],
+  placeholder: string,
+): { entries: HistoryEntry[]; sources: ConsentSource[] } {
+  const replayed = entries.map((entry) =>
+    entry.src !== undefined && entry.src.every((source) => allowed.includes(source))
+      ? entry
+      : { ...entry, reply: placeholder, src: [] },
+  );
+  return { entries: replayed, sources: provenanceOf(replayed) };
+}
 
 /**
  * A conversation in the app (§6.18): its id, or '' for the one shared thread
@@ -45,7 +78,7 @@ export class ConversationHistory {
 
   async append(principal: string, entry: HistoryEntry, conversation = ''): Promise<void> {
     const ciphertext = await encryptToken(
-      JSON.stringify({ u: entry.user, r: entry.reply }),
+      JSON.stringify({ u: entry.user, r: entry.reply, ...(entry.src ? { s: entry.src } : {}) }),
       this.keyring(),
       { provider: AAD_PROVIDER, account: accountOf(principal, conversation) },
     );
@@ -96,9 +129,11 @@ export class ConversationHistory {
           provider: AAD_PROVIDER,
           account: accountOf(principal, conversation),
         });
-        const parsed = JSON.parse(plain) as { u?: unknown; r?: unknown };
+        const parsed = JSON.parse(plain) as { u?: unknown; r?: unknown; s?: unknown };
         if (typeof parsed.u !== 'string' || typeof parsed.r !== 'string') throw new Error('shape');
         entry = { user: parsed.u, reply: parsed.r, tainted: Number(row['tainted']) === 1 };
+        // Sources that do not read cleanly are unknown: replayed as a legacy entry.
+        if (Array.isArray(parsed.s) && parsed.s.every(isConsentSource)) entry.src = parsed.s;
       } catch {
         this.sql.exec('DELETE FROM conversation_turns WHERE id = ?', row['id']);
         continue;
