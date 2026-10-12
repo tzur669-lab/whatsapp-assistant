@@ -13,7 +13,7 @@ import { Hono } from 'hono';
 import type { Context } from 'hono';
 import type { AppEnv } from './core/env.js';
 import { channelOf } from './core/env.js';
-import { checkAppRequest } from './channels/app/ingress.js';
+import { checkAppRequest, readCapped } from './channels/app/ingress.js';
 import { verifyWebhookHandshake, verifyWebhookSignature } from './channels/whatsapp/verify.js';
 import { parseWebhookPayload } from './channels/whatsapp/parse.js';
 import { isAllowed, parseAllowlist } from './security/allowlist.js';
@@ -51,10 +51,11 @@ app.get('/wa/webhook', (c) => {
 app.post('/wa/webhook', async (c) => {
   if (channelOf(c.env) !== 'whatsapp') return c.text('not found', 404);
 
-  // 1. Raw body. The signature covers these exact bytes.
-  const rawBody = await c.req.text();
-  if (rawBody.length > MAX_WEBHOOK_BODY_BYTES) {
-    log.warn('body_too_large', { bytes: rawBody.length });
+  // 1. Raw body. The signature covers these exact bytes, counted as bytes and
+  //    never read past the cap (Improvement plan §3 T7).
+  const rawBody = await readCapped(c.req.raw, MAX_WEBHOOK_BODY_BYTES);
+  if (rawBody === null) {
+    log.warn('body_too_large', {});
     return c.text('payload too large', 413);
   }
 
@@ -72,7 +73,8 @@ app.post('/wa/webhook', async (c) => {
   // 3. Parse.
   let payload: unknown;
   try {
-    payload = JSON.parse(rawBody);
+    // Decoded only now, after the signature passed.
+    payload = JSON.parse(new TextDecoder().decode(rawBody));
   } catch {
     log.warn('malformed_json', {});
     return c.text('bad request', 400);

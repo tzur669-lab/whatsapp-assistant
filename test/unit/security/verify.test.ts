@@ -52,6 +52,27 @@ describe('verifyWebhookSignature (PLAN §11.4)', () => {
     expect(reserialized.length).toBeGreaterThan(0);
   });
 
+  it('signs bytes and the same text alike: the RFC 4231 vector (T7)', async () => {
+    const expected = '5bdcc146bf60754e6a042426089575c75a003f089d2739839dec58b964ec3843';
+    const data = 'what do ya want for nothing?';
+    expect(await hmacSha256Hex('Jefe', data)).toBe(expected);
+    expect(await hmacSha256Hex('Jefe', new TextEncoder().encode(data))).toBe(expected);
+  });
+
+  it('verifies the raw bytes, Hebrew included', async () => {
+    const hebrew = '{"text":"שלום"}';
+    const bytes = new TextEncoder().encode(hebrew);
+    expect(await verifyWebhookSignature(bytes, await sign(hebrew), APP_SECRET)).toEqual({ ok: true });
+  });
+
+  it('counts the cap in bytes, not characters', async () => {
+    // Under the cap in characters, over it in UTF-8 bytes (two per Hebrew letter).
+    const text = 'ש'.repeat(Math.ceil(MAX_WEBHOOK_BODY_BYTES / 2) + 1);
+    expect(text.length).toBeLessThan(MAX_WEBHOOK_BODY_BYTES);
+    const bytes = new TextEncoder().encode(text);
+    expect(await verifyWebhookSignature(bytes, await sign(text), APP_SECRET)).toEqual({ ok: false, reason: 'body_too_large' });
+  });
+
   it('rejects a body over the size limit before doing any crypto', async () => {
     const big = 'x'.repeat(MAX_WEBHOOK_BODY_BYTES + 1);
     const res = await verifyWebhookSignature(big, await sign(big), APP_SECRET);

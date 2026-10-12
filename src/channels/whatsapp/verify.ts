@@ -19,14 +19,18 @@ export type SignatureResult = { ok: true } | { ok: false; reason: SignatureFailu
 
 const PREFIX = 'sha256=';
 
-/** Verify `X-Hub-Signature-256` against the raw request body. */
+/**
+ * Verify `X-Hub-Signature-256` against the raw request body: its bytes as
+ * read (`readCapped`), or a string in tests. The cap counts bytes.
+ */
 export async function verifyWebhookSignature(
-  rawBody: string,
+  rawBody: string | Uint8Array,
   header: string | null | undefined,
   appSecret: string,
 ): Promise<SignatureResult> {
   if (!appSecret) return { ok: false, reason: 'not_configured' };
-  if (rawBody.length > MAX_WEBHOOK_BODY_BYTES) return { ok: false, reason: 'body_too_large' };
+  const bytes = typeof rawBody === 'string' ? new TextEncoder().encode(rawBody).byteLength : rawBody.byteLength;
+  if (bytes > MAX_WEBHOOK_BODY_BYTES) return { ok: false, reason: 'body_too_large' };
   if (!header) return { ok: false, reason: 'missing_signature' };
   if (!header.startsWith(PREFIX)) return { ok: false, reason: 'bad_signature_format' };
 

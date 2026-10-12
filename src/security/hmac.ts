@@ -5,8 +5,11 @@
 
 const encoder = new TextEncoder();
 
-/** HMAC-SHA256 of `message` under `secret`, lowercase hex. */
-export async function hmacSha256Hex(secret: string, message: string): Promise<string> {
+/**
+ * HMAC-SHA256 of `message` under `secret`, lowercase hex. Bytes are signed as
+ * they are (a webhook's exact body); a string as its UTF-8.
+ */
+export async function hmacSha256Hex(secret: string, message: string | Uint8Array): Promise<string> {
   const key = await crypto.subtle.importKey(
     'raw',
     encoder.encode(secret),
@@ -14,7 +17,8 @@ export async function hmacSha256Hex(secret: string, message: string): Promise<st
     false,
     ['sign'],
   );
-  const sig = await crypto.subtle.sign('HMAC', key, encoder.encode(message));
+  const data = typeof message === 'string' ? encoder.encode(message) : message;
+  const sig = await crypto.subtle.sign('HMAC', key, data);
   return [...new Uint8Array(sig)].map((b) => b.toString(16).padStart(2, '0')).join('');
 }
 

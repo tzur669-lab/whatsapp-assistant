@@ -151,6 +151,46 @@ describe('POST /wa/webhook', () => {
     expect(res.status).toBe(413);
   });
 
+  it('counts the size limit in bytes: Hebrew under it in characters but over it in bytes is refused (T7)', async () => {
+    const raw = 'ש'.repeat(128 * 1024 + 1);
+    expect(raw.length).toBeLessThan(256 * 1024);
+    const res = await post(raw);
+    expect(res.status).toBe(413);
+    expect(handedOff).toHaveLength(0);
+  });
+
+  it('refuses a streamed oversize body without reading all of it (T7)', async () => {
+    let pulled = 0;
+    const chunk = new Uint8Array(64 * 1024).fill(0x78);
+    const stream = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        pulled += 1;
+        if (pulled > 100) controller.close();
+        else controller.enqueue(chunk);
+      },
+    });
+    const res = await app.fetch(
+      new Request('https://worker.test/wa/webhook', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', 'x-hub-signature-256': 'sha256=deadbeef' },
+        body: stream,
+        duplex: 'half',
+      } as RequestInit),
+      makeEnv(),
+      executionCtx,
+    );
+    expect(res.status).toBe(413);
+    // 256 KiB is five 64 KiB chunks: it stopped there, not at a hundred.
+    expect(pulled).toBeLessThan(10);
+  });
+
+  it('a correctly signed Hebrew message still goes through (T7)', async () => {
+    const raw = body(ALLOWED, 'שלום, מה שלומך?');
+    expect(raw).toMatch(/[֐-׿]/);
+    expect((await post(raw)).status).toBe(200);
+    expect(handedOff).toHaveLength(1);
+  });
+
   it('returns 400 for malformed JSON that is correctly signed', async () => {
     const res = await post('{not json');
     expect(res.status).toBe(400);
