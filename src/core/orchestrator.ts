@@ -29,6 +29,8 @@ import { NOTE_TOOLS } from '../tools/notes.js';
 import { LIST_TOOLS } from '../tools/lists.js';
 import { PORTFOLIO_TOOLS } from '../tools/portfolio.js';
 import { routineRun } from '../tools/routines.js';
+import { screenTask } from '../tools/screen.js';
+import { screenText } from '../render/screen.js';
 import { routineText } from '../render/routines.js';
 import { MEMORY_TOOLS } from '../tools/memory.js';
 import { EXPENSE_TOOLS } from '../tools/expenses.js';
@@ -179,6 +181,7 @@ const IMPLEMENTED: Partial<Record<ToolName, ToolDefinition>> = {
   ...MEMORY_TOOLS,
   ...PORTFOLIO_TOOLS,
   'routine.run': routineRun,
+  'screen.task': screenTask,
 };
 
 export type RunOptions = {
@@ -587,7 +590,42 @@ export async function runButton(raw: string, turn: TurnContext): Promise<Reply> 
       return runDeferred(parsed.id, parsed.nonce, turn, snoozeMinutes(parsed.verb));
     case 'rt':
       return parsed.verb === 'no' ? cancelRoutineRun(parsed.id, parsed.nonce, turn) : { text: statusText.confirmNotFound };
+    case 'sa':
+      return parsed.verb === 'ok' || parsed.verb === 'no'
+        ? answerScreenApproval(parsed.id, parsed.nonce, parsed.verb === 'ok', turn)
+        : { text: statusText.confirmNotFound };
+    case 'ss':
+      return parsed.verb === 'no' ? stopScreenTask(parsed.id, parsed.nonce, turn) : { text: statusText.confirmNotFound };
   }
+}
+
+/**
+ * The chat's answer to a screen-agent card (§6.28): the same row and nonce as
+ * the phone's notification, the first answer wins. Approving releases that
+ * one stored action and wakes the phone; rejecting ends the task.
+ */
+async function answerScreenApproval(taskId: string, nonce: string, approve: boolean, turn: TurnContext): Promise<Reply> {
+  const ctx = turn.tool;
+  const store = ctx.screen;
+  if (!store) return { text: screenText.notRunning(ctx.lang), private: true };
+  const result = store.decideApproval(taskId, ctx.principal, nonce, approve);
+  audit(turn, 'screen.task', null, approve ? 'SCREEN_APPROVED' : 'SCREEN_REJECTED', result.kind, taskId);
+  if (result.kind === 'already') return { text: screenText.alreadyDecided(ctx.lang), private: true };
+  await ctx.screenPush?.(taskId, result.kind === 'released' ? 'screen_release' : 'screen_stop');
+  if (result.kind === 'released') return { text: screenText.released(ctx.lang), private: true, rescheduleAlarm: true };
+  return { text: screenText.ended(result.ended, undefined, ctx.lang), private: true, rescheduleAlarm: true };
+}
+
+/** The chat's stop button on a running task (§6.28): any open status to `stopped`. */
+async function stopScreenTask(taskId: string, nonce: string, turn: TurnContext): Promise<Reply> {
+  const ctx = turn.tool;
+  const store = ctx.screen;
+  if (!store) return { text: screenText.notRunning(ctx.lang), private: true };
+  const ended = store.stop(taskId, ctx.principal, nonce);
+  audit(turn, 'screen.task', null, 'SCREEN_STOPPED', ended === 'gone' ? 'gone' : ended.outcome, taskId);
+  if (ended === 'gone') return { text: screenText.notRunning(ctx.lang), private: true };
+  await ctx.screenPush?.(taskId, 'screen_stop');
+  return { text: screenText.ended(ended, undefined, ctx.lang), private: true, rescheduleAlarm: true };
 }
 
 /**

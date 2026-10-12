@@ -43,6 +43,8 @@ import type { DriveClient } from '../google/drive.js';
 import type { ContactsClient } from '../google/contacts.js';
 import type { BirthdayStore } from '../core/birthdays.js';
 import type { RoutineStore } from './routine-store.js';
+import type { ScreenStore } from './screen-store.js';
+import type { ScreenQuestion } from '../render/screen.js';
 
 /** One candidate when a description matched more than one thing. */
 export type TargetChoice = { id: string; label: string };
@@ -84,7 +86,9 @@ export type Clarify =
    * Lists (block H, 2026-10-07): no list was named and there is more than one.
    * Recorded as an open question; the answer names the list.
    */
-  | { code: 'which_list'; names: string[] };
+  | { code: 'which_list'; names: string[] }
+  /** The screen agent (§6.28): a question about its app, task or limits; `labels` lists the allowed apps. */
+  | { code: 'screen'; what: ScreenQuestion; labels?: string[] };
 
 export type PersonalQuestion =
   | 'note_text'
@@ -204,6 +208,15 @@ export type ToolContext = {
   expenses?: ExpenseStore;
   /** Routines synced from the paired app, and their runs (§6.27). */
   routines?: RoutineStore;
+  /** The screen agent's allowlist and tasks (§6.28). */
+  screen?: ScreenStore;
+  /** Wakes the phone about a screen task (an approval decided, the task stopped). Best effort. */
+  screenPush?: (taskId: string, kind: 'screen_release' | 'screen_stop') => Promise<void>;
+  /**
+   * The message's own words, for a tool that checks the model copied from them
+   * (`screen.task`'s inputs, §6.28). Read by code only; never sent anywhere.
+   */
+  userText?: string;
   /**
    * The turn already read text someone else wrote (§6.19). Set by `runIntent`
    * for the one tool that sends the model's words out: Wikipedia (2026-10-05).

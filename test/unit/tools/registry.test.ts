@@ -25,6 +25,7 @@ import { calendarFreeTime } from '../../../src/tools/free-time.js';
 import { birthdaysUpcoming } from '../../../src/tools/birthdays.js';
 import { mailBills } from '../../../src/tools/bills.js';
 import { routineRun } from '../../../src/tools/routines.js';
+import { screenTask } from '../../../src/tools/screen.js';
 import type { ToolDefinition } from '../../../src/tools/types.js';
 import { INTENT_NAMES } from '../../../src/nlu/intent-schema.js';
 
@@ -49,6 +50,7 @@ const IMPLEMENTATIONS: Record<string, ToolDefinition> = {
   'birthdays.upcoming': birthdaysUpcoming,
   'mail.bills': mailBills,
   'routine.run': routineRun,
+  'screen.task': screenTask,
 };
 
 describe('every registered tool is real', () => {

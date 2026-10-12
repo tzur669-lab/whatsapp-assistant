@@ -238,6 +238,45 @@ goes back as codes (`/app/routine/result`). A claimed run is never retried.
 Locked for two minutes, or more than ten minutes late: nothing runs.
 **Deploy the server first**: an older one answers the sync with 404.
 
+## Screen agent (0.14.0)
+
+"תחפש בפיד סטימצקי": after the user confirms a card in the chat, the bot works
+inside one app on the phone, step by step (spec and plan:
+`docs/plans/screen-agent.md`). The loop and the model are on the server; the
+phone is its eyes and hands and has the last word on every action.
+
+- **The allowlist** (☰ → ⚙️ סוכן מסך, `ScreenAllowActivity`): at most 20 apps,
+  each with "לשאול לפני כל לחיצה" (off by default), and the disclosure that
+  the app's text goes to the bot's server and, scrubbed, to Groq. Settings, the
+  system UI, launchers, messaging, mail, banks, payments and stores can never
+  be added (`ScreenLogic.blocked`). Every change is synced
+  (`POST /app/screen/allow`) and once per process; removing an app stops a
+  task in it at once.
+- **A task** (`ScreenAgentRunner`, `ScreenRun`): FCM `{kind: screen, task_id}` →
+  unlock if needed (`RoutineRunActivity`) → one signed claim (the app, the
+  approved inputs, kept in memory only) → the app is brought to the front as it
+  was (no `CLEAR_TASK`; routines keep it) → up to 12 steps of: the screen as at
+  most 80 elements (`ScreenLogic.elements`) → `POST /app/screen/step` → one
+  action. It runs on the accessibility service's one worker, so a routine and a
+  task never act at once; a routine push stops the task.
+- **Every action** names its node by the phone's own binding
+  (`ScreenLogic.binding`), and acts only when a fresh snapshot holds exactly
+  one node with it. The phone classes each tap, Enter and typing with its own
+  copy of the risk policy (`ScreenLogic.riskClass`, checked against
+  `test/fixtures/screen-policy.json`); a higher class than the server's is held
+  and asked about. Approvals come as a private, high-priority notification
+  ("אשר" / "דחה" need the phone unlocked) or as the chat card.
+- **At most once**: a journal in private preferences (`ScreenJournal`: task id,
+  action id, status — never screen text), one `commit()` per move, and one gate
+  around stop-check → journal → act → journal. After a crash, an action left
+  `started` is reported `uncertain` and never repeated; one left `held` is
+  refused (`CompanionApp` at process start).
+- **Stop**: "עצור" on the ongoing notification, a routine push, FCM
+  `screen_stop`, or removing the app. A request in flight is aborted.
+
+Nothing here logs screen text. **Deploy the server first**: an older one
+answers the new routes with 404 and never sends a `screen` push.
+
 ## Setup
 
 1. **Firebase**: project `tzur-call-companion`, Android app
@@ -291,6 +330,9 @@ recorder all come from the platform.
   titles, where a row goes, and that only a real conversation id is sent.
 - **Matching rules**, for calls (`ContactMatcherTest`), cards (`CardLogicTest`)
   routines (`RoutineLogicTest`: validation, the step hash, one exact target),
+  the screen agent (`ScreenLogicTest`: elements and caps, the binding, the
+  journal's every move; `ScreenPolicyFixtureTest`: the word lists and vectors
+  shared with the server),
   and phone reads (`PhoneReadLogicTest`: the query's shape, one-time codes,
   names never numbers, the caps).
 - **The wire protocol** (`ProtocolTest`), pinned against vectors from the

@@ -285,4 +285,50 @@
     <string name="routine_reason_tap_refused">הלחיצה או ההקלדה לא התקבלו</string>
     <string name="routine_reason_deadline">עברו 4 דקות</string>
     <string name="routine_reason_error">תקלה בטלפון</string>
+
+    <!-- The screen agent (0.14) -->
+    <string name="screen_open">⚙️ סוכן מסך</string>
+    <string name="screen_title">סוכן מסך</string>
+    <string name="screen_intro">סוכן המסך פועל רק באפליקציות שנבחרו כאן, ורק אחרי אישור של בקשה בצ\'אט. למשל: \"תחפש בפיד סטימצקי\". הוא קורא את מה שמופיע במסך, לוחץ, גולל ומקליד רק טקסט שמופיע בבקשה. לפני לחיצה שנראית רגישה הוא עוצר ומבקש אישור. אפשר לעצור אותו בכל רגע מההתראה.</string>
+    <string name="screen_disclosure">טקסט שמופיע באפליקציה הזו נשלח לשרת של הבוט, ואחרי ניקוי של מספרים, קישורים ומיילים, לשירות Groq. הניקוי לא מסיר כל פרט אישי.</string>
+    <string name="screen_service_on">✓ שירות הנגישות \"שגרות של העוזר\" פועל.</string>
+    <string name="screen_service_off">שירות הנגישות \"שגרות של העוזר\" כבוי, ולכן סוכן המסך לא יכול לפעול. יש להפעיל אותו בהגדרות הנגישות.</string>
+    <string name="screen_apps_title">אפליקציות מאושרות</string>
+    <string name="screen_apps_empty">עוד לא נבחרו אפליקציות.</string>
+    <string name="screen_add">＋ הוספת אפליקציה</string>
+    <string name="screen_full">אפשר לבחור עד 20 אפליקציות.</string>
+    <string name="screen_blocked_note">אי אפשר להוסיף אפליקציות של הגדרות, מסך הבית, הודעות, מייל, בנקים, תשלומים וחנויות אפליקציות.</string>
+    <string name="screen_choose">בחירת אפליקציה</string>
+    <string name="screen_choose_none">אין אפליקציות נוספות שאפשר להוסיף.</string>
+    <string name="screen_add_confirm_title">לאשר את %1$s לסוכן המסך?</string>
+    <string name="screen_add_confirm_go">הוספה</string>
+    <string name="screen_ask_every_tap">לשאול לפני כל לחיצה</string>
+    <string name="screen_remove">הסרה</string>
+    <string name="screen_sync_failed">השינוי נשמר בטלפון, אבל לא הגיע לשרת. הוא יישלח שוב בפתיחה הבאה של האפליקציה.</string>
+    <string name="screen_unlock_prompt">סוכן המסך מתחיל משימה. אם הטלפון נעול, יש לפתוח אותו כדי שהמשימה תרוץ.</string>
+
+    <string name="channel_screen">סוכן מסך: בקשות אישור</string>
+    <string name="channel_screen_running">סוכן מסך: משימה פעילה</string>
+    <string name="screen_running_title">סוכן המסך עובד ב%1$s</string>
+    <string name="screen_running_text">אפשר לעצור אותו בכל רגע.</string>
+    <string name="screen_stop">עצור</string>
+    <string name="screen_approval_public">סוכן המסך מבקש אישור</string>
+    <string name="screen_approval_title">סוכן המסך מבקש אישור · %1$s</string>
+    <string name="screen_approve">אשר</string>
+    <string name="screen_reject">דחה</string>
+    <string name="screen_action_tap">לחיצה על %1$s</string>
+    <string name="screen_action_submit">לחיצה על Enter בשדה %1$s</string>
+    <string name="screen_action_type">הקלדה של %1$s בשדה %2$s</string>
+    <string name="screen_action_other">פעולה במסך</string>
+    <string name="screen_input">קלט %1$d</string>
+    <string name="screen_unnamed">(בלי שם)</string>
+    <string name="screen_why_sensitive">נראה כמו שליחה/תשלום/מחיקה</string>
+    <string name="screen_why_generic">כפתור כללי — ייתכן שזה שולח טופס</string>
+    <string name="screen_why_unlabelled">כפתור בלי שם</string>
+    <string name="screen_why_after_form">אחרי מילוי שדה</string>
+    <string name="screen_why_ask_every_tap">באפליקציה הזו מוגדר אישור לפני כל לחיצה</string>
+    <string name="screen_why_submit_not_search">שליחה משדה שהוא לא שדה חיפוש</string>
+    <string name="screen_verdict_sent">ההחלטה נשלחה.</string>
+    <string name="screen_verdict_already">כבר הוחלט.</string>
+    <string name="screen_verdict_failed">ההחלטה לא נשלחה. אפשר לאשר או לדחות מהצ\'אט.</string>
 </resources>

@@ -32,6 +32,7 @@ import smartConversations0026 from '../../migrations/0026_smart_conversations.sq
 import consentTurns0027 from '../../migrations/0027_consent_turns.sql';
 import routines0028 from '../../migrations/0028_routines.sql';
 import routineCards0029 from '../../migrations/0029_routine_cards.sql';
+import screenTasks0030 from '../../migrations/0030_screen_tasks.sql';
 
 export const MIGRATIONS = [
   { id: 1, sql: init0001 },
@@ -63,4 +64,5 @@ export const MIGRATIONS = [
   { id: 27, sql: consentTurns0027 },
   { id: 28, sql: routines0028 },
   { id: 29, sql: routineCards0029 },
+  { id: 30, sql: screenTasks0030 },
 ] as const;

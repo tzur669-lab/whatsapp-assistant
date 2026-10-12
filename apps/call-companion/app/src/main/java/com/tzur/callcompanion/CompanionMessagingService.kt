@@ -16,7 +16,11 @@ import com.google.firebase.messaging.RemoteMessage
  * - `kind: calls_report` — the digest asks for the calls missed in the last
  *   day (2026-10-06). Answered signed, with names only; nothing is shown.
  * - `kind: routine` — a scheduled routine is due (0.13): its run id only; the
- *   routine comes back from the signed claim (`RoutineRunner`).
+ *   routine comes back from the signed claim (`RoutineRunner`). It stops a
+ *   running screen task first.
+ * - `kind: screen` / `screen_release` / `screen_stop` (0.14) — a screen task
+ *   to claim, an approval decided (the wait polls now), or a task the server
+ *   ended (its stop flag). `task_id` only (`ScreenAgentRunner`).
  */
 class CompanionMessagingService : FirebaseMessagingService() {
     private companion object {
@@ -28,10 +32,23 @@ class CompanionMessagingService : FirebaseMessagingService() {
         if (!Signer(this).isPaired) return
         if (message.data["kind"] == "outbox") return onOutbox()
         if (message.data["kind"] == "calls_report") return onCallsReport()
-        if (message.data["kind"] == "routine") return RoutineRunner.onPush(this, message.data["run_id"] ?: return)
+        when (message.data["kind"]) {
+            "routine" -> {
+                // A routine is due: a running screen task stops first (the server preempts it).
+                ScreenAgentRunner.stopAll(ScreenAgentRunner.StopBy.ROUTINE)
+                return RoutineRunner.onPush(this, message.data["run_id"] ?: return)
+            }
+            "screen" -> return ScreenAgentRunner.onPush(this, screenTaskId(message) ?: return)
+            "screen_release" -> return ScreenAgentRunner.wake(screenTaskId(message) ?: return)
+            "screen_stop" -> return ScreenAgentRunner.stop(screenTaskId(message) ?: return, ScreenAgentRunner.StopBy.SERVER)
+        }
         val dispatchId = message.data["dispatch_id"] ?: return
         onDispatch(dispatchId)
     }
+
+    /** The screen pushes' `task_id`: 32 lowercase hex, or nothing is done. */
+    private fun screenTaskId(message: RemoteMessage): String? =
+        message.data["task_id"]?.takeIf { ScreenLogic.ID.matches(it) }
 
     private fun onOutbox() {
         val outcome = Sync.run(this, Api.PUSH_TIMEOUT_MS)

@@ -95,6 +95,15 @@ export class FcmClient {
     return this.post(pushToken, { kind: 'routine', run_id: runId }, ROUTINE_TTL);
   }
 
+  /**
+   * The screen agent (§6.28): wake the phone for a confirmed task, tell it an
+   * approval was decided, or that the task ended. The task's opaque id only;
+   * what to do comes back from the signed claim and steps.
+   */
+  screenTask(pushToken: string, taskId: string, kind: 'screen' | 'screen_release' | 'screen_stop'): Promise<PushResult> {
+    return this.post(pushToken, { kind, task_id: taskId }, ROUTINE_TTL);
+  }
+
   private async post(pushToken: string, data: Record<string, string>, ttl: string): Promise<PushResult> {
     if (!this.account) return { ok: false, reason: 'not_configured' };
 

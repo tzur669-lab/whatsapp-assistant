@@ -328,6 +328,165 @@ object Api {
         return signed(context, "POST", "/app/calls-report", JSON_TYPE, utf8(body), SHORT_TIMEOUT_MS) is Result.Ok
     }
 
+    // -- the screen agent (0.14, docs/plans/screen-agent.md §C) ----------------
+
+    /**
+     * One request another thread can cut off: [abort] disconnects the
+     * connection in flight (or stops the next one from starting), and the
+     * caller gets [Result.Unreachable]. Used for `/app/screen/step`, so a stop
+     * does not wait out a 30-second read.
+     */
+    class Abortable {
+        @Volatile var aborted = false
+            private set
+        @Volatile internal var connection: HttpURLConnection? = null
+
+        fun abort() {
+            aborted = true
+            try {
+                connection?.disconnect()
+            } catch (_: Exception) {
+                // Already closed.
+            }
+        }
+    }
+
+    /** A step waits on one model call on the server; past this the phone counts it as no answer. */
+    const val SCREEN_STEP_TIMEOUT_MS = 30_000
+
+    /** The apps the agent may act in, with "ask before every tap". Replaces the server's copy whole. */
+    fun syncScreenAllow(context: Context, apps: List<ScreenLogic.AllowedApp>): Boolean {
+        val body = Protocol.screenAllowBody(apps).toByteArray(Charsets.UTF_8)
+        return signed(context, "POST", Protocol.SCREEN_ALLOW_PATH, JSON_TYPE, body, SHORT_TIMEOUT_MS) is Result.Ok
+    }
+
+    sealed class ScreenClaim {
+        class Ok(
+            val packageName: String,
+            val label: String,
+            val inputs: List<String>,
+            val deadlineAt: Long,
+            val maxSteps: Int,
+        ) : ScreenClaim()
+        class Refused(val reason: String) : ScreenClaim()
+        object Unreachable : ScreenClaim()
+    }
+
+    /**
+     * The one claim on a task. The inputs travel only here, and stay in
+     * memory. The task's words (`task`) are not kept: the phone never needs them.
+     */
+    fun claimScreen(context: Context, taskId: String): ScreenClaim {
+        require(ScreenLogic.ID.matches(taskId))
+        val body = Protocol.screenClaimBody(taskId).toByteArray(Charsets.UTF_8)
+        val json = when (val result = signed(context, "POST", Protocol.SCREEN_CLAIM_PATH, JSON_TYPE, body, SHORT_TIMEOUT_MS)) {
+            is Result.Ok -> result.json ?: return ScreenClaim.Refused("not_found")
+            is Result.Unreachable -> return ScreenClaim.Unreachable
+            else -> return ScreenClaim.Refused("not_found")
+        }
+        if (json.optString("status") != "ok") return ScreenClaim.Refused(json.optString("reason", "not_found"))
+        return try {
+            val packageName = json.getString("package")
+            val array = json.optJSONArray("inputs") ?: JSONArray()
+            val inputs = List(array.length()) { array.getString(it) }
+            val maxSteps = json.optInt("maxSteps", ScreenLogic.MAX_STEPS)
+            val ok = ScreenLogic.validPackage(packageName) &&
+                inputs.size <= ScreenLogic.MAX_INPUTS &&
+                inputs.all { it.isNotEmpty() && it.length <= ScreenLogic.MAX_INPUT } &&
+                maxSteps in 1..ScreenLogic.MAX_STEPS
+            if (!ok) return ScreenClaim.Refused("not_allowed")
+            ScreenClaim.Ok(packageName, json.optString("label"), inputs, json.getLong("deadlineAt"), maxSteps)
+        } catch (_: Exception) {
+            ScreenClaim.Refused("not_found")
+        }
+    }
+
+    sealed class ScreenReply {
+        class Answer(val answer: ScreenLogic.Answer) : ScreenReply()
+        /** No answer: no network, a timeout, or the request was aborted by a stop. */
+        object Unreachable : ScreenReply()
+        /** A 4xx, an answer off-shape, or the phone is no longer paired. */
+        object Refused : ScreenReply()
+    }
+
+    /** One `/app/screen/step` request (`screen`, `poll` or `hold`); [call] lets a stop abort it. */
+    fun screenStep(context: Context, body: String, call: Abortable): ScreenReply {
+        val bytes = body.toByteArray(Charsets.UTF_8)
+        return when (val result = signed(context, "POST", Protocol.SCREEN_STEP_PATH, JSON_TYPE, bytes, SCREEN_STEP_TIMEOUT_MS, call)) {
+            is Result.Ok -> result.json?.let(::screenAnswer)?.let { ScreenReply.Answer(it) } ?: ScreenReply.Refused
+            is Result.Unreachable -> ScreenReply.Unreachable
+            else -> ScreenReply.Refused
+        }
+    }
+
+    /** `released`, `rejected` or `already`; null when the server could not be reached or answered off-shape. */
+    fun approveScreen(context: Context, taskId: String, actionId: String, nonce: String, approve: Boolean): String? {
+        val body = Protocol.screenApproveBody(taskId, actionId, nonce, approve).toByteArray(Charsets.UTF_8)
+        val json = (signed(context, "POST", Protocol.SCREEN_APPROVE_PATH, JSON_TYPE, body, PUSH_TIMEOUT_MS) as? Result.Ok)?.json
+            ?: return null
+        return json.optString("status").takeIf { it == "released" || it == "rejected" || it == "already" }
+    }
+
+    /** A body from [Protocol.screenResultBody]. True once the server has it. */
+    fun screenResult(context: Context, body: String): Boolean =
+        signed(context, "POST", Protocol.SCREEN_RESULT_PATH, JSON_TYPE, body.toByteArray(Charsets.UTF_8), SHORT_TIMEOUT_MS) is Result.Ok
+
+    private fun screenAnswer(json: JSONObject): ScreenLogic.Answer? {
+        return try {
+            when (json.optString("status")) {
+                "act" -> ScreenLogic.Answer.Act(
+                    json.getInt("step"), hexId(json, "actionId"), screenAction(json.getJSONObject("action")),
+                    ScreenLogic.Cls.of(json.optString("cls")) ?: return null,
+                )
+                "approval" -> ScreenLogic.Answer.Approval(
+                    step = json.getInt("step"),
+                    actionId = hexId(json, "actionId"),
+                    action = screenAction(json.getJSONObject("action")),
+                    cls = ScreenLogic.Cls.of(json.optString("cls")) ?: return null,
+                    why = textOrNull(json, "why"),
+                    nonce = hexId(json, "nonce"),
+                    expiresAt = json.getLong("expiresAt"),
+                )
+                "released" -> {
+                    val grant = json.getJSONObject("grant")
+                    ScreenLogic.Answer.Released(
+                        json.getInt("step"), hexId(json, "actionId"), screenAction(json.getJSONObject("action")),
+                        ScreenLogic.Grant(
+                            taskId = hexId(grant, "taskId"),
+                            step = grant.getInt("step"),
+                            actionId = hexId(grant, "actionId"),
+                            binding = textOrNull(grant, "binding"),
+                            packageName = grant.getString("package"),
+                            maxClass = ScreenLogic.Cls.of(grant.optString("maxClass")) ?: return null,
+                            expiresAt = grant.getLong("expiresAt"),
+                        ),
+                    )
+                }
+                "wait" -> ScreenLogic.Answer.Wait(json.getLong("retryAfterMs"))
+                "end" -> ScreenLogic.Answer.End(json.optString("outcome"))
+                "stopped" -> ScreenLogic.Answer.Stopped(json.optString("reason"))
+                else -> null
+            }
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    private fun screenAction(o: JSONObject) = ScreenLogic.Action(
+        kind = o.getString("kind"),
+        b = textOrNull(o, "b"),
+        input = o.optInt("input", 0),
+        dir = textOrNull(o, "dir"),
+        seconds = o.optInt("s", 0),
+    )
+
+    private fun hexId(o: JSONObject, key: String): String =
+        o.getString(key).also { if (!ScreenLogic.ID.matches(it)) throw IllegalArgumentException("id") }
+
+    /** `optString` turns a JSON null into "null"; this does not. */
+    private fun textOrNull(o: JSONObject, key: String): String? =
+        if (!o.has(key) || o.isNull(key)) null else o.optString(key)
+
     // -- phone reads (PLAN §6.21) ---------------------------------------------
 
     /** The phone's answer to a read. Answered like a message: the reply, or pending. */
@@ -388,9 +547,11 @@ object Api {
         contentType: String?,
         body: ByteArray,
         timeoutMs: Int,
+        call: Abortable? = null,
     ): Result {
         val signer = Signer(context)
         repeat(SIGN_ATTEMPTS) {
+            if (call?.aborted == true) return Result.Unreachable
             val deviceId = signer.deviceId ?: return Result.Unpaired
             val timestamp = System.currentTimeMillis()
             val nonce = Protocol.newNonce()
@@ -404,7 +565,7 @@ object Api {
             )
 
             val (status, text) = try {
-                http(method, path, headers, contentType, body, timeoutMs)
+                http(method, path, headers, contentType, body, timeoutMs, call)
             } catch (_: IOException) {
                 return Result.Unreachable
             }
@@ -433,9 +594,15 @@ object Api {
         contentType: String?,
         body: ByteArray,
         timeoutMs: Int,
+        call: Abortable? = null,
     ): Pair<Int, String> {
         val connection = URL(BuildConfig.SERVER_URL + path).openConnection() as HttpURLConnection
         try {
+            if (call != null) {
+                // Set before the check: an abort() in between disconnects it, one before is seen here.
+                call.connection = connection
+                if (call.aborted) throw IOException("aborted")
+            }
             connection.requestMethod = method
             connection.connectTimeout = minOf(CONNECT_TIMEOUT_MS, timeoutMs)
             connection.readTimeout = timeoutMs

@@ -147,3 +147,12 @@ export function modelEntry(id: string): ModelEntry | undefined {
 export const DEFAULT_MINUTE_TOKENS = 8_000;
 export const DEFAULT_TURN_CAP = 7_000;
 export const DEFAULT_MAX_COMPLETION_TOKENS = 1_024;
+
+/**
+ * The Groq models a screen-agent step may use (PLAN §6.28, 2026-10-12): never
+ * a smart model, so screen text never reaches Gemini. qwen first. Groq quotas
+ * are per model, so moving the steps to a model chat does not use would cost
+ * chat nothing — a change made only after a human reads that model's
+ * `pnpm eval:screen` report, like `canWrite`.
+ */
+export const SCREEN_MODELS: readonly string[] = [QWEN];

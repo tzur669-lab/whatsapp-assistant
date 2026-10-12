@@ -42,6 +42,11 @@
             <action android:name="android.intent.action.MAIN" />
             <category android:name="android.intent.category.LAUNCHER" />
         </intent>
+        <!-- The home apps, so the screen agent's allowlist can refuse a launcher (0.14). -->
+        <intent>
+            <action android:name="android.intent.action.MAIN" />
+            <category android:name="android.intent.category.HOME" />
+        </intent>
     </queries>
 
     <!-- Both are used when present; neither is required to install. -->
@@ -54,6 +59,7 @@
       and the Keystore alias stay on this phone (data_extraction_rules.xml).
     -->
     <application
+        android:name=".CompanionApp"
         android:allowBackup="false"
         android:dataExtractionRules="@xml/data_extraction_rules"
         android:fullBackupContent="false"
@@ -173,6 +179,29 @@
             android:name=".RoutinesActivity"
             android:exported="false"
             android:launchMode="singleTop" />
+
+        <!-- The screen agent's allowlist (0.14). Opened by the app only. -->
+        <activity
+            android:name=".ScreenAllowActivity"
+            android:exported="false"
+            android:launchMode="singleTop" />
+
+        <!--
+          Before Android 12, the screen agent's approve / reject buttons open
+          this (after the unlock): it sends the decision and closes. No UI.
+        -->
+        <activity
+            android:name=".ScreenApproveActivity"
+            android:exported="false"
+            android:excludeFromRecents="true"
+            android:noHistory="true"
+            android:taskAffinity=""
+            android:theme="@android:style/Theme.NoDisplay" />
+
+        <!-- The screen agent's notification buttons: stop, approve, reject. Only the app's own PendingIntents. -->
+        <receiver
+            android:name=".ScreenActionReceiver"
+            android:exported="false" />
 
         <!--
           Routines (0.13): runs the user's own steps inside the one app each

@@ -18,7 +18,7 @@ import { normalizeHebrew } from '../time/hebrew-lexicon.js';
 import type { ToolName } from '../tools/registry.js';
 import { TOOL_NAMES } from '../tools/registry.js';
 
-export type GroupName = 'time' | 'records' | 'info' | 'mail' | 'drive' | 'phone' | 'routine';
+export type GroupName = 'time' | 'records' | 'info' | 'mail' | 'drive' | 'phone' | 'routine' | 'screen';
 
 export const GROUPS: Readonly<Record<GroupName, readonly ToolName[]>> = {
   time: [
@@ -76,6 +76,9 @@ export const GROUPS: Readonly<Record<GroupName, readonly ToolName[]>> = {
   // Routines (§6.27): offered only when the message names a synced routine
   // (decision D4), and then kept whatever group the words select.
   routine: ['routine.run'],
+  // The screen agent (§6.28): offered only when the message names it or an app
+  // on its list, and then kept whatever group the words select, like routines.
+  screen: ['screen.task'],
 };
 
 /**
@@ -144,6 +147,8 @@ const PATTERNS: Readonly<Record<GroupName, readonly RegExp[]>> = {
   ],
   // For "לא הבנתי" examples only: selection never narrows by this group.
   routine: [/שגר/, /רוטינ/, /\broutines?\b/i],
+  // Like `routine`: for the examples after "לא הבנתי" only; selection never narrows by it.
+  screen: [/סוכן\s*(?:ה)?מסך/, /\bscreen agent\b/i],
 };
 
 const GROUP_NAMES = Object.keys(GROUPS) as GroupName[];
@@ -181,7 +186,7 @@ export const MAX_UNION_GROUPS = 3;
 export function selectTools(text: string, offered: readonly ToolName[]): Selection {
   // `routine.run` is offered only when the words name a routine (D4); then it
   // stays in whatever the other words select. The group itself never narrows.
-  const groups = matchGroups(text).filter((group) => group !== 'routine');
+  const groups = matchGroups(text).filter((group) => group !== 'routine' && group !== 'screen');
   const full = { tools: [...offered], groups: [] };
   // Code found a routine named and the words name nothing else: the routine and
   // the time tools ("תזכיר לי לפתוח את פיד" is still a reminder). The whole
@@ -190,14 +195,21 @@ export function selectTools(text: string, offered: readonly ToolName[]): Selecti
     const members = new Set<ToolName>(['routine.run', ...GROUPS.time]);
     return { tools: offered.filter((tool) => members.has(tool)), groups: ['time', 'routine'] };
   }
+  // The screen agent named and nothing else: it, and the phone's tools
+  // ("תפתח את פיד" may still mean only opening the app).
+  if (groups.length === 0 && offered.includes('screen.task')) {
+    const members = new Set<ToolName>(['screen.task', ...GROUPS.phone]);
+    return { tools: offered.filter((tool) => members.has(tool)), groups: ['phone', 'screen'] };
+  }
   if (groups.length === 0 || groups.length > MAX_UNION_GROUPS) return full;
-  const members = new Set<ToolName>(offered.filter((tool) => tool === 'routine.run'));
+  const members = new Set<ToolName>(offered.filter((tool) => tool === 'routine.run' || tool === 'screen.task'));
   for (const group of groups) {
     const available = GROUPS[group].filter((tool) => offered.includes(tool));
     if (available.length * 2 <= GROUPS[group].length) return full;
     for (const tool of available) members.add(tool);
   }
-  return { tools: offered.filter((tool) => members.has(tool)), groups };
+  // The screen agent, when offered, rides along and is named in the selection.
+  return { tools: offered.filter((tool) => members.has(tool)), groups: members.has('screen.task') ? [...groups, 'screen'] : groups };
 }
 
 /** A selection as one word, for logs and the benchmark: `time`, `time+mail`, `full`. */

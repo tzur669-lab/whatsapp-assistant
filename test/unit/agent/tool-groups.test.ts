@@ -27,6 +27,7 @@ const corpus = readdirSync(resolve(root, 'test/evals'))
 );
 
 const everything = agentToolNames({ cards: true, fileCards: true, phoneReads: true, grants: { gmail: true, tasks: true, drive: true } });
+const withScreen = agentToolNames({ cards: true, fileCards: true, phoneReads: true, grants: { gmail: true, tasks: true, drive: true }, screen: true });
 
 /** `time`, `mail+time` (fixed group order), or `full`. */
 function selected(text: string): string {
@@ -105,7 +106,9 @@ describe('the eval corpus', () => {
     const wrong = corpus.filter((testCase) => {
       const tool = testCase.expect.intent as ToolName;
       if (!TOOL_NAMES.includes(tool)) return false;
-      const { groups } = selectTools(testCase.input, everything);
+      // A screen case is offered `screen.task`, as the pipeline offers it when the app is named (§6.28).
+      const offered = testCase.id.startsWith('scr-') ? withScreen : everything;
+      const { groups } = selectTools(testCase.input, offered);
       const owner = groupOf(tool);
       return groups.length > 0 && (owner === null || !groups.includes(owner));
     });

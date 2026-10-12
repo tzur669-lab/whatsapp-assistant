@@ -15,6 +15,7 @@ import { isolate, isolateLtr } from './bidi.js';
 import { callText } from './calls.js';
 import { phoneQuestion } from './phone.js';
 import { personalQuestion } from './personal.js';
+import { screenText } from './screen.js';
 import { formatWhen } from './format-time.js';
 import type { Lang } from './format-time.js';
 import type { Clarify, TargetChoice } from '../tools/types.js';
@@ -49,6 +50,8 @@ export function renderClarify(clarify: Clarify, lang: Lang): string {
       return phoneQuestion(clarify.what, lang);
     case 'personal':
       return personalQuestion(clarify.what, lang);
+    case 'screen':
+      return screenText.question(clarify.what, lang, clarify.labels ?? []);
     case 'which_list':
       return lang === 'he'
         ? `לאיזו רשימה? יש: ${clarify.names.map(isolate).join(', ')}.`

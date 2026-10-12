@@ -19,6 +19,7 @@ import {
   mailBillsSlots,
   phoneCallsSlots,
   routineRunSlots,
+  screenTaskSlots,
   calendarCreateEventSlots,
   calendarDeleteEventSlots,
   calendarListEventsSlots,
@@ -198,6 +199,8 @@ export const intentDraftSchema = z.discriminatedUnion('intent', [
   z.object({ intent: z.literal('phone.calls'), slots: phoneCallsSlots, ...common }).strict(),
   // Routines (2026-10-11). Agent-only, private, offered only when a routine is named.
   z.object({ intent: z.literal('routine.run'), slots: routineRunSlots, ...common }).strict(),
+  // The screen agent (2026-10-12). Agent-only, private, offered only when named.
+  z.object({ intent: z.literal('screen.task'), slots: screenTaskSlots, ...common }).strict(),
   // Anything outside the tool list, including prompt-injection attempts.
   z.object({ intent: z.literal('unsupported'), slots: ignoredSlots, ...common }).strict(),
 ]);

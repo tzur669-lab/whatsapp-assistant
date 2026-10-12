@@ -184,7 +184,32 @@ object RoutineLogic {
         val clickable: Boolean = false,
         val focused: Boolean = false,
         val password: Boolean = false,
+        // The screen agent (0.14): what the binding is made of (ScreenLogic.binding).
+        /** The view's class, e.g. `android.widget.Button`. */
+        val className: String? = null,
+        /** Child indexes from the window's root, joined by "." (the root itself is ""). */
+        val path: String = "",
+        /** The window the node was read from: a new activity has a new one. */
+        val windowId: Int = -1,
+        val scrollable: Boolean = false,
+        val checkable: Boolean = false,
+        val checked: Boolean = false,
     )
+
+    /**
+     * `Intent.FLAG_ACTIVITY_NEW_TASK` and `FLAG_ACTIVITY_CLEAR_TASK`, as numbers
+     * so the JVM tests can pin [launchFlags] without Android.
+     */
+    const val FLAG_NEW_TASK = 0x10000000
+    const val FLAG_CLEAR_TASK = 0x00008000
+
+    /**
+     * How the service launches an app. A routine starts it fresh (`fresh`):
+     * FID had been left on a results page with no field. A screen task
+     * (0.14) only brings it to the front as it was, so the user's place and
+     * any unsaved work survive.
+     */
+    fun launchFlags(fresh: Boolean): Int = if (fresh) FLAG_NEW_TASK or FLAG_CLEAR_TASK else FLAG_NEW_TASK
 
     sealed class Pick {
         data class One(val index: Int) : Pick()

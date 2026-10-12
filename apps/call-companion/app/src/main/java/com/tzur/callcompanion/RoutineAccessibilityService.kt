@@ -14,11 +14,12 @@ import android.view.accessibility.AccessibilityNodeInfo
 import java.util.concurrent.Executors
 
 /**
- * Runs a routine's steps inside one other app (0.13, PLAN §6.27). The user
- * turns it on in the system's accessibility settings; until then nothing runs.
+ * Acts inside one other app at a time, for two callers. The user turns it on
+ * in the system's accessibility settings; until then nothing runs.
  *
- * What it may do, checked again before every step (not only by the
- * `packageNames` filter, which limits the events it hears and nothing else):
+ * **Routines** (0.13, PLAN §6.27): the user's own fixed steps. Checked again
+ * before every step (not only by the `packageNames` filter, which limits the
+ * events it hears and nothing else):
  * - the phone is not locked — it never touches the lock screen;
  * - the active window belongs to the routine's own app;
  * - a tap is `ACTION_CLICK` on the one element [RoutineLogic.pickTarget]
@@ -26,11 +27,30 @@ import java.util.concurrent.Executors
  * - typing (0.13.1) sets only the text written into the routine, on the one
  *   field [RoutineLogic.pickField] chose — never a password field — and the
  *   keyboard's Enter goes only to the focused field.
- * No coordinates, no scrolling, no global actions.
- * Screen content is read only to match the routine's own words. It is never
- * stored, logged or sent anywhere; a result carries codes only.
+ * A routine opens its app fresh (`FLAG_ACTIVITY_CLEAR_TASK`), never scrolls
+ * and uses no global action. Its screen content is read only to match the
+ * routine's own words, and never leaves the phone.
  *
- * Runs go one at a time on one thread: a second waits for the first.
+ * **Screen tasks** (0.14, `docs/plans/screen-agent.md`), only through
+ * [ScreenOps], driven by [ScreenAgentRunner]:
+ * - only in a package on the user's allowlist ([ScreenAllowStore]), opened
+ *   without clearing its task, so the user's place in it survives;
+ * - the screen is read as [RoutineLogic.Node]s and sent, signed, to the bot's
+ *   own server as [ScreenLogic.elements];
+ * - every action names its node by the phone's own binding
+ *   ([ScreenLogic.binding]): a fresh snapshot must hold exactly one node with
+ *   it, and the same last checks as a routine's tap or typing must pass, or
+ *   nothing is done;
+ * - a tap is [click], typing is [type] with an input the user approved in the
+ *   chat, Enter is [submit], a scroll is `ACTION_SCROLL_FORWARD`/`_BACKWARD`
+ *   on the bound node, and back is `GLOBAL_ACTION_BACK` — after which the
+ *   window must still be the task's app, else the task ends (`left_app`).
+ *   No coordinates, no gestures, no other global action.
+ *
+ * Nothing here logs node text; failures are codes.
+ *
+ * Routines, scans and screen tasks run one at a time on one thread
+ * ([worker]): they never act at once, and a second waits for the first.
  */
 class RoutineAccessibilityService : AccessibilityService() {
 
@@ -61,9 +81,16 @@ class RoutineAccessibilityService : AccessibilityService() {
         if (event?.packageName?.toString() == running) lastChangeAt = SystemClock.uptimeMillis()
     }
 
-    /** Hear only the apps the saved routines use, plus [extra]; with none, only this app. */
+    /**
+     * Hear only the apps the saved routines use and the screen agent's
+     * allowlist, plus [extra]; with none, only this app.
+     */
     private fun applyPackages(extra: List<String>) {
-        val packages = (RoutineStore.all(this).map { it.packageName } + extra).distinct()
+        val packages = (
+            RoutineStore.all(this).map { it.packageName } +
+                ScreenAllowStore.all(this).map { it.packageName } +
+                extra
+            ).distinct()
         val info = serviceInfo ?: return
         // Plus the phone's "allow opening another app?" dialog, so a run can tell it is waiting there.
         info.packageNames = packages.ifEmpty { listOf(packageName) }
@@ -111,7 +138,7 @@ class RoutineAccessibilityService : AccessibilityService() {
         val launch = packageManager.getLaunchIntentForPackage(packageName) ?: return null
         val deadline = SystemClock.uptimeMillis() + RoutineLogic.CONFIRM_WAIT_MS + SCAN_SETTLE_MS
         runningPackage = packageName
-        if (open(packageName, launch, deadline) != null) return null
+        if (open(packageName, launch, deadline, fresh = true) != null) return null
         // A web page inside the app keeps loading after its window appears.
         SystemClock.sleep(SCAN_SETTLE_MS)
         waitUntilStable(deadline + RoutineLogic.STABLE_MAX_MS)
@@ -126,7 +153,7 @@ class RoutineAccessibilityService : AccessibilityService() {
         val launch = packageManager.getLaunchIntentForPackage(routine.packageName)
             ?: return RoutineLogic.failure(0, -1, "app_missing")
         runningPackage = routine.packageName
-        open(routine.packageName, launch, deadline)?.let { return RoutineLogic.failure(0, -1, it) }
+        open(routine.packageName, launch, deadline, fresh = true)?.let { return RoutineLogic.failure(0, -1, it) }
 
         var tapped = 0
         // The field the last tap put the cursor in: typing goes only there (0.13.5).
@@ -237,16 +264,27 @@ class RoutineAccessibilityService : AccessibilityService() {
      * Launches the app and waits until its window is in front: null when it
      * is, else why not. While the phone's "allow opening another app?" dialog
      * is up, the wait stretches to [RoutineLogic.CONFIRM_WAIT_MS] for the user.
+     *
+     * [fresh]: a routine starts the app on its first screen, not on whatever
+     * it was left showing (FID still showed the last search's results, with no
+     * field to type into). A screen task passes false: the app comes to the
+     * front as it was ([RoutineLogic.launchFlags]). [cancel] ends the wait
+     * early, checked every [POLL_MS].
      */
-    private fun open(packageName: String, launch: Intent, deadline: Long): String? {
+    private fun open(
+        packageName: String,
+        launch: Intent,
+        deadline: Long,
+        fresh: Boolean,
+        cancel: () -> Boolean = { false },
+    ): String? {
         lastChangeAt = SystemClock.uptimeMillis()
-        // A fresh start: the app opens on its first screen, not on whatever it was left showing
-        // (FID still showed the last search's results, with no field to type into).
-        val fresh = launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
-        main.post { startActivity(fresh) }
+        val intent = launch.addFlags(RoutineLogic.launchFlags(fresh))
+        main.post { startActivity(intent) }
         val start = SystemClock.uptimeMillis()
         var sawConfirm = false
         while (true) {
+            if (cancel()) return "app_not_front"
             if (snapshot(packageName) != null) return null
             if (RoutineLogic.isLaunchConfirm(rootInActiveWindow?.packageName?.toString())) sawConfirm = true
             val limit = if (sawConfirm) RoutineLogic.CONFIRM_WAIT_MS else RoutineLogic.OPEN_TIMEOUT_MS
@@ -328,10 +366,12 @@ class RoutineAccessibilityService : AccessibilityService() {
         if (root.packageName?.toString() != packageName) return null
         val nodes = ArrayList<AccessibilityNodeInfo>()
         val infos = ArrayList<RoutineLogic.Node>()
-        val stack = ArrayDeque<Pair<AccessibilityNodeInfo, Int>>()
-        stack.addLast(root to -1)
+        val windowId = root.windowId
+        // Each entry carries its tap target and its path: child indexes from the root, "." between.
+        val stack = ArrayDeque<Triple<AccessibilityNodeInfo, Int, String>>()
+        stack.addLast(Triple(root, -1, ""))
         while (stack.isNotEmpty() && nodes.size < MAX_NODES) {
-            val (node, parentTarget) = stack.removeLast()
+            val (node, parentTarget, path) = stack.removeLast()
             val index = nodes.size
             val target = if (node.isClickable) index else parentTarget
             nodes.add(node)
@@ -348,16 +388,25 @@ class RoutineAccessibilityService : AccessibilityService() {
                     clickable = node.isClickable,
                     focused = node.isFocused,
                     password = node.isPassword,
+                    className = node.className?.toString(),
+                    path = path,
+                    windowId = windowId,
+                    scrollable = node.isScrollable,
+                    checkable = node.isCheckable,
+                    checked = node.isChecked,
                 ),
             )
-            for (i in node.childCount - 1 downTo 0) node.getChild(i)?.let { stack.addLast(it to target) }
+            for (i in node.childCount - 1 downTo 0) {
+                node.getChild(i)?.let { stack.addLast(Triple(it, target, if (path.isEmpty()) "$i" else "$path.$i")) }
+            }
         }
         return nodes to infos
     }
 
-    private fun waitUntilStable(deadline: Long) {
+    private fun waitUntilStable(deadline: Long, cancel: () -> Boolean = { false }) {
         val until = minOf(SystemClock.uptimeMillis() + RoutineLogic.STABLE_MAX_MS, deadline)
         while (SystemClock.uptimeMillis() < until) {
+            if (cancel()) return
             if (SystemClock.uptimeMillis() - lastChangeAt >= RoutineLogic.STABLE_MS) return
             SystemClock.sleep(POLL_MS)
         }
@@ -372,8 +421,114 @@ class RoutineAccessibilityService : AccessibilityService() {
         }
     }
 
+    // -- screen tasks (0.14) ------------------------------------------------------
+
+    /** The node a screen action will act on: found once, by its binding, on a fresh snapshot. */
+    class Target(val info: AccessibilityNodeInfo, val nodes: List<RoutineLogic.Node>, val index: Int) {
+        val node: RoutineLogic.Node get() = nodes[index]
+    }
+
+    sealed class Found {
+        class One(val target: Target) : Found()
+        /** An end code: `screen_changed`, `target_ambiguous`, `left_app`, `locked`. */
+        class Refused(val reason: String) : Found()
+    }
+
+    /**
+     * What a screen task may do, for one package, on the worker thread only
+     * (inside [screenTask]). [cancel] is the task's stop flag: every wait in
+     * here looks at it every [POLL_MS].
+     */
+    inner class ScreenOps internal constructor(val packageName: String, private val cancel: () -> Boolean) {
+
+        fun locked(): Boolean = (getSystemService(Context.KEYGUARD_SERVICE) as KeyguardManager).isKeyguardLocked
+
+        /** Why the task's app is not readable now: an end code. */
+        fun whyNotFront(): String = if (locked()) "locked" else "left_app"
+
+        /** Brings the task's app to the front as it was (never `CLEAR_TASK`). Null when it is in front, else an end code. */
+        fun open(deadline: Long): String? {
+            if (locked()) return "locked"
+            val launch = packageManager.getLaunchIntentForPackage(packageName) ?: return "app_missing"
+            runningPackage = packageName
+            return open(packageName, launch, deadline, fresh = false, cancel)
+        }
+
+        /** The settled screen, or null when the app is not in front or the phone is locked. */
+        fun read(deadline: Long): List<RoutineLogic.Node>? {
+            waitUntilStable(deadline, cancel)
+            return snapshot(packageName)?.second
+        }
+
+        /** A fresh snapshot, and the one node with [binding] on it. */
+        fun find(binding: String, deadline: Long): Found {
+            waitUntilStable(deadline, cancel)
+            val (infos, nodes) = snapshot(packageName) ?: return Found.Refused(whyNotFront())
+            return when (val pick = ScreenLogic.resolveBinding(nodes, binding, packageName)) {
+                is RoutineLogic.Pick.One -> Found.One(Target(infos[pick.index], nodes, pick.index))
+                is RoutineLogic.Pick.Many -> Found.Refused("target_ambiguous")
+                else -> Found.Refused("screen_changed")
+            }
+        }
+
+        /**
+         * The last checks before [fire] — [click]'s and [fieldUsable]'s, plus the
+         * same window — without acting. Null when it may act, else an end code.
+         */
+        fun ready(action: ScreenLogic.Action, target: Target?): String? {
+            if (locked()) return "locked"
+            if (rootInActiveWindow?.packageName?.toString() != packageName) return "left_app"
+            if (!action.bound) return null
+            val info = target?.info ?: return "screen_changed"
+            if (!info.refresh()) return "screen_changed"
+            if (info.packageName?.toString() != packageName) return "left_app"
+            if (info.windowId != target.node.windowId) return "screen_changed"
+            if (!info.isVisibleToUser || !info.isEnabled) return "screen_changed"
+            return when (action.kind) {
+                "type" -> if (info.isEditable && !info.isPassword) null else "not_allowed"
+                "submit" -> if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && info.isEditable && !info.isPassword) null else "not_allowed"
+                "scroll" -> if (info.isScrollable) null else "screen_changed"
+                else -> null
+            }
+        }
+
+        /**
+         * Performs the action once; true when Android accepted it. Only after
+         * [ready], inside the runner's dispatch gate. [input] is the approved
+         * text a `type` sets.
+         */
+        fun fire(action: ScreenLogic.Action, target: Target?, input: String?): Boolean {
+            val accepted = when (action.kind) {
+                "tap" -> target != null && click(target.info, packageName)
+                "type" -> target != null && input != null && type(target.info, input, packageName).first
+                "submit" -> target != null && submit(target.info, packageName).first
+                "scroll" -> target != null && target.info.performAction(
+                    if (action.dir == "back") AccessibilityNodeInfo.ACTION_SCROLL_BACKWARD else AccessibilityNodeInfo.ACTION_SCROLL_FORWARD,
+                )
+                "back" -> performGlobalAction(GLOBAL_ACTION_BACK)
+                "wait" -> true
+                else -> false
+            }
+            lastChangeAt = SystemClock.uptimeMillis()
+            return accepted
+        }
+
+        /** After back: whether the task's app is still the window in front (else the task ends, `left_app`). */
+        fun stillInApp(deadline: Long): Boolean {
+            waitUntilStable(deadline, cancel)
+            val until = minOf(SystemClock.uptimeMillis() + BACK_SETTLE_MS, deadline)
+            while (true) {
+                if (!locked() && rootInActiveWindow?.packageName?.toString() == packageName) return true
+                if (cancel() || SystemClock.uptimeMillis() >= until) return false
+                SystemClock.sleep(POLL_MS)
+            }
+        }
+    }
+
     companion object {
         private const val POLL_MS = 250L
+        /** After back, how long the window may take to settle on the task's app again. */
+        private const val BACK_SETTLE_MS = 2_000L
         private const val MAX_NODES = 2_000
         private const val SCAN_SETTLE_MS = 2_000L
         /** How long a tap or typing step waits for its target to appear. */
@@ -403,7 +558,29 @@ class RoutineAccessibilityService : AccessibilityService() {
             return true
         }
 
-        /** After the routines change: listen to their apps only. */
+        /**
+         * A screen task (0.14) on the same single [worker] as routines and
+         * scans, so they never act at once. [block] gets a factory for the
+         * task's [ScreenOps], once it knows the package (after the claim); the
+         * factory gives null if the service went away. False when the service
+         * is off.
+         */
+        fun screenTask(block: (ops: (packageName: String, cancel: () -> Boolean) -> ScreenOps?) -> Unit): Boolean {
+            if (instance == null) return false
+            worker.execute {
+                var used: RoutineAccessibilityService? = null
+                try {
+                    block { packageName, cancel -> instance?.also { used = it }?.ScreenOps(packageName, cancel) }
+                } catch (_: Exception) {
+                    // The runner reports its own failures; the worker must outlive any of them.
+                } finally {
+                    used?.runningPackage = null
+                }
+            }
+            return true
+        }
+
+        /** After the routines or the screen allowlist change: listen to their apps only. */
         fun refreshPackages(@Suppress("UNUSED_PARAMETER") context: Context) {
             val service = instance ?: return
             main.post { service.applyPackages(emptyList()) }

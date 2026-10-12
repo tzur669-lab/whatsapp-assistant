@@ -5,7 +5,7 @@ system is, where things live, and what breaks easily, then links out. It does
 **not** repeat the rules in `CLAUDE.md` (always loaded) or the spec in
 `PLAN.md` (read by section, never whole).
 
-_Last updated: 2026-10-12 · server at migration 0029 · agent prompt a10 + smart note s2 · parser prompt v6 · app 0.13.5 · smart model gemini-3.5-flash-lite_
+_Last updated: 2026-10-12 · server at migration 0030 · agent prompt a10 + smart note s2 + screen step s1 · parser prompt v6 · app 0.14.0 · smart model gemini-3.5-flash-lite_
 
 ## 1. What this is
 
@@ -27,6 +27,10 @@ Contacts birthdays, phone actions and reads, public lookups, notes, lists, facts
   that only echo the user's own call never ask, and private tools are offered
   but never answer to a model; 2026-10-11). Local conversations are unchanged
   and never reach Gemini.
+- **Screen agent** (2026-10-12, PLAN §6.28): `screen.task` does one task
+  inside one app the user turned on, reading its screen as text. The phone is
+  eyes and hands; each step is one Groq call on the server (never Gemini), and
+  code stops before every sensitive or uncertain tap.
 
 ## 2. The one idea
 
@@ -67,6 +71,7 @@ Full map with every module: [ARCHITECTURE.md](ARCHITECTURE.md).
 | time/date logic | Only `src/time/resolve.ts` (forward), `src/time/past-day.ts` (expenses, backward) or the calendar read windows in `src/time/range.ts` (either way, 2026-10-12). DST: next fall-back 2026-10-25. Never default a missing time. |
 | routines (`tools/routine*.ts`, `routine_runs`) | A run moves one way, one conditional `UPDATE` at a time; the claim is the only thing that lets the phone run it, once, on time, with the confirmed step hash. Never retry a claimed run. `routine.run` is offered only when `namesRoutine` says so — never add it to the full catalog. Reason codes are closed on both sides (`RUN_REASONS` ↔ the app's `RoutineRunner`). PLAN §6.27. |
 | a migration | Add `migrations/00NN_*.sql` **and** register it in `src/platform/migrations.ts`. Backward-compatible for one version. |
+| the screen agent (`tools/screen*.ts`, `agent/screen-*.ts`, the app's `Screen*.kt`) | Read `docs/plans/screen-agent.md` first. The word lists live in code on both sides and must equal `test/fixtures/screen-policy.json` (a test on each side). Every status move is one conditional UPDATE; never retry an action — a `started` journal entry is `uncertain`. Screen text is never stored, logged or put in history, and goes to `SCREEN_MODELS` (Groq) only. `screen.task` is offered only when named: never add it to the full catalog. A step prompt change is `pnpm eval:screen`. |
 | `src/channels/app/parse.ts` or the wire protocol | The app has a matching `Protocol.kt` with test vectors. **Deploy the server before installing a new APK**, or the old server rejects the new app. |
 | a Tier 0–1 write's `execute` that calls Google (or the turn deadline) | The enumeration in `src/agent/limits.ts`: more sequential `GoogleApi.call`s than `MAX_WRITE_CALLS` means raising it, or the lock can expire under a running write. `TURN_DEADLINE_MS` is provisional (M6). |
 | outbound `fetch` | Call `fetch` through a closure, never `this.fetchImpl(...)` — Workers throws "Illegal invocation" (tests use `test/integration/workers-fetch.ts` to catch it). A new call site must be placed in `test/security/turn-signal-fetch.test.ts`; one a tool reaches takes the turn signal (`AbortSignal.any`), and a new network client on `ToolContext` is bound in `tools/turn-signal.ts`. |
@@ -110,6 +115,11 @@ Network on the hotspot: `NODE_OPTIONS=--dns-result-order=ipv4first` for wrangler
   2026-10-11: private tools offered, own-input writes never ask, smart note
   s2 — its `--filter` evals are owed. Open items in PLAN §13 (limits probe,
   Gemini calibration, s2 evals).
+- **Screen agent** (PLAN §6.28, plan `docs/plans/screen-agent.md`, ROADMAP
+  block I): phases 1–2 built (server migration 0030, app 0.14.0), not deployed.
+  Owed, in order (PLAN §13): `pnpm eval:screen` and `eval:agent --filter scr-`
+  on qwen with a human read, a staging deploy, then the 0.14.0 APK —
+  **server first** — and the phone checks. Phase 3 needs its own plan.
 - **Next work:** [ROADMAP.md](ROADMAP.md) (Hebrew) — block H (2026-10-07):
   a smarter bot. Parts 15 (notes), 16 ("לא הבנת" capture), 17 (tool
   unions, calibrated token estimate, history fitter, named lists) and 18
@@ -138,6 +148,7 @@ Network on the hotspot: `NODE_OPTIONS=--dns-result-order=ipv4first` for wrangler
 | [ROADMAP.md](ROADMAP.md) | Starting the next feature block. |
 | `docs/plans/routines.md` | Routines (PLAN §6.27): the reviewed plan, stages and decisions D1–D4. |
 | `docs/plans/block-h.md` | Building a block H part: the reviewed plan, by part. |
+| `docs/plans/screen-agent.md` | The screen agent (PLAN §6.28): the build spec (wire protocol, elements, binding, risk policy, journal) and the reviewed plan. |
 | `ops/runbook.md` | Routes, crons, chat commands, deploy, diagnosing. Other `ops/*.md`: secret rotation, token revoke, restore. |
 | `apps/call-companion/README.md` | Anything in the Android app or the app ↔ server protocol. |
 | `.claude/skills/add-tool/SKILL.md` | Adding or changing a tool. |
@@ -145,6 +156,13 @@ Network on the hotspot: `NODE_OPTIONS=--dns-result-order=ipv4first` for wrangler
 | [SETUP.md](SETUP.md) | Setting up a new copy from zero: accounts, Groq key, models, secrets, deploy, app, AI agent. |
 
 ## 8. Session log (docs)
+
+- 2026-10-12: Screen agent, phases 1–2 (PLAN §6.28, ROADMAP block I):
+  `screen.task`, `tools/screen-store.ts`, `agent/screen-step.ts`,
+  `agent/screen-policy.ts`, `render/screen.ts`, migration 0030, routes
+  `/app/screen/*`, FCM `screen*`, buttons `sa:`/`ss:`, `pnpm eval:screen`;
+  app 0.14.0 (`ScreenLogic`, `ScreenRun`, `ScreenJournal`, allowlist screen).
+  CLAUDE.md invariants 2, 3, 5, 10 amended. Not deployed.
 
 - 2026-10-12: Staging deployed (df45a4c6) with Batches 09 (server text) and 14.
 

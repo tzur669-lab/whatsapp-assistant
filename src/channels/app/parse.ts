@@ -13,6 +13,8 @@ import { phoneReadResultSchema } from '../../tools/phone-reads.js';
 import type { ConversationMode } from '../types.js';
 import { MAX_APP_LABEL, MAX_ROUTINE_NAME, MAX_ROUTINES } from '../../tools/routine-store.js';
 import { RUN_REASONS } from '../../render/routines.js';
+import { MAX_SCREEN_APPS, MAX_SCREEN_LABEL } from '../../tools/screen-store.js';
+import { screenSchema, stepReportSchema } from '../../agent/screen-step.js';
 
 /** A client message id: a v4-shaped uuid, lowercase. */
 export const MESSAGE_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
@@ -260,6 +262,114 @@ export function parseRoutineClaim(body: Uint8Array): z.infer<typeof routineClaim
 
 export function parseRoutineResult(body: Uint8Array): z.infer<typeof routineResultSchema> | null {
   return parseWith(routineResultSchema, body);
+}
+
+/**
+ * The screen agent (PLAN §6.28). The allowlist is package names, the app's own
+ * label and the "ask before every tap" switch. A step carries the screen — raw
+ * element text, kept in memory for this one request, never stored or logged —
+ * and the report on the previous action, as codes. Nothing here carries an
+ * input or a text to type: those exist only on the server, sealed.
+ */
+const SCREEN_ID = /^[0-9a-f]{32}$/;
+const PACKAGE = /^[A-Za-z][A-Za-z0-9_]*(\.[A-Za-z0-9_]+)+$/;
+
+const screenAllowSchema = z
+  .object({
+    apps: z
+      .array(
+        z
+          .object({
+            package: z.string().max(200).regex(PACKAGE),
+            label: z.string().trim().min(1).max(MAX_SCREEN_LABEL),
+            askEveryTap: z.boolean(),
+          })
+          .strict(),
+      )
+      .max(MAX_SCREEN_APPS),
+  })
+  .strict();
+
+const screenClaimSchema = z.object({ taskId: z.string().regex(SCREEN_ID) }).strict();
+
+const screenStepSchema = z.discriminatedUnion('kind', [
+  z
+    .object({
+      kind: z.literal('screen'),
+      taskId: z.string().regex(SCREEN_ID),
+      step: z.number().int().min(1).max(64),
+      screen: screenSchema,
+      report: stepReportSchema.optional(),
+    })
+    .strict(),
+  z.object({ kind: z.literal('poll'), taskId: z.string().regex(SCREEN_ID), step: z.number().int().min(1).max(64) }).strict(),
+  z
+    .object({
+      kind: z.literal('hold'),
+      taskId: z.string().regex(SCREEN_ID),
+      step: z.number().int().min(1).max(64),
+      actionId: z.string().regex(SCREEN_ID),
+      cls: z.enum(['uncertain', 'sensitive']),
+      why: z.enum(['sensitive', 'ask_every_tap', 'unlabelled', 'generic', 'submit_not_search', 'after_form']),
+    })
+    .strict(),
+]);
+
+const screenApproveSchema = z
+  .object({
+    taskId: z.string().regex(SCREEN_ID),
+    actionId: z.string().regex(SCREEN_ID),
+    nonce: z.string().regex(SCREEN_ID),
+    verdict: z.enum(['yes', 'no']),
+  })
+  .strict();
+
+/** The phone's own ends of a task (docs/plans/screen-agent.md, section C). */
+export const SCREEN_END_REASONS = [
+  'stopped_user',
+  'stopped_restart',
+  'locked',
+  'app_missing',
+  'app_not_front',
+  'launch_confirm',
+  'left_app',
+  'service_off',
+  'deadline',
+  'step_limit',
+  'not_allowed',
+  'screen_changed',
+  'target_ambiguous',
+  'uncertain',
+  'unreachable',
+  'error',
+] as const;
+
+const screenResultSchema = z
+  .object({
+    taskId: z.string().regex(SCREEN_ID),
+    reason: z.enum(SCREEN_END_REASONS),
+    report: stepReportSchema.optional(),
+  })
+  .strict();
+
+export function parseScreenAllow(body: Uint8Array): z.infer<typeof screenAllowSchema> | null {
+  return parseWith(screenAllowSchema, body);
+}
+
+export function parseScreenClaim(body: Uint8Array): z.infer<typeof screenClaimSchema> | null {
+  return parseWith(screenClaimSchema, body);
+}
+
+export function parseScreenStep(body: Uint8Array): z.infer<typeof screenStepSchema> | null {
+  return parseWith(screenStepSchema, body);
+}
+
+export function parseScreenApprove(body: Uint8Array): z.infer<typeof screenApproveSchema> | null {
+  return parseWith(screenApproveSchema, body);
+}
+
+export function parseScreenResult(body: Uint8Array): z.infer<typeof screenResultSchema> | null {
+  return parseWith(screenResultSchema, body);
 }
 
 export function parseActionReport(body: Uint8Array): z.infer<typeof actionReportSchema> | null {

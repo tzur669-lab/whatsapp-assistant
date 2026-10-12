@@ -172,6 +172,8 @@ export type AgentTurnInput = {
   consent?: { granted: readonly ConsentSource[]; ask: boolean };
   /** The message names a synced routine, so `routine.run` is offered (§6.27, D4). */
   routines?: boolean;
+  /** The message names the screen agent or an app on its list, so `screen.task` is offered (§6.28). */
+  screen?: boolean;
   /**
    * The consent sources of the history entries replayed in full (2026-10-12,
    * `replayByConsent`). A smart turn that pauses keeps them, so a resume can
@@ -361,6 +363,7 @@ export async function runAgentTurn(input: AgentTurnInput, deps: AgentDeps): Prom
     ...(input.grants ? { grants: input.grants } : {}),
     ...(readOnly ? { readOnly } : {}),
     ...(input.routines ? { routines: true } : {}),
+    ...(input.screen ? { screen: true } : {}),
   });
   // A smart conversation's turn is offered the same tools whichever model takes
   // it: consent belongs to the conversation (2026-10-08). Those that never ask

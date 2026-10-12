@@ -57,6 +57,11 @@ import type { Run } from '../tools/routine-store.js';
 import { routineText } from '../render/routines.js';
 import type { RoutineView, RunReason } from '../render/routines.js';
 import { buttonId } from '../confirm/pending.js';
+import { SCREEN_MAX_STEPS, ScreenStore } from '../tools/screen-store.js';
+import type { Ended, ScreenTask } from '../tools/screen-store.js';
+import { screenText } from '../render/screen.js';
+import { answerFor, runScreenStep, SCREEN_MAX_COMPLETION_TOKENS } from '../agent/screen-step.js';
+import type { StepDeps } from '../agent/screen-step.js';
 import { createQuoteSources } from '../lookup/quotes.js';
 import type { QuoteSources } from '../lookup/quotes.js';
 import { portfolioReport } from '../tools/portfolio.js';
@@ -91,6 +96,11 @@ import {
   parseRoutineClaim,
   parseRoutineResult,
   parseRoutineSync,
+  parseScreenAllow,
+  parseScreenApprove,
+  parseScreenClaim,
+  parseScreenResult,
+  parseScreenStep,
   parseDeviceResult,
   parseClaim,
   parseMessage,
@@ -109,7 +119,7 @@ import { callText } from '../render/calls.js';
 import { agentEnabled } from '../core/env.js';
 import { createGeminiAgentProvider, createGroqAgentProvider } from '../agent/provider.js';
 import { TokenBudget } from '../agent/budget.js';
-import { MODELS, SMART_MODELS } from '../agent/models.js';
+import { MODELS, modelEntry, SCREEN_MODELS, SMART_MODELS } from '../agent/models.js';
 import type { ModelEntry } from '../agent/models.js';
 import { TURN_TOKEN_CAP } from '../agent/loop.js';
 import { ConversationHistory } from '../agent/history.js';
@@ -173,6 +183,8 @@ export class AssistantDO implements DurableObject {
   private readonly facts: FactStore;
   private readonly holdings: HoldingStore;
   private readonly routines: RoutineStore;
+  /** The screen agent's allowlist and tasks (§6.28). */
+  private readonly screen: ScreenStore;
   private readonly quotes: QuoteSources;
   private readonly missedCalls: MissedCallStore;
   private readonly expenses: ExpenseStore;
@@ -280,6 +292,7 @@ export class AssistantDO implements DurableObject {
     this.facts = new FactStore(this.sql, now, keyringOnce);
     this.holdings = new HoldingStore(this.sql, now);
     this.routines = new RoutineStore(this.sql, now);
+    this.screen = new ScreenStore(this.sql, now, keyringOnce);
     // The key only in a header, inside `lookup/quotes.ts`; never logged (§6.24).
     this.quotes = createQuoteSources(this.fetchImpl, this.env.QUOTES_API_KEY, now);
     this.agentLock = new AgentLock(this.sql, now);
@@ -353,6 +366,7 @@ export class AssistantDO implements DurableObject {
     this.exchanges.purgeExpired();
     this.agentTurns.purgeOld();
     this.routines.purgeOld(now);
+    this.screen.purgeOld(now);
     // A turn the phone never answered gets its answer now, not on the next read.
     this.settleExpiredTurns();
 
@@ -360,6 +374,11 @@ export class AssistantDO implements DurableObject {
     // now, because it was asked for now. Shabbat does not hold a call (§6.17),
     // and the user wrote in seconds ago, so the window is open.
     await this.expireDispatches();
+
+    // The screen agent (§6.28) answers to its own clock: a confirmed task is
+    // pushed now, and a deadline or an unanswered card ends a task now,
+    // Shabbat or not — the user asked for it a moment ago.
+    await this.serviceScreen(principal);
 
     // Also before the holds: an unacked row is re-pushed and an expired one
     // retired on its own schedule, Shabbat or not — it is already on the phone's
@@ -446,6 +465,14 @@ export class AssistantDO implements DurableObject {
 
     const due = this.routines.takeDue(now);
     const unclaimed = this.routines.takeUnclaimed(now);
+    // Routines first (§6.28): a screen task gives way before the phone is woken.
+    if (due.push.length + unclaimed.repush.length > 0) {
+      for (const ended of this.screen.preemptAll(principal)) {
+        this.log.info('screen_task_preempted', { taskId: ended.task.taskId });
+        await this.sayScreenEnd(ended);
+        await this.pushScreen(principal, ended.task.taskId, 'screen_stop');
+      }
+    }
     for (const run of [...due.push, ...unclaimed.repush]) await this.pushRoutine(principal, run);
     for (const run of [...due.expired, ...unclaimed.expired]) {
       this.log.warn('routine_expired', { runId: run.runId });
@@ -557,6 +584,215 @@ export class AssistantDO implements DurableObject {
     await this.sayRoutine(settled.run, text);
     await this.armAlarm();
     return json({ status: 'ok' });
+  }
+
+  // -- the screen agent (PLAN §6.28) -------------------------------------------
+
+  /** Confirmed tasks are pushed; what time alone ends is said once. */
+  private async serviceScreen(principal: string): Promise<void> {
+    for (const task of this.screen.takePushes()) await this.pushScreen(principal, task.taskId, 'screen');
+    for (const ended of this.screen.sweep()) {
+      this.log.info('screen_task_ended', { reason: ended.reason, outcome: ended.outcome });
+      await this.sayScreenEnd(ended);
+      await this.pushScreen(principal, ended.task.taskId, 'screen_stop');
+    }
+  }
+
+  /** The task's id and the kind of wake-up, nothing else. Best effort: the phone also polls. */
+  private async pushScreen(principal: string, taskId: string, kind: 'screen' | 'screen_release' | 'screen_stop'): Promise<void> {
+    const device = this.devices.activeDevice(principal);
+    const token = device ? await this.devices.pushTokenOf(device.id) : null;
+    const fcm = this.fcmClient();
+    if (!device || !token || !fcm) {
+      this.log.info('screen_push_skipped', { kind, device: device !== null, token: token !== null, fcm: fcm !== null });
+      return;
+    }
+    const pushed = await fcm.screenTask(token, taskId, kind);
+    this.log.info('screen_pushed', { kind, ok: pushed.ok });
+    if (!pushed.ok && pushed.reason === 'unregistered') {
+      this.devices.forgetPushToken(device.id);
+      this.repo.setLastErrorCode('E_PUSH_UNREGISTERED');
+    }
+  }
+
+  /** One message about a task, to the reminders conversation, like a routine's. */
+  private async sayScreen(principal: string, text: string, buttons?: OutboundButton[]): Promise<void> {
+    await this.send({ to: this.selfWaId(), text, ...(buttons ? { buttons } : {}) }, { kind: 'reminder', principal });
+  }
+
+  /** The one message when a task ends. The model's words only as a quotation (`screenText.ended`). */
+  private async sayScreenEnd(ended: Ended, modelText?: string): Promise<void> {
+    await this.sayScreen(ended.task.principal, screenText.ended(ended, modelText, 'he'));
+  }
+
+  /** The chat's approval card: the app, the kind of action and why — no screen text. */
+  private async sayApprovalCard(task: ScreenTask): Promise<void> {
+    if (!task.approvalNonce || !task.action) return;
+    await this.sayScreen(task.principal, screenText.approvalCard(task.appLabel, task.action.kind, task.why ?? 'unlabelled', 'he'), [
+      { id: buttonId('sa', task.taskId, task.approvalNonce, 'ok'), title: screenText.approveButton('he') },
+      { id: buttonId('sa', task.taskId, task.approvalNonce, 'no'), title: screenText.rejectButton('he') },
+    ]);
+  }
+
+  /** The phone's allowlist (§6.28). A task in an app taken off it ends now. */
+  private async appScreenAllow(body: Uint8Array, principal: string): Promise<Response> {
+    const parsed = parseScreenAllow(body);
+    if (!parsed) return appError(400, 'bad_request');
+    const ended = this.screen.replaceAllow(principal, parsed.apps);
+    this.log.info('screen_allow_synced', { count: parsed.apps.length, ended: ended.length });
+    for (const task of ended) {
+      await this.sayScreenEnd(task);
+      await this.pushScreen(principal, task.task.taskId, 'screen_stop');
+    }
+    if (ended.length > 0) await this.armAlarm();
+    return json({ status: 'ok' });
+  }
+
+  /**
+   * The phone's one claim on a task: the app, the task's words and the
+   * approved inputs — the only place the inputs leave the server, in a signed
+   * request's answer over TLS.
+   */
+  private async appScreenClaim(body: Uint8Array, principal: string): Promise<Response> {
+    const parsed = parseScreenClaim(body);
+    if (!parsed) return appError(400, 'bad_request');
+    const claimed = this.screen.claim(parsed.taskId, principal);
+    this.repo.audit({
+      ts: Date.now(),
+      principal,
+      tool: 'screen.task',
+      tier: 2,
+      decision: 'SCREEN_CLAIMED',
+      outcome: claimed.ok ? 'ok' : claimed.reason,
+      externalRef: parsed.taskId,
+    });
+    if (!claimed.ok) {
+      this.log.info('screen_claim_refused', { reason: claimed.reason });
+      const task = this.screen.get(parsed.taskId);
+      if ((claimed.reason === 'late' || claimed.reason === 'not_allowed') && task?.outcome) {
+        await this.sayScreenEnd({ task, outcome: task.outcome, reason: task.reason ?? claimed.reason });
+      }
+      return json({ status: 'refused', reason: claimed.reason });
+    }
+    const sealed = await this.screen.unseal(parsed.taskId);
+    if (!sealed) {
+      const ended = this.screen.finish(parsed.taskId, 'failed', 'sealed_missing');
+      if (ended) await this.sayScreenEnd(ended);
+      return json({ status: 'refused', reason: 'stopped' });
+    }
+    await this.armAlarm();
+    return json({
+      status: 'ok',
+      package: claimed.task.package,
+      label: claimed.task.appLabel,
+      task: sealed.task,
+      inputs: sealed.inputs,
+      deadlineAt: claimed.deadlineAt,
+      maxSteps: SCREEN_MAX_STEPS,
+    });
+  }
+
+  /** One step (§6.28): a new screen, a poll while a card waits, or the phone's higher class. */
+  private async appScreenStep(body: Uint8Array, principal: string): Promise<Response> {
+    const parsed = parseScreenStep(body);
+    if (!parsed) return appError(400, 'bad_request');
+
+    if (parsed.kind === 'poll') {
+      const task = this.screen.get(parsed.taskId);
+      if (!task || task.principal !== principal) return json({ status: 'stopped', reason: 'not_found' });
+      return json(answerFor(task));
+    }
+
+    if (parsed.kind === 'hold') {
+      const before = this.screen.get(parsed.taskId);
+      const held = this.screen.hold(parsed.taskId, principal, parsed.step, parsed.actionId, parsed.cls, parsed.why);
+      if (!held) {
+        const task = this.screen.get(parsed.taskId);
+        return json(task && task.principal === principal ? answerFor(task) : { status: 'stopped', reason: 'not_found' });
+      }
+      // One card per action: a retried hold finds it already open.
+      if (before?.status === 'running') {
+        this.log.info('screen_step_held', { step: parsed.step, cls: parsed.cls, why: parsed.why });
+        await this.sayApprovalCard(held);
+        await this.armAlarm();
+      }
+      return json(answerFor(held));
+    }
+
+    const result = await runScreenStep(this.screenStepDeps(), {
+      taskId: parsed.taskId,
+      principal,
+      step: parsed.step,
+      screen: parsed.screen,
+      ...(parsed.report ? { report: parsed.report } : {}),
+    });
+    if (result.approval) await this.sayApprovalCard(result.approval);
+    if (result.ended) await this.sayScreenEnd(result.ended, result.modelText);
+    if (result.approval || result.ended) await this.armAlarm();
+    return json(result.answer);
+  }
+
+  /** The phone's notification answered a card: the same row and nonce as the chat's. */
+  private async appScreenApprove(body: Uint8Array, principal: string): Promise<Response> {
+    const parsed = parseScreenApprove(body);
+    if (!parsed) return appError(400, 'bad_request');
+    const result = this.screen.decideApproval(parsed.taskId, principal, parsed.nonce, parsed.verdict === 'yes', parsed.actionId);
+    this.repo.audit({
+      ts: Date.now(),
+      principal,
+      tool: 'screen.task',
+      tier: 2,
+      decision: parsed.verdict === 'yes' ? 'SCREEN_APPROVED' : 'SCREEN_REJECTED',
+      outcome: result.kind,
+      externalRef: parsed.taskId,
+    });
+    if (result.kind === 'rejected') {
+      await this.sayScreenEnd(result.ended);
+      await this.armAlarm();
+    }
+    return json({ status: result.kind });
+  }
+
+  /** The phone ended a task itself: codes, and a report on the last action. */
+  private async appScreenResult(body: Uint8Array, principal: string): Promise<Response> {
+    const parsed = parseScreenResult(body);
+    if (!parsed) return appError(400, 'bad_request');
+    const ended = this.screen.endByPhone(parsed.taskId, principal, parsed.reason, parsed.report);
+    this.repo.audit({
+      ts: Date.now(),
+      principal,
+      tool: 'screen.task',
+      tier: 2,
+      decision: 'SCREEN_RESULT',
+      outcome: ended ? ended.outcome : 'ignored',
+      externalRef: parsed.taskId,
+    });
+    if (ended) {
+      await this.sayScreenEnd(ended);
+      await this.armAlarm();
+    }
+    return json({ status: 'ok' });
+  }
+
+  /** The step's dependencies: Groq models only, never a smart one (§6.28). */
+  private screenStepDeps(): StepDeps {
+    return {
+      store: this.screen,
+      budget: this.tokenBudget,
+      providers: SCREEN_MODELS.map((id) =>
+        createGroqAgentProvider({
+          apiKey: this.env.GROQ_API_KEY,
+          model: id,
+          role: 'primary',
+          maxCompletionTokens: SCREEN_MAX_COMPLETION_TOKENS,
+          params: modelEntry(id)?.params ?? {},
+          fetchImpl: this.groqFetch,
+        }),
+      ),
+      lock: this.agentLock,
+      log: this.log,
+      now: () => Date.now(),
+    };
   }
 
   // -- OAuth -----------------------------------------------------------------
@@ -1019,6 +1255,11 @@ export class AssistantDO implements DurableObject {
     if (app && method === 'POST' && path === '/app/routines') return this.appRoutineSync(body, principal);
     if (app && method === 'POST' && path === '/app/routine/claim') return this.appRoutineClaim(body, principal);
     if (app && method === 'POST' && path === '/app/routine/result') return this.appRoutineResult(body, principal);
+    if (app && method === 'POST' && path === '/app/screen/allow') return this.appScreenAllow(body, principal);
+    if (app && method === 'POST' && path === '/app/screen/claim') return this.appScreenClaim(body, principal);
+    if (app && method === 'POST' && path === '/app/screen/step') return this.appScreenStep(body, principal);
+    if (app && method === 'POST' && path === '/app/screen/approve') return this.appScreenApprove(body, principal);
+    if (app && method === 'POST' && path === '/app/screen/result') return this.appScreenResult(body, principal);
 
     const dispatch = /^\/device\/dispatch\/([0-9a-f]{32})$/.exec(path);
     if (method === 'GET' && dispatch) {
@@ -1934,6 +2175,8 @@ export class AssistantDO implements DurableObject {
       facts: this.facts,
       holdings: this.holdings,
       routines: this.routines,
+      screen: this.screen,
+      screenPush: async (taskId, kind) => this.pushScreen(await this.selfPrincipal(), taskId, kind),
       quotes: this.quotes,
       expenses: this.expenses,
       pending: this.pending,
@@ -2056,6 +2299,7 @@ export class AssistantDO implements DurableObject {
     const candidates = [
       this.reminders.nextDueAt(),
       this.routines.nextWakeAt(),
+      this.screen.nextWakeAt(),
       this.devices.nextExpiryAt(),
       outboxAt,
       // A turn waiting for the phone is answered when its time runs out (§6.21).

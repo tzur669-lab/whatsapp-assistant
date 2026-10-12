@@ -1,0 +1,75 @@
+# Screen agent cases (PLAN §6.28, 2026-10-12), run by `pnpm eval:agent --filter scr-`.
+#
+# Kept out of `fingerprintPhrases` like the routine cases: `screen.task` is
+# offered only when the input names the screen agent or an app on its list
+# (the harness's EVAL_SCREEN_APPS stand in for the synced allowlist), so these
+# phrases change nothing any other case is offered.
+#
+# What is pinned: the tool, and `inputs` — the exact texts the agent may type,
+# copied from the message. A task that types nothing lists `inputs` as missing,
+# so a model that invents one is counted as inventing a slot. Code still finds
+# the app and checks every input against the message.
+
+- id: scr-001
+  now: "2026-10-12T10:00:00+03:00"
+  input: "סוכן מסך: תחפש בפיד סטימצקי"
+  expect:
+    intent: screen.task
+    slots:
+      inputs: ["סטימצקי"]
+    missing: []
+
+- id: scr-002
+  now: "2026-10-12T10:00:00+03:00"
+  input: "תחפש בפיד את סטימצקי דיזנגוף"
+  expect:
+    intent: screen.task
+    slots:
+      inputs: ["סטימצקי דיזנגוף"]
+    missing: []
+
+- id: scr-003
+  now: "2026-10-12T10:00:00+03:00"
+  input: "תבדוק באפליקציית הנוכחות אם החתמתי כניסה היום"
+  expect:
+    intent: screen.task
+    missing: [inputs]
+
+- id: scr-004
+  now: "2026-10-12T10:00:00+03:00"
+  input: "screen agent: search FID for Steimatzky"
+  expect:
+    intent: screen.task
+    slots:
+      inputs: ["Steimatzky"]
+    missing: []
+
+- id: scr-005
+  now: "2026-10-12T10:00:00+03:00"
+  input: "סוכן מסך: תראה בנוכחות כמה שעות עבדתי החודש"
+  expect:
+    intent: screen.task
+    missing: [inputs]
+
+- id: scr-006
+  now: "2026-10-12T10:00:00+03:00"
+  input: "תפתח את פיד"
+  expect:
+    intent: app.open
+    missing: []
+
+- id: scr-007
+  now: "2026-10-12T10:00:00+03:00"
+  input: "תזכיר לי מחר בשמונה בבוקר לחפש בפיד מתנה לאמא"
+  expect:
+    intent: reminders.create
+    missing: []
+
+- id: scr-008
+  now: "2026-10-12T10:00:00+03:00"
+  input: "סוכן מסך: בפיד תחפש מחברת A4 ותגיד לי כמה היא עולה"
+  expect:
+    intent: screen.task
+    slots:
+      inputs: ["מחברת A4"]
+    missing: []

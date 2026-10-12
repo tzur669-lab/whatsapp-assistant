@@ -69,6 +69,19 @@ export class AgentLock {
     return row !== undefined;
   }
 
+  /**
+   * When the lock held for this sender expires, or null when none is held.
+   * The screen agent waits this long, clamped, before it asks again (PLAN §6.28).
+   */
+  expiresAt(principal: string): number | null {
+    const row = this.sql.exec(
+      'SELECT expires_at FROM agent_lock WHERE principal = ? AND expires_at > ?',
+      principal,
+      this.now(),
+    )[0];
+    return typeof row?.['expires_at'] === 'number' ? row['expires_at'] : null;
+  }
+
   wipe(principal: string): void {
     this.sql.exec('DELETE FROM agent_lock WHERE principal = ?', principal);
   }

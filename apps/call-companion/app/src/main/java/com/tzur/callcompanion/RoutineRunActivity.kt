@@ -26,7 +26,9 @@ class RoutineRunActivity : Activity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        val runId = intent.getStringExtra(EXTRA_RUN_ID)
+        // A screen task (0.14) waits for the unlock the same way, then is claimed by its own runner.
+        screenTaskId = intent.getStringExtra(EXTRA_SCREEN_TASK_ID)
+        val runId = screenTaskId ?: intent.getStringExtra(EXTRA_RUN_ID)
         if (runId == null) {
             finish()
             return
@@ -40,7 +42,7 @@ class RoutineRunActivity : Activity() {
         }
         window.decorView.layoutDirection = View.LAYOUT_DIRECTION_RTL
         setContentView(TextView(this).apply {
-            text = getString(R.string.routine_unlock_prompt)
+            text = getString(if (screenTaskId != null) R.string.screen_unlock_prompt else R.string.routine_unlock_prompt)
             textSize = 20f
             gravity = Gravity.CENTER
             setPadding(48, 48, 48, 48)
@@ -66,16 +68,22 @@ class RoutineRunActivity : Activity() {
         done = true
         main.removeCallbacksAndMessages(null)
         val app = applicationContext
-        if (unlocked) {
-            Thread { RoutineRunner.claimAndRun(app, runId) }.start()
-        } else {
-            RoutineRunner.lockedOut(app, runId)
+        val screen = screenTaskId != null
+        when {
+            screen && unlocked -> ScreenAgentRunner.start(app, runId)
+            screen -> ScreenAgentRunner.lockedOut(app, runId)
+            unlocked -> Thread { RoutineRunner.claimAndRun(app, runId) }.start()
+            else -> RoutineRunner.lockedOut(app, runId)
         }
         finish()
     }
 
+    private var screenTaskId: String? = null
+
     companion object {
         const val EXTRA_RUN_ID = "routine_run_id"
+        /** Set instead of [EXTRA_RUN_ID] for a screen task: after the unlock, the screen runner claims it. */
+        const val EXTRA_SCREEN_TASK_ID = "screen_task_id"
         /** Two minutes for a finger on the sensor, well inside the run's ten. */
         private const val UNLOCK_WAIT_MS = 2 * 60_000L
     }

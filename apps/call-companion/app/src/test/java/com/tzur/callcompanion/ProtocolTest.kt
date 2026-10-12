@@ -170,6 +170,119 @@ class ProtocolTest {
         assertEquals(Protocol.Step.REFUSED, Protocol.stepFor(500))
     }
 
+    // -- the screen agent (0.14): the request shapes of docs/plans/screen-agent.md §C --
+
+    private val task = "0123456789abcdef0123456789abcdef"
+    private val action = "fedcba9876543210fedcba9876543210"
+    private val binding = "00112233445566778899aabbccddeeff"
+
+    @Test fun `the first step carries the screen and no report`() {
+        val elements = listOf(
+            ScreenLogic.Element(i = 0, t = "תוצאות", f = ""),
+            ScreenLogic.Element(i = 1, t = "סטימצקי", v = "row", c = "LinearLayout", f = "c", b = binding),
+            ScreenLogic.Element(i = 2, h = "חפש", f = "ceo", b = binding),
+        )
+        assertEquals(
+            "{\"kind\":\"screen\",\"taskId\":\"$task\",\"step\":1,\"screen\":{\"hash\":\"${"a".repeat(64)}\",\"elements\":[" +
+                "{\"i\":0,\"t\":\"תוצאות\",\"f\":\"\"}," +
+                "{\"i\":1,\"t\":\"סטימצקי\",\"v\":\"row\",\"c\":\"LinearLayout\",\"f\":\"c\",\"b\":\"$binding\"}," +
+                "{\"i\":2,\"h\":\"חפש\",\"f\":\"ceo\",\"b\":\"$binding\"}]}}",
+            Protocol.screenStepBody(task, 1, "a".repeat(64), elements, null),
+        )
+    }
+
+    @Test fun `a later step reports the action before it`() {
+        val body = Protocol.screenStepBody(task, 3, "b".repeat(64), emptyList(), ScreenLogic.Report(action, ScreenLogic.Status.DISPATCHED))
+        assertEquals(
+            "{\"kind\":\"screen\",\"taskId\":\"$task\",\"step\":3,\"screen\":{\"hash\":\"${"b".repeat(64)}\",\"elements\":[]}," +
+                "\"report\":{\"actionId\":\"$action\",\"status\":\"dispatched\"}}",
+            body,
+        )
+        assertEquals(
+            "{\"actionId\":\"$action\",\"status\":\"refused\",\"reason\":\"screen_changed\"}",
+            Protocol.reportJson(ScreenLogic.Report(action, ScreenLogic.Status.REFUSED, "screen_changed")),
+        )
+    }
+
+    @Test fun `a report's reason is one the server's report schema knows`() {
+        fun reasonOf(code: String) =
+            Protocol.reportJson(ScreenLogic.Report(action, ScreenLogic.Status.REFUSED, code)).substringAfter("\"reason\":\"").substringBefore('"')
+        assertEquals("stopped", reasonOf("stopped_user"))
+        assertEquals("stopped", reasonOf("stopped_restart"))
+        assertEquals("stopped", reasonOf("deadline"))
+        assertEquals("target_ambiguous", reasonOf("target_ambiguous"))
+        assertEquals("not_allowed", reasonOf("not_allowed"))
+        assertEquals("error", reasonOf("locked"))
+        assertEquals("error", reasonOf("unreachable"))
+        // The recovery report after a restart, whole.
+        assertEquals(
+            "{\"taskId\":\"$task\",\"reason\":\"stopped_restart\",\"report\":{\"actionId\":\"$action\",\"status\":\"refused\",\"reason\":\"stopped\"}}",
+            Protocol.screenResultBody(task, "stopped_restart", ScreenLogic.Report(action, ScreenLogic.Status.REFUSED, "stopped_restart")),
+        )
+    }
+
+    @Test fun `only a final status is ever reported`() {
+        val thrown = runCatching { Protocol.reportJson(ScreenLogic.Report(action, ScreenLogic.Status.STARTED)) }
+        assertTrue(thrown.isFailure)
+    }
+
+    @Test fun `poll, hold, claim, approve, result and allow have the spec's shapes`() {
+        assertEquals("{\"kind\":\"poll\",\"taskId\":\"$task\",\"step\":3}", Protocol.screenPollBody(task, 3))
+        assertEquals(
+            "{\"kind\":\"hold\",\"taskId\":\"$task\",\"step\":3,\"actionId\":\"$action\",\"cls\":\"sensitive\",\"why\":\"sensitive\"}",
+            Protocol.screenHoldBody(task, 3, action, ScreenLogic.Cls.SENSITIVE, ScreenLogic.Why.SENSITIVE),
+        )
+        assertEquals(
+            "{\"kind\":\"hold\",\"taskId\":\"$task\",\"step\":2,\"actionId\":\"$action\",\"cls\":\"uncertain\",\"why\":\"after_form\"}",
+            Protocol.screenHoldBody(task, 2, action, ScreenLogic.Cls.UNCERTAIN, ScreenLogic.Why.AFTER_FORM),
+        )
+        assertEquals("{\"taskId\":\"$task\"}", Protocol.screenClaimBody(task))
+        assertEquals(
+            "{\"taskId\":\"$task\",\"actionId\":\"$action\",\"nonce\":\"$binding\",\"verdict\":\"yes\"}",
+            Protocol.screenApproveBody(task, action, binding, approve = true),
+        )
+        assertEquals(
+            "{\"taskId\":\"$task\",\"actionId\":\"$action\",\"nonce\":\"$binding\",\"verdict\":\"no\"}",
+            Protocol.screenApproveBody(task, action, binding, approve = false),
+        )
+        assertEquals(
+            "{\"taskId\":\"$task\",\"reason\":\"uncertain\",\"report\":{\"actionId\":\"$action\",\"status\":\"uncertain\"}}",
+            Protocol.screenResultBody(task, "uncertain", ScreenLogic.Report(action, ScreenLogic.Status.UNCERTAIN)),
+        )
+        // A reason the server does not know goes out as `error`.
+        assertEquals("{\"taskId\":\"$task\",\"reason\":\"error\"}", Protocol.screenResultBody(task, "tap_refused", null))
+        assertEquals(
+            "{\"apps\":[{\"package\":\"il.co.fid\",\"label\":\"FID\",\"askEveryTap\":false}," +
+                "{\"package\":\"com.example.clock\",\"label\":\"com.example.clock\",\"askEveryTap\":true}]}",
+            Protocol.screenAllowBody(
+                listOf(
+                    ScreenLogic.AllowedApp("il.co.fid", "FID"),
+                    ScreenLogic.AllowedApp("com.example.clock", " ", askEveryTap = true),
+                ),
+            ),
+        )
+        assertEquals("{\"apps\":[]}", Protocol.screenAllowBody(emptyList()))
+    }
+
+    @Test fun `a hold is never sent for a safe action`() {
+        assertTrue(runCatching { Protocol.screenHoldBody(task, 1, action, ScreenLogic.Cls.SAFE, null) }.isFailure)
+    }
+
+    @Test fun `screen text is escaped as JSON`() {
+        assertEquals("\"a\\\"b\\\\c\\nd\\u0001\"", Protocol.json("a\"b\\c\nd\u0001"))
+        assertEquals("\"שלום ⁨x⁩\"", Protocol.json("שלום ⁨x⁩"))
+    }
+
+    @Test fun `a screen step signs over the exact bytes it sends`() {
+        val body = Protocol.screenPollBody(task, 1).toByteArray(Charsets.UTF_8)
+        assertEquals(
+            Protocol.sha256Hex(body),
+            Protocol.canonical("POST", Protocol.SCREEN_STEP_PATH, "00112233445566778899aabbccddeeff", 1L, "ff".repeat(16), body)
+                .substringAfterLast('\n'),
+        )
+        assertEquals("/app/screen/step", Protocol.SCREEN_STEP_PATH)
+    }
+
     @Test fun `only server-shaped button ids pass`() {
         assertTrue(Protocol.BUTTON_ID.matches("snooze:0a1b2c:9f8e7d:m10"))
         assertFalse(Protocol.BUTTON_ID.matches("Snooze"))

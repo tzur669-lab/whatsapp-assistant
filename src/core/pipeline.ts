@@ -20,6 +20,10 @@ import type { NoteStore } from '../tools/note-store.js';
 import type { ListStore } from '../tools/list-store.js';
 import type { HoldingStore } from '../tools/holding-store.js';
 import type { RoutineStore } from '../tools/routine-store.js';
+import type { ScreenStore } from '../tools/screen-store.js';
+import { namesScreenTask } from '../tools/screen.js';
+import { screenText } from '../render/screen.js';
+import { buttonId } from '../confirm/pending.js';
 import { foldForMatch } from '../tools/match.js';
 import type { QuoteSources } from '../lookup/quotes.js';
 import { marketWordsIn } from '../tools/portfolio.js';
@@ -137,6 +141,10 @@ export type Services = {
   expenses?: ExpenseStore;
   /** Routines synced from the paired app, and their runs (§6.27). */
   routines?: RoutineStore;
+  /** The screen agent's allowlist and tasks (§6.28). */
+  screen?: ScreenStore;
+  /** Wakes the phone about a screen task: an approval decided, or the task stopped. */
+  screenPush?: (taskId: string, kind: 'screen_release' | 'screen_stop') => Promise<void>;
   pending: PendingActions;
   /** The one clarifying question a sender may have open (§6.11). */
   questions: OpenQuestions;
@@ -532,6 +540,18 @@ async function respondToText(
     log.info('question_abandoned', { tool: open.tool, asked: open.asked });
   }
 
+  // 2c. The screen agent is at work (§6.28): a code reply with its stop button,
+  //     no model — a second turn would race it for the phone and the lock.
+  const screenTask = deps.services.screen?.active(principal);
+  if (screenTask && screenTask.status !== 'confirmed') {
+    repo.markInboundOutcome(event.wamid, { decision: 'BUSY' });
+    return {
+      action: 'reply',
+      text: screenText.busy(screenTask.appLabel, 'he'),
+      buttons: [{ id: buttonId('ss', screenTask.taskId, screenTask.stopNonce, 'no'), title: screenText.stopButton('he') }],
+    };
+  }
+
   // 3. The models. Only here does a turn write the latest exchange that
   //    "לא הבנת" keeps (§6.23): commands, confirmations and answers above never
   //    do, so "לא הבנת" after a "כן" still finds the request it answered.
@@ -840,6 +860,10 @@ async function respondWithAgent(
           ...(smartConversation ? { smart: true, consent: { granted, ask }, historySources } : {}),
           // Only when the words name a synced routine (§6.27, decision D4).
           ...(deps.channel === 'app' && namesRoutine(text, deps.services?.routines, principal) ? { routines: true } : {}),
+          // Only when the words name the screen agent or an app on its list (§6.28).
+          ...(deps.channel === 'app' && deps.services?.screen && namesScreenTask(text, deps.services.screen.allowed(principal))
+            ? { screen: true }
+            : {}),
         },
         {
           providers: readOnly ? (agent.fallbackProviders ?? []) : [...smartModels, ...agent.providers],
@@ -1655,6 +1679,9 @@ function turnOf(
       ...(marketWords ? { marketWords } : {}),
       ...(services.expenses ? { expenses: services.expenses } : {}),
       ...(services.routines ? { routines: services.routines } : {}),
+      ...(services.screen ? { screen: services.screen } : {}),
+      ...(services.screenPush ? { screenPush: services.screenPush } : {}),
+      ...(text !== undefined ? { userText: text } : {}),
     },
     pending: services.pending,
     deferred: services.deferred,

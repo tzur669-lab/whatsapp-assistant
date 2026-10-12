@@ -18,7 +18,8 @@
     "bench": "tsx scripts/bench-turn.ts",
     "dev": "wrangler dev --env staging",
     "deploy:staging": "vitest run test/unit/agent/fingerprint.test.ts test/unit/config/release-gate.test.ts && wrangler deploy --env staging",
-    "eval:agent": "tsx test/evals/run-agent-evals.ts"
+    "eval:agent": "tsx test/evals/run-agent-evals.ts",
+    "eval:screen": "tsx test/evals/run-screen-evals.ts"
   },
   "dependencies": {
     "hono": "^4.6.14",

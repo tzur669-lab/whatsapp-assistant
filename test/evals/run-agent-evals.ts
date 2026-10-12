@@ -55,6 +55,8 @@
  * none): its answers were given to a different prompt, catalog or model.
  */
 import { createHash } from 'node:crypto';
+import { namesScreenTask } from '../../src/tools/screen.js';
+import type { AllowedApp } from '../../src/tools/screen-store.js';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -187,13 +189,24 @@ function namesEvalRoutine(input: string): boolean {
   return EVAL_ROUTINES.some((name) => input.toLowerCase().includes(name)) || /שגר|רוטינ|\broutines?\b/i.test(input);
 }
 
-function offered(routines = false) {
+/**
+ * The apps an eval turn behaves as if the phone had turned on for the screen
+ * agent (§6.28): `screen.task` is offered only when the input names one, or
+ * the screen agent, as in the pipeline (`namesScreenTask`).
+ */
+const EVAL_SCREEN_APPS: AllowedApp[] = [
+  { package: 'il.co.fid', label: 'פיד', askEveryTap: false },
+  { package: 'il.co.fid.en', label: 'FID', askEveryTap: false },
+  { package: 'com.attendance.app', label: 'נוכחות', askEveryTap: true },
+];
+
+function offered(routines = false, screen = false) {
   const grants = { gmail: true, tasks: true, drive: true };
   // A typed smart turn that may ask for consent: everything a local turn gets (slice 5; private tools since 2026-10-11).
-  if (smart) return smartOfferedTools(agentToolNames({ cards: true, fileCards: true, phoneReads: true, grants, routines }), { granted: [], ask: true });
+  if (smart) return smartOfferedTools(agentToolNames({ cards: true, fileCards: true, phoneReads: true, grants, routines, screen }), { granted: [], ask: true });
   return readOnly
     ? agentToolNames({ cards: false, phoneReads: false, grants, readOnly: true })
-    : agentToolNames({ cards: true, fileCards: true, phoneReads: true, grants, routines });
+    : agentToolNames({ cards: true, fileCards: true, phoneReads: true, grants, routines, screen });
 }
 
 /** The system prompt the loop sends this kind of turn. */
@@ -397,7 +410,7 @@ function promptLabel(): string {
 /** What the bot would offer this message: the full set, or narrowed by code with `--select-tools`. */
 function toolsFor(input: string): WireTool[] {
   // A smart turn has no selection: the whole smart catalog, as the loop offers it.
-  const tools = offered(namesEvalRoutine(input));
+  const tools = offered(namesEvalRoutine(input), namesScreenTask(input, EVAL_SCREEN_APPS));
   return wireTools(selecting && !smart ? selectTools(input, tools).tools : tools);
 }
 
@@ -424,7 +437,7 @@ async function ask(provider: AgentProvider, id: string, messages: AgentMessage[]
   const call = response.toolCalls[0];
   if (!call) return { id, draft: null, text: true, latencyMs, tokens, promptTokens, ...served };
 
-  const tool = fromWireName(call.name, offered(true));
+  const tool = fromWireName(call.name, offered(true, true));
   let slots: unknown = {};
   try {
     slots = stripNulls(JSON.parse(call.arguments));
@@ -648,8 +661,8 @@ function loadCases(filter: string | null): EvalCase[] {
   const dir = fileURLToPath(new URL('.', import.meta.url));
   const cases: EvalCase[] = [];
   // The phone actions are scored as an app that runs cards would see them (§6.20).
-  // `cases.routines.yaml` is outside the fingerprint (see its header, §6.27).
-  for (const file of ['cases.he.yaml', 'cases.en.yaml', 'cases.phone.yaml', 'cases.routines.yaml']) {
+  // `cases.routines.yaml` and `cases.screen.yaml` are outside the fingerprint (see their headers).
+  for (const file of ['cases.he.yaml', 'cases.en.yaml', 'cases.phone.yaml', 'cases.routines.yaml', 'cases.screen.yaml']) {
     const parsed = parseYaml(readFileSync(`${dir}${file}`, 'utf8')) as EvalCase[] | null;
     if (Array.isArray(parsed)) cases.push(...parsed);
   }

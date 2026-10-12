@@ -1,0 +1,42 @@
+{
+  "version": 1,
+  "comment": "The screen agent's risk policy (PLAN §6.28). The server (src/agent/screen-policy.ts) and the app (ScreenLogic.kt) keep these lists in code; a test on each side fails when its lists stop matching this file, and both run every vector. Hebrew words match anywhere in the normalized label; Latin words match the start of a token. Generic words match a whole token. Search words decide whether a field is a search field.",
+  "sensitive": [
+    "שלח", "שליחה", "לשלם", "תשלום", "שלם", "קנה", "קנייה", "רכישה", "לרכוש", "הזמן", "הזמנה", "מחק", "מחיקה",
+    "הסר", "הסרה", "העבר", "העברה", "אשר", "בטל מנוי", "ביטול מנוי", "תרומה", "הפקד", "משוך", "משיכה", "חתום",
+    "send", "pay", "buy", "purchase", "order", "checkout", "delete", "remove", "transfer", "confirm",
+    "unsubscribe", "subscribe", "donate", "withdraw", "deposit", "erase"
+  ],
+  "generic": [
+    "המשך", "הבא", "סיום", "סיים", "שמור", "שמירה", "אישור", "אוקיי", "אוקי", "בטל", "ביטול", "כן", "אני מסכים",
+    "continue", "next", "done", "save", "ok", "okay", "submit", "finish", "yes", "apply", "cancel", "accept", "agree", "allow"
+  ],
+  "search": ["חיפוש", "חפש", "search", "find"],
+  "vectors": [
+    { "name": "plain search result", "action": "tap", "el": { "t": "סטימצקי דיזנגוף", "f": "c" }, "ctx": {}, "cls": "safe", "why": null },
+    { "name": "send button", "action": "tap", "el": { "t": "שלח", "f": "c" }, "ctx": {}, "cls": "sensitive", "why": "sensitive" },
+    { "name": "send with a prefix", "action": "tap", "el": { "t": "ושליחה מהירה", "f": "c" }, "ctx": {}, "cls": "sensitive", "why": "sensitive" },
+    { "name": "pay in English, inside a longer token", "action": "tap", "el": { "t": "Payment", "f": "c" }, "ctx": {}, "cls": "sensitive", "why": "sensitive" },
+    { "name": "a view id names it", "action": "tap", "el": { "v": "btnDeleteItem", "f": "c" }, "ctx": {}, "cls": "sensitive", "why": "sensitive" },
+    { "name": "snake_case view id", "action": "tap", "el": { "v": "confirm_order", "f": "c" }, "ctx": {}, "cls": "sensitive", "why": "sensitive" },
+    { "name": "sensitive word in a harmless label still stops", "action": "tap", "el": { "t": "כאשר תגיע", "f": "c" }, "ctx": {}, "cls": "sensitive", "why": "sensitive" },
+    { "name": "niqqud and bidi marks are ignored", "action": "tap", "el": { "t": "‏שְׁלַח", "f": "c" }, "ctx": {}, "cls": "sensitive", "why": "sensitive" },
+    { "name": "generic continue", "action": "tap", "el": { "t": "המשך", "f": "c" }, "ctx": {}, "cls": "uncertain", "why": "generic" },
+    { "name": "generic OK", "action": "tap", "el": { "t": "OK", "f": "c" }, "ctx": {}, "cls": "uncertain", "why": "generic" },
+    { "name": "an icon with no label", "action": "tap", "el": { "f": "c" }, "ctx": {}, "cls": "uncertain", "why": "unlabelled" },
+    { "name": "a hint alone is not a label for a tap", "action": "tap", "el": { "h": "בחר", "f": "c" }, "ctx": {}, "cls": "uncertain", "why": "unlabelled" },
+    { "name": "display is not pay", "action": "tap", "el": { "t": "Display", "f": "c" }, "ctx": {}, "cls": "safe", "why": null },
+    { "name": "submit in a search field", "action": "submit", "el": { "h": "חפש מוצר", "f": "ce" }, "ctx": {}, "cls": "safe", "why": null },
+    { "name": "submit in a search field named by id", "action": "submit", "el": { "v": "search_src_text", "f": "e" }, "ctx": {}, "cls": "safe", "why": null },
+    { "name": "submit outside a search field", "action": "submit", "el": { "h": "שם מלא", "f": "e" }, "ctx": {}, "cls": "uncertain", "why": "submit_not_search" },
+    { "name": "a tap after filling a form", "action": "tap", "el": { "t": "פרטים נוספים", "f": "c" }, "ctx": { "typedNonSearch": true }, "cls": "uncertain", "why": "after_form" },
+    { "name": "tapping a field after filling a form is fine", "action": "tap", "el": { "h": "טלפון", "v": "phone", "f": "ce" }, "ctx": { "typedNonSearch": true }, "cls": "safe", "why": null },
+    { "name": "ask before every tap", "action": "tap", "el": { "t": "סטימצקי", "f": "c" }, "ctx": { "askEveryTap": true }, "cls": "uncertain", "why": "ask_every_tap" },
+    { "name": "ask before typing too", "action": "type", "el": { "h": "חפש", "f": "ce" }, "ctx": { "askEveryTap": true }, "cls": "uncertain", "why": "ask_every_tap" },
+    { "name": "sensitive beats ask every tap", "action": "tap", "el": { "t": "קנה עכשיו", "f": "c" }, "ctx": { "askEveryTap": true }, "cls": "sensitive", "why": "sensitive" },
+    { "name": "typing an approved input", "action": "type", "el": { "h": "חפש", "f": "ce" }, "ctx": {}, "cls": "safe", "why": null },
+    { "name": "scrolling never asks", "action": "scroll", "el": { "f": "s" }, "ctx": { "askEveryTap": true }, "cls": "safe", "why": null },
+    { "name": "back never asks", "action": "back", "el": null, "ctx": { "askEveryTap": true }, "cls": "safe", "why": null },
+    { "name": "wait never asks", "action": "wait", "el": null, "ctx": {}, "cls": "safe", "why": null }
+  ]
+}

@@ -230,6 +230,8 @@ class ChatActivity : Activity(), ChatEvents.Listener {
         Notifier.cancelAll(this)
         // Routines (0.13): the server's copy of the names, and any result not yet reported.
         RoutineRunner.syncOnce(this)
+        // The screen agent (0.14): the server's copy of the allowlist, and any task result not yet reported.
+        ScreenAgentRunner.syncOnce(this)
         refresh()
 
         val app = applicationContext
@@ -488,6 +490,14 @@ class ChatActivity : Activity(), ChatEvents.Listener {
             setOnClickListener {
                 closeDrawer()
                 startActivity(Intent(this@ChatActivity, RoutinesActivity::class.java))
+            }
+        })
+        panel.addView(Button(this).apply {
+            text = getString(R.string.screen_open)
+            isAllCaps = false
+            setOnClickListener {
+                closeDrawer()
+                startActivity(Intent(this@ChatActivity, ScreenAllowActivity::class.java))
             }
         })
         panel.addView(Button(this).apply {

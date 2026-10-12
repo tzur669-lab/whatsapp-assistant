@@ -61,6 +61,7 @@ import {
   phoneCallsSlots,
   timerSetSlots,
   routineRunSlots,
+  screenTaskSlots,
 } from '../nlu/slot-schemas.js';
 
 export const TOOL_NAMES = [
@@ -134,6 +135,9 @@ export const TOOL_NAMES = [
   // Routines (PLAN §6.27, 2026-10-11): the user's own steps inside one app,
   // run by the phone. Offered only when the message names a synced routine.
   'routine.run',
+  // The screen agent (PLAN §6.28, 2026-10-12): one task inside one app the
+  // user turned on, the phone's screen read as text. Offered only when named.
+  'screen.task',
 ] as const;
 
 export type ToolName = (typeof TOOL_NAMES)[number];
@@ -306,6 +310,22 @@ export const REGISTRY: Readonly<Record<ToolName, ToolSpec>> = {
     tier: 2,
     scopes: [],
     rateLimit: { perHour: 10, perDay: 30 },
+    implementedIn: 6,
+  },
+  'screen.task': {
+    name: 'screen.task',
+    // The task and the texts to type are the user's own, and the result is
+    // what was on their screen: nothing here returns to any model (PLAN §6.28).
+    dataSource: 'private',
+    private: true,
+    llmDescription:
+      'Do one task inside one phone app the user turned on for the screen agent, by reading its screen: search, look something up, check a status. app: the phone app to work in, as named. task: the whole request, as the user said it. inputs: every exact text to type in the app, such as the words to search for, copied from the message; empty when nothing is typed. Example: "תחפש בפיד סטימצקי" is app "פיד", inputs ["סטימצקי"]; "תבדוק באפליקציית הנוכחות אם החתמתי" is app "נוכחות", inputs [].',
+    draftSchema: screenTaskSlots,
+    refusesTainted: true,
+    // It acts inside another app: the request is confirmed first, always.
+    tier: 2,
+    scopes: [],
+    rateLimit: { perHour: 3, perDay: 3 },
     implementedIn: 6,
   },
   'reminders.create': {

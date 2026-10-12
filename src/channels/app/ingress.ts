@@ -62,6 +62,14 @@ export const APP_ROUTES: readonly AppRoute[] = [
   { method: 'POST', pattern: /^\/app\/routines$/, maxBytes: 16_384, contentType: JSON_TYPE, channels: ['app'] },
   { method: 'POST', pattern: /^\/app\/routine\/claim$/, maxBytes: 1_024, contentType: JSON_TYPE, channels: ['app'] },
   { method: 'POST', pattern: /^\/app\/routine\/result$/, maxBytes: 1_024, contentType: JSON_TYPE, channels: ['app'] },
+  // The screen agent (§6.28): twenty apps; a step's screen — eighty elements
+  // with 32-hex bindings and 2,500 characters of text, two bytes each in
+  // Hebrew, plus JSON; the claim, the approval and the end, ids and codes only.
+  { method: 'POST', pattern: /^\/app\/screen\/allow$/, maxBytes: 4_096, contentType: JSON_TYPE, channels: ['app'] },
+  { method: 'POST', pattern: /^\/app\/screen\/claim$/, maxBytes: 1_024, contentType: JSON_TYPE, channels: ['app'] },
+  { method: 'POST', pattern: /^\/app\/screen\/step$/, maxBytes: 16_384, contentType: JSON_TYPE, channels: ['app'] },
+  { method: 'POST', pattern: /^\/app\/screen\/approve$/, maxBytes: 1_024, contentType: JSON_TYPE, channels: ['app'] },
+  { method: 'POST', pattern: /^\/app\/screen\/result$/, maxBytes: 1_024, contentType: JSON_TYPE, channels: ['app'] },
 ];
 
 export type Checked =

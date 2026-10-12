@@ -502,6 +502,19 @@ export const routineRunSlots = z
   })
   .strict();
 
+/**
+ * The screen agent (PLAN §6.28): the app as the user named it, the task in
+ * their words, and `inputs` — the exact texts it may type, each copied from
+ * the message (code checks they are there). Nothing else is ever typed.
+ */
+export const screenTaskSlots = z
+  .object({
+    app: z.string().min(1).max(60).optional(),
+    task: z.string().min(1).max(200).optional(),
+    inputs: z.array(z.string().min(1).max(60)).max(3).optional(),
+  })
+  .strict();
+
 export const EXPENSE_CATEGORY_SLOTS = [
   'food',
   'groceries',

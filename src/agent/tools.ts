@@ -188,6 +188,11 @@ export type OfferOptions = {
    * full catalog's tokens.
    */
   routines?: boolean;
+  /**
+   * The message names the screen agent or an app on its list (§6.28,
+   * 2026-10-12): only then is `screen.task` offered.
+   */
+  screen?: boolean;
 };
 
 export function agentToolNames(options: OfferOptions = { cards: false }): ToolName[] {
@@ -195,6 +200,7 @@ export function agentToolNames(options: OfferOptions = { cards: false }): ToolNa
     const spec = REGISTRY[name];
     if (options.readOnly && (spec.tier !== 0 || spec.phoneRead || spec.confirmation === 'card')) return false;
     if (name === 'routine.run') return options.routines === true;
+    if (name === 'screen.task') return options.screen === true;
     if (name.startsWith('mail.')) return options.grants?.gmail === true;
     if (name.startsWith('tasks.')) return options.grants?.tasks === true;
     if (name.startsWith('drive.')) return options.grants?.drive === true;
