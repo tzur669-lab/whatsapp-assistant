@@ -157,6 +157,9 @@ const MISSED_CALLS_POLL_MS = 1_000;
 /** What `send` knows afterwards: the id, or why it did not go (PLAN §6.8). */
 type SendOutcome = { ok: true; wamid: string } | { ok: false; failure: WaFailure };
 
+/** Consecutive failed pushes before the status screen shows one (F17). */
+const PUSH_FAILURES_SHOWN = 3;
+
 export class AssistantDO implements DurableObject {
   private readonly repo: Repository;
   private readonly sql: DurableObjectSqlDriver;
@@ -1300,13 +1303,18 @@ export class AssistantDO implements DurableObject {
     // phone's result is idempotent, so answering it twice continues it once.
     // Waiting for the user's consent (slice 5): its card was the answer, and
     // the app has it — still waiting, never a device query.
-    const suspended = this.agentTurns.byWamid(`${APP_INBOUND_PREFIX}${messageId}`);
+    const wamid = `${APP_INBOUND_PREFIX}${messageId}`;
+    const suspended = this.agentTurns.byWamid(wamid);
     if (suspended?.status === 'waiting' && suspended.kind === 'consent') return { status: 'pending' };
     if (suspended?.status === 'waiting' && suspended.ciphertext !== null) {
       const state = await this.agentTurns.open(suspended.queryId, suspended.principal, suspended.ciphertext);
       if (state && state.kind !== 'consent') return { status: 'device_query', queryId: suspended.queryId, query: state.query };
     }
-    if (suspended?.status === 'running') return { status: 'pending' };
+    // A resumed turn holds the lock under its wamid while it runs; once the lock
+    // expired with the row still `running`, an eviction cut it (T8): unknown.
+    if (suspended?.status === 'running') {
+      return { status: this.agentLock.heldBy(suspended.principal, wamid) ? 'pending' : 'unknown' };
+    }
 
     const inbound = this.repo.getInbound(`${APP_INBOUND_PREFIX}${messageId}`);
     if (inbound && inbound['decision'] !== null && inbound['decision'] !== undefined) return { status: 'done' };
@@ -1408,7 +1416,9 @@ export class AssistantDO implements DurableObject {
     if (begun.kind === 'settled') {
       const row = this.outbox.replyTo(messageId);
       if (row) return json({ status: 'reply', row });
-      if (begun.status === 'running') return json({ status: 'pending' });
+      if (begun.status === 'running') {
+        return json({ status: this.agentLock.heldBy(principal, begun.wamid) ? 'pending' : 'unknown' });
+      }
       if (begun.status === 'done') return json({ status: 'done' });
       const text = begun.status === 'expired' ? he.phoneReadTimedOut : he.phoneReadCancelled;
       const late = this.acceptReply(messageId, principal, text, text, []);
@@ -1539,14 +1549,21 @@ export class AssistantDO implements DurableObject {
     if (device && token && fcm) {
       const pushed = await fcm.signal(token);
       if (!pushed.ok) {
+        const errorCode = `E_PUSH_${pushed.reason.toUpperCase()}`;
         this.log.warn('outbox_push_failed', {
-          errorCode: `E_PUSH_${pushed.reason.toUpperCase()}`,
+          errorCode,
           ...(pushed.status === undefined ? {} : { status: pushed.status }),
         });
+        const streak = this.repo.bumpPushFailures();
         if (pushed.reason === 'unregistered') {
           this.devices.forgetPushToken(device.id);
-          this.repo.setLastErrorCode('E_PUSH_UNREGISTERED');
+          this.repo.setLastErrorCode('E_PUSH_UNREGISTERED', Date.now());
+        } else if (streak >= PUSH_FAILURES_SHOWN) {
+          // Transient ones, again and again: the status screen says so (F17).
+          this.repo.setLastErrorCode(errorCode, Date.now());
         }
+      } else {
+        this.repo.clearPushFailures();
       }
     } else {
       this.log.info('outbox_push_skipped', { device: device !== null, token: token !== null, fcm: fcm !== null });

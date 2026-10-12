@@ -21,6 +21,7 @@ import { Repository } from '../../../src/core/repo.js';
 import { he } from '../../../src/render/he.js';
 import { stripIsolates } from '../../../src/render/bidi.js';
 import { REMINDER_ROW_TTL_MS, REPUSH_AFTER_MS } from '../../../src/channels/app/outbox.js';
+import { LOCK_TTL_MS } from '../../../src/agent/limits.js';
 import { CLOCK_SKEW_MS } from '../../../src/channels/app/verify.js';
 import type { AppEnv } from '../../../src/core/env.js';
 import { SMART_MODELS } from '../../../src/agent/models.js';
@@ -359,6 +360,36 @@ describe('the app channel', () => {
       expect(google.pushes).toHaveLength(1);
       expect((await outbox(phone)).rows).toHaveLength(1);
       expect(fake.driver.exec('SELECT push_token_enc FROM devices WHERE id = ?', phone.deviceId)[0]!['push_token_enc']).toBeNull();
+    });
+
+    it('show on the status screen after three failed pushes in a row, and a push that works starts the count again (F17)', async () => {
+      await pair();
+      google.failPushes(503);
+      due('לקחת תרופה');
+      let at = NOW;
+      const pushAgain = async (index: number) => {
+        at += REPUSH_AFTER_MS[index]!;
+        vi.setSystemTime(at);
+        await assistant.alarm();
+      };
+
+      await assistant.alarm();
+      await pushAgain(0);
+      expect(google.pushes).toHaveLength(2);
+      expect(repo.lastErrorCode()).toBeNull();
+      await pushAgain(1);
+      expect(repo.lastErrorCode()).toBe('E_PUSH_PUSH_FAILED');
+
+      google.failPushes(200);
+      repo.setLastErrorCode('E_OTHER');
+      await pushAgain(2);
+      expect(google.pushes).toHaveLength(4);
+      expect(repo.getSetting('push_fail_streak')).toBe('0');
+      // The count restarted: one more failure shows nothing yet.
+      google.failPushes(503);
+      due('עוד משהו');
+      await assistant.alarm();
+      expect(repo.lastErrorCode()).toBe('E_OTHER');
     });
 
     it('are not held by the 24-hour window, which the app does not have', async () => {
@@ -1074,6 +1105,36 @@ describe('the app channel', () => {
       expect(
         (await send(await phone.toDo('POST', '/app/device-result', { queryId: 'a'.repeat(32), result: { status: 'ok', items: [{ number: '0501234567' }] } }))).status,
       ).toBe(400);
+    });
+
+    it('a resumed turn an eviction left `running` answers unknown once its lock expired, never pending forever (T8)', async () => {
+      const phone = await pairReader();
+      chat = [{ tool: 'phone__sms', args: {} }];
+      const id = messageId();
+      const asked = (await say(phone, 'מה כתבו לי ב-SMS?', id)) as unknown as { queryId: string };
+
+      // The result began the resume, which took the lock under its wamid — and
+      // then the object was evicted: the row stays `running`, the lock stays.
+      const row = fake.driver.exec('SELECT principal, wamid FROM agent_turns WHERE query_id = ?', asked.queryId)[0]!;
+      fake.driver.exec(`UPDATE agent_turns SET status = 'running' WHERE query_id = ?`, asked.queryId);
+      fake.driver.exec(
+        'INSERT INTO agent_lock (principal, turn_id, started_at, expires_at) VALUES (?, ?, ?, ?)',
+        row['principal'],
+        row['wamid'],
+        Date.now(),
+        Date.now() + LOCK_TTL_MS,
+      );
+      buildWithAgent();
+
+      // While the lock lives, the turn may still be running: pending.
+      expect((await say(phone, 'מה כתבו לי ב-SMS?', id)).status).toBe('pending');
+      expect((await result(phone, asked.queryId, ITEMS)).status).toBe('pending');
+
+      // Past it, nothing can still be running it.
+      vi.setSystemTime(Date.now() + LOCK_TTL_MS);
+      expect((await say(phone, 'מה כתבו לי ב-SMS?', id)).status).toBe('unknown');
+      expect((await result(phone, asked.queryId, ITEMS)).status).toBe('unknown');
+      expect(chatCalls).toBe(1);
     });
 
     it('forgets a waiting turn when the phone is unpaired', async () => {

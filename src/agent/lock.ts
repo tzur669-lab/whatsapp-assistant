@@ -53,6 +53,22 @@ export class AgentLock {
     return row !== undefined;
   }
 
+  /**
+   * Whether this turn holds the lock now. Synchronous. An expired row is not
+   * held: rows are deleted only in `acquire`, so the expiry is checked here.
+   * What tells a live resumed turn (`running`, its lock under its wamid) from
+   * one an eviction left behind (Improvement plan §3 T8).
+   */
+  heldBy(principal: string, turnId: string): boolean {
+    const row = this.sql.exec(
+      'SELECT 1 AS held FROM agent_lock WHERE principal = ? AND turn_id = ? AND expires_at > ?',
+      principal,
+      turnId,
+      this.now(),
+    )[0];
+    return row !== undefined;
+  }
+
   wipe(principal: string): void {
     this.sql.exec('DELETE FROM agent_lock WHERE principal = ?', principal);
   }

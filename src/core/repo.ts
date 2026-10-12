@@ -474,6 +474,22 @@ export class Repository {
     if (atMs !== undefined) this.setSetting('last_error_at', String(Math.round(atMs)));
   }
 
+  /**
+   * Consecutive failed pushes (F17): one more, and the streak's new length. A
+   * failed push is otherwise only logged, so a phone that stopped hearing them
+   * would show nothing on the status screen.
+   */
+  bumpPushFailures(): number {
+    const next = (Number(this.getSetting('push_fail_streak')) || 0) + 1;
+    this.setSetting('push_fail_streak', String(next));
+    return next;
+  }
+
+  /** A push went through: the streak starts again. */
+  clearPushFailures(): void {
+    if (this.getSetting('push_fail_streak') !== null) this.setSetting('push_fail_streak', '0');
+  }
+
   /** The most recent error code and when, for the quota screen (2026-10-01). */
   lastError(): { code: string; at: number | null } | null {
     const code = this.lastErrorCode();

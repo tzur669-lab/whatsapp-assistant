@@ -45,6 +45,18 @@ describe('AgentLock', () => {
     expect(lock.acquire('p', 't3')).toBe(false);
   });
 
+  it('says which turn holds it, and an expired row holds nothing (T8)', () => {
+    lock.acquire('p', 'wamid.1');
+    expect(lock.heldBy('p', 'wamid.1')).toBe(true);
+    expect(lock.heldBy('p', 'wamid.2')).toBe(false);
+    expect(lock.heldBy('q', 'wamid.1')).toBe(false);
+    now += LOCK_TTL_MS - 1;
+    expect(lock.heldBy('p', 'wamid.1')).toBe(true);
+    now += 1;
+    // Still in the table (only `acquire` deletes), but no longer held.
+    expect(lock.heldBy('p', 'wamid.1')).toBe(false);
+  });
+
   it('expires, so an evicted turn cannot lock a sender out', () => {
     lock.acquire('p', 't1');
     now += LOCK_TTL_MS + 1;
