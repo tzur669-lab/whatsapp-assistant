@@ -116,10 +116,10 @@ Network on the hotspot: `NODE_OPTIONS=--dns-result-order=ipv4first` for wrangler
   s2 — its `--filter` evals are owed. Open items in PLAN §13 (limits probe,
   Gemini calibration, s2 evals).
 - **Screen agent** (PLAN §6.28, plan `docs/plans/screen-agent.md`, ROADMAP
-  block I): phases 1–2 built (server migration 0030, app 0.14.0), not deployed.
-  Owed, in order (PLAN §13): `pnpm eval:screen` and `eval:agent --filter scr-`
-  on qwen with a human read, a staging deploy, then the 0.14.0 APK —
-  **server first** — and the phone checks. Phase 3 needs its own plan.
+  block I): phases 1–2 built (server migration 0030, app 0.14.0); staging
+  deployed 2026-10-12 (9643484a). Owed, in order (PLAN §13): `pnpm eval:screen`
+  and `eval:agent --filter scr-` on qwen with a human read, then the 0.14.0
+  APK and the phone checks. Phase 3 needs its own plan.
 - **Next work:** [ROADMAP.md](ROADMAP.md) (Hebrew) — block H (2026-10-07):
   a smarter bot. Parts 15 (notes), 16 ("לא הבנת" capture), 17 (tool
   unions, calibrated token estimate, history fitter, named lists) and 18
@@ -156,6 +156,9 @@ Network on the hotspot: `NODE_OPTIONS=--dns-result-order=ipv4first` for wrangler
 | [SETUP.md](SETUP.md) | Setting up a new copy from zero: accounts, Groq key, models, secrets, deploy, app, AI agent. |
 
 ## 8. Session log (docs)
+
+- 2026-10-12: Staging deployed (9643484a) with the screen agent (migration
+  0030); the five `/app/screen/*` routes answer 401 unsigned.
 
 - 2026-10-12: Screen agent, phases 1–2 (PLAN §6.28, ROADMAP block I):
   `screen.task`, `tools/screen-store.ts`, `agent/screen-step.ts`,
