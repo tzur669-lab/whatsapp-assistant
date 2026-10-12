@@ -161,7 +161,39 @@ export function findApp(allowed: readonly AllowedApp[], named: string): AllowedA
   if (exact.length > 1) return 'many';
   const partial = matchByText(allowed, [named], (app) => app.label);
   if (partial.length === 1) return partial[0]!;
-  return partial.length === 0 ? 'none' : 'many';
+  if (partial.length > 1) return 'many';
+  // "פיד" for an app the phone calls "Fid": the same sounds in the other
+  // script (found on the phone, 2026-10-12). The confirm card names the app.
+  const wantedSound = soundOf(named);
+  const sounding = wantedSound.length >= 2 ? allowed.filter((app) => soundOf(app.label) === wantedSound) : [];
+  if (sounding.length === 1) return sounding[0]!;
+  return sounding.length === 0 ? 'none' : 'many';
+}
+
+/** Hebrew letters and Latin spellings folded to one rough consonant skeleton. */
+const HEBREW_SOUNDS: Record<string, string> = {
+  ב: 'b', ג: 'g', ד: 'd', ז: 'z', ח: 'k', ט: 't', כ: 'k', ך: 'k', ל: 'l', מ: 'm', ם: 'm', נ: 'n', ן: 'n',
+  ס: 's', פ: 'f', ף: 'f', צ: 's', ץ: 's', ק: 'k', ר: 'r', ש: 's', ת: 't',
+};
+
+/**
+ * The consonants of a name, so "פיד" and "Fid" or "ספוטיפיי" and "Spotify" meet.
+ * Vowels, א ה ו י ע, h, w and v are dropped; p/f, b/v, c/k/q/ch/kh, s/sh/ts/tz
+ * fold together. Rough on purpose: used only after the exact and partial
+ * matches found nothing, and only when exactly one app sounds alike.
+ */
+export function soundOf(name: string): string {
+  const latin = foldForMatch(name)
+    .replace(/[\u0590-\u05FF]/g, (letter) => HEBREW_SOUNDS[letter] ?? '')
+    .replace(/ph/g, 'f')
+    .replace(/(?:ch|kh|ck)/g, 'k')
+    .replace(/(?:sh|ts|tz)/g, 's')
+    .replace(/p/g, 'f')
+    .replace(/[cq]/g, 'k')
+    .replace(/v/g, 'b')
+    .replace(/[^a-z0-9]/g, '')
+    .replace(/[aeiouyhw]/g, '');
+  return latin.replace(/(.)\1+/g, '$1');
 }
 
 /**
@@ -172,9 +204,17 @@ export function namesScreenTask(text: string, allowed: readonly AllowedApp[]): b
   if (allowed.length === 0) return false;
   if (/סוכן\s*(?:ה)?מסך|על המסך|במסך|\bscreen agent\b|\bon (?:the|my) screen\b/i.test(text)) return true;
   const folded = foldForMatch(text);
+  // Each word as said, and without one prefix letter ("בפיד" → "פיד").
+  const sounds = new Set(
+    folded
+      .split(' ')
+      .flatMap((word) => (/^[בלמהוש]/.test(word) ? [word, word.slice(1)] : [word]))
+      .map(soundOf)
+      .filter((sound) => sound.length >= 2),
+  );
   return allowed.some((app) => {
     const label = foldForMatch(app.label);
-    return label.length > 1 && folded.includes(label);
+    return (label.length > 1 && folded.includes(label)) || (!label.includes(' ') && sounds.has(soundOf(label)));
   });
 }
 

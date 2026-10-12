@@ -18,7 +18,7 @@ import {
 import type { Screen, ScreenElement, StepDeps } from '../../../src/agent/screen-step.js';
 import { TokenBudget } from '../../../src/agent/budget.js';
 import { AgentLock } from '../../../src/agent/lock.js';
-import { findApp, inputsSaid, namesScreenTask, screenTask } from '../../../src/tools/screen.js';
+import { findApp, inputsSaid, namesScreenTask, screenTask, soundOf } from '../../../src/tools/screen.js';
 import { screenText } from '../../../src/render/screen.js';
 import { stripIsolates } from '../../../src/render/bidi.js';
 import { parseKeyring } from '../../../src/security/crypto.js';
@@ -537,6 +537,18 @@ describe('screen.task, the tool', () => {
     expect(inputsSaid(['Steimatzky  TLV'], 'search steimatzky tlv please')).toBe(true);
     expect(inputsSaid(['שלח'], 'תחפש סטימצקי')).toBe(false);
     expect(findApp([FID, CLOCK], 'נוכחות')).toEqual(CLOCK);
+  });
+
+  it('finds an app named in the other script by its sound (found on the phone, 2026-10-12)', () => {
+    const fid: AllowedApp = { package: 'cubbbixapps.fid', label: 'Fid', askEveryTap: true };
+    expect(soundOf('פיד')).toBe(soundOf('Fid'));
+    expect(soundOf('ספוטיפיי')).toBe(soundOf('Spotify'));
+    expect(findApp([fid, CLOCK], 'פיד')).toEqual(fid);
+    expect(findApp([fid, CLOCK], 'וולט')).toBe('none');
+    // One letter of sound is too little to guess by.
+    expect(findApp([{ package: 'x.y', label: 'Pa', askEveryTap: false }], 'פה')).toBe('none');
+    expect(namesScreenTask('תחפש בפיד סטימצקי', [fid])).toBe(true);
+    expect(namesScreenTask('תזכיר לי לפדות שובר', [fid])).toBe(false);
   });
 
   it('is offered only when the words name the screen agent or an app on its list', () => {
