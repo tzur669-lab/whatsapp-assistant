@@ -43,7 +43,9 @@ export const dateSpecSchema = z.discriminatedUnion('kind', [
       kind: z.literal('absolute'),
       day: z.number().int().min(1).max(31),
       month: z.number().int().min(1).max(12),
-      year: z.number().int().min(2020).max(2100).optional(),
+      // From 1970: a calendar read may name any past year (2026-10-12). A write
+      // to a past day is still a question (`already_past`).
+      year: z.number().int().min(1970).max(2100).optional(),
     })
     .strict(),
   z
@@ -165,10 +167,27 @@ export const remindersLeaveSlots = z
   })
   .strict();
 
+/**
+ * A calendar read's spans (2026-10-12): the shared three, and the ones only a
+ * read asks about. Kept apart from `rangeSchema`, which `reminders.list` uses.
+ */
+export const calendarRangeSchema = z.enum(['this_week', 'next_week', 'weekend', 'last_week', 'this_month', 'last_month', 'next_month']);
+
+/** The oldest year a calendar read names: a read has no past limit. */
+export const MIN_READ_YEAR = 1970;
+
+/**
+ * "מה היה לי ביומן אתמול / בשבוע שעבר / במרץ 2024". A past day is `days_ago`
+ * (1 = yesterday), as in expenses: measured, a model writes "yesterday" as a
+ * forward `relative_days`. A whole month or year is `month`/`year`.
+ */
 export const calendarListEventsSlots = z
   .object({
     date: dateSpecSchema.optional(),
-    range: rangeSchema.optional(),
+    days_ago: z.number().int().min(1).max(36_500).optional(),
+    range: calendarRangeSchema.optional(),
+    month: z.number().int().min(1).max(12).optional(),
+    year: z.number().int().min(MIN_READ_YEAR).max(2100).optional(),
   })
   .strict();
 

@@ -7,11 +7,13 @@
  * message. The lock is taken synchronously when the agent step starts, so the
  * check and the take cannot be split by an await, and it is released when the
  * turn ends. It expires on its own, so an object evicted mid-turn cannot leave a
- * sender locked out.
+ * sender locked out — but only after anything the turn started has ended.
  */
 import type { SqlDriver } from '../core/sql.js';
+import { LOCK_TTL_MS } from './limits.js';
 
-export const LOCK_TTL_MS = 60_000;
+/** Derived from the turn deadline and the longest write (`limits.ts`). */
+export { LOCK_TTL_MS };
 
 export class AgentLock {
   constructor(

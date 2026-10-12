@@ -127,6 +127,25 @@ export function fillUnstatedTime(tool: string, args: unknown, said: string): unk
 }
 
 /**
+ * A whole month sent inside `date` (2026-10-12): gpt-oss-120b sent "במרץ 2024"
+ * as `date: {month: 3, year: 2024}`, which strict Zod rejects. For
+ * `calendar.list_events` only, a `date` whose keys are `month` (a number) and
+ * at most `year` (a number) moves to the `month`/`year` slots — never over one
+ * that was sent. Anything else stays as sent, for strict Zod to judge. Never
+ * mutates its input.
+ */
+export function liftMonthFromDate(tool: string, args: unknown): unknown {
+  if (tool !== 'calendar.list_events' || !isRecord(args)) return args;
+  const date = args['date'];
+  if (!isRecord(date) || args['month'] !== undefined || args['year'] !== undefined) return args;
+  const keys = Object.keys(date);
+  if (typeof date['month'] !== 'number' || !keys.every((key) => key === 'month' || key === 'year')) return args;
+  if (date['year'] !== undefined && typeof date['year'] !== 'number') return args;
+  const { date: _date, ...rest } = args;
+  return { ...rest, month: date['month'], ...(date['year'] === undefined ? {} : { year: date['year'] }) };
+}
+
+/**
  * What `fillUnstatedTime` checks for am/pm and parts of the day: every message
  * of the turn but the system prompt — the user's words now and in the history,
  * the replies, read results. Wide on purpose: a word found anywhere only keeps

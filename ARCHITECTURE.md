@@ -43,11 +43,13 @@ Current as of 2026-10-11 (migration 0028).
    button replies, "כן" to a pending confirmation, an answer to an open
    question. No LLM. Confirmations execute the *stored* input (inv. 7).
 3. **Agent** (`agent/loop.ts`, when `AGENT=on`) — per-sender lock
-   (`lock.ts`), encrypted short history (`history.ts`), code picks a tool
+   (`lock.ts`, its TTL derived from the turn deadline in `limits.ts`; no
+   model call or tool starts past it, and then no parser either), encrypted short history (`history.ts`), code picks a tool
    group (`tool-groups.ts`), budget reserves tokens before each call
    (`budget.ts`, `models.ts`). Each tool call → `fillUnstatedTime`
    (`tools.ts`: a TimeSpec's missing `meridiem`/`part_of_day` → 'unspecified'
-   only where it cannot move the time) → strict Zod → `orchestrator` path below.
+   only where it cannot move the time; `liftMonthFromDate` for a calendar
+   read's month sent inside `date`) → strict Zod → `orchestrator` path below.
    Only Tier 0 reads return to the model; any other outcome ends the turn.
 4. **Fallback parser** (`nlu/`) — one `IntentDraft` under strict structured
    output; models then `rules-fallback.ts`. If it finds no tool, the backup

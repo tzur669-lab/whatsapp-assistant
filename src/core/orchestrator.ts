@@ -50,6 +50,7 @@ import { cardReply } from '../render/phone.js';
 import type { CardInput } from '../render/phone.js';
 import type { Clarify, ExecuteResult, ResolveOutcome, ToolContext, ToolDefinition } from '../tools/types.js';
 import { ToolInputError } from '../tools/types.js';
+import { AppError } from './errors.js';
 import { buttonId, parseButtonId } from '../confirm/pending.js';
 import type { AskedSlot } from '../confirm/questions.js';
 import { canAnswer, dateSlotOf } from '../nlu/answer.js';
@@ -237,7 +238,7 @@ async function runIntentInner(
   } catch (error) {
     ctx.log.error('resolve_failed', {
       tool: draft.intent,
-      errorCode: error instanceof Error ? error.message : 'E_UNKNOWN',
+      errorCode: errorCodeOf(error),
     });
     return { text: he.internalError };
   }
@@ -447,6 +448,18 @@ function offerCard(
   };
 }
 
+/**
+ * What a failure may say in the log: a known class's code, else the error's
+ * class name. Never its message — a native `SyntaxError` or a SQLite error can
+ * quote the input it choked on (Improvement plan §3 T5).
+ */
+function errorCodeOf(error: unknown): string {
+  if (error instanceof ToolInputError) return error.message;
+  if (error instanceof AppError) return error.code;
+  if (error instanceof Error && /^[A-Za-z]{1,40}$/.test(error.name)) return error.name;
+  return 'E_UNKNOWN';
+}
+
 // -- execution ----------------------------------------------------------------
 
 async function execute(
@@ -589,7 +602,7 @@ async function runConfirmed(
   } catch (error) {
     ctx.log.error('confirmed_execute_failed', {
       tool: checked.action.tool,
-      errorCode: error instanceof Error ? error.message : 'E_UNKNOWN',
+      errorCode: errorCodeOf(error),
     });
     audit(turn, tool.name, null, 'CONFIRMED', 'error', checked.action.id);
     return { text: he.internalError };
@@ -633,7 +646,7 @@ async function runDeferred(
   } catch (error) {
     ctx.log.error('undo_failed', {
       tool: used.tool,
-      errorCode: error instanceof Error ? error.message : 'E_UNKNOWN',
+      errorCode: errorCodeOf(error),
     });
     return { text: he.internalError };
   }

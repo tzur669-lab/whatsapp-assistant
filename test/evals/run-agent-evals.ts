@@ -70,7 +70,7 @@ import {
   SYSTEM_PROMPT,
   AGENT_PROMPT_VERSION,
 } from '../../src/agent/prompt.js';
-import { agentToolNames, fillUnstatedTime, fromWireName, smartOfferedTools, wireTools } from '../../src/agent/tools.js';
+import { agentToolNames, fillUnstatedTime, fromWireName, liftMonthFromDate, smartOfferedTools, wireTools } from '../../src/agent/tools.js';
 import type { WireTool } from '../../src/agent/provider.js';
 import { promptChars } from '../../src/agent/loop.js';
 import { CHARS_PER_TOKEN } from '../../src/agent/budget.js';
@@ -512,7 +512,7 @@ function draftFor(testCase: EvalCase, recorded: Recorded): { draft: IntentDraft 
   // As the loop does before strict Zod (2026-10-08), at scoring time so a
   // recording made before it is scored the same way. A first turn has no
   // history: the case's own words are all that was said.
-  const slots = fillUnstatedTime(raw.intent, raw.slots, testCase.input);
+  const slots = liftMonthFromDate(raw.intent, fillUnstatedTime(raw.intent, raw.slots, testCase.input));
   const validated = validateIntentDraft({ intent: raw.intent, language, slots, missing, ambiguities: [] });
   return validated.ok ? { draft: validated.draft, schemaOk: true } : { draft: null, schemaOk: false };
 }

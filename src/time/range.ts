@@ -13,7 +13,7 @@
  * Boundaries are midnight local, resolved through the zone rather than computed
  * in UTC, so a range that spans a DST change is still exactly seven days long.
  */
-import { ZONE, addDays, localPartsOf, wallTimeToUtc } from './tz.js';
+import { ZONE, addDays, isRealDate, localPartsOf, wallTimeToUtc } from './tz.js';
 import type { WallTime } from './tz.js';
 
 export type RangeName = 'this_week' | 'next_week' | 'weekend';
@@ -128,4 +128,86 @@ export function endOfLocalDay(atMs: number, zone: string = ZONE): number {
   // produce, but the earliest candidate is the safe reading either way.
   if (midnight.kind === 'fold') return Math.min(...midnight.utcMsCandidates) - 1;
   return Date.UTC(tomorrow.year, tomorrow.month - 1, tomorrow.day) - 1;
+}
+
+// -- calendar reads, past and future (2026-10-12) ------------------------------
+//
+// A read may look back as far as asked. These never return an instant inside a
+// day: every window is whole local days, midnight to midnight, so a DST day is
+// 23 or 25 hours and still whole.
+
+export type ReadSpan = 'last_week' | 'this_month' | 'last_month' | 'next_month';
+
+const wall = (year: number, month: number, day: number): WallTime => ({ year, month, day, hour: 0, minute: 0 });
+
+function daysWindow(first: WallTime, days: number, zone: string): ResolvedRange {
+  return { startUtc: midnightUtc(first, zone), endUtc: midnightUtc(addDays(first, days), zone) };
+}
+
+function monthsWindow(year: number, month: number, zone: string): ResolvedRange {
+  const next = month === 12 ? wall(year + 1, 1, 1) : wall(year, month + 1, 1);
+  return { startUtc: midnightUtc(wall(year, month, 1), zone), endUtc: midnightUtc(next, zone) };
+}
+
+/** The whole local day `days` days before today. No limit on how far back. */
+export function daysAgoWindow(days: number, nowMs: number, zone: string = ZONE): ResolvedRange {
+  const now = localPartsOf(nowMs, zone);
+  return daysWindow(addDays(wall(now.year, now.month, now.day), -days), 1, zone);
+}
+
+/**
+ * One day. With a year, that day, behind or ahead. Without one, the nearest
+ * such date — a tie goes to the past. Null when the date does not exist.
+ */
+export function dayWindowOf(
+  day: number,
+  month: number,
+  year: number | undefined,
+  nowMs: number,
+  zone: string = ZONE,
+): ResolvedRange | null {
+  if (year !== undefined) return isRealDate(year, month, day) ? daysWindow(wall(year, month, day), 1, zone) : null;
+
+  const now = localPartsOf(nowMs, zone);
+  const today = Date.UTC(now.year, now.month - 1, now.day);
+  let best: number | undefined;
+  for (const candidate of [now.year - 1, now.year, now.year + 1]) {
+    if (!isRealDate(candidate, month, day)) continue;
+    const distance = Math.abs(Date.UTC(candidate, month - 1, day) - today);
+    const bestDistance = best === undefined ? Infinity : Math.abs(Date.UTC(best, month - 1, day) - today);
+    if (distance < bestDistance) best = candidate;
+  }
+  return best === undefined ? null : daysWindow(wall(best, month, day), 1, zone);
+}
+
+/** A whole month. Without a year, the nearest such month — a tie goes to the past. */
+export function monthWindow(month: number, year: number | undefined, nowMs: number, zone: string = ZONE): ResolvedRange {
+  if (year !== undefined) return monthsWindow(year, month, zone);
+  const now = localPartsOf(nowMs, zone);
+  const here = now.year * 12 + now.month;
+  let best = now.year - 1;
+  for (const candidate of [now.year, now.year + 1]) {
+    if (Math.abs(candidate * 12 + month - here) < Math.abs(best * 12 + month - here)) best = candidate;
+  }
+  return monthsWindow(best, month, zone);
+}
+
+/** A whole year. */
+export function yearWindow(year: number, zone: string = ZONE): ResolvedRange {
+  return { startUtc: midnightUtc(wall(year, 1, 1), zone), endUtc: midnightUtc(wall(year + 1, 1, 1), zone) };
+}
+
+/** The spans only a read asks about. Weeks run Sunday to Saturday. */
+export function resolveReadSpan(span: ReadSpan, nowMs: number, zone: string = ZONE): ResolvedRange {
+  const now = localPartsOf(nowMs, zone);
+  switch (span) {
+    case 'last_week':
+      return daysWindow(addDays(wall(now.year, now.month, now.day), -now.weekday - 7), 7, zone);
+    case 'this_month':
+      return monthsWindow(now.year, now.month, zone);
+    case 'last_month':
+      return now.month === 1 ? monthsWindow(now.year - 1, 12, zone) : monthsWindow(now.year, now.month - 1, zone);
+    case 'next_month':
+      return now.month === 12 ? monthsWindow(now.year + 1, 1, zone) : monthsWindow(now.year, now.month + 1, zone);
+  }
 }

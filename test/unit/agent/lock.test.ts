@@ -5,6 +5,9 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { Repository } from '../../../src/core/repo.js';
 import { MIGRATIONS } from '../../../src/platform/migrations.js';
 import { AgentLock, LOCK_TTL_MS } from '../../../src/agent/lock.js';
+import { GOOGLE_CALL_MAX_MS, MAX_WRITE_CALLS, MAX_WRITE_MS, TURN_DEADLINE_MS } from '../../../src/agent/limits.js';
+import { TIMEOUT_MS } from '../../../src/google/api.js';
+import { TOKEN_TIMEOUT_MS } from '../../../src/google/oauth.js';
 import { TestSqlDriver } from '../../integration/sqlite-driver.js';
 
 describe('AgentLock', () => {
@@ -46,5 +49,19 @@ describe('AgentLock', () => {
     lock.acquire('p', 't1');
     now += LOCK_TTL_MS + 1;
     expect(lock.acquire('p', 't2')).toBe(true);
+  });
+
+  it('outlives a write started just before the turn deadline (Improvement plan §3 T3)', () => {
+    // Fails when a constant changes without the TTL following it.
+    expect(GOOGLE_CALL_MAX_MS).toBeGreaterThanOrEqual(2 * (TOKEN_TIMEOUT_MS + TIMEOUT_MS));
+    expect(MAX_WRITE_MS).toBeGreaterThanOrEqual(MAX_WRITE_CALLS * GOOGLE_CALL_MAX_MS);
+    expect(LOCK_TTL_MS).toBeGreaterThan(TURN_DEADLINE_MS + MAX_WRITE_MS);
+  });
+
+  it('is still held when that write ends', () => {
+    lock.acquire('p', 't1');
+    now += TURN_DEADLINE_MS + MAX_WRITE_MS;
+    expect(lock.isHeld('p')).toBe(true);
+    expect(lock.acquire('p', 't2')).toBe(false);
   });
 });

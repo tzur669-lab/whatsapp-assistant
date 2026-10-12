@@ -7,13 +7,19 @@
  *
  * A day and a range are both accepted, because "tomorrow" and "this week" are
  * both ordinary questions. A day is a `DateSpec` resolved through the time
- * rules; a range is one of the three named spans. Asked with neither, it answers
+ * rules; a range is one of the named spans. Asked with neither, it answers
  * about today rather than asking a question nobody wants for a read.
+ *
+ * A read has no limit in time (2026-10-12): a past day (`days_ago`, or a date
+ * with its year), last week or last month, a whole month or year. Every window
+ * is computed in `src/time/range.ts`.
  */
 import { z } from 'zod';
 import { resolveDay } from '../time/resolve.js';
 import type { DateSpec } from '../time/resolve.js';
-import { resolveRange } from '../time/range.js';
+import { daysAgoWindow, dayWindowOf, monthWindow, resolveRange, resolveReadSpan, yearWindow } from '../time/range.js';
+import type { ReadSpan } from '../time/range.js';
+import { calendarRangeSchema, MIN_READ_YEAR } from '../nlu/slot-schemas.js';
 import { localPartsOf, wallTimeToUtc, addDays, ZONE } from '../time/tz.js';
 import { eventText } from '../render/events.js';
 import { asCalendarEvents } from '../ical/merge.js';
@@ -31,9 +37,14 @@ type ListInput = z.infer<typeof inputSchema>;
 const slotsSchema = z
   .object({
     date: z.unknown().optional(),
-    range: z.enum(['this_week', 'next_week', 'weekend']).optional(),
+    days_ago: z.number().int().min(1).max(36_500).optional(),
+    range: calendarRangeSchema.optional(),
+    month: z.number().int().min(1).max(12).optional(),
+    year: z.number().int().min(MIN_READ_YEAR).max(2100).optional(),
   })
   .passthrough();
+
+const READ_SPANS: ReadonlySet<string> = new Set<ReadSpan>(['last_week', 'this_month', 'last_month', 'next_month']);
 
 export const calendarListEvents: ToolDefinition = {
   name: 'calendar.list_events',
@@ -41,19 +52,39 @@ export const calendarListEvents: ToolDefinition = {
 
   resolve(rawSlots, ctx): ResolveOutcome {
     const slots = slotsSchema.safeParse(rawSlots);
-    const date = slots.success ? (slots.data.date as DateSpec | undefined) : undefined;
-    const range = slots.success ? slots.data.range : undefined;
+    const data = slots.success ? slots.data : {};
+    const date = data.date as DateSpec | undefined;
+    const range = data.range;
+
+    // A whole month, or a whole year (2026-10-12).
+    if (data.month !== undefined) return { kind: 'ready', input: monthWindow(data.month, data.year, ctx.nowMs) };
+    if (data.year !== undefined && !date) return { kind: 'ready', input: yearWindow(data.year) };
+
+    if (range && READ_SPANS.has(range)) {
+      return { kind: 'ready', input: resolveReadSpan(range as ReadSpan, ctx.nowMs) };
+    }
 
     if (range) {
       // The whole range: "this week" includes the meetings already behind.
-      const { startUtc, endUtc } = resolveRange(range, ctx.nowMs, ZONE, { fromStart: true });
+      const { startUtc, endUtc } = resolveRange(range as 'this_week' | 'next_week' | 'weekend', ctx.nowMs, ZONE, { fromStart: true });
       return { kind: 'ready', input: { startUtc, endUtc } };
     }
+
+    // A past day, as far back as asked.
+    if (data.days_ago !== undefined) return { kind: 'ready', input: daysAgoWindow(data.days_ago, ctx.nowMs) };
 
     if (!date) {
       // A read with no day named is about today. Asking "which day?" for a
       // question that changes nothing would be pedantry, not safety.
       return { kind: 'ready', input: dayWindow(ctx.nowMs) };
+    }
+
+    // A date the user named is read as said, behind or ahead: with its year
+    // that day, without one the nearest such date (`dayWindowOf`).
+    if (date.kind === 'absolute') {
+      const window = dayWindowOf(date.day, date.month, date.year, ctx.nowMs);
+      if (!window) return { kind: 'clarify', clarify: { code: 'time', detail: { kind: 'clarify', rule: 'R10', reason: 'nonexistent_date' } } };
+      return { kind: 'ready', input: window };
     }
 
     // The time resolver owns every date in the system, including this one:

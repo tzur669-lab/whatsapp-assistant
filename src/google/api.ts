@@ -11,7 +11,8 @@ import type { Logger } from '../security/redact.js';
 import { refreshAccessToken } from './oauth.js';
 import type { GoogleStore } from './store.js';
 
-const TIMEOUT_MS = 10_000;
+/** One request's own limit; exported for the agent's write bound (`agent/limits.ts`). */
+export const TIMEOUT_MS = 10_000;
 /** Refresh this far before expiry, so a call never races the deadline. */
 const REFRESH_MARGIN_MS = 60_000;
 

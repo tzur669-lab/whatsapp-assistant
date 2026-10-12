@@ -11,6 +11,7 @@ import { readFileSync } from 'node:fs';
 import { CalendarClient } from '../../../src/google/calendar.js';
 import { GoogleStore } from '../../../src/google/store.js';
 import { calendarListEvents } from '../../../src/tools/calendar-read.js';
+import { calendarListEventsSlots } from '../../../src/nlu/slot-schemas.js';
 import { parseKeyring } from '../../../src/security/crypto.js';
 import { Repository } from '../../../src/core/repo.js';
 import { ReminderStore } from '../../../src/tools/reminder-store.js';
@@ -388,6 +389,61 @@ describe('calendar.list_events', () => {
     if (outcome.kind !== 'ready') throw new Error('expected ready');
     const { startUtc, endUtc } = outcome.input as { startUtc: number; endUtc: number };
     expect(endUtc).toBeGreaterThan(startUtc);
+  });
+
+  describe('past and future without a limit (2026-10-12)', () => {
+    const windowOf = (slots: Record<string, unknown>) => {
+      const outcome = calendarListEvents.resolve(slots, ctx);
+      if (outcome.kind !== 'ready') throw new Error(`expected ready, got ${JSON.stringify(outcome)}`);
+      const { startUtc, endUtc } = outcome.input as { startUtc: number; endUtc: number };
+      return [new Date(startUtc).toISOString(), new Date(endUtc).toISOString()];
+    };
+
+    it('reads yesterday from days_ago', () => {
+      expect(windowOf({ days_ago: 1 })).toEqual(['2026-09-22T21:00:00.000Z', '2026-09-23T21:00:00.000Z']);
+    });
+
+    it('reads years back from days_ago', () => {
+      expect(windowOf({ days_ago: 3650 })[0]).toBe('2016-09-25T21:00:00.000Z');
+    });
+
+    it('reads a past date with its year, instead of asking', () => {
+      expect(windowOf({ date: { kind: 'absolute', day: 3, month: 5, year: 2024 } })).toEqual([
+        '2024-05-02T21:00:00.000Z',
+        '2024-05-03T21:00:00.000Z',
+      ]);
+    });
+
+    it('reads a date without a year as the nearest one, behind or ahead', () => {
+      expect(windowOf({ date: { kind: 'absolute', day: 20, month: 9 } })[0]).toBe('2026-09-19T21:00:00.000Z');
+      expect(windowOf({ date: { kind: 'absolute', day: 20, month: 12 } })[0]).toBe('2026-12-19T22:00:00.000Z');
+    });
+
+    it('asks about a date that does not exist', () => {
+      expect(calendarListEvents.resolve({ date: { kind: 'absolute', day: 31, month: 2, year: 2025 } }, ctx).kind).toBe('clarify');
+    });
+
+    it('reads a whole month, and a whole year', () => {
+      expect(windowOf({ month: 3, year: 2024 })).toEqual(['2024-02-29T22:00:00.000Z', '2024-03-31T21:00:00.000Z']);
+      expect(windowOf({ year: 2023 })).toEqual(['2022-12-31T22:00:00.000Z', '2023-12-31T22:00:00.000Z']);
+    });
+
+    it('reads last week, this month, last month and next month', () => {
+      expect(windowOf({ range: 'last_week' })).toEqual(['2026-09-12T21:00:00.000Z', '2026-09-19T21:00:00.000Z']);
+      expect(windowOf({ range: 'this_month' })[0]).toBe('2026-08-31T21:00:00.000Z');
+      expect(windowOf({ range: 'last_month' })[0]).toBe('2026-07-31T21:00:00.000Z');
+      expect(windowOf({ range: 'next_month' })[0]).toBe('2026-09-30T21:00:00.000Z');
+    });
+
+    it('reads a weekday or a relative day forward, as before', () => {
+      expect(windowOf({ date: { kind: 'relative_days', offset: 400 } })[0]).toBe('2027-10-28T21:00:00.000Z');
+    });
+
+    it('the slot schema takes the new slots and refuses a negative days_ago', () => {
+      expect(calendarListEventsSlots.safeParse({ days_ago: 2, range: 'last_month', month: 3, year: 1999 }).success).toBe(true);
+      expect(calendarListEventsSlots.safeParse({ days_ago: -1 }).success).toBe(false);
+      expect(calendarListEventsSlots.safeParse({ range: 'last_year' }).success).toBe(false);
+    });
   });
 
   it('says the calendar is not connected instead of failing', async () => {

@@ -416,6 +416,62 @@
       date: { kind: absolute, day: 3, month: 10 }
     missing: []
 
+# Past and future without a limit (2026-10-12): Monday 12.10.2026.
+- id: he-calp-001
+  now: "2026-10-12T12:00:00+03:00"
+  input: "מה היה לי ביומן אתמול"
+  expect:
+    intent: calendar.list_events
+    slots:
+      days_ago: 1
+    missing: [date]
+
+- id: he-calp-002
+  now: "2026-10-12T12:00:00+03:00"
+  input: "מה היה לי בשבוע שעבר ביומן"
+  expect:
+    intent: calendar.list_events
+    slots:
+      range: last_week
+    missing: []
+
+- id: he-calp-003
+  now: "2026-10-12T12:00:00+03:00"
+  input: "מה היה לי ביומן בחודש שעבר"
+  expect:
+    intent: calendar.list_events
+    slots:
+      range: last_month
+    missing: []
+
+- id: he-calp-004
+  now: "2026-10-12T12:00:00+03:00"
+  input: "מה יש לי ביומן בחודש הבא"
+  expect:
+    intent: calendar.list_events
+    slots:
+      range: next_month
+    missing: []
+
+- id: he-calp-005
+  now: "2026-10-12T12:00:00+03:00"
+  input: "מה היה לי ביומן במרץ 2024"
+  expect:
+    intent: calendar.list_events
+    slots:
+      month: 3
+      year: 2024
+    missing: []
+
+- id: he-calp-006
+  now: "2026-10-12T12:00:00+03:00"
+  input: "מה היה לי ביומן ב-3.5.2024"
+  expect:
+    intent: calendar.list_events
+    slots:
+      date: { kind: absolute, day: 3, month: 5, year: 2024 }
+    missing: []
+
 # ---------------------------------------------------------------- calendar: create
 - id: he-cal-010
   now: "2026-09-24T21:00:00+03:00"

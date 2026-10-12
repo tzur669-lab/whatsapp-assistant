@@ -34,7 +34,8 @@ describe('the eval fingerprint', () => {
     // fingerprint of their own, so a Groq eval stays valid. Re-pinned
     // 2026-10-12, one value per model, when the model's identity joined the
     // hash; no entry had recorded `evaluated`, so nothing recorded moved.
-    const pinned: Record<string, string> = { 'qwen/qwen3.8-27b': '601e8e9de1ad4a90', 'openai/gpt-oss-120b': 'b384921176e3c34c' };
+    // Re-pinned 2026-10-12 for the calendar's past reads (catalog and cases).
+    const pinned: Record<string, string> = { 'qwen/qwen3.8-27b': '514ae8e1119b2456', 'openai/gpt-oss-120b': 'fa4c97634f85f7ed' };
     for (const entry of MODELS) expect(fingerprintFor(entry), entry.id).toBe(pinned[entry.id]);
   });
 

@@ -48,9 +48,10 @@ import type { HistoryEntry } from './history.js';
 import { languageLine, nowLine, READ_ONLY_NOTE, SMART_NOTE, SYSTEM_PROMPT } from './prompt.js';
 import type { AgentMessage, AgentProvider, AgentResponse, ToolCall, WireTool } from './provider.js';
 import { wireToolCall } from './provider.js';
-import { agentToolNames, conversationText, fillUnstatedTime, fromWireName, smartOfferedTools, TAINTING_TOOLS, wireTools } from './tools.js';
+import { agentToolNames, conversationText, fillUnstatedTime, fromWireName, liftMonthFromDate, smartOfferedTools, TAINTING_TOOLS, wireTools } from './tools.js';
 import { consentNeededFor, consentSourceOf, echoesOwnInput } from './consents.js';
 import { MAX_SUSPENDS } from './turns.js';
+import { TURN_DEADLINE_MS } from './limits.js';
 
 export const MAX_MODEL_CALLS = 3;
 /** One model's minute bucket is 8K; a turn has to fit in one (plan K4). The default; `models.ts` sets each. */
@@ -290,6 +291,8 @@ export type AgentDeps = {
    * catalog on every call, as before 2026-10-06. Never set in production.
    */
   legacyCatalog?: boolean;
+  /** The clock the turn deadline is measured on. Absent: `Date.now`. */
+  now?: () => number;
 };
 
 /** One turn in progress. The same whether it started now or resumed after a phone read. */
@@ -735,8 +738,34 @@ function ranIn(messages: readonly AgentMessage[]): ToolName[] {
  * — and already the last message.
  */
 async function drive(loop: Loop, deps: AgentDeps, approved?: ToolCall): Promise<AgentResult> {
+  // One content-free record per loop, resumes included, on every way out
+  // (Improvement plan §3 T3): what validates the provisional deadline.
+  const now = deps.now ?? Date.now;
+  const started = now();
+  const callsBefore = loop.calls;
+  const toolsBefore = loop.ran.length;
+  let result: AgentResult | undefined;
+  try {
+    result = await driveSteps(loop, deps, approved);
+    return result;
+  } finally {
+    deps.log.info('agent_turn', {
+      ms: now() - started,
+      modelCalls: loop.calls - callsBefore,
+      toolsRun: loop.ran.length - toolsBefore,
+      deadlineHit: result?.kind === 'failed' && result.errorCode === 'deadline',
+    });
+  }
+}
+
+async function driveSteps(loop: Loop, deps: AgentDeps, approved?: ToolCall): Promise<AgentResult> {
   const { log, budget } = deps;
   const model = loop.provider.model;
+  // Nothing awaits before this in any entry, so this is the turn's start —
+  // a resume's own (Improvement plan §3 T3).
+  const now = deps.now ?? Date.now;
+  const deadlineAt = now() + TURN_DEADLINE_MS;
+  const pastDeadline = (): boolean => now() >= deadlineAt;
 
   const ranTools = () => ({
     ...(loop.ran.length > 0 ? { tools: [...loop.ran] } : {}),
@@ -750,6 +779,17 @@ async function drive(loop: Loop, deps: AgentDeps, approved?: ToolCall): Promise<
     tainted: loop.tainted,
     ...ranTools(),
   });
+  /**
+   * The deadline passed: no model call or tool starts. A deadline, not
+   * `max_calls`: the pipeline then runs neither the parser nor the read-only
+   * try, so nothing past it can reach a model or act.
+   */
+  const deadlineHit = (): AgentResult => {
+    if (loop.reserved) budget.release(loop.reserved);
+    loop.reserved = undefined;
+    log.info('agent_deadline', { model, calls: loop.calls });
+    return failed('deadline');
+  };
 
   /** What a pause stores: the conversation up to and including the call that paused it. */
   const paused = (toolCall: ToolCall, tool: ToolName, callStored: boolean): SuspendedCommon => {
@@ -835,6 +875,7 @@ async function drive(loop: Loop, deps: AgentDeps, approved?: ToolCall): Promise<
   };
 
   if (approved) {
+    if (pastDeadline()) return deadlineHit();
     const ended = await act(approved, true);
     if (ended) return ended;
   }
@@ -845,6 +886,7 @@ async function drive(loop: Loop, deps: AgentDeps, approved?: ToolCall): Promise<
   const maxCompletion = loop.provider.maxCompletionTokens ?? DEFAULT_MAX_COMPLETION_TOKENS;
 
   while (loop.calls < maxModelCalls) {
+    if (pastDeadline()) return deadlineHit();
     const call = loop.calls;
     // Text-only once a read has answered (a phone's included), once the user
     // declined access, and on the last call: the model can only word the
@@ -915,6 +957,7 @@ async function drive(loop: Loop, deps: AgentDeps, approved?: ToolCall): Promise<
 
     // One tool call per model call. A second one in the same response is not
     // run: the next call can ask for it once it has seen this one's result.
+    if (pastDeadline()) return deadlineHit();
     const ended = await act(toolCall, false);
     if (ended) return ended;
   }
@@ -953,6 +996,7 @@ async function runToolCall(call: ToolCall, loop: Loop, log: Logger, approved: bo
   // cannot move the time, judged against everything said in the turn but the
   // system prompt (2026-10-08). Shape only; strict Zod still runs next.
   args = fillUnstatedTime(tool, args, conversationText(loop.messages));
+  args = liftMonthFromDate(tool, args);
 
   // The arguments are model output, and pass the same strict schema a parsed
   // draft does (plan invariant 3). Issue paths are slot names, never values.

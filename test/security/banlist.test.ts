@@ -58,6 +58,21 @@ describe('ban-list scan', () => {
     expect(offenders).toEqual([]);
   });
 
+  // A tripwire for the obvious form only (Improvement plan §3 T5). The guarantee
+  // is the canary in `error-log-canary.test.ts`; a local variable gets past this.
+  const ERROR_TEXT_AS_CODE = /errorCode:\s*[^,\n}]*\.message\b/;
+
+  it('trips on a fixture that logs error text as errorCode', () => {
+    expect(ERROR_TEXT_AS_CODE.test('log.error("x", { errorCode: e.message });')).toBe(true);
+    expect(ERROR_TEXT_AS_CODE.test("errorCode: error instanceof Error ? error.message : 'E_UNKNOWN',")).toBe(true);
+    expect(ERROR_TEXT_AS_CODE.test('errorCode: errorCodeOf(error),')).toBe(false);
+  });
+
+  it('logs no error text as errorCode', () => {
+    const offenders = FILES.filter((f) => ERROR_TEXT_AS_CODE.test(f.code)).map((f) => f.path);
+    expect(offenders).toEqual([]);
+  });
+
   it('imports Cloudflare-only APIs from src/platform alone', () => {
     // DurableObjectState / DurableObjectStorage are ambient Workers types, so
     // the check is on usage, not on import statements.

@@ -15,6 +15,6 @@ import { toolCatalog } from '../../../src/tools/registry.js';
 describe('the tool catalog in the prompt', () => {
   it('has not changed without an eval', () => {
     const digest = createHash('sha256').update(JSON.stringify(toolCatalog())).digest('hex');
-    expect(digest).toBe('f715d20226940bced5380e945f7eff47183bf02119755f6ab040427d9afe6020');
+    expect(digest).toBe('5366b2fa32204034f64dc30af70249a4cffa1c3ba5c1c24a46aba53eb6bd2145');
   });
 });

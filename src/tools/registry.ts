@@ -418,7 +418,7 @@ export const REGISTRY: Readonly<Record<ToolName, ToolSpec>> = {
     name: 'calendar.list_events',
     dataSource: 'calendar',
     consent: 'always',
-    llmDescription: 'List calendar events for a day or range.',
+    llmDescription: 'List calendar events, past or future. days_ago: 1 = yesterday.',
     draftSchema: calendarListEventsSlots,
     tier: 0,
     scopes: [EVENTS_OWNED],

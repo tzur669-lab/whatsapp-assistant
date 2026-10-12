@@ -590,6 +590,13 @@ async function respondWithModels(
     else return answered;
   }
 
+  // The turn ran out of time (Improvement plan §3 T3): no parser, no read-only
+  // try — nothing past the deadline may reach a model or act.
+  if (agentFailure === 'deadline') {
+    repo.markInboundOutcome(event.wamid, { decision: 'CLARIFY', errorCode: 'E_AGENT_DEADLINE' });
+    return { action: 'reply', text: he.agentFailed(agentFailure) };
+  }
+
   // 3b. The LLM as a parser: the path before the agent, and its fallback.
   const nlu = services.tokenBudget
     ? meterParsers(services.nlu, services.tokenBudget, scope)
@@ -722,7 +729,7 @@ async function missCommand(
 }
 
 /** Failures of the turn itself, not of the model: another model would hit them too. */
-const TURN_SHAPE_FAILURES: ReadonlySet<string> = new Set(['turn_token_cap', 'max_calls']);
+const TURN_SHAPE_FAILURES: ReadonlySet<string> = new Set(['turn_token_cap', 'max_calls', 'deadline']);
 
 /**
  * One agent turn (PLAN §6.19). Returns `fellBack`, with why, to hand the
@@ -838,6 +845,7 @@ async function respondWithAgent(
           providers: readOnly ? (agent.fallbackProviders ?? []) : [...smartModels, ...agent.providers],
           budget: agent.budget,
           log,
+          now: deps.now,
           ...(options.scope ? { scope: options.scope } : {}),
           ...(agent.legacyCatalog ? { legacyCatalog: true } : {}),
         },
@@ -1044,7 +1052,7 @@ export async function resumeFromPhone(
     // What the conversation allows now (slice 5): a resumed turn asks no one.
     const granted = smart && agent.consents ? agent.consents.list(principal, state.conversation ?? '') : [];
     const result = await timed(deps, 'agent', () =>
-      resumeAgentTurn(state, request.result, turn, { providers, budget: agent.budget, log }, granted),
+      resumeAgentTurn(state, request.result, turn, { providers, budget: agent.budget, log, now: deps.now }, granted),
     );
     log.info('agent_resumed', { wamid: request.wamid, readStatus: request.result.status, itemCount: request.result.items.length });
 
@@ -1137,7 +1145,7 @@ async function consentAnswer(
     const turn = turnOf(deps, { sentAtMs, forwarded: false }, now, { kind: 'text' }, state.lang);
     const providers = [...(agent.smartProviders ?? []), ...agent.providers];
     const result = await timed(deps, 'agent', () =>
-      resumeAfterConsent(state, decision, consents.list(principal, conversation), turn, { providers, budget: agent.budget, log }),
+      resumeAfterConsent(state, decision, consents.list(principal, conversation), turn, { providers, budget: agent.budget, log, now: deps.now }),
     );
 
     if (result.kind === 'suspend') {

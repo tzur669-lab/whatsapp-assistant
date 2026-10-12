@@ -1,9 +1,13 @@
 /**
  * The only logger the app may use (CLAUDE.md, PLAN §6.9).
  *
- * It is an allow-shaped redactor: known-sensitive keys are dropped outright at
- * every depth, long strings are truncated, and phone numbers are replaced by a
- * keyed hash. A canary test asserts nothing sensitive reaches the sink.
+ * It is a denylist redactor: known-sensitive keys are dropped outright at
+ * every depth, and long strings are truncated. Values under any other key pass
+ * as they are, so nothing here hashes or masks a phone number found in a value;
+ * callers log a principal through `hashPrincipal`. An `errorCode` that does not
+ * look like a code is replaced as a backup check only — the guarantee is that
+ * call sites never log error text. Canary tests assert nothing sensitive reaches
+ * the sink.
  */
 import { hmacSha256Hex } from './hmac.js';
 import { normalizeWaId } from './allowlist.js';
@@ -100,6 +104,8 @@ export const BANNED_LOG_FIELDS = [
 const BANNED = new Set<string>(BANNED_LOG_FIELDS);
 const MAX_STRING = 128;
 const MAX_DEPTH = 4;
+/** Printable ASCII, no whitespace, at most 64 characters (Improvement plan §3 T5). */
+const ERROR_CODE_SHAPE = /^[!-~]{1,64}$/;
 
 export type LogLevel = 'debug' | 'info' | 'warn' | 'error';
 export type LogFields = Record<string, unknown>;
@@ -124,8 +130,8 @@ export function createLogger(base: LogFields = {}): Logger {
       ts: new Date().toISOString(),
       level,
       event,
-      ...(redact(base, 0) as LogFields),
-      ...(redact(fields ?? {}, 0) as LogFields),
+      ...(redact(checkErrorCode(base), 0) as LogFields),
+      ...(redact(checkErrorCode(fields ?? {}), 0) as LogFields),
     };
     // eslint-disable-next-line no-console -- this is the single sanctioned sink.
     console.log(safeStringify(record));
@@ -139,7 +145,20 @@ export function createLogger(base: LogFields = {}): Logger {
   };
 }
 
-function redact(value: unknown, depth: number, seen = new WeakSet<object>()): unknown {
+/** An `errorCode` that is not code-shaped is logged as `E_UNCLASSIFIED`. */
+function checkErrorCode(fields: LogFields): LogFields {
+  const code = fields['errorCode'];
+  if (code === undefined || code === null) return fields;
+  if (typeof code === 'string' && ERROR_CODE_SHAPE.test(code)) return fields;
+  return { ...fields, errorCode: 'E_UNCLASSIFIED' };
+}
+
+/**
+ * `ancestors` holds the objects on the path from the root to this value: one
+ * that is its own ancestor is a real cycle, while one shared by two siblings is
+ * logged in full each time.
+ */
+function redact(value: unknown, depth: number, ancestors = new Set<object>()): unknown {
   if (value === null || value === undefined) return value;
 
   if (typeof value === 'string') {
@@ -149,20 +168,23 @@ function redact(value: unknown, depth: number, seen = new WeakSet<object>()): un
   if (typeof value !== 'object') return undefined;
 
   if (depth >= MAX_DEPTH) return '[depth]';
-  if (seen.has(value as object)) return '[circular]';
-  seen.add(value as object);
+  if (ancestors.has(value)) return '[circular]';
+  ancestors.add(value);
+  try {
+    if (Array.isArray(value)) {
+      return value.slice(0, 20).map((v) => redact(v, depth + 1, ancestors));
+    }
 
-  if (Array.isArray(value)) {
-    return value.slice(0, 20).map((v) => redact(v, depth + 1, seen));
+    const out: LogFields = {};
+    for (const [key, v] of Object.entries(value as LogFields)) {
+      if (BANNED.has(key)) continue;
+      const cleaned = redact(v, depth + 1, ancestors);
+      if (cleaned !== undefined) out[key] = cleaned;
+    }
+    return out;
+  } finally {
+    ancestors.delete(value);
   }
-
-  const out: LogFields = {};
-  for (const [key, v] of Object.entries(value as LogFields)) {
-    if (BANNED.has(key)) continue;
-    const cleaned = redact(v, depth + 1, seen);
-    if (cleaned !== undefined) out[key] = cleaned;
-  }
-  return out;
 }
 
 function safeStringify(record: unknown): string {

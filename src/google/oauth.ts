@@ -25,7 +25,8 @@ export const REVOKE_ENDPOINT = 'https://oauth2.googleapis.com/revoke';
  */
 export const GOOGLE_SCOPES = GRANTS.calendar.scopes;
 
-const TOKEN_TIMEOUT_MS = 10_000;
+/** Exported for the agent's write bound (`agent/limits.ts`). */
+export const TOKEN_TIMEOUT_MS = 10_000;
 
 export type Pkce = { verifier: string; challenge: string };
 

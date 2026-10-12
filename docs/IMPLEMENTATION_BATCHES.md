@@ -264,6 +264,8 @@ Order: T5-1, then T5-2.
 - Tests and checks: test first. Full suite green.
 - Completion boundary: as above.
 - Plan ref: §3 T5 steps 3–5.
+- Carry forward: done 2026-10-12. A plain `new Error('E_…')` thrown by a tool now logs as
+  `Error` at the three sites; give such a failure a code-carrying class if its code matters.
 
 ### Batch 06: turn deadline, its outcome and its bounds (P2)
 
@@ -313,7 +315,9 @@ Order: T3-1, then T3-2.
   green.
 - Completion boundary: the enumeration is written down with file references.
 - Plan ref: §3 T3 step 1, "Validation"; step 4.
-- Carry forward: start M6. T8-1 (optional) is now unblocked.
+- Carry forward: start M6. T8-1 (optional) is now unblocked. Done 2026-10-12: `MAX_WRITE_MS` came
+  out as 3 calls (`tasks.add`), so `LOCK_TTL_MS` is 220 s, not about 180 s. Reads and model calls in
+  flight at the deadline still run to their own timeouts until Batch 07.
 
 ### Batch 07: cancel reads and model calls at the deadline (P2)
 
