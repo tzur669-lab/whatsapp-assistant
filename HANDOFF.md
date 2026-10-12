@@ -145,10 +145,15 @@ Network on the hotspot: `NODE_OPTIONS=--dns-result-order=ipv4first` for wrangler
 
 ## 8. Session log (docs)
 
+- 2026-10-12: Batch 05 done: `errorCodeOf` in `orchestrator.ts` (no error
+  text in `errorCode`), new `test/security/error-log-canary.test.ts`, a
+  ban-list tripwire, `E_UNCLASSIFIED` and ancestor-only cycle check in
+  `redact.ts`. No new modules or tables.
+
 - 2026-10-12: Batch 04 done: a smart suspended turn stores `historySources`
   (`turns.ts`); `mayResend` in `loop.ts` ends a resume whose history or tool
   results hold a source not allowed now (no model call). "This time" = one
-  turn (D1), written in `consents.ts` and PLAN §6.19. No new modules or tables.
+  turn (D1), written in `consents.ts` and PLAN §6.19. No new modules or tables. Staging deployed with Batches 02–04 (d76e775c).
 
 - 2026-10-12: Batch 03 done (decisions D1 = placeholder, D2 = yes): history
   entries carry `src` (`history.ts` `provenanceOf`, `replayByConsent`); a
