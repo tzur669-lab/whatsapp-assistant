@@ -550,6 +550,14 @@ describe('screen.task, the tool', () => {
     expect(selectTools('סוכן מסך תחפש סטימצקי', offered).tools).toContain('screen.task');
     expect(selectTools('תזכיר לי מחר בשמונה, סוכן מסך', offered).tools).toContain('screen.task');
   });
+
+  it('stays offered when the words also name a routine (found on the phone, 2026-10-12)', () => {
+    const both = agentToolNames({ cards: true, screen: true, routines: true });
+    const selection = selectTools('סוכן מסך תחפש בפיד סטימצקי', both);
+    expect(selection.tools).toContain('screen.task');
+    expect(selection.tools).toContain('routine.run');
+    expect(selection.groups).toEqual(['time', 'routine', 'screen']);
+  });
 });
 
 describe("the phone's bodies (ProtocolTest.kt vectors)", () => {

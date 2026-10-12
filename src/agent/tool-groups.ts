@@ -190,10 +190,16 @@ export function selectTools(text: string, offered: readonly ToolName[]): Selecti
   const full = { tools: [...offered], groups: [] };
   // Code found a routine named and the words name nothing else: the routine and
   // the time tools ("תזכיר לי לפתוח את פיד" is still a reminder). The whole
-  // catalog with the routine on top passed the turn cap (2026-10-11).
+  // catalog with the routine on top passed the turn cap (2026-10-11). The
+  // screen agent, when offered too, stays: a routine named "פיד" must not hide
+  // "סוכן מסך תחפש בפיד" (found on the phone, 2026-10-12).
   if (groups.length === 0 && offered.includes('routine.run')) {
-    const members = new Set<ToolName>(['routine.run', ...GROUPS.time]);
-    return { tools: offered.filter((tool) => members.has(tool)), groups: ['time', 'routine'] };
+    const withScreen = offered.includes('screen.task');
+    const members = new Set<ToolName>(['routine.run', ...GROUPS.time, ...(withScreen ? (['screen.task'] as const) : [])]);
+    return {
+      tools: offered.filter((tool) => members.has(tool)),
+      groups: withScreen ? ['time', 'routine', 'screen'] : ['time', 'routine'],
+    };
   }
   // The screen agent named and nothing else: it, and the phone's tools
   // ("תפתח את פיד" may still mean only opening the app).
