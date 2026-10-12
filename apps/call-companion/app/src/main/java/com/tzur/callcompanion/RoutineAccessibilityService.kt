@@ -129,6 +129,8 @@ class RoutineAccessibilityService : AccessibilityService() {
         open(routine.packageName, launch, deadline)?.let { return RoutineLogic.failure(0, -1, it) }
 
         var tapped = 0
+        // The field the last tap put the cursor in: typing goes only there (0.13.5).
+        var anchor: RoutineLogic.Step? = null
         routine.steps.forEachIndexed { index, step ->
             if (SystemClock.uptimeMillis() > deadline) return RoutineLogic.failure(tapped, index, "deadline")
             if (locked()) return RoutineLogic.failure(tapped, index, "locked")
@@ -163,15 +165,16 @@ class RoutineAccessibilityService : AccessibilityService() {
                         RoutineLogic.Pick.None -> return RoutineLogic.failure(tapped, index, "target_not_found")
                         RoutineLogic.Pick.Disabled -> return RoutineLogic.failure(tapped, index, "target_disabled")
                         is RoutineLogic.Pick.Many -> return RoutineLogic.failure(tapped, index, "target_ambiguous")
-                        // Only the field anchor answers it; not wired into runs yet (T4-3).
                         RoutineLogic.Pick.FieldChanged -> return RoutineLogic.failure(tapped, index, "field_changed")
                         is RoutineLogic.Pick.One -> {
                             // A dry run stops at the first action: everything before it was found.
                             if (dryRun) return RoutineLogic.Result(RoutineLogic.Outcome.DRY_RUN_OK, index)
-                            if (!click(nodes[pick.index], routine.packageName)) {
+                            val target = nodes[pick.index]
+                            if (!click(target, routine.packageName)) {
                                 return RoutineLogic.failure(tapped, index, guardReason(routine) ?: "tap_refused")
                             }
                             tapped++
+                            anchor = RoutineLogic.anchorAfter(anchor, step, target.isEditable)
                             lastChangeAt = SystemClock.uptimeMillis()
                         }
                     }
@@ -179,13 +182,12 @@ class RoutineAccessibilityService : AccessibilityService() {
 
                 RoutineLogic.Kind.TYPE_TEXT, RoutineLogic.Kind.SUBMIT -> {
                     val submit = step.kind == RoutineLogic.Kind.SUBMIT
-                    val (nodes, pick) = findTarget(routine.packageName, deadline) { RoutineLogic.pickField(it, needFocus = submit) }
+                    val (nodes, pick) = findTarget(routine.packageName, deadline) { RoutineLogic.anchoredField(it, anchor, needFocus = submit) }
                         ?: return RoutineLogic.failure(tapped, index, guardReason(routine) ?: "app_not_front")
                     when (pick) {
                         RoutineLogic.Pick.None -> return RoutineLogic.failure(tapped, index, "target_not_found")
                         RoutineLogic.Pick.Disabled -> return RoutineLogic.failure(tapped, index, "target_disabled")
                         is RoutineLogic.Pick.Many -> return RoutineLogic.failure(tapped, index, "target_ambiguous")
-                        // Only the field anchor answers it; not wired into runs yet (T4-3).
                         RoutineLogic.Pick.FieldChanged -> return RoutineLogic.failure(tapped, index, "field_changed")
                         is RoutineLogic.Pick.One -> {
                             if (dryRun) return RoutineLogic.Result(RoutineLogic.Outcome.DRY_RUN_OK, index)
@@ -223,7 +225,10 @@ class RoutineAccessibilityService : AccessibilityService() {
             waitUntilStable(deadline)
             val (nodes, infos) = snapshot(packageName) ?: return null
             val chosen = pick(infos)
-            if (chosen != RoutineLogic.Pick.None || SystemClock.uptimeMillis() >= until) return nodes to chosen
+            // A field the tap just focused may take a moment to report it: looked
+            // at again, like a target not there yet, before "field_changed".
+            val again = chosen == RoutineLogic.Pick.None || chosen == RoutineLogic.Pick.FieldChanged
+            if (!again || SystemClock.uptimeMillis() >= until) return nodes to chosen
             SystemClock.sleep(POLL_MS)
         }
     }

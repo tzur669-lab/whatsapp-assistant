@@ -158,8 +158,8 @@ export const he = {
    */
   smartUnavailable(lang: 'he' | 'en'): string {
     return lang === 'en'
-      ? 'Smart mode is not available right now. This answer is from the local model.'
-      : 'המצב החכם לא זמין כרגע. התשובה מהמודל המקומי.';
+      ? "Smart mode is not available right now. This answer is from the regular conversation's model (Groq)."
+      : 'המצב החכם לא זמין כרגע. התשובה מהמודל של השיחה הרגילה (⁨Groq⁩).';
   },
 
   /** `/forget` (§6.19). */

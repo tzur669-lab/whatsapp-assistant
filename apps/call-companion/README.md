@@ -183,7 +183,7 @@ card to the event's place, if it has one. The card can be claimed for two hours.
 ## Smart or local (0.12)
 
 ＋ asks which conversation to open: **✨ שיחה חכמה** (Gemini's free tier on the
-server, PLAN §6.19) or **שיחה מקומית** (the assistant as before). The choice
+server, PLAN §6.19) or **שיחה רגילה** (the assistant as before, on Groq's servers; labelled "local" before 0.13.5, still `mode: 'local'` on the wire). The choice
 says that Google may train on a smart conversation's content and human
 reviewers may read it, and that personal data reaches the model only after a
 consent card. The mode is fixed for the conversation's life and shown as a

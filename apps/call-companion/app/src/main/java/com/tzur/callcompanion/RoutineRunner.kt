@@ -29,11 +29,15 @@ object RoutineRunner {
 
     private val synced = AtomicBoolean(false)
 
-    /** Reasons the server knows; anything else is reported as `error`. */
-    private val REASONS = setOf(
+    /**
+     * Reasons the server knows; anything else is reported as `error`. Must
+     * hold every one of the server's `RUN_REASONS` (`RoutineReasonsTest`
+     * reads them from `src/render/routines.ts`).
+     */
+    internal val REASONS = setOf(
         "locked", "app_missing", "app_not_front", "launch_confirm", "app_left", "text_not_found",
-        "not_verified", "target_not_found", "target_disabled", "target_ambiguous", "tap_refused",
-        "deadline", "changed", "service_off", "error",
+        "not_verified", "target_not_found", "target_disabled", "target_ambiguous", "field_changed",
+        "tap_refused", "deadline", "changed", "service_off", "error",
     )
 
     /** From the push, on FCM's thread. */

@@ -40,13 +40,13 @@
     <!-- The kind of a new conversation (0.12): fixed for its life -->
     <string name="mode_choose_title">איזו שיחה לפתוח?</string>
     <string name="mode_smart">✨ שיחה חכמה</string>
-    <string name="mode_smart_note">פועלת עם &#x2068;Gemini&#x2069; בחינם. &#x2068;Google&#x2069; רשאית לאמן מודלים על התוכן, ובודקים אנושיים עשויים לקרוא אותו. מידע אישי נשלח למודל רק אחרי אישור בכרטיס.</string>
+    <string name="mode_smart_note">פועלת עם &#x2068;Gemini&#x2069; בחינם. &#x2068;Google&#x2069; רשאית לאמן מודלים על התוכן, ובודקים אנושיים עשויים לקרוא אותו. מידע אישי נשלח למודל רק אחרי אישור בכרטיס. אישור לכל השיחה נשאר בתוקף עד סופה, ואפשר לבטל אותו עם &#x2068;/consents&#x2069;. כש־&#x2068;Gemini&#x2069; לא זמין, עונה המודל של השיחה הרגילה ב־&#x2068;Groq&#x2069;.</string>
     <string name="mode_smart_unavailable">לא זמינה כרגע</string>
-    <string name="mode_local">שיחה מקומית</string>
-    <string name="mode_local_note">העוזר הרגיל, כמו עד עכשיו.</string>
+    <string name="mode_local">שיחה רגילה</string>
+    <string name="mode_local_note">העוזר הרגיל, כמו עד עכשיו. רץ על מודלים בשרתים של &#x2068;Groq&#x2069;, לא על הטלפון.</string>
     <string name="mode_fixed">אי אפשר לשנות את סוג השיחה אחרי שהיא נפתחת.</string>
     <string name="mode_badge_smart">✨ חכמה</string>
-    <string name="mode_badge_local">מקומית</string>
+    <string name="mode_badge_local">רגילה</string>
     <string name="guide_open">📖 מדריך ופקודות</string>
     <string name="quota_open">📊 מכסות</string>
     <string name="location_on">📍 מיקום למזג אוויר: פועל</string>
