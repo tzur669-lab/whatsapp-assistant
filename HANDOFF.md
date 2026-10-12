@@ -146,6 +146,9 @@ Network on the hotspot: `NODE_OPTIONS=--dns-result-order=ipv4first` for wrangler
 
 ## 8. Session log (docs)
 
+- 2026-10-12: Staging deployed (db0fe6f4) with Batches 05–06 and the calendar's
+  past reads. No migration, no app change.
+
 - 2026-10-12: `calendar.list_events` reads past and future with no limit:
   `days_ago`, `last_week`/`this_month`/`last_month`/`next_month`, `month`/`year`
   (read windows in `time/range.ts`); `DateSpec` years from 1970. Catalog
