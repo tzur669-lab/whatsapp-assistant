@@ -54,9 +54,22 @@ internal class ScreenRun(private val app: Context, private val task: ScreenAgent
             if (late()) return end("deadline", report)
             if (step > task.maxSteps) return end("step_limit", report)
             if (ScreenAllowStore.get(app, task.packageName) == null) return end("not_allowed", report)
-            val nodes = ops.read(task.deadline)
+            var nodes = ops.read(task.deadline)
                 ?: return if (task.stopped) stopped(report) else end(ops.whyNotFront(), report)
-            val elements = ScreenLogic.elements(nodes, task.packageName)
+            var elements = ScreenLogic.elements(nodes, task.packageName)
+            // An app still loading reads as nothing labelled (found on the phone,
+            // 2026-10-12: FID's splash ended the task `tree_unusable`). Read again
+            // a few times before the server judges it.
+            var rereads = 0
+            while (!ScreenLogic.usable(elements) && rereads < UNUSABLE_REREADS) {
+                pause(UNUSABLE_WAIT_MS)
+                if (task.stopped) return stopped(report)
+                if (late()) return end("deadline", report)
+                rereads++
+                nodes = ops.read(task.deadline)
+                    ?: return if (task.stopped) stopped(report) else end(ops.whyNotFront(), report)
+                elements = ScreenLogic.elements(nodes, task.packageName)
+            }
             val body = Protocol.screenStepBody(task.taskId, step, ScreenLogic.screenHash(elements), elements, report)
             when (val ex = exchange(body)) {
                 is Ex.Fail -> return failWith(ex.code, report)
@@ -147,6 +160,9 @@ internal class ScreenRun(private val app: Context, private val task: ScreenAgent
         if (ScreenJournal.get(app, actionId) == null) ScreenJournal.move(app, task.taskId, actionId, Event.HOLD)
         if (task.stopped) return refuseAndEnd(actionId, "stopped")
         if (ScreenAllowStore.get(app, task.packageName) == null) return refuseAndEnd(actionId, "not_allowed")
+        // Approved in the chat on this phone: the bot's own app is in front now.
+        // Bring the task's app back as it was; the binding still decides.
+        if (!ops.inFront()) ops.open(task.deadline)?.let { return refuseAndEnd(actionId, it) }
         val located = locate(actionId, answer.action) ?: return false
         val own = ownClass(answer.action, located)
         ScreenLogic.grantProblem(
@@ -432,5 +448,8 @@ internal class ScreenRun(private val app: Context, private val task: ScreenAgent
         const val RETRY_MS = 2_000L
         /** Answers missing in a row before the task ends `unreachable`. */
         const val MAX_FAILURES = 3
+        /** Reads of a screen with nothing labelled to tap, a second apart, before it is sent as it is. */
+        const val UNUSABLE_REREADS = 6
+        const val UNUSABLE_WAIT_MS = 1_000L
     }
 }

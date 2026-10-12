@@ -443,6 +443,9 @@ class RoutineAccessibilityService : AccessibilityService() {
 
         fun locked(): Boolean = (getSystemService(Context.KEYGUARD_SERVICE) as KeyguardManager).isKeyguardLocked
 
+        /** Whether the task's app is the window in front. */
+        fun inFront(): Boolean = rootInActiveWindow?.packageName?.toString() == packageName
+
         /** Why the task's app is not readable now: an end code. */
         fun whyNotFront(): String = if (locked()) "locked" else "left_app"
 

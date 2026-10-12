@@ -5,7 +5,7 @@ system is, where things live, and what breaks easily, then links out. It does
 **not** repeat the rules in `CLAUDE.md` (always loaded) or the spec in
 `PLAN.md` (read by section, never whole).
 
-_Last updated: 2026-10-12 · server at migration 0030 · agent prompt a10 + smart note s2 + screen step s1 · parser prompt v6 · app 0.14.0 · smart model gemini-3.5-flash-lite_
+_Last updated: 2026-10-12 · server at migration 0030 · agent prompt a10 + smart note s2 + screen step s1 · parser prompt v6 · app 0.14.1 · smart model gemini-3.5-flash-lite_
 
 ## 1. What this is
 
@@ -116,7 +116,7 @@ Network on the hotspot: `NODE_OPTIONS=--dns-result-order=ipv4first` for wrangler
   s2 — its `--filter` evals are owed. Open items in PLAN §13 (limits probe,
   Gemini calibration, s2 evals).
 - **Screen agent** (PLAN §6.28, plan `docs/plans/screen-agent.md`, ROADMAP
-  block I): phases 1–2 built (server migration 0030, app 0.14.0); staging
+  block I): phases 1–2 built (server migration 0030, app 0.14.1 on the phone); staging
   deployed 2026-10-12 (9643484a). Owed, in order (PLAN §13): `pnpm eval:screen`
   and `eval:agent --filter scr-` on qwen with a human read, then the 0.14.0
   APK and the phone checks. Phase 3 needs its own plan.
@@ -156,6 +156,16 @@ Network on the hotspot: `NODE_OPTIONS=--dns-result-order=ipv4first` for wrangler
 | [SETUP.md](SETUP.md) | Setting up a new copy from zero: accounts, Groq key, models, secrets, deploy, app, AI agent. |
 
 ## 8. Session log (docs)
+
+- 2026-10-12: First phone run of the screen agent (staging 9c5e9299, app
+  0.14.1). Fixed: a routine named for the app hid `screen.task`
+  (`selectTools`); "פיד" vs the phone's label "Fid" (`soundOf` in
+  `findApp`/`namesScreenTask`); a still-loading app ended the task
+  `tree_unusable` (`ScreenRun` reads again up to 6 s); a chat approval left
+  the app behind (`released` brings it back, `ScreenOps.inFront`). The run
+  reached step 1 (type, held for "ask every tap"), approved, then
+  `screen_changed` (the map tab grew chips). The day's 3 calls were spent
+  (a refused call counts); `done` on the phone is still owed.
 
 - 2026-10-12: Staging deployed (9643484a) with the screen agent (migration
   0030); the five `/app/screen/*` routes answer 401 unsigned.
