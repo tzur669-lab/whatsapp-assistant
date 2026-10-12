@@ -43,6 +43,8 @@ export const MODE_MISMATCH_ERROR = 'E_MODE_MISMATCH';
 
 /** Conversation modes and consents unused this long are purged (smart conversations). */
 export const CONVERSATION_MODE_RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
+/** How long an audit row is kept (D3, the user's decision 2026-10-12). Rate limits need 24 hours. */
+export const AUDIT_RETENTION_MS = 90 * 24 * 60 * 60 * 1000;
 
 export type OutboundRecord = {
   wamid: string;
@@ -271,6 +273,14 @@ export class Repository {
   }
 
   /** Purge inbound records past their retention window (PLAN §6.8: 30 days). */
+  /**
+   * Delete audit rows older than `cutoffMs` (T11, D3). They hold no content;
+   * rate limits read only the last 24 hours. Returns how many were deleted.
+   */
+  purgeAuditBefore(cutoffMs: number): number {
+    return this.sql.exec('DELETE FROM audit_log WHERE ts < ? RETURNING id', cutoffMs).length;
+  }
+
   purgeInboundBefore(cutoffMs: number): void {
     this.sql.exec('DELETE FROM inbound_messages WHERE received_at < ?', cutoffMs);
   }

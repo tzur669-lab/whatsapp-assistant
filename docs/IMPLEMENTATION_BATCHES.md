@@ -33,8 +33,8 @@ The execution order for `docs/IMPROVEMENT_PLAN.md`, the evidence and design refe
 |---|---|---|---|
 | D1 | Should a "this time" approval's reply stay in the smart history for follow-ups (today), or become a placeholder? | Placeholder — **decided 2026-10-12: placeholder** (Batch 03's filter already does it; T1-4 adds its test and docs) | T1-4 |
 | D2 | At T1 deploy, accept losing up to 12 h of smart-conversation context once, since legacy entries are replayed as placeholders? | Yes — **decided 2026-10-12: yes** | T1-2 |
-| D3 | How many days to keep delivered or cancelled reminders (and old audit rows)? | — | T11-1 (optional) |
-| D4 | Keep the regular mode's label "local", explained by its note, or rename it? | Rename | the label part of T6b-1 (the note text is not blocked) |
+| D3 | How many days to keep delivered or cancelled reminders (and old audit rows)? | 90 — **decided 2026-10-12: 90 days** | T11-1 (optional) |
+| D4 | Keep the regular mode's label "local", explained by its note, or rename it? | Rename — **decided 2026-10-12: rename** («שיחה רגילה») | the label part of T6b-1 (the note text is not blocked) |
 
 **Before Batch 01:** no decision is needed. Batches 01–02 are decision-free.
 **Before Batch 03:** D2. **Before Batch 04:** D1. **Before Batch 09:** D4.
@@ -444,6 +444,10 @@ label part of T6b-1 only.
 - Tests and checks: `./gradlew testDebugUnitTest`; the server suite. **Device: M4.** Unit tests do
   not establish behaviour in real Android apps.
 - Completion boundary: **not done until M4 passes**, the FID routine included.
+- Carry forward: code done 2026-10-12, APK 0.13.5 (versionCode 22) built after the staging deploy
+  1cf2b868 that has `field_changed`. `findTarget` looks again at `FieldChanged` like `None` (up to
+  10 s), so a field the tap just focused has time to report it. `RoutineReasonsTest` reads
+  `RUN_REASONS` from `src/render/routines.ts` and checks both ways. **M4 is owed.**
 - Risks: install the APK only after the staging server has the new reason.
 - Plan ref: §3 T4; §6, "Physical Android device".
 
@@ -462,6 +466,11 @@ label part of T6b-1 only.
   - The wire value `mode: 'local'` is unchanged.
 - Tests and checks: `./gradlew testDebugUnitTest`; the strings checked on the phone, as part of M4.
 - Completion boundary: the strings are reviewed by the user.
+- Carry forward: done 2026-10-12 with D4 = rename: `mode_local` «שיחה רגילה», badge «רגילה»; the
+  regular note names Groq's servers; the smart note adds the Groq fallback and that an approval
+  for the conversation lasts to its end (revocable with /consents). The server's
+  `he.smartUnavailable` no longer says "the local model". The user still reviews the strings on
+  the phone (M4).
 - Plan ref: §3 T6, "Disclosure gap", "Two permissions".
 
 ### Batch 10: production readiness of the write gate (P1/P2)
@@ -565,6 +574,10 @@ This is a single task because it needs a product decision and its own repeat-rem
 - Scope: `runMaintenance` in `src/platform/assistant-do.ts`; `src/tools/reminder-store.ts`;
   `src/core/repo.ts`.
 - Depends on: **D3**; reading the repeat-reminder semantics first.
+- Carry forward: done 2026-10-12, D3 = 90 days. `ReminderStore.purgeSettledBefore` (sent, done,
+  failed, cancelled; both `due_at_utc` and `updated_at` past the cutoff) and
+  `Repository.purgeAuditBefore`, from `runMaintenance` (the daily cron). `reminder_series` rows are
+  kept.
 - Acceptance:
   - Only terminal reminder rows older than N days are deleted.
   - `scheduled` and `sending` rows, and anything a recurrence depends on, are untouched.

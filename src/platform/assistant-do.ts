@@ -7,7 +7,7 @@
  * storage handle, and the alarm. Everything else is plain TypeScript underneath
  * (CLAUDE.md invariant 11).
  */
-import { CONVERSATION_MODE_RETENTION_MS, MODE_MISMATCH_ERROR, Repository } from '../core/repo.js';
+import { AUDIT_RETENTION_MS, CONVERSATION_MODE_RETENTION_MS, MODE_MISMATCH_ERROR, Repository } from '../core/repo.js';
 import { handleInbound, resumeFromPhone } from '../core/pipeline.js';
 import type { PipelineOutcome, Services } from '../core/pipeline.js';
 import { snoozeButtons, SNOOZE_TOOL } from '../core/orchestrator.js';
@@ -19,7 +19,7 @@ import type { WaFailure } from '../channels/whatsapp/errors.js';
 import { createVoiceTranscriber } from '../channels/whatsapp/voice.js';
 import { createGroqWhisperProvider, WHISPER_MODEL } from '../voice/groq-whisper.js';
 import { buildNluChain } from '../nlu/index.js';
-import { ReminderStore } from '../tools/reminder-store.js';
+import { ReminderStore, SETTLED_RETENTION_MS } from '../tools/reminder-store.js';
 import type { ClaimedReminder } from '../tools/reminder-store.js';
 import { MAX_EXPIRY_MS, PendingActions } from '../confirm/pending.js';
 import { cardPreview } from '../render/phone.js';
@@ -680,6 +680,10 @@ export class AssistantDO implements DurableObject {
   async runMaintenance(): Promise<void> {
     this.repo.purgeInboundBefore(Date.now() - RETENTION_INBOUND_MS);
     this.repo.purgeOutboundBefore(Date.now() - RETENTION_INBOUND_MS);
+    // Rows that ended long ago (T11, D3 = 90 days): counts only in the log.
+    const settled = this.reminders.purgeSettledBefore(Date.now() - SETTLED_RETENTION_MS);
+    const audited = this.repo.purgeAuditBefore(Date.now() - AUDIT_RETENTION_MS);
+    if (settled + audited > 0) this.log.info('retention_purged', { reminders: settled, audit: audited });
     this.pending.expireStale();
     this.pending.purgeOld();
     this.history.purgeExpired();

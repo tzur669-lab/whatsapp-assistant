@@ -64,11 +64,33 @@ export type ClaimedReminder = Reminder & {
   lateByMs: number;
 };
 
+/** How long a reminder that ended is kept (D3, the user's decision 2026-10-12). */
+export const SETTLED_RETENTION_MS = 90 * 24 * 60 * 60 * 1000;
+
 export class ReminderStore {
   constructor(
     private readonly sql: SqlDriver,
     private readonly now: () => number,
   ) {}
+
+  /**
+   * Delete reminders that ended — sent, done, failed or cancelled — both due
+   * and last touched before `cutoffMs` (Improvement plan §3 T11, D3). A row
+   * still scheduled or being sent is never touched; a repeating series' next
+   * occurrence is always its own scheduled row, so no series loses what it
+   * fires next. A sent row is reopened only by a late failure report, long
+   * gone by then. Returns how many were deleted.
+   */
+  purgeSettledBefore(cutoffMs: number): number {
+    return this.sql.exec(
+      `DELETE FROM reminders
+       WHERE status IN ('sent', 'done', 'failed', 'cancelled')
+         AND due_at_utc < ? AND updated_at < ?
+       RETURNING id`,
+      cutoffMs,
+      cutoffMs,
+    ).length;
+  }
 
   schedule(params: {
     principal: string;
