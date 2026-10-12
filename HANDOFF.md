@@ -77,6 +77,7 @@ Full map with every module: [ARCHITECTURE.md](ARCHITECTURE.md).
 
 `pnpm typecheck && pnpm lint && pnpm test` before calling anything done.
 `pnpm eval` / `pnpm eval:agent [--filter p-] [--resume] [--select-tools] [--model <id>]` (a `SMART_MODELS` id runs as a smart turn and needs `GEMINI_API_KEY` in `.dev.vars`).
+`eval:agent` exits 0 only for a complete pass, 1 on a gate miss, 2 when incomplete; a recording from another environment is refused (header of `test/evals/run-agent-evals.ts`).
 `pnpm deploy:staging` only with approval. Production, secrets, rollback: human only.
 App: `cd apps/call-companion && ./gradlew testDebugUnitTest`.
 Network on the hotspot: `NODE_OPTIONS=--dns-result-order=ipv4first` for wrangler.
@@ -143,6 +144,11 @@ Network on the hotspot: `NODE_OPTIONS=--dns-result-order=ipv4first` for wrangler
 | [SETUP.md](SETUP.md) | Setting up a new copy from zero: accounts, Groq key, models, secrets, deploy, app, AI agent. |
 
 ## 8. Session log (docs)
+
+- 2026-10-12: `docs/IMPROVEMENT_PLAN.md` + `docs/IMPLEMENTATION_BATCHES.md`
+  (review and batches). Batch 01 done: eval exit codes, model id/provider in
+  both fingerprints (Groq pins now one per model), recordings keep their
+  fingerprint. Eval tooling only; no `src/` change.
 
 - 2026-10-12: App 0.13.4: routine title always RTL; a check waits up to
   60 s (`MAX_WAIT_SECONDS`). Staging deployed (918e1386). On the phone the

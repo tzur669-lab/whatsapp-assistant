@@ -31,8 +31,21 @@ describe('the eval fingerprint', () => {
 
   it('is unchanged for the Groq models by smart conversations (2026-10-08)', () => {
     // Pinned before slice 4: the smart note and the smart catalog live in a
-    // fingerprint of their own, so a Groq eval stays valid.
-    for (const entry of MODELS) expect(fingerprintFor(entry), entry.id).toBe('ec8897b5e26d0c57');
+    // fingerprint of their own, so a Groq eval stays valid. Re-pinned
+    // 2026-10-12, one value per model, when the model's identity joined the
+    // hash; no entry had recorded `evaluated`, so nothing recorded moved.
+    const pinned: Record<string, string> = { 'qwen/qwen3.8-27b': '601e8e9de1ad4a90', 'openai/gpt-oss-120b': 'b384921176e3c34c' };
+    for (const entry of MODELS) expect(fingerprintFor(entry), entry.id).toBe(pinned[entry.id]);
+  });
+
+  it("changes with the model's identity (2026-10-12)", () => {
+    // Another model under the same entry was never judged.
+    const entry = MODELS[0]!;
+    expect(fingerprintFor({ ...entry, id: `${entry.id}-other` })).not.toBe(fingerprintFor(entry));
+    expect(fingerprintFor({ ...entry, provider: 'gemini' })).not.toBe(fingerprintFor(entry));
+    const gemini = SMART_MODELS[0]!;
+    expect(smartFingerprintFor({ ...gemini, id: `${gemini.id}-other` })).not.toBe(smartFingerprintFor(gemini));
+    expect(smartFingerprintFor({ ...gemini, provider: 'groq' })).not.toBe(smartFingerprintFor(gemini));
   });
 
   it('pins a smart model to the smart note and the smart catalog policy', () => {
