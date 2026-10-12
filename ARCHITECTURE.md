@@ -157,7 +157,7 @@ One SQLite DB inside the DO. Schema = `migrations/0001…0028` (registered in
 | Agent | `conversation_turns` (encrypted history), `agent_turns` (suspended; 0027 adds `kind` phone/consent, `nonce_hash`, `source`, `conversation`), `agent_lock` |
 | Smart conversations (0026) | `conversation_modes` (mode per app conversation, recorded once), `conversation_consents` (sources allowed for one conversation); both purged after 30 days unused and by `/forget`, `/pair off` |
 | Misses (§6.23) | `last_exchange` (encrypted, 1 h), `misses` (encrypted, 30 days); `inbound_messages.seq` + `settings.inbound_seq` order arrivals |
-| Routines (0028, §6.27) | `routine_names` (the app's sync: id, name, app label, step hash — never steps), `routine_runs` (one row per confirmed run: scheduled → noticed → pushed → claimed → done/unverified/failed/unknown, or cancelled/expired/changed) |
+| Routines (0028–0029, §6.27) | `routine_names` (the app's sync: id, name, app label, step hash, list position — never steps), `routine_runs` (one row per confirmed run, with its card time and the card's and notice's cancel hashes: scheduled → noticed → pushed → claimed → done/unverified/failed/unknown, or cancelled/expired/changed) |
 | Quota | `groq_limits`, `groq_token_spend`, `worker_requests`, `model_day_requests` (Gemini requests per Pacific day, 0026) |
 | Data | `ical_feeds`, `ical_events`, `birthdays`, `notes`, `lists`, `list_items`, `facts` (encrypted; the model sees them), `holdings` (the portfolio, soft-delete + version), `quote_cache` (public prices, no principal), `expenses`, `missed_calls` (minutes only) |
 

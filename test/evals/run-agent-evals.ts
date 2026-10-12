@@ -144,7 +144,7 @@ let smart = false;
  * The routines an eval turn behaves as if the app had synced (§6.27):
  * `routine.run` is offered only when the input names one, as in the pipeline.
  */
-const EVAL_ROUTINES = ['כניסה לעבודה', 'יציאה מהעבודה', 'clock out'];
+const EVAL_ROUTINES = ['כניסה לעבודה', 'יציאה מהעבודה', 'clock out', 'פיד'];
 
 function namesEvalRoutine(input: string): boolean {
   return EVAL_ROUTINES.some((name) => input.toLowerCase().includes(name)) || /שגר|רוטינ|\broutines?\b/i.test(input);

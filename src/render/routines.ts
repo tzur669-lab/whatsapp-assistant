@@ -9,7 +9,15 @@ import type { Lang } from './format-time.js';
 import { localPartsOf } from '../time/tz.js';
 import { ROUTINE_MAX_LATE_MS } from '../tools/routine-store.js';
 
-export type RoutineView = { name: string; appLabel: string; dueAtUtc: number; tz: string; now: boolean };
+export type RoutineView = {
+  name: string;
+  appLabel: string;
+  dueAtUtc: number;
+  tz: string;
+  now: boolean;
+  /** Its place in the phone's list, when known (2026-10-12). */
+  number?: number;
+};
 
 /** Why a run stopped, as the phone reports it. Closed: anything else is `error`. */
 export const RUN_REASONS = [
@@ -35,8 +43,8 @@ function when(view: Pick<RoutineView, 'dueAtUtc' | 'tz'>, lang: Lang): string {
   return formatWhen(localPartsOf(view.dueAtUtc, view.tz), lang);
 }
 
-function named(view: Pick<RoutineView, 'name'>): string {
-  return isolate(view.name);
+function named(view: Pick<RoutineView, 'name' | 'number'>): string {
+  return view.number === undefined ? isolate(view.name) : `${isolateLtr(String(view.number))} · ${isolate(view.name)}`;
 }
 
 const MAX_LATE_MINUTES = Math.round(ROUTINE_MAX_LATE_MS / 60_000);
@@ -47,22 +55,29 @@ export const routineText = {
     if (lang !== 'he') {
       return view.now
         ? `Run the routine ${named(view)} in ${isolate(view.appLabel)} now?`
-        : `Run the routine ${named(view)} in ${isolate(view.appLabel)} on ${when(view, lang)}? A notice with a cancel button comes two minutes before.`;
+        : `Run the routine ${named(view)} in ${isolate(view.appLabel)} on ${when(view, lang)}? Its details and a cancel button will be in the reminders conversation.`;
     }
     return view.now
       ? `להפעיל עכשיו את השגרה ${named(view)} באפליקציה ${isolate(view.appLabel)}?`
-      : `להפעיל את השגרה ${named(view)} באפליקציה ${isolate(view.appLabel)} ב${when(view, lang)}? שתי דקות לפני תגיע התראה עם כפתור ביטול.`;
+      : `להפעיל את השגרה ${named(view)} באפליקציה ${isolate(view.appLabel)} ב${when(view, lang)}? הפרטים וכפתור ביטול יופיעו בשיחת התזכורות.`;
   },
 
   scheduled(view: RoutineView, lang: Lang): string {
     if (lang !== 'he') {
       return view.now
         ? `Running ${named(view)} now. The result will come here.`
-        : `Set: ${named(view)} runs on ${when(view, lang)}. A notice with a cancel button comes two minutes before.`;
+        : `Set: ${named(view)} runs on ${when(view, lang)}. Its details and a cancel button are in the reminders conversation; the result will come there too.`;
     }
     return view.now
-      ? `מפעיל עכשיו את ${named(view)}. התוצאה תגיע לכאן.`
-      : `נקבע: ${named(view)} תופעל ב${when(view, lang)}. שתי דקות לפני תגיע התראה עם כפתור ביטול.`;
+      ? `מפעיל עכשיו את ${named(view)}. התוצאה תגיע לשיחת התזכורות.`
+      : `נקבע: ${named(view)} תופעל ב${when(view, lang)}. הפרטים וכפתור ביטול נמצאים בשיחת התזכורות, וגם התוצאה תגיע לשם.`;
+  },
+
+  /** The card in the reminders conversation, with a cancel button (2026-10-12). */
+  card(view: RoutineView, lang: Lang): string {
+    return lang === 'he'
+      ? `⚙️ שגרה מתוזמנת: ${named(view)} באפליקציה ${isolate(view.appLabel)}, ב${when(view, lang)}.\nשתי דקות לפני תגיע תזכורת, ובסוף הודעה אם הפעולה בוצעה. כדי לבטל, יש ללחוץ על ביטול.`
+      : `⚙️ Scheduled routine: ${named(view)} in ${isolate(view.appLabel)}, on ${when(view, lang)}.\nA notice comes two minutes before, and a message at the end saying whether it worked. Tap cancel to stop it.`;
   },
 
   /** Two minutes before. */
@@ -94,7 +109,7 @@ export const routineText = {
 
   done(view: RoutineView, lang: Lang): string {
     return lang === 'he'
-      ? `✓ ${named(view)} הופעלה, והאפליקציה אישרה. ${when(view, lang)}`
+      ? `✓ בוצע: ${named(view)} הופעלה, והאפליקציה אישרה. ${when(view, lang)}`
       : `✓ ${named(view)} ran, and the app confirmed it. ${when(view, lang)}`;
   },
 

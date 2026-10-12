@@ -422,13 +422,19 @@ export class AssistantDO implements DurableObject {
   // -- routines (PLAN §6.27) ---------------------------------------------------
 
   /**
-   * Every routine run that has something due: the notice with its cancel
-   * button, the push that wakes the phone (and once a minute again until it
-   * claims), the run that never started in its ten minutes, and the claim that
-   * never reported. Each row moves once, inside the store's transaction, so a
+   * Every routine run that has something due: the card for a newly scheduled
+   * one (what, when, a cancel button), the notice with its cancel button, the
+   * push that wakes the phone (and once a minute again until it claims), the
+   * run that never started in its ten minutes, and the claim that never
+   * reported. Each row moves once, inside the store's transaction, so a
    * re-entered alarm finds nothing left to do twice.
    */
   private async serviceRoutines(principal: string, now: number): Promise<void> {
+    for (const { run, nonce, number } of this.routines.takeAnnouncements(now)) {
+      await this.sayRoutine(run, routineText.card({ ...viewOfRun(run), ...(number !== null ? { number } : {}) }, 'he'), [
+        { id: buttonId('rt', run.runId, nonce, 'no'), title: routineText.cancelButton('he') },
+      ]);
+    }
     for (const { run, nonce } of this.routines.takeNotices(now)) {
       await this.sayRoutine(run, routineText.notice(viewOfRun(run), 'he'), [
         { id: buttonId('rt', run.runId, nonce, 'no'), title: routineText.cancelButton('he') },

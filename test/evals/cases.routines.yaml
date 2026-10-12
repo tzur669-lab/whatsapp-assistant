@@ -52,3 +52,32 @@
     slots:
       date: { kind: in_duration, minutes: 15 }
     missing: []
+
+# The user's own words on the phone (2026-10-11): both got a reminders reply.
+- id: rt-006
+  now: "2026-10-11T13:00:00+03:00"
+  input: "בעוד 2 דקות תפעיל את שגרת פיד"
+  expect:
+    intent: routine.run
+    slots:
+      date: { kind: in_duration, minutes: 2 }
+    missing: []
+
+- id: rt-007
+  now: "2026-10-11T13:00:00+03:00"
+  input: "בעוד 2 דקות תפעיל את פיד"
+  expect:
+    intent: routine.run
+    slots:
+      date: { kind: in_duration, minutes: 2 }
+    missing: []
+
+# A routine by its number (2026-10-12): the number is the routine slot's words.
+- id: rt-008
+  now: "2026-10-11T13:00:00+03:00"
+  input: "בעוד רבע שעה תפעיל את שגרה 2"
+  expect:
+    intent: routine.run
+    slots:
+      date: { kind: in_duration, minutes: 15 }
+    missing: []

@@ -71,11 +71,13 @@ class RoutinesActivity : Activity() {
         column.addView(heading(getString(R.string.routines_list_title), 18f))
         val routines = RoutineStore.all(this)
         if (routines.isEmpty()) column.addView(paragraph(getString(R.string.routines_empty)))
-        for (routine in routines) column.addView(routineRow(routine))
+        else column.addView(paragraph(getString(R.string.routines_numbers_note)).apply { textSize = 13f })
+        // The number the assistant knows it by too: "תפעיל שגרה 2" (2026-10-12).
+        routines.forEachIndexed { index, routine -> column.addView(routineRow(routine, index + 1)) }
         if (routines.size < RoutineLogic.MAX_ROUTINES) column.addView(button(getString(R.string.routines_new)) { edit(null) })
     }
 
-    private fun routineRow(routine: RoutineLogic.Routine): View {
+    private fun routineRow(routine: RoutineLogic.Routine, number: Int): View {
         val box = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(12), dp(8), dp(12), dp(8))
@@ -85,7 +87,7 @@ class RoutinesActivity : Activity() {
             }
         }
         box.addView(TextView(this).apply {
-            text = routine.name
+            text = getString(R.string.routine_numbered, number, Ui.isolate(routine.name))
             textSize = 17f
             setTypeface(typeface, Typeface.BOLD)
             textDirection = View.TEXT_DIRECTION_ANY_RTL

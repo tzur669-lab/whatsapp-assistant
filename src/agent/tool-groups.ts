@@ -183,6 +183,13 @@ export function selectTools(text: string, offered: readonly ToolName[]): Selecti
   // stays in whatever the other words select. The group itself never narrows.
   const groups = matchGroups(text).filter((group) => group !== 'routine');
   const full = { tools: [...offered], groups: [] };
+  // Code found a routine named and the words name nothing else: the routine and
+  // the time tools ("תזכיר לי לפתוח את פיד" is still a reminder). The whole
+  // catalog with the routine on top passed the turn cap (2026-10-11).
+  if (groups.length === 0 && offered.includes('routine.run')) {
+    const members = new Set<ToolName>(['routine.run', ...GROUPS.time]);
+    return { tools: offered.filter((tool) => members.has(tool)), groups: ['time', 'routine'] };
+  }
   if (groups.length === 0 || groups.length > MAX_UNION_GROUPS) return full;
   const members = new Set<ToolName>(offered.filter((tool) => tool === 'routine.run'));
   for (const group of groups) {

@@ -19,6 +19,7 @@ import type { ToolContext } from '../../../src/tools/types.js';
 import { decide, DEFAULT_LIMITS } from '../../../src/policy/engine.js';
 import { agentToolNames } from '../../../src/agent/tools.js';
 import { selectTools } from '../../../src/agent/tool-groups.js';
+import { routineText } from '../../../src/render/routines.js';
 import { handleInbound, namesRoutine } from '../../../src/core/pipeline.js';
 import type { PipelineDeps, Services } from '../../../src/core/pipeline.js';
 import { PendingActions } from '../../../src/confirm/pending.js';
@@ -141,6 +142,45 @@ describe('the run lifecycle', () => {
     expect(store.cancel(other.runId, second!.nonce, PRINCIPAL)).toBe('started');
   });
 
+  it('a far run gets one card with its own cancel button; both buttons work until the claim', () => {
+    const run = schedule(NOW + 30 * 60_000);
+    const cards = store.takeAnnouncements(NOW);
+    expect(cards.map((c) => c.run.runId)).toEqual([run.runId]);
+    expect(cards[0]!.nonce).toMatch(/^[0-9a-f]{32}$/);
+    expect(cards[0]!.number).toBe(1);
+    expect(store.takeAnnouncements(NOW)).toEqual([]); // re-entered: once
+
+    // The notice brings a second button; the card's still works.
+    const [notice] = store.takeNotices(run.dueAtUtc - ROUTINE_NOTICE_MS);
+    expect(notice!.nonce).not.toBe(cards[0]!.nonce);
+    expect(store.cancel(run.runId, cards[0]!.nonce, PRINCIPAL)).toBe('cancelled');
+    expect(store.cancel(run.runId, notice!.nonce, PRINCIPAL)).toBe('gone');
+  });
+
+  it('the card says what runs, where, when, and that the result will come', () => {
+    const text = plain(routineText.card({ name: 'פיד', appLabel: 'Fid', dueAtUtc: NOW + 15 * 60_000, tz: 'Asia/Jerusalem', now: false, number: 3 }, 'he'));
+    expect(text).toBe('⚙️ שגרה מתוזמנת: 3 · פיד באפליקציה Fid, ביום א׳ 11.10 · 10:15.\nשתי דקות לפני תגיע תזכורת, ובסוף הודעה אם הפעולה בוצעה. כדי לבטל, יש ללחוץ על ביטול.');
+    expect(plain(routineText.done({ name: 'פיד', appLabel: 'Fid', dueAtUtc: NOW, tz: 'Asia/Jerusalem', now: false }, 'he'))).toMatch(/^✓ בוצע: פיד הופעלה/);
+  });
+
+  it('a run due within the notice window gets no card: the notice comes at once with the button', () => {
+    const run = schedule(NOW + ROUTINE_NOTICE_MS);
+    expect(store.takeAnnouncements(NOW)).toEqual([]);
+    expect(store.takeNotices(NOW).map((n) => n.run.runId)).toEqual([run.runId]);
+    expect(store.nextWakeAt()).toBe(run.dueAtUtc);
+  });
+
+  it('the notice nonce cancels too, and neither once the phone claimed it', () => {
+    const run = schedule(NOW + 30 * 60_000);
+    const [card] = store.takeAnnouncements(NOW);
+    const [notice] = store.takeNotices(run.dueAtUtc - ROUTINE_NOTICE_MS);
+    clock = run.dueAtUtc;
+    store.takeDue(clock);
+    store.claim(run.runId, PRINCIPAL);
+    expect(store.cancel(run.runId, card!.nonce, PRINCIPAL)).toBe('started');
+    expect(store.cancel(run.runId, notice!.nonce, PRINCIPAL)).toBe('started');
+  });
+
   it('a pushed run cancelled before the claim is refused at the claim', () => {
     const run = schedule(NOW + ROUTINE_NOTICE_MS);
     const [notice] = store.takeNotices(NOW);
@@ -183,8 +223,10 @@ describe('the run lifecycle', () => {
     expect(store.settle(run.runId, PRINCIPAL, 'blocked', 'locked')?.status).toBe('failed');
   });
 
-  it('wakes the alarm for the notice, the push, the re-push and the sweep', () => {
+  it('wakes the alarm for the card, the notice, the push, the re-push and the sweep', () => {
     const run = schedule(NOW + 30 * 60_000);
+    expect(store.nextWakeAt()).toBe(NOW); // the card in the reminders conversation, now
+    store.takeAnnouncements(NOW);
     expect(store.nextWakeAt()).toBe(run.dueAtUtc - ROUTINE_NOTICE_MS);
     store.takeNotices(run.dueAtUtc - ROUTINE_NOTICE_MS);
     expect(store.nextWakeAt()).toBe(run.dueAtUtc);
@@ -232,6 +274,34 @@ describe('routine.run', () => {
     expect(question({ routine: ['יציאה'] })).toBe('routine_ambiguous');
   });
 
+  it('numbers routines in the order the phone sent them', () => {
+    store.replaceNames(PRINCIPAL, [EXIT, ENTRY]);
+    expect(store.names(PRINCIPAL).map((r) => [r.number, r.name])).toEqual([[1, EXIT.name], [2, ENTRY.name]]);
+    store.replaceNames(PRINCIPAL, [ENTRY, EXIT]);
+    expect(store.names(PRINCIPAL).map((r) => r.name)).toEqual([ENTRY.name, EXIT.name]);
+  });
+
+  it('finds a routine by its number, said alone or after "שגרה"', () => {
+    store.replaceNames(PRINCIPAL, [EXIT, ENTRY]);
+    const names = store.names(PRINCIPAL);
+    for (const said of ['2', 'שגרה 2', 'שגרה מספר 2', 'השגרה 2', 'routine 2', 'מספר 2']) {
+      expect((findRoutine(names, [said]) as RoutineName).routineId).toBe(ENTRY.routineId);
+    }
+    expect(findRoutine(names, ['3'])).toBe('none');
+    expect(findRoutine(names, ['0'])).toBe('none');
+    // A name that is a number is still a name, first.
+    const odd = [{ ...EXIT, name: '2', number: 1 }, { ...ENTRY, number: 2 }];
+    expect((findRoutine(odd, ['2']) as RoutineName).routineId).toBe(EXIT.routineId);
+  });
+
+  it('the preview names the routine with its number', () => {
+    store.replaceNames(PRINCIPAL, [ENTRY, EXIT]);
+    const out = routineRun.resolve({ routine: ['שגרה 2'], date: { kind: 'in_duration', minutes: 15 } }, ctx);
+    if (out.kind !== 'ready') throw new Error('expected ready');
+    expect(out.input).toMatchObject({ routineId: EXIT.routineId, number: 2 });
+    expect(plain(routineRun.preview(out.input, 'he'))).toContain('השגרה 2 · יציאה מהעבודה');
+  });
+
   it('an exact name wins over a partial one', () => {
     expect(findRoutine([EXIT, ENTRY, { ...ENTRY, routineId: 'x', name: 'כניסה מאוחרת' }], ['כניסה'])).toEqual(ENTRY);
   });
@@ -275,7 +345,7 @@ describe('routine.run', () => {
     const out = routineRun.resolve({ routine: ['יציאה מהעבודה'], date: { kind: 'in_duration', minutes: 15 } }, ctx);
     if (out.kind !== 'ready') throw new Error('expected ready');
     expect(plain(routineRun.preview(out.input, 'he'))).toBe(
-      'להפעיל את השגרה יציאה מהעבודה באפליקציה clock2go2020 ביום א׳ 11.10 · 10:15? שתי דקות לפני תגיע התראה עם כפתור ביטול.',
+      'להפעיל את השגרה 1 · יציאה מהעבודה באפליקציה clock2go2020 ביום א׳ 11.10 · 10:15? הפרטים וכפתור ביטול יופיעו בשיחת התזכורות.',
     );
   });
 
@@ -322,6 +392,20 @@ describe('offering routine.run', () => {
     expect(agentToolNames({ cards: true, routines: true, readOnly: true })).not.toContain('routine.run');
     // "in a quarter of an hour" selects the time group; the routine stays.
     expect(selectTools('תזכיר לי בעוד רבע שעה', offered).tools).toContain('routine.run');
+  });
+
+  it('words that name a routine and nothing else get the routine and the time tools, not the whole catalog', () => {
+    // The user's words (2026-10-11): the whole catalog with facts and history passed the
+    // turn cap, and the parser fallback answered with a reminders tool.
+    const offered = agentToolNames({ cards: true, routines: true });
+    const selection = selectTools('בעוד 2 דקות תפעיל את שגרת פיד', offered);
+    expect(selection.groups).toEqual(['time', 'routine']);
+    expect(selection.tools).toContain('routine.run');
+    expect(selection.tools).toContain('reminders.create');
+    expect(selection.tools.length).toBeLessThan(offered.length / 2);
+    // Without the routine offered, nothing changes: no group named → the whole set.
+    const plain = agentToolNames({ cards: true });
+    expect(selectTools('בעוד 2 דקות תפעיל את פיד', plain).groups).toEqual([]);
   });
 });
 
@@ -400,7 +484,7 @@ describe('routine.run in a turn', () => {
   it('asks to confirm, and schedules only after the tap', async () => {
     const out = await handleInbound(say('בעוד רבע שעה תפעיל את יציאה מהעבודה'), deps([call]));
     if (out.action !== 'reply') throw new Error('expected a reply');
-    expect(plain(out.text)).toContain('להפעיל את השגרה יציאה מהעבודה');
+    expect(plain(out.text)).toContain('להפעיל את השגרה 1 · יציאה מהעבודה');
     expect(out.private).toBe(true);
     expect(store.open(PRINCIPAL)).toEqual([]);
 

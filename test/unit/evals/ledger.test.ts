@@ -56,7 +56,8 @@ describe('EvalLedger', () => {
     ledger.close();
   });
 
-  describe('a model guarded by requests (Gemini, 2026-10-08)', () => {
+  // Each test writes the ledger file up to LIMIT times: past 5 s on Windows under a full parallel run.
+  describe('a model guarded by requests (Gemini, 2026-10-08)', { timeout: 20_000 }, () => {
     const GUARD = { dayRequests: 250 };
     const LIMIT = Math.floor(250 * LEDGER_REQUEST_SHARE);
 

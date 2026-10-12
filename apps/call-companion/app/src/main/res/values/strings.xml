@@ -188,6 +188,8 @@
     <string name="routine_service_label">שגרות של העוזר</string>
     <string name="routine_service_description">מאפשר לעוזר להריץ שגרות שבנית: לפתוח אפליקציה שבחרת, ללחוץ בה על מה שהגדרת ולהקליד את הטקסט שכתבת בשגרה. השירות רואה רק את האפליקציות של השגרות, לא מקליד בשדות סיסמה ולא נוגע במסך הנעילה. תוכן המסך לא נשמר ולא יוצא מהטלפון.</string>
     <string name="routines_list_title">השגרות שלי</string>
+    <string name="routine_numbered">%1$d · %2$s</string>
+    <string name="routines_numbers_note">אפשר לבקש מהעוזר להפעיל שגרה לפי המספר שלה, למשל: \"בעוד רבע שעה תפעיל את שגרה 2\". מחיקת שגרה משנה את המספרים של השגרות שאחריה.</string>
     <string name="routines_empty">עוד אין שגרות.</string>
     <string name="routines_new">＋ שגרה חדשה</string>
     <plurals name="routine_summary">

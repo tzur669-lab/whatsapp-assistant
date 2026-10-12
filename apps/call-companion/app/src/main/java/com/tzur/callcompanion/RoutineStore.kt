@@ -25,9 +25,17 @@ object RoutineStore {
 
     fun get(context: Context, id: String): RoutineLogic.Routine? = all(context).firstOrNull { it.id == id }
 
-    /** Adds or replaces by id. The caller has checked [RoutineLogic.problem]. */
+    /**
+     * Adds at the end, or replaces in place by id: a routine keeps its place,
+     * and so its number (2026-10-12). The caller has checked [RoutineLogic.problem].
+     */
     fun save(context: Context, routine: RoutineLogic.Routine) {
-        val list = all(context).filter { it.id != routine.id } + routine
+        val current = all(context)
+        val list = if (current.any { it.id == routine.id }) {
+            current.map { if (it.id == routine.id) routine else it }
+        } else {
+            current + routine
+        }
         write(context, list)
     }
 

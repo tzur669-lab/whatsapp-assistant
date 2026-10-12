@@ -37,6 +37,11 @@ export const routineInputSchema = z
     tz: z.string().min(1).max(64),
     /** No day or time was said: it runs as soon as it is confirmed. */
     now: z.boolean(),
+    /**
+     * Its place in the phone's list when it was found, for the preview only.
+     * Optional: a confirmation stored before 2026-10-12 has none.
+     */
+    number: z.number().int().min(1).max(99).optional(),
   })
   .strict();
 
@@ -88,6 +93,7 @@ export const routineRun: ToolDefinition = {
       dueAtUtc,
       tz,
       now,
+      ...(found.number !== undefined ? { number: found.number } : {}),
     };
     return { kind: 'ready', input };
   },
@@ -127,22 +133,41 @@ export const routineRun: ToolDefinition = {
 };
 
 /**
- * The one routine the words name: an exact name first, else one whose name
- * holds the words or is held by them. Several → ask for the full name; a
- * guess never runs something in another app.
+ * The one routine the words name: an exact name first, then its number in
+ * the phone's list ("2", "שגרה 2", "routine 2"), else one whose name holds the
+ * words or is held by them. Several → ask for the full name; a guess never
+ * runs something in another app. A number that names nothing is "none".
  */
 export function findRoutine(names: readonly RoutineName[], variants: readonly string[]): RoutineName | 'none' | 'many' {
   const wanted = variants.map(foldForMatch).filter((v) => v.length > 0);
   const exact = names.filter((r) => wanted.includes(foldForMatch(r.name)));
   if (exact.length === 1) return exact[0]!;
   if (exact.length > 1) return 'many';
+  const numbers = [...new Set(variants.map(numberOf).filter((n): n is number => n !== null))];
+  if (numbers.length === 1) return names.find((r) => r.number === numbers[0]) ?? 'none';
+  if (numbers.length > 1) return 'many';
   const partial = matchByText(names, variants, (r) => r.name);
   if (partial.length === 1) return partial[0]!;
   return partial.length === 0 ? 'none' : 'many';
 }
 
+const NUMBER = /^(?:ה?שגרה\s+|routine\s+)?(?:מספר\s+|number\s+|#\s*)?(\d{1,2})$/i;
+
+/** "2", "שגרה 2", "השגרה מספר 2", "routine 2" → 2; anything else → null. */
+function numberOf(variant: string): number | null {
+  const match = NUMBER.exec(variant.trim());
+  return match ? Number(match[1]) : null;
+}
+
 function viewOf(input: RoutineInput): RoutineView {
-  return { name: input.name, appLabel: input.appLabel, dueAtUtc: input.dueAtUtc, tz: input.tz, now: input.now };
+  return {
+    name: input.name,
+    appLabel: input.appLabel,
+    dueAtUtc: input.dueAtUtc,
+    tz: input.tz,
+    now: input.now,
+    ...(input.number !== undefined ? { number: input.number } : {}),
+  };
 }
 
 function storeOf(ctx: ToolContext): RoutineStore | undefined {

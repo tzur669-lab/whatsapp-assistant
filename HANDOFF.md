@@ -5,7 +5,7 @@ system is, where things live, and what breaks easily, then links out. It does
 **not** repeat the rules in `CLAUDE.md` (always loaded) or the spec in
 `PLAN.md` (read by section, never whole).
 
-_Last updated: 2026-10-11 · server at migration 0028 · agent prompt a10 + smart note s2 · parser prompt v6 · app 0.13.1 · smart model gemini-3.5-flash-lite_
+_Last updated: 2026-10-12 · server at migration 0029 · agent prompt a10 + smart note s2 · parser prompt v6 · app 0.13.2 · smart model gemini-3.5-flash-lite_
 
 ## 1. What this is
 
@@ -92,7 +92,7 @@ Network on the hotspot: `NODE_OPTIONS=--dns-result-order=ipv4first` for wrangler
   plan: the bot builds a routine on request and explains it (the user's
   wish, 2026-10-11 — it changes "never written by a model", PLAN §6.27): the
   dry run passed on the real attendance app (exit, 2026-10-11). Server
-  and app are deployed (staging, 0.13.1). Owed in PLAN §13: a first real
+  and app: staging has 0.13.1; 0.13.2 (migration 0029) needs a staging deploy and the APK. Owed in PLAN §13: a first real
   scheduled run.
 - **Smart conversations** (PLAN §6.19, plan
   `~/.claude/plans/abundant-wobbling-sparkle.md`): built, slices 1–6, server
@@ -143,6 +143,12 @@ Network on the hotspot: `NODE_OPTIONS=--dns-result-order=ipv4first` for wrangler
 | [SETUP.md](SETUP.md) | Setting up a new copy from zero: accounts, Groq key, models, secrets, deploy, app, AI agent. |
 
 ## 8. Session log (docs)
+
+- 2026-10-12: Routines from chat, a card, numbers (app 0.13.2, migration 0029
+  `routine_cards`): `selectTools` gives a routine-only message the routine +
+  time tools; `RoutineStore.takeAnnouncements`, `notice_hash`,
+  `routine_names.position`; `findRoutine` by number; `routineText.card`.
+  No new modules or tools.
 
 - 2026-10-11: Routines, typing (app 0.13.1): `TYPE_TEXT`, `SUBMIT`,
   `RoutineLogic.pickField`; checks skip fields; server wording only

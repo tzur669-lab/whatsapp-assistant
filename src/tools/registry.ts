@@ -298,7 +298,7 @@ export const REGISTRY: Readonly<Record<ToolName, ToolSpec>> = {
     dataSource: 'private',
     private: true,
     llmDescription:
-      "Run one of the user's saved phone routines, by its name: now, or at a stated day and time within 7 days.",
+      "Run one of the user's saved phone routines, by its name or its number: now, or at a stated day and time within 7 days. Offered only when the message names one of them, so \"run/activate/open X\" (תפעיל, הפעל) means this tool, not a reminder.",
     draftSchema: routineRunSlots,
     refusesTainted: true,
     // It acts inside another app with no tap at the due time (decision D1), so

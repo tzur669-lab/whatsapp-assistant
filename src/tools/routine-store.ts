@@ -56,7 +56,14 @@ export type RunStatus =
 /** What the phone says happened. Codes only, never screen text. */
 export type RunOutcome = 'verified' | 'tapped_unverified' | 'failed_before_tap' | 'failed_after_tap' | 'blocked' | 'changed';
 
-export type RoutineName = { routineId: string; name: string; stepHash: string; appLabel: string };
+export type RoutineName = {
+  routineId: string;
+  name: string;
+  stepHash: string;
+  appLabel: string;
+  /** Its place in the phone's list, from 1 (`names` only; 2026-10-12). */
+  number?: number;
+};
 
 export type Run = {
   runId: string;
@@ -94,15 +101,18 @@ export class RoutineStore {
   names(principal: string): RoutineName[] {
     return this.sql
       .exec(
-        `SELECT routine_id, name, step_hash, app_label FROM routine_names WHERE principal = ? ORDER BY name LIMIT ?`,
+        // The phone's order; a row from before 0029 (no position yet) last.
+        `SELECT routine_id, name, step_hash, app_label FROM routine_names WHERE principal = ?
+         ORDER BY position IS NULL, position, name LIMIT ?`,
         principal,
         MAX_ROUTINES,
       )
-      .map((row) => ({
+      .map((row, index) => ({
         routineId: String(row['routine_id']),
         name: String(row['name']),
         stepHash: String(row['step_hash']),
         appLabel: String(row['app_label']),
+        number: index + 1,
       }));
   }
 
@@ -115,18 +125,19 @@ export class RoutineStore {
     const now = this.now();
     return this.sql.transaction(() => {
       this.sql.exec(`DELETE FROM routine_names WHERE principal = ?`, principal);
-      for (const item of list.slice(0, MAX_ROUTINES)) {
+      list.slice(0, MAX_ROUTINES).forEach((item, position) => {
         this.sql.exec(
-          `INSERT OR REPLACE INTO routine_names (principal, routine_id, name, step_hash, app_label, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?)`,
+          `INSERT OR REPLACE INTO routine_names (principal, routine_id, name, step_hash, app_label, position, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?)`,
           principal,
           item.routineId,
           item.name,
           item.stepHash,
           item.appLabel,
+          position,
           now,
         );
-      }
+      });
       const current = new Map(list.map((item) => [item.routineId, item.stepHash]));
       const changed = this.open(principal).filter((run) => current.get(run.routineId) !== run.stepHash);
       for (const run of changed) this.move(run.runId, OPEN, 'changed', now);
@@ -137,8 +148,9 @@ export class RoutineStore {
   // -- runs ------------------------------------------------------------------
 
   /**
-   * A confirmed run. Its cancel nonce is made with the notice (`takeNotices`);
-   * until then the stored hash is of a nonce nobody holds.
+   * A confirmed run. Its cancel nonces are made with its card
+   * (`takeAnnouncements`) and its notice (`takeNotices`); until then the
+   * stored hash is of a nonce nobody holds.
    */
   schedule(params: {
     principal: string;
@@ -203,7 +215,12 @@ export class RoutineStore {
     return this.sql.transaction(() => {
       const row = this.sql.exec(`SELECT * FROM routine_runs WHERE run_id = ? AND principal = ?`, runId, principal)[0];
       if (!row) return 'gone';
-      if (!timingSafeEqualHex(String(row['cancel_hash']), digest(nonce))) return 'gone';
+      // The card's button or the notice's: both compared, always.
+      const given = digest(nonce);
+      const byCard = timingSafeEqualHex(String(row['cancel_hash']), given);
+      const noticeHash = row['notice_hash'];
+      const byNotice = typeof noticeHash === 'string' && timingSafeEqualHex(noticeHash, given);
+      if (!byCard && !byNotice) return 'gone';
       const status = String(row['status']) as RunStatus;
       if (status === 'claimed') return 'started';
       return this.move(runId, OPEN, 'cancelled', this.now()) ? 'cancelled' : 'gone';
@@ -211,8 +228,42 @@ export class RoutineStore {
   }
 
   /**
+   * Runs that need their card now (2026-10-12): scheduled, not announced, and
+   * due later than the notice window — a sooner one gets the notice at once,
+   * which carries the button. Each is marked once, with a fresh nonce for the
+   * card's cancel button (only its hash kept), and its number in the list.
+   */
+  takeAnnouncements(now: number): { run: Run; nonce: string; number: number | null }[] {
+    return this.sql.transaction(() => {
+      const rows = this.sql
+        .exec(
+          `SELECT * FROM routine_runs WHERE status = 'scheduled' AND announced_at IS NULL AND due_at_utc - ? > ?`,
+          ROUTINE_NOTICE_MS,
+          now,
+        )
+        .map(runOf);
+      const cards: { run: Run; nonce: string; number: number | null }[] = [];
+      for (const run of rows) {
+        const nonce = randomHex(16);
+        const moved = this.sql.exec(
+          `UPDATE routine_runs SET announced_at = ?, cancel_hash = ?
+           WHERE run_id = ? AND status = 'scheduled' AND announced_at IS NULL RETURNING run_id`,
+          now,
+          digest(nonce),
+          run.runId,
+        );
+        if (moved.length === 0) continue;
+        const number = this.names(run.principal).find((r) => r.routineId === run.routineId)?.number ?? null;
+        cards.push({ run, nonce, number });
+      }
+      return cards;
+    });
+  }
+
+  /**
    * Runs whose notice is due now: moved to `noticed` and returned once, each
-   * with a fresh nonce for its cancel button — only the nonce's hash is kept.
+   * with a fresh nonce for its cancel button — only the nonce's hash is kept,
+   * beside the card's, so the card's button still works.
    */
   takeNotices(now: number): { run: Run; nonce: string }[] {
     return this.sql.transaction(() => {
@@ -228,7 +279,7 @@ export class RoutineStore {
       for (const run of rows) {
         const nonce = randomHex(16);
         const moved = this.sql.exec(
-          `UPDATE routine_runs SET status = 'noticed', cancel_hash = ? WHERE run_id = ? AND status = 'scheduled' RETURNING run_id`,
+          `UPDATE routine_runs SET status = 'noticed', notice_hash = ? WHERE run_id = ? AND status = 'scheduled' RETURNING run_id`,
           digest(nonce),
           run.runId,
         );
@@ -366,7 +417,15 @@ export class RoutineStore {
       const value = this.sql.exec(query, ...bindings)[0]?.['at'];
       return typeof value === 'number' ? value : null;
     };
+    const now = this.now();
     const candidates = [
+      // A card still owed: now.
+      at(
+        `SELECT MIN(?) AS at FROM routine_runs WHERE status = 'scheduled' AND announced_at IS NULL AND due_at_utc - ? > ?`,
+        now,
+        ROUTINE_NOTICE_MS,
+        now,
+      ),
       at(`SELECT MIN(due_at_utc - ?) AS at FROM routine_runs WHERE status = 'scheduled'`, ROUTINE_NOTICE_MS),
       at(`SELECT MIN(due_at_utc) AS at FROM routine_runs WHERE status IN ('scheduled', 'noticed')`),
       at(`SELECT MIN(pushed_at + ?) AS at FROM routine_runs WHERE status = 'pushed'`, ROUTINE_REPUSH_MS),
