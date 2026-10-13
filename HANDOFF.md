@@ -123,6 +123,11 @@ Network on the hotspot: `NODE_OPTIONS=--dns-result-order=ipv4first` for wrangler
   deployed 2026-10-12 (9643484a). Owed, in order (PLAN §13): `pnpm eval:screen`
   and `eval:agent --filter scr-` on qwen with a human read, then the 0.14.0
   APK and the phone checks. Phase 3 needs its own plan.
+- **Block J** (2026-10-13, plan `docs/plans/block-j.md`, ROADMAP block J):
+  seven free ideas from OpenClaw, J1–J7, one commit each, in order. J1 done
+  (a repeated refused call makes the next call text-only, Gemini only). Next:
+  J2 (inherit groups + brief descriptions; the block's only full `eval:agent`).
+  The plan's "Additions" and "Follow-up" sections win over the part sections.
 - **Next work:** [ROADMAP.md](ROADMAP.md) (Hebrew) — block H (2026-10-07):
   a smarter bot. Parts 15 (notes), 16 ("לא הבנת" capture), 17 (tool
   unions, calibrated token estimate, history fitter, named lists) and 18
@@ -159,6 +164,11 @@ Network on the hotspot: `NODE_OPTIONS=--dns-result-order=ipv4first` for wrangler
 | [SETUP.md](SETUP.md) | Setting up a new copy from zero: accounts, Groq key, models, secrets, deploy, app, AI agent. |
 
 ## 8. Session log (docs)
+
+- 2026-10-13: Block J planned (`docs/plans/block-j.md`); J1 built: a
+  refused call repeated in one turn makes the next call text-only, for a
+  model with more than 3 calls (`Loop.retryKeys`, `ToolOutcome.retry.code`
+  in `agent/loop.ts`). No new modules, tables or prompt change.
 
 - 2026-10-13: First smart screen run in Waze failed twice. (1) The phone's
   accessibility service was off and the `service_off` end went to the

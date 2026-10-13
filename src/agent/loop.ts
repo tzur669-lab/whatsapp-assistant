@@ -339,6 +339,14 @@ type Loop = {
   ran: ToolName[];
   /** This drive's deadline signal (`driveSteps`); never stored. */
   signal?: AbortSignal;
+  /**
+   * The calls code refused this turn, each as tool + code + raw arguments
+   * (block J, J1). In memory only, never logged or stored: a resumed turn
+   * starts with none, which costs at most one more refused call.
+   */
+  retryKeys?: string[];
+  /** A refused call came back unchanged: the next call is text-only. */
+  repeated?: boolean;
 };
 
 /** One way to start the turn: its catalog, its first call's messages and their estimate. */
@@ -759,6 +767,7 @@ async function drive(loop: Loop, deps: AgentDeps, approved?: ToolCall): Promise<
       modelCalls: loop.calls - callsBefore,
       toolsRun: loop.ran.length - toolsBefore,
       deadlineHit: result?.kind === 'failed' && result.errorCode === 'deadline',
+      ...(loop.repeated ? { repeat: true } : {}),
     });
   }
 }
@@ -855,6 +864,13 @@ async function steps(
     };
     const outcome = await runToolCall(toolCall, loop, log, isApproved);
     if (outcome.kind === 'retry') {
+      // J1: the same refused call twice — same tool, same arguments, same
+      // refusal — will not fare better a third time. Only a model with more
+      // than 3 calls gains: a Groq model's next call is already its last.
+      const key = `${toolCall.name}|${outcome.code}|${toolCall.arguments}`;
+      const keys = (loop.retryKeys ??= []);
+      if (keys.includes(key) && limitsOf(model).maxModelCalls > MAX_MODEL_CALLS) loop.repeated = true;
+      else keys.push(key);
       addCall();
       loop.messages.push({ role: 'tool', tool_call_id: toolCall.id, content: outcome.result });
       return null;
@@ -930,7 +946,8 @@ async function steps(
     // declined access, and on the last call: the model can only word the
     // answer, and the catalog is not paid for again (§3).
     const textOnly =
-      !deps.legacyCatalog && (loop.readText !== undefined || loop.declined || call === maxModelCalls - 1);
+      !deps.legacyCatalog &&
+      (loop.readText !== undefined || loop.declined || loop.repeated === true || call === maxModelCalls - 1);
     const tools = textOnly ? [] : loop.tools;
     const prompt = estimateTokens(loop.messages, textOnly ? 0 : loop.toolChars, charsPerToken);
     if (loop.spent + prompt + COMPLETION_RESERVE > turnCap) {
@@ -1014,29 +1031,31 @@ async function steps(
 type ToolOutcome =
   | { kind: 'ran'; tool: ToolName; reply: Reply }
   /** Nothing ran; this goes back to the model as the tool's result. */
-  | { kind: 'retry'; result: string }
+  | { kind: 'retry'; code: RetryCode; result: string }
   /** Nothing ran: the source is not allowed, and the user is asked (slice 5). */
   | { kind: 'consent'; tool: ToolName; source: ConsentSource };
+
+type RetryCode = 'unknown_tool' | 'one_phone_read_per_turn' | 'arguments_not_json' | 'invalid_arguments' | 'access_not_allowed';
 
 async function runToolCall(call: ToolCall, loop: Loop, log: Logger, approved: boolean): Promise<ToolOutcome> {
   const tool = fromWireName(call.name, loop.offered);
   if (!tool) {
     log.warn('agent_unknown_tool', {});
-    return { kind: 'retry', result: '{"error":"unknown_tool"}' };
+    return { kind: 'retry', code: 'unknown_tool', result: '{"error":"unknown_tool"}' };
   }
   // A model's call may pause the turn only while it has not paused; the call
   // the user approved may make the second pause (2026-10-08). So one phone
   // read per turn: a second would suspend a turn already resumed.
   const maySuspend = loop.suspends === 0 || (approved && loop.suspends < MAX_SUSPENDS);
   if (REGISTRY[tool].phoneRead && !maySuspend) {
-    return { kind: 'retry', result: '{"error":"one_phone_read_per_turn"}' };
+    return { kind: 'retry', code: 'one_phone_read_per_turn', result: '{"error":"one_phone_read_per_turn"}' };
   }
 
   let args: unknown;
   try {
     args = stripNulls(JSON.parse(call.arguments));
   } catch {
-    return { kind: 'retry', result: '{"error":"arguments_not_json"}' };
+    return { kind: 'retry', code: 'arguments_not_json', result: '{"error":"arguments_not_json"}' };
   }
   // A TimeSpec without meridiem or part_of_day: 'unspecified' only where it
   // cannot move the time, judged against everything said in the turn but the
@@ -1057,6 +1076,7 @@ async function runToolCall(call: ToolCall, loop: Loop, log: Logger, approved: bo
     log.info('agent_args_invalid', { tool, issues: validated.issues });
     return {
       kind: 'retry',
+      code: 'invalid_arguments',
       result: JSON.stringify({ error: 'invalid_arguments', at: validated.issues.slice(0, 3) }),
     };
   }
@@ -1075,7 +1095,7 @@ async function runToolCall(call: ToolCall, loop: Loop, log: Logger, approved: bo
   if (source !== null && !loop.allowed.has(source)) {
     if (!loop.ask || !maySuspend) {
       log.info('agent_consent_refused', { tool, source });
-      return { kind: 'retry', result: '{"error":"access_not_allowed"}' };
+      return { kind: 'retry', code: 'access_not_allowed', result: '{"error":"access_not_allowed"}' };
     }
     log.info('agent_consent_needed', { tool, source });
     return { kind: 'consent', tool, source };
