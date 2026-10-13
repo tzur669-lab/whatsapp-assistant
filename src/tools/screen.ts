@@ -177,14 +177,19 @@ const HEBREW_SOUNDS: Record<string, string> = {
 };
 
 /**
- * The consonants of a name, so "פיד" and "Fid" or "ספוטיפיי" and "Spotify" meet.
- * Vowels, א ה ו י ע, h, w and v are dropped; p/f, b/v, c/k/q/ch/kh, s/sh/ts/tz
- * fold together. Rough on purpose: used only after the exact and partial
- * matches found nothing, and only when exactly one app sounds alike.
+ * The consonants of a name, so "פיד" and "Fid" or "וויז" and "Waze" meet.
+ * Vowels, א ה י ע, a ו inside a word, and h are dropped; a word-initial ו or
+ * any וו is the consonant v/w ("וויז", "ויבר"), as is a w before a vowel.
+ * p/f, b/v/w, c/k/q/ch/kh, s/sh/ts/tz fold together. Rough on purpose: used
+ * only after the exact and partial matches found nothing, and only when
+ * exactly one app sounds alike.
  */
 export function soundOf(name: string): string {
   const latin = foldForMatch(name)
+    .replace(/(^|\s)וו?/g, '$1ב')
+    .replace(/וו/g, 'ב')
     .replace(/[\u0590-\u05FF]/g, (letter) => HEBREW_SOUNDS[letter] ?? '')
+    .replace(/wh?(?=[aeiouy])/g, 'v')
     .replace(/ph/g, 'f')
     .replace(/(?:ch|kh|ck)/g, 'k')
     .replace(/(?:sh|ts|tz)/g, 's')

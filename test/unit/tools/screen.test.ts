@@ -551,6 +551,25 @@ describe('screen.task, the tool', () => {
     expect(namesScreenTask('תזכיר לי לפדות שובר', [fid])).toBe(false);
   });
 
+  it('hears a ו or וו as the w/v of an English name (found on the phone, 2026-10-13)', () => {
+    const waze: AllowedApp = { package: 'com.waze', label: 'Waze', askEveryTap: false };
+    const FID_UPPER: AllowedApp = { package: 'cubbbixapps.fid', label: 'FID', askEveryTap: true };
+    expect(soundOf('וויז')).toBe(soundOf('Waze'));
+    expect(soundOf('ווייז')).toBe(soundOf('WAZE'));
+    expect(soundOf('ויבר')).toBe(soundOf('Viber'));
+    expect(soundOf('וולט')).toBe(soundOf('Wolt'));
+    expect(soundOf('וואטסאפ')).toBe(soundOf('WhatsApp'));
+    expect(soundOf('טוויטר')).toBe(soundOf('Twitter'));
+    // A ו inside a word is still a vowel.
+    expect(soundOf('ספוטיפיי')).toBe(soundOf('Spotify'));
+    expect(findApp([waze, FID_UPPER, CLOCK], 'וויז')).toEqual(waze);
+    expect(findApp([waze, FID_UPPER, CLOCK], 'פיד')).toEqual(FID_UPPER);
+    expect(namesScreenTask('תפתח את וויז ותנווט הביתה', [waze])).toBe(true);
+    expect(namesScreenTask('תחפש בווייז תחנת דלק', [waze])).toBe(true);
+    expect(namesScreenTask('תחפש בפיד סטימצקי', [FID_UPPER])).toBe(true);
+    expect(namesScreenTask('תזכיר לי מחר בשמונה', [waze])).toBe(false);
+  });
+
   it('is offered only when the words name the screen agent or an app on its list', () => {
     expect(namesScreenTask('תחפש בFID סטימצקי', [FID])).toBe(true);
     expect(namesScreenTask('סוכן מסך: תבדוק משהו', [FID])).toBe(true);
