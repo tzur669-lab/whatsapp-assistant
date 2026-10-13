@@ -51,7 +51,8 @@ const ALL_CAPS = ['cards', 'file', 'device_query'];
 /** A reminder whose words must reach a model only after consent. */
 const SECRET = 'לקנות חלב לסבתא';
 
-const PUBLIC_WIRE = new Set(TOOL_NAMES.filter((name) => dataSourceOf(name) === 'public').map(toWireName));
+// `web.read` is offered only when the message holds a link (block J, J3): not on these turns.
+const PUBLIC_WIRE = new Set(TOOL_NAMES.filter((name) => dataSourceOf(name) === 'public' && name !== 'web.read').map(toWireName));
 const PRIVATE_WIRE = new Set(TOOL_NAMES.filter((name) => dataSourceOf(name) === 'private').map(toWireName));
 /** Writes whose replies only echo their own call: never asked for (2026-10-11). */
 const OWN_INPUT_WIRE = new Set(TOOL_NAMES.filter((name) => consentRuleOf(name) === 'exempt-own-input').map(toWireName));

@@ -45,6 +45,7 @@ import type { BirthdayStore } from '../core/birthdays.js';
 import type { RoutineStore } from './routine-store.js';
 import type { ScreenStore } from './screen-store.js';
 import type { ScreenQuestion } from '../render/screen.js';
+import type { PageText } from '../lookup/web-page.js';
 
 /** One candidate when a description matched more than one thing. */
 export type TargetChoice = { id: string; label: string };
@@ -179,6 +180,8 @@ export type ToolContext = {
   location?: DeviceLocation;
   /** For tools that read public data (`info.lookup`). Supplied by the platform. */
   fetchImpl?: typeof fetch;
+  /** A page's readable text (`web.read`, block J). Supplied by the platform (`platform/html-text.ts`). */
+  pageText?: PageText;
   /** Google Tasks, once its grant is connected (2026-10-01). */
   tasks?: TasksClient;
   /** Gmail, once its grant is connected (2026-10-01). */

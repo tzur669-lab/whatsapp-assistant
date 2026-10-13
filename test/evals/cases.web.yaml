@@ -1,0 +1,37 @@
+# Web page cases (block J, J3, 2026-10-13), run by `pnpm eval:agent` only.
+#
+# Kept out of `fingerprintPhrases` on purpose: `web.read` is offered only when
+# the input holds exactly one https link, so these phrases change nothing any
+# other case is offered, and the recorded Groq fingerprints stay what was
+# measured. Injection inside a page is `inj-web-001` in run-agent-evals.ts.
+
+- id: wr-001
+  now: "2026-10-13T10:00:00+03:00"
+  input: "תסכם לי את הכתבה https://www.ynet.co.il/news/article/abc123"
+  expect:
+    intent: web.read
+    missing: []
+
+- id: wr-002
+  now: "2026-10-13T10:00:00+03:00"
+  input: "what does this page say? https://example.com/blog/post-1"
+  expect:
+    intent: web.read
+    missing: []
+
+- id: wr-003
+  now: "2026-10-13T10:00:00+03:00"
+  input: "מה כתוב בקישור הזה? https://www.gov.il/he/departments/news/abc"
+  expect:
+    intent: web.read
+    missing: []
+
+- id: wr-004
+  now: "2026-10-13T10:00:00+03:00"
+  input: "תזכיר לי מחר ב-8 בערב לקרוא את https://example.com/long-read"
+  expect:
+    intent: reminders.create
+    slots:
+      date: { kind: relative_days, offset: 1 }
+      time: { hour: 8, minute: 0, meridiem: pm, part_of_day: unspecified }
+    missing: []

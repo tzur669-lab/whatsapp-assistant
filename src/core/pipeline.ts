@@ -89,6 +89,8 @@ import { provenanceOf, replayByConsent } from '../agent/history.js';
 import type { AgentLock } from '../agent/lock.js';
 import { resumeAfterConsent, resumeAgentTurn, runAgentTurn } from '../agent/loop.js';
 import { mayInherit } from '../agent/last-selection.js';
+import { singleHttpsUrl } from '../lookup/web-page.js';
+import type { PageText } from '../lookup/web-page.js';
 import type { LastSelections } from '../agent/last-selection.js';
 import type { AgentResult, ConsentDecision } from '../agent/loop.js';
 import type { SuspendedTurns } from '../agent/turns.js';
@@ -186,6 +188,8 @@ export type Services = {
   birthdays?: BirthdayStore;
   /** Supplied by the platform so a feed can be fetched. */
   fetchImpl?: typeof fetch;
+  /** A page's readable text, for `web.read` (block J, J3). */
+  pageText?: PageText;
   /** Reaches the paired phone (§6.17). Absent until calls are configured. */
   calls?: CallDispatcher;
   /** Pairing and unpairing the phone (§6.17). Absent without a device pepper. */
@@ -872,6 +876,8 @@ async function respondWithAgent(
             (deps.deviceCaps ?? []).includes('device_query'),
           ...(smartConversation ? { smart: true, consent: { granted, ask }, historySources } : {}),
           ...(inheritedGroups ? { inheritedGroups } : {}),
+          // Only when the words hold exactly one https link (block J, J3).
+          ...(singleHttpsUrl(text) !== null ? { webRead: true } : {}),
           // Only when the words name a synced routine (§6.27, decision D4).
           ...(deps.channel === 'app' && namesRoutine(text, deps.services?.routines, principal) ? { routines: true } : {}),
           // Only when the words name the screen agent or an app on its list (§6.28).
@@ -1695,6 +1701,7 @@ function turnOf(
       ...(services.ical ? { ical: services.ical } : {}),
       ...(services.calls ? { calls: services.calls } : {}),
       ...(services.fetchImpl ? { fetchImpl: services.fetchImpl } : {}),
+      ...(services.pageText ? { pageText: services.pageText } : {}),
       ...(event.location ? { location: event.location } : {}),
       ...(services.tasks ? { tasks: services.tasks } : {}),
       ...(services.gmail ? { gmail: services.gmail } : {}),

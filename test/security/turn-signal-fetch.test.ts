@@ -42,6 +42,7 @@ const TURN_PATH: Record<string, string> = {
 const BOUND_BY_CALLER: Record<string, string> = {
   'lookup/http.ts': 'its `fetchImpl` is the tool context’s, bound by `withTurnSignal`',
   'core/quota.ts': 'passes `init` (and its signal) through unchanged',
+  'lookup/web-page.ts': '`web.read`: its `fetchImpl` is the tool context’s, bound by `withTurnSignal`, with its own 8 s timeout',
 };
 
 /** Never inside an agent turn's deadline. */

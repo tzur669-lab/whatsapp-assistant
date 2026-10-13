@@ -489,6 +489,9 @@ export const portfolioUpdateSlots = z
 /** "מה שווי התיק?", "איך המניות שלי?". */
 export const portfolioShowSlots = z.object({}).strict();
 
+/** "תסכם לי את הכתבה הזאת https://…" (block J, J3): no slots, code takes the link from the words. */
+export const webReadSlots = z.object({}).strict();
+
 /**
  * Routines (PLAN §6.27): the routine by its name as the user said it, and
  * when — nothing for now, or a day and time code resolves. The steps are on

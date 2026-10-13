@@ -59,6 +59,8 @@ describe('dataSource', () => {
   it('public data and arithmetic are public', () => {
     expect(dataSourceOf('info.lookup')).toBe('public');
     expect(dataSourceOf('calc.compute')).toBe('public');
+    // A public page, the link the user's own (block J, J3); it taints instead.
+    expect(dataSourceOf('web.read')).toBe('public');
   });
 
   it('the rest map to their own source', () => {

@@ -194,6 +194,8 @@ export type OfferOptions = {
    * 2026-10-12): only then is `screen.task` offered.
    */
   screen?: boolean;
+  /** The message holds exactly one https link (block J, J3): only then is `web.read` offered. */
+  webRead?: boolean;
 };
 
 export function agentToolNames(options: OfferOptions = { cards: false }): ToolName[] {
@@ -202,6 +204,7 @@ export function agentToolNames(options: OfferOptions = { cards: false }): ToolNa
     if (options.readOnly && (spec.tier !== 0 || spec.phoneRead || spec.confirmation === 'card')) return false;
     if (name === 'routine.run') return options.routines === true;
     if (name === 'screen.task') return options.screen === true;
+    if (name === 'web.read') return options.webRead === true;
     if (name.startsWith('mail.')) return options.grants?.gmail === true;
     if (name.startsWith('tasks.')) return options.grants?.tasks === true;
     if (name.startsWith('drive.')) return options.grants?.drive === true;
@@ -285,6 +288,8 @@ export const TAINTING_TOOLS: ReadonlySet<ToolName> = new Set<ToolName>([
   'phone.sms',
   // A task made from a Gmail message carries its subject: someone else's words.
   'tasks.list',
+  // A web page is someone else's words (block J, J3).
+  'web.read',
   // Mail is the plainest case of text someone else wrote.
   'mail.search',
   'mail.bills',

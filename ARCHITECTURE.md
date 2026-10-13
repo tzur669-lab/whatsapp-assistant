@@ -193,6 +193,7 @@ the same code on Node SQLite (`test/integration/sqlite-driver.ts`).
 
 **Coupled on purpose (change together)**
 - `tools/registry.ts` ↔ `agent/tool-groups.ts` ↔ `test/evals/fingerprint.ts` ↔ `models.ts` evaluated fingerprint. `agent/briefs.ts` is hashed too (the brief full catalog, J2b): editing a brief moves the Groq fingerprint.
+- `web.read` (J3, §6.29): `core/pipeline.ts` (`singleHttpsUrl` → `webRead` offer) ↔ `agent/tools.ts` (`OfferOptions.webRead`, `TAINTING_TOOLS`) ↔ `agent/tool-groups.ts` (rides along in any selection) ↔ `tools/web-read.ts` (link from `userText`) ↔ `lookup/web-page.ts` (guard, fetch) ↔ `platform/html-text.ts` (`HTMLRewriter`, `ToolContext.pageText`, wired in `assistant-do.ts`); `test/security/turn-signal-fetch.test.ts` places its fetch.
 - Inherited groups (J2a): `core/pipeline.ts` reads `LastSelections.inherited` before the turn and passes `onLocalSelection` (writes at plan time, `seq` from `inboundSeq`) ↔ `agent/loop.ts` ↔ `selectTools(text, offered, inherited)`; `settleAgentResult` calls `markRan` for the same `seq` (never the read-only try).
 - `tools/registry.ts` `dataSource` and `consent` ↔ `agent/consents.ts` ↔ `render/consent.ts` ↔ the history gate in `pipeline.ts` ↔ the smart fingerprint (`SMART_CATALOG_POLICY`).
 - `channels/app/parse.ts` + `verify.ts` ↔ app's `Protocol.kt` (shared test vectors).

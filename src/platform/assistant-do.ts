@@ -129,6 +129,7 @@ import type { ModelSpec, ServerLimits } from '../core/quota.js';
 import { AgentLock } from '../agent/lock.js';
 import { SuspendedTurns } from '../agent/turns.js';
 import { LastSelections } from '../agent/last-selection.js';
+import { htmlText } from './html-text.js';
 import { ConversationConsents } from '../agent/consents.js';
 import { defangLinks } from '../security/scrub.js';
 import { DurableObjectSqlDriver } from './sql-repo.js';
@@ -2217,6 +2218,7 @@ export class AssistantDO implements DurableObject {
       ical: this.ical,
       birthdays: this.birthdays,
       fetchImpl: this.fetchImpl,
+      pageText: htmlText,
       deferred: this.deferred,
       // The parser spends from the same per-model budget as the agent (plan K3),
       // metered once per message in the pipeline (§2b). Its chain stays exactly

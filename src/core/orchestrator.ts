@@ -37,6 +37,7 @@ import { EXPENSE_TOOLS } from '../tools/expenses.js';
 import { calendarListEvents } from '../tools/calendar-read.js';
 import { infoLookup } from '../tools/lookup.js';
 import { calcCompute } from '../tools/calc.js';
+import { webRead } from '../tools/web-read.js';
 import { calendarFreeTime } from '../tools/free-time.js';
 import { TASK_TOOLS } from '../tools/tasks.js';
 import { MAIL_TOOLS } from '../tools/mail.js';
@@ -170,6 +171,7 @@ const IMPLEMENTED: Partial<Record<ToolName, ToolDefinition>> = {
   ...PHONE_READ_TOOLS,
   'info.lookup': infoLookup,
   'calc.compute': calcCompute,
+  'web.read': webRead,
   ...TASK_TOOLS,
   ...MAIL_TOOLS,
   'drive.search': driveSearch,

@@ -129,6 +129,8 @@ Network on the hotspot: `NODE_OPTIONS=--dns-result-order=ipv4first` for wrangler
   done (migration 0033 `last_selection`, `agent/briefs.ts`): the Groq
   fingerprint moved, so a full `eval:agent` on qwen and gpt-oss-120b (with
   `--resume`, and `--select-tools` on qwen) is owed before anything gates.
+  J3 done (`web.read`, PLAN §6.29): evals `--filter wr-` and `inj-web-001`
+  and a CPU check in `wrangler dev` owed. Next: J4 (its PLAN section is §6.30).
   The plan's "Additions" and "Follow-up" sections win over the part sections.
 - **Next work:** [ROADMAP.md](ROADMAP.md) (Hebrew) — block H (2026-10-07):
   a smarter bot. Parts 15 (notes), 16 ("לא הבנת" capture), 17 (tool
@@ -166,6 +168,10 @@ Network on the hotspot: `NODE_OPTIONS=--dns-result-order=ipv4first` for wrangler
 | [SETUP.md](SETUP.md) | Setting up a new copy from zero: accounts, Groq key, models, secrets, deploy, app, AI agent. |
 
 ## 8. Session log (docs)
+
+- 2026-10-13: Block J3: `web.read` — new `tools/web-read.ts`,
+  `lookup/web-page.ts`, `platform/html-text.ts`; `ToolContext.pageText`,
+  `OfferOptions.webRead`, `cases.web.yaml`. No tables.
 
 - 2026-10-13: Block J2: new `agent/last-selection.ts` (`LastSelections`,
   `mayInherit`), `agent/briefs.ts`, migration 0033 `last_selection`;

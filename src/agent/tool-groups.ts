@@ -56,7 +56,7 @@ export const GROUPS: Readonly<Record<GroupName, readonly ToolName[]>> = {
     'portfolio.update',
     'portfolio.show',
   ],
-  info: ['info.lookup', 'calc.compute'],
+  info: ['info.lookup', 'calc.compute', 'web.read'],
   mail: ['mail.search', 'mail.draft', 'mail.bills'],
   drive: ['drive.search'],
   phone: [
@@ -220,7 +220,10 @@ export function selectTools(
       ? inherited.filter((group) => group !== 'routine' && group !== 'screen').slice(0, MAX_UNION_GROUPS)
       : named;
   if (groups.length === 0 || groups.length > MAX_UNION_GROUPS) return full;
-  const members = new Set<ToolName>(offered.filter((tool) => tool === 'routine.run' || tool === 'screen.task'));
+  // Offered only when named or linked, these ride along in any selection.
+  const members = new Set<ToolName>(
+    offered.filter((tool) => tool === 'routine.run' || tool === 'screen.task' || tool === 'web.read'),
+  );
   for (const group of groups) {
     const available = GROUPS[group].filter((tool) => offered.includes(tool));
     if (available.length * 2 <= GROUPS[group].length) return full;
