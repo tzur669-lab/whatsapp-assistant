@@ -27,6 +27,9 @@ object Notifier {
     private const val CHANNEL_MESSAGES = "messages"
     private const val TAG = "row"
     private const val GENERIC_ID = -1
+    /** Its own tag, so opening the chat ([cancelAll]) does not clear it. */
+    private const val UNLOCK_TAG = "unlock"
+    private const val UNLOCK_ID = 1
     /** Android shows three actions at most. */
     private const val MAX_ACTIONS = 3
 
@@ -72,6 +75,31 @@ object Notifier {
             .setAutoCancel(true)
             .build()
         context.getSystemService(NotificationManager::class.java).notify(TAG, GENERIC_ID, notification)
+    }
+
+    /**
+     * The stored PIN did not open the phone (0.17): auto-unlock turned itself
+     * off. Opens the routines screen, where the PIN is saved again.
+     */
+    fun unlockFailed(context: Context) {
+        if (!canNotify(context)) return
+        ensureChannels(context)
+        val open = PendingIntent.getActivity(
+            context,
+            UNLOCK_ID,
+            Intent(context, RoutinesActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+        )
+        val text = context.getString(R.string.unlock_failed_notice)
+        val notification = Notification.Builder(context, CHANNEL_REMINDERS)
+            .setSmallIcon(R.drawable.ic_assistant)
+            .setContentTitle(context.getString(R.string.unlock_failed_title))
+            .setContentText(text)
+            .setStyle(Notification.BigTextStyle().bigText(text))
+            .setContentIntent(open)
+            .setAutoCancel(true)
+            .build()
+        context.getSystemService(NotificationManager::class.java).notify(UNLOCK_TAG, UNLOCK_ID, notification)
     }
 
     fun cancel(context: Context, seq: Long) {

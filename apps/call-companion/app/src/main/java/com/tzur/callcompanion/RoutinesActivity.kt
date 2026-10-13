@@ -14,6 +14,7 @@ import android.text.InputType
 import android.view.View
 import android.view.ViewGroup
 import android.widget.Button
+import android.widget.CheckBox
 import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.ScrollView
@@ -75,6 +76,84 @@ class RoutinesActivity : Activity() {
         // The number the assistant knows it by too: "תפעיל שגרה 2" (2026-10-12).
         routines.forEachIndexed { index, routine -> column.addView(routineRow(routine, index + 1)) }
         if (routines.size < RoutineLogic.MAX_ROUTINES) column.addView(button(getString(R.string.routines_new)) { edit(null) })
+        unlockSection()
+    }
+
+    // --- Unlocking with the stored PIN (0.17) ---
+
+    private fun unlockSection() {
+        column.addView(heading(getString(R.string.unlock_title), 18f))
+        if (Build.VERSION.SDK_INT < UnlockLogic.MIN_SDK) {
+            column.addView(paragraph(getString(R.string.unlock_old_android)))
+            return
+        }
+        column.addView(paragraph(getString(R.string.unlock_intro)).apply { textSize = 14f })
+        val hasPin = UnlockStore.hasPin(this)
+        val status = when {
+            !hasPin -> R.string.unlock_status_none
+            UnlockStore.failed(this) -> R.string.unlock_status_failed
+            else -> R.string.unlock_status_saved
+        }
+        column.addView(paragraph(getString(status)))
+        column.addView(button(getString(if (hasPin) R.string.unlock_replace else R.string.unlock_save)) { askPin() })
+        if (hasPin) column.addView(button(getString(R.string.unlock_remove)) { confirmRemovePin() })
+    }
+
+    /** The PIN typed twice; never shown, never kept in a String of ours. */
+    private fun askPin() {
+        val first = pinField(R.string.unlock_pin_hint)
+        val second = pinField(R.string.unlock_pin_again_hint)
+        val box = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(20), dp(8), dp(20), 0)
+            addView(first)
+            addView(second)
+        }
+        AlertDialog.Builder(this)
+            .setTitle(R.string.unlock_dialog_title)
+            .setView(box)
+            .setPositiveButton(R.string.unlock_save) { _, _ ->
+                val a = charsOf(first)
+                val b = charsOf(second)
+                first.text.clear()
+                second.text.clear()
+                val message = when {
+                    UnlockLogic.pinProblem(a) != null -> R.string.unlock_pin_bad
+                    !UnlockLogic.sameEntry(a, b) -> R.string.unlock_pin_mismatch
+                    UnlockStore.savePin(this, a) -> R.string.unlock_saved
+                    else -> R.string.unlock_save_failed
+                }
+                a.fill('0')
+                b.fill('0')
+                android.widget.Toast.makeText(this, message, android.widget.Toast.LENGTH_LONG).show()
+                render()
+            }
+            .setNegativeButton(R.string.chat_keep, null)
+            .show()
+    }
+
+    private fun pinField(hint: Int) = EditText(this).apply {
+        inputType = InputType.TYPE_CLASS_NUMBER or InputType.TYPE_NUMBER_VARIATION_PASSWORD
+        setHint(hint)
+        filters = arrayOf(android.text.InputFilter.LengthFilter(UnlockLogic.MAX_DIGITS))
+        textDirection = View.TEXT_DIRECTION_LTR
+    }
+
+    private fun charsOf(field: EditText): CharArray {
+        val text = field.text
+        return CharArray(text.length) { text[it] }
+    }
+
+    private fun confirmRemovePin() {
+        AlertDialog.Builder(this)
+            .setTitle(R.string.unlock_remove_title)
+            .setMessage(R.string.unlock_remove_text)
+            .setPositiveButton(R.string.chat_delete) { _, _ ->
+                UnlockStore.clear(this)
+                render()
+            }
+            .setNegativeButton(R.string.chat_keep, null)
+            .show()
     }
 
     private fun routineRow(routine: RoutineLogic.Routine, number: Int): View {
@@ -105,6 +184,15 @@ class RoutinesActivity : Activity() {
                 text = getString(R.string.routine_no_verify_note)
                 textSize = 13f
                 setTextColor(Color.rgb(0x8A, 0x5A, 0x00))
+            })
+        }
+        // Off by default; an edit of the steps turns it off (UnlockStore keeps the step hash).
+        if (UnlockStore.hasPin(this) && Build.VERSION.SDK_INT >= UnlockLogic.MIN_SDK) {
+            box.addView(CheckBox(this).apply {
+                text = getString(R.string.unlock_routine_switch)
+                textSize = 14f
+                isChecked = UnlockStore.isOptedIn(this@RoutinesActivity, routine)
+                setOnCheckedChangeListener { _, on -> UnlockStore.setOptIn(this@RoutinesActivity, routine, on) }
             })
         }
         // Two rows: five buttons in one squeezed "מחיקה" to nothing on a phone.

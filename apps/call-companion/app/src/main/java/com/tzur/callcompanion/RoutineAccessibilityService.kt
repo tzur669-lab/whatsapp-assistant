@@ -1,9 +1,12 @@
 package com.tzur.callcompanion
 
 import android.accessibilityservice.AccessibilityService
+import android.accessibilityservice.GestureDescription
 import android.app.KeyguardManager
 import android.content.Context
 import android.content.Intent
+import android.graphics.Path
+import android.graphics.Rect
 import android.os.Build
 import android.os.Bundle
 import android.os.Handler
@@ -11,7 +14,10 @@ import android.os.Looper
 import android.os.SystemClock
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
+import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicInteger
 
 /**
  * Acts inside one other app at a time, for two callers. The user turns it on
@@ -20,7 +26,7 @@ import java.util.concurrent.Executors
  * **Routines** (0.13, PLAN §6.27): the user's own fixed steps. Checked again
  * before every step (not only by the `packageNames` filter, which limits the
  * events it hears and nothing else):
- * - the phone is not locked — it never touches the lock screen;
+ * - the phone is not locked — a routine's steps never act on the lock screen;
  * - the active window belongs to the routine's own app;
  * - a tap is `ACTION_CLICK` on the one element [RoutineLogic.pickTarget]
  *   chose, re-read just before the click;
@@ -46,6 +52,15 @@ import java.util.concurrent.Executors
  *   on the bound node, and back is `GLOBAL_ACTION_BACK` — after which the
  *   window must still be the task's app, else the task ends (`left_app`).
  *   No coordinates, no gestures, no other global action.
+ *
+ * **Unlocking with the stored PIN** (0.17, `docs/plans/routine-auto-unlock.md`),
+ * only through [unlockAndRun], only for a claimed routine the user opted in:
+ * every digit is matched to exactly one key of the lock screen's keypad by
+ * what the key says, before anything is pressed; a key is `ACTION_CLICK`, or,
+ * only if Android refuses that, a tap at the key's centre — the one
+ * `dispatchGesture` in the app. Afterwards `GLOBAL_ACTION_LOCK_SCREEN` locks
+ * the phone again — the one other global action — when that job typed the
+ * PIN and no other job waits. One attempt: see [UnlockStore].
  *
  * Nothing here logs node text; failures are codes.
  *
@@ -101,7 +116,7 @@ class RoutineAccessibilityService : AccessibilityService() {
 
     private fun start(routine: RoutineLogic.Routine, dryRun: Boolean, done: (RoutineLogic.Result) -> Unit) {
         applyPackages(listOf(routine.packageName))
-        worker.execute {
+        submit {
             val result = try {
                 execute(routine, dryRun)
             } catch (_: Exception) {
@@ -121,7 +136,7 @@ class RoutineAccessibilityService : AccessibilityService() {
      */
     private fun startScan(packageName: String, done: (List<RoutineLogic.ScanLine>?) -> Unit) {
         applyPackages(listOf(packageName))
-        worker.execute {
+        submit {
             val lines = try {
                 scanNow(packageName)
             } catch (_: Exception) {
@@ -144,6 +159,131 @@ class RoutineAccessibilityService : AccessibilityService() {
         waitUntilStable(deadline + RoutineLogic.STABLE_MAX_MS)
         val (_, infos) = snapshot(packageName) ?: return null
         return RoutineLogic.scan(infos)
+    }
+
+    /**
+     * One job: unlock with [pin] if the phone is still locked, run [routine],
+     * then lock again if this job typed the PIN and nothing else waits.
+     * [pin] is zeroed here. [done] gets the unlock's code and, when it ran,
+     * the routine's result, on the main thread.
+     */
+    private fun startUnlockAndRun(routine: RoutineLogic.Routine, pin: CharArray, done: (String, RoutineLogic.Result?) -> Unit) {
+        submit {
+            var code = UNLOCK_NO_KEYPAD
+            var result: RoutineLogic.Result? = null
+            try {
+                code = try { unlockNow(pin) } finally { pin.fill('0') }
+                if (code == UNLOCK_OPEN || code == UNLOCK_TYPED) {
+                    applyPackages(listOf(routine.packageName))
+                    result = try {
+                        execute(routine, dryRun = false)
+                    } catch (_: Exception) {
+                        // An Android error mid-run; whether a tap happened is unknown.
+                        RoutineLogic.Result(RoutineLogic.Outcome.FAILED_AFTER_TAP, -1, "error")
+                    }
+                }
+            } catch (_: Exception) {
+                // Failed before the run: reported as locked; a started attempt is already in the store.
+            } finally {
+                runningPackage = null
+                if (code == UNLOCK_TYPED && pending.get() == 1) relock()
+                applyPackages(emptyList())
+            }
+            val unlock = code
+            main.post { done(unlock, result) }
+        }
+    }
+
+    /**
+     * Types [pin] on the lock screen's keypad, once. [UNLOCK_OPEN] when the
+     * phone was already open (nothing typed), [UNLOCK_TYPED] when it opened,
+     * [UNLOCK_NO_KEYPAD] when no keypad held one key per digit (nothing
+     * typed), [UNLOCK_STILL_LOCKED] when it stayed locked after the PIN.
+     */
+    private fun unlockNow(pin: CharArray): String {
+        if (!locked()) return UNLOCK_OPEN
+        applyPackages(listOf(SYSTEM_UI))
+        val until = SystemClock.uptimeMillis() + KEYPAD_WAIT_MS
+        var nodes: List<AccessibilityNodeInfo>
+        var plan: List<Int>?
+        var enter: Int?
+        while (true) {
+            if (!locked()) return UNLOCK_OPEN
+            val (infos, keys) = keypad()
+            plan = UnlockLogic.plan(pin, keys)
+            if (plan != null) {
+                nodes = infos
+                enter = UnlockLogic.enterKey(keys)
+                break
+            }
+            if (SystemClock.uptimeMillis() >= until) return UNLOCK_NO_KEYPAD
+            SystemClock.sleep(POLL_MS)
+        }
+        if (!UnlockStore.beginAttempt(this)) return UNLOCK_NO_KEYPAD
+        for (index in plan!!) {
+            press(nodes[index])
+            SystemClock.sleep(KEY_GAP_MS)
+        }
+        // A keypad that confirms by itself is open already, and has no Enter.
+        if (locked()) enter?.let { press(nodes[it]) }
+        val opened = waitFor(OPEN_WAIT_MS, Long.MAX_VALUE) { !locked() }
+        return if (opened) {
+            UnlockStore.attemptWorked(this)
+            UNLOCK_TYPED
+        } else {
+            UnlockStore.attemptFailed(this)
+            UNLOCK_STILL_LOCKED
+        }
+    }
+
+    /** The system UI's windows (the lock screen and its keypad), flattened. */
+    private fun keypad(): Pair<List<AccessibilityNodeInfo>, List<UnlockLogic.Key>> {
+        val infos = ArrayList<AccessibilityNodeInfo>()
+        val keys = ArrayList<UnlockLogic.Key>()
+        for (window in windows) {
+            val root = window.root ?: continue
+            if (root.packageName?.toString() != SYSTEM_UI) continue
+            val stack = ArrayDeque<AccessibilityNodeInfo>()
+            stack.addLast(root)
+            while (stack.isNotEmpty() && infos.size < MAX_NODES) {
+                val node = stack.removeLast()
+                infos.add(node)
+                keys.add(
+                    UnlockLogic.Key(
+                        text = node.text?.toString(),
+                        description = node.contentDescription?.toString(),
+                        viewId = node.viewIdResourceName,
+                        visible = node.isVisibleToUser,
+                        enabled = node.isEnabled,
+                    ),
+                )
+                for (i in node.childCount - 1 downTo 0) node.getChild(i)?.let { stack.addLast(it) }
+            }
+        }
+        return infos to keys
+    }
+
+    /** One key: a click, or, only if Android refuses it, a tap at its centre. */
+    private fun press(node: AccessibilityNodeInfo) {
+        if (node.performAction(AccessibilityNodeInfo.ACTION_CLICK)) return
+        val bounds = Rect().also { node.getBoundsInScreen(it) }
+        if (bounds.isEmpty) return
+        val path = Path().apply { moveTo(bounds.exactCenterX(), bounds.exactCenterY()) }
+        val gesture = GestureDescription.Builder()
+            .addStroke(GestureDescription.StrokeDescription(path, 0, TAP_MS))
+            .build()
+        val latch = CountDownLatch(1)
+        val callback = object : GestureResultCallback() {
+            override fun onCompleted(gestureDescription: GestureDescription?) = latch.countDown()
+            override fun onCancelled(gestureDescription: GestureDescription?) = latch.countDown()
+        }
+        main.post { if (!dispatchGesture(gesture, callback, null)) latch.countDown() }
+        latch.await(GESTURE_WAIT_MS, TimeUnit.MILLISECONDS)
+    }
+
+    /** Locks the phone again after a run this service unlocked. */
+    private fun relock() {
+        if (Build.VERSION.SDK_INT >= UnlockLogic.MIN_SDK) performGlobalAction(GLOBAL_ACTION_LOCK_SCREEN)
     }
 
     private fun execute(routine: RoutineLogic.Routine, dryRun: Boolean): RoutineLogic.Result {
@@ -536,9 +676,34 @@ class RoutineAccessibilityService : AccessibilityService() {
         private const val SCAN_SETTLE_MS = 2_000L
         /** How long a tap or typing step waits for its target to appear. */
         private const val TARGET_WAIT_MS = 10_000L
+        private const val SYSTEM_UI = "com.android.systemui"
+        /** How long the lock screen's keypad may take to come up. */
+        private const val KEYPAD_WAIT_MS = 10_000L
+        /** After the last key, how long the phone may take to open. */
+        private const val OPEN_WAIT_MS = 5_000L
+        private const val KEY_GAP_MS = 150L
+        private const val TAP_MS = 50L
+        private const val GESTURE_WAIT_MS = 1_000L
+        const val UNLOCK_OPEN = "open"
+        const val UNLOCK_TYPED = "unlocked"
+        const val UNLOCK_NO_KEYPAD = "no_keypad"
+        const val UNLOCK_STILL_LOCKED = "still_locked"
 
         @Volatile private var instance: RoutineAccessibilityService? = null
         private val worker = Executors.newSingleThreadExecutor()
+        /** Jobs submitted and not finished, the running one included: relock only when it is the last. */
+        private val pending = AtomicInteger(0)
+
+        private fun submit(job: () -> Unit) {
+            pending.incrementAndGet()
+            worker.execute {
+                try {
+                    job()
+                } finally {
+                    pending.decrementAndGet()
+                }
+            }
+        }
         private val main = Handler(Looper.getMainLooper())
 
         /** Whether the user has turned the service on (and the system has bound it). */
@@ -551,6 +716,21 @@ class RoutineAccessibilityService : AccessibilityService() {
         fun run(routine: RoutineLogic.Routine, dryRun: Boolean, done: (RoutineLogic.Result) -> Unit): Boolean {
             val service = instance ?: return false
             service.start(routine, dryRun, done)
+            return true
+        }
+
+        /**
+         * A claimed routine on a locked phone (0.17): unlock with [pin], run,
+         * lock again. False when the service is off ([pin] is zeroed then too).
+         * [done]: the unlock's code and the run's result, if it ran.
+         */
+        fun unlockAndRun(routine: RoutineLogic.Routine, pin: CharArray, done: (String, RoutineLogic.Result?) -> Unit): Boolean {
+            val service = instance
+            if (service == null) {
+                pin.fill('0')
+                return false
+            }
+            service.startUnlockAndRun(routine, pin, done)
             return true
         }
 
@@ -570,7 +750,7 @@ class RoutineAccessibilityService : AccessibilityService() {
          */
         fun screenTask(block: (ops: (packageName: String, cancel: () -> Boolean) -> ScreenOps?) -> Unit): Boolean {
             if (instance == null) return false
-            worker.execute {
+            submit {
                 var used: RoutineAccessibilityService? = null
                 try {
                     block { packageName, cancel -> instance?.also { used = it }?.ScreenOps(packageName, cancel) }

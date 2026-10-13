@@ -5,7 +5,7 @@ system is, where things live, and what breaks easily, then links out. It does
 **not** repeat the rules in `CLAUDE.md` (always loaded) or the spec in
 `PLAN.md` (read by section, never whole).
 
-_Last updated: 2026-10-13 · server at migration 0034 · agent prompt a10 + smart note s2 + screen step s1 · parser prompt v6 · app 0.16.0 · smart model gemini-3.5-flash-lite_
+_Last updated: 2026-10-13 · server at migration 0034 · agent prompt a10 + smart note s2 + screen step s1 · parser prompt v6 · app 0.17.0 · smart model gemini-3.5-flash-lite_
 
 ## 1. What this is
 
@@ -74,6 +74,7 @@ Full map with every module: [ARCHITECTURE.md](ARCHITECTURE.md).
 | time/date logic | Only `src/time/resolve.ts` (forward), `src/time/past-day.ts` (expenses, backward) or the calendar read windows in `src/time/range.ts` (either way, 2026-10-12). DST: next fall-back 2026-10-25. Never default a missing time. |
 | routines (`tools/routine*.ts`, `routine_runs`) | A run moves one way, one conditional `UPDATE` at a time; the claim is the only thing that lets the phone run it, once, on time, with the confirmed step hash. Never retry a claimed run. `routine.run` is offered only when `namesRoutine` says so — never add it to the full catalog. Reason codes are closed on both sides (`RUN_REASONS` ↔ the app's `RoutineRunner`). PLAN §6.27. |
 | a migration | Add `migrations/00NN_*.sql` **and** register it in `src/platform/migrations.ts`. Backward-compatible for one version. |
+| the stored-PIN unlock (the app's `UnlockLogic.kt`, `UnlockStore.kt`) | Routines only, never a screen task. The PIN never leaves the phone; the claim comes before the unlock; one attempt until the PIN is saved again. `dispatchGesture` and `GLOBAL_ACTION_LOCK_SCREEN` live only in `press`/`relock` (`UnlockScanTest`). PLAN §6.27. |
 | the screen agent (`tools/screen*.ts`, `agent/screen-*.ts`, the app's `Screen*.kt`) | Read `docs/plans/screen-agent.md` first. The word lists live in code on both sides and must equal `test/fixtures/screen-policy.json` (a test on each side). Every status move is one conditional UPDATE; never retry an action — a `started` journal entry is `uncertain`. Screen text is never stored, logged or put in history, and goes only to the task's family: `SCREEN_MODELS` (Groq) for `mode: 'local'`, `SCREEN_SMART_MODELS` (Gemini) for `'smart'` — the mode rides in the confirmed input and the task row, never re-read from the turn. A Groq model's screen share is `SCREEN_GROQ_DAY_TOKENS`. `screen.task` is offered only when named: never add it to the full catalog. A step prompt change is `pnpm eval:screen`. |
 | `src/channels/app/parse.ts` or the wire protocol | The app has a matching `Protocol.kt` with test vectors. **Deploy the server before installing a new APK**, or the old server rejects the new app. |
 | a Tier 0–1 write's `execute` that calls Google (or the turn deadline) | The enumeration in `src/agent/limits.ts`: more sequential `GoogleApi.call`s than `MAX_WRITE_CALLS` means raising it, or the lock can expire under a running write. `TURN_DEADLINE_MS` is provisional (M6). |
@@ -98,7 +99,10 @@ Network on the hotspot: `NODE_OPTIONS=--dns-result-order=ipv4first` for wrangler
   are built (app 0.13.0, migration 0028, decisions D1–D4 approved); app
   0.13.1 adds typing a fixed text and the keyboard's Enter ("open FID and
   search סטימצקי", plan `docs/plans/routines-typing.md`). Staging is deployed
-  (2026-10-11), 0.13.1 is on the phone. Next, a separate
+  (2026-10-11), 0.13.1 is on the phone. App 0.17.0 (2026-10-13, plan
+  `docs/plans/routine-auto-unlock.md`): an opted-in routine unlocks a
+  PIN-locked phone with a PIN stored on the phone only, then locks it
+  again; APK in Downloads, the phone check owed (PLAN §13). Next, a separate
   plan: the bot builds a routine on request and explains it (the user's
   wish, 2026-10-11 — it changes "never written by a model", PLAN §6.27): the
   dry run passed on the real attendance app (exit, 2026-10-11). Server
@@ -178,6 +182,11 @@ Network on the hotspot: `NODE_OPTIONS=--dns-result-order=ipv4first` for wrangler
 | [SETUP.md](SETUP.md) | Setting up a new copy from zero: accounts, Groq key, models, secrets, deploy, app, AI agent. |
 
 ## 8. Session log (docs)
+
+- 2026-10-13: App 0.17.0: routines unlock with a stored PIN — new
+  `UnlockLogic.kt`, `UnlockStore.kt`; `RoutineRunner.claimFirst`/`runClaimed`,
+  `RoutineAccessibilityService.unlockAndRun`, `RoutineRunActivity` claimed
+  and pin modes, `Notifier.unlockFailed`. No server change, no deploy.
 
 - 2026-10-13: Calendar lists grouped by day, time first (`eventText.list`
   takes an optional clock for היום/מחר/אתמול). Render only; no new modules

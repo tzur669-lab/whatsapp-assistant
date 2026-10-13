@@ -3,6 +3,7 @@ package com.tzur.callcompanion
 import android.app.KeyguardManager
 import android.content.Context
 import android.content.Intent
+import android.os.Build
 import org.json.JSONArray
 import org.json.JSONObject
 import java.util.concurrent.atomic.AtomicBoolean
@@ -11,12 +12,20 @@ import java.util.concurrent.atomic.AtomicBoolean
  * A scheduled routine run, from the push to the report (0.13, PLAN §6.27).
  *
  * 1. FCM wakes the app with the run's opaque id.
- * 2. A locked phone is unlocked first (`RoutineRunActivity`): with Extend
- *    Unlock on, by itself; with a secure lock, by one fingerprint touch. Only
- *    then the claim, so a run is never claimed and left waiting on a finger.
+ * 2. A locked phone with no usable stored PIN is unlocked first
+ *    (`RoutineRunActivity`): with Extend Unlock on, by itself; with a secure
+ *    lock, by one fingerprint touch. Only then the claim, so a run is never
+ *    claimed and left waiting on a finger.
  * 3. The signed claim, once: the server says which routine, and its step hash.
  *    A routine missing here, or with other steps, is not run ("changed").
  * 4. The accessibility service runs the steps; the outcome goes back as codes.
+ *
+ * **With a stored PIN** (0.17, `docs/plans/routine-auto-unlock.md`) a locked
+ * phone claims **first** ([claimFirst]): only a run the server confirmed and
+ * pushed on time can unlock it. An opted-in routine with these very steps
+ * then unlocks, runs and locks again in one service job; any other claimed
+ * run asks as in step 2, through [runClaimed], which never claims again.
+ * This runner is the one that reports; the activity never does in that mode.
  *
  * Nothing is retried after the claim: a second run of a punch is worse than
  * none. A report that cannot be sent waits here and goes with the next sync.
@@ -50,6 +59,10 @@ object RoutineRunner {
         }
         val keyguard = app.getSystemService(Context.KEYGUARD_SERVICE) as KeyguardManager
         if (keyguard.isKeyguardLocked) {
+            if (mayUsePin(app)) {
+                Thread { claimFirst(app, runId) }.start()
+                return
+            }
             // The screen comes on over the lock screen; the run waits for the unlock.
             app.startActivity(
                 Intent(app, RoutineRunActivity::class.java)
@@ -63,6 +76,76 @@ object RoutineRunner {
 
     /** After the unlock (or with the phone already open). Blocks on the network: never the main thread. */
     fun claimAndRun(context: Context, runId: String) {
+        val ok = claim(context, runId) ?: return
+        runClaimed(context, runId, ok.routineId, ok.stepHash)
+    }
+
+    /**
+     * A run already claimed (0.17): the local routine must match the claimed
+     * steps, then it runs. Never claims; the phone must be open by now.
+     */
+    fun runClaimed(context: Context, runId: String, routineId: String, stepHash: String) {
+        val routine = matching(context, runId, routineId, stepHash) ?: return
+        val started = RoutineAccessibilityService.run(routine, dryRun = false) { result ->
+            report(context, runId, wireOutcome(result.outcome), result.reason.ifEmpty { null })
+        }
+        if (!started) report(context, runId, "failed_before_tap", "service_off")
+    }
+
+    /** Whether a locked phone should claim first and maybe type the PIN. */
+    private fun mayUsePin(context: Context): Boolean =
+        UnlockStore.hasPin(context) && !UnlockStore.failed(context) && Build.VERSION.SDK_INT >= UnlockLogic.MIN_SDK
+
+    /**
+     * A locked phone with a stored PIN (0.17): claim, then unlock with the
+     * PIN only for an opted-in routine with these very steps; else ask as
+     * before. Blocks on the network: never the main thread.
+     */
+    private fun claimFirst(context: Context, runId: String) {
+        val ok = claim(context, runId) ?: return
+        val routine = matching(context, runId, ok.routineId, ok.stepHash) ?: return
+        val decision = UnlockLogic.decide(
+            hasPin = UnlockStore.hasPin(context),
+            failed = UnlockStore.failed(context),
+            optedInHash = UnlockStore.optedInHash(context, routine.id),
+            stepHash = ok.stepHash,
+            sdk = Build.VERSION.SDK_INT,
+        )
+        val pin = if (decision == UnlockLogic.Decision.PIN) UnlockStore.readPin(context) else null
+        if (pin == null) {
+            context.startActivity(
+                Intent(context, RoutineRunActivity::class.java)
+                    .putExtra(RoutineRunActivity.EXTRA_RUN_ID, runId)
+                    .putExtra(RoutineRunActivity.EXTRA_CLAIMED_ROUTINE, ok.routineId)
+                    .putExtra(RoutineRunActivity.EXTRA_CLAIMED_HASH, ok.stepHash)
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_NO_ANIMATION),
+            )
+            return
+        }
+        // The screen on, the keypad up; the activity only waits and never reports.
+        context.startActivity(
+            Intent(context, RoutineRunActivity::class.java)
+                .putExtra(RoutineRunActivity.EXTRA_RUN_ID, runId)
+                .putExtra(RoutineRunActivity.EXTRA_PIN_MODE, true)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_NO_ANIMATION),
+        )
+        val started = RoutineAccessibilityService.unlockAndRun(routine, pin) { unlock, result ->
+            RoutineRunActivity.closePinMode()
+            if (result != null) {
+                report(context, runId, wireOutcome(result.outcome), result.reason.ifEmpty { null })
+            } else {
+                report(context, runId, "blocked", "locked")
+                if (unlock == RoutineAccessibilityService.UNLOCK_STILL_LOCKED) Notifier.unlockFailed(context)
+            }
+        }
+        if (!started) {
+            RoutineRunActivity.closePinMode()
+            report(context, runId, "failed_before_tap", "service_off")
+        }
+    }
+
+    /** The one claim, with a retry only when the server could not be reached. Null: nothing runs. */
+    private fun claim(context: Context, runId: String): Api.RoutineClaim.Ok? {
         var claim: Api.RoutineClaim = Api.RoutineClaim.Unreachable
         for (attempt in 1..CLAIM_ATTEMPTS) {
             claim = Api.claimRoutine(context, runId)
@@ -70,17 +153,17 @@ object RoutineRunner {
         }
         // Refused (cancelled, late, already claimed, changed) or unreachable: the
         // server tells the user; nothing runs.
-        val ok = claim as? Api.RoutineClaim.Ok ?: return
+        return claim as? Api.RoutineClaim.Ok
+    }
 
-        val routine = RoutineStore.get(context, ok.routineId)
-        if (routine == null || RoutineLogic.stepHash(routine) != ok.stepHash) {
+    /** The local routine with the claimed steps, or null after reporting "changed". */
+    private fun matching(context: Context, runId: String, routineId: String, stepHash: String): RoutineLogic.Routine? {
+        val routine = RoutineStore.get(context, routineId)
+        if (routine == null || RoutineLogic.stepHash(routine) != stepHash) {
             report(context, runId, "changed", "changed")
-            return
+            return null
         }
-        val started = RoutineAccessibilityService.run(routine, dryRun = false) { result ->
-            report(context, runId, wireOutcome(result.outcome), result.reason.ifEmpty { null })
-        }
-        if (!started) report(context, runId, "failed_before_tap", "service_off")
+        return routine
     }
 
     /** The phone stayed locked: nothing was claimed, nothing ran. */

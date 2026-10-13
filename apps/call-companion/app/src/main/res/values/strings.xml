@@ -185,12 +185,12 @@
     <string name="routines_title">שגרות</string>
     <string name="routines_intro">שגרה היא רצף קבוע של פעולות בתוך אפליקציה אחת: לחיצות, והקלדה של טקסט קבוע. למשל: לפתוח את שעון הנוכחות וללחוץ על \"כניסה\", או לפתוח אפליקציית קניות ולחפש בה \"סטימצקי\". בונים אותה כאן פעם אחת. בשלב הבא אפשר יהיה לבקש מהעוזר להפעיל אותה, גם בעוד זמן מה.
 
-השגרה רואה רק את האפליקציה שנבחרה לה, מקלידה רק את הטקסט שנכתב בה (אף פעם לא בשדה סיסמה) ולא נוגעת במסך הנעילה. מה שמופיע במסך לא נשמר ולא יוצא מהטלפון.</string>
+השגרה רואה רק את האפליקציה שנבחרה לה, מקלידה רק את הטקסט שנכתב בה (אף פעם לא בשדה סיסמה), ולא נוגעת במסך הנעילה, אלא אם הופעלה לה פתיחת נעילה לבד (בהמשך המסך). מה שמופיע במסך לא נשמר ולא יוצא מהטלפון.</string>
     <string name="routines_service_on">✓ שירות הנגישות של השגרות פועל.</string>
     <string name="routines_service_off">שירות הנגישות כבוי, ולכן שגרות לא יכולות לפעול. יש להפעיל את \"שגרות של העוזר\" בהגדרות הנגישות.</string>
     <string name="routines_service_open">פתיחת הגדרות הנגישות</string>
     <string name="routine_service_label">שגרות של העוזר</string>
-    <string name="routine_service_description">מאפשר לעוזר להריץ שגרות שבנית: לפתוח אפליקציה שבחרת, ללחוץ בה על מה שהגדרת ולהקליד את הטקסט שכתבת בשגרה. השירות רואה רק את האפליקציות של השגרות, לא מקליד בשדות סיסמה ולא נוגע במסך הנעילה. תוכן המסך לא נשמר ולא יוצא מהטלפון.</string>
+    <string name="routine_service_description">מאפשר לעוזר להריץ שגרות שבנית: לפתוח אפליקציה שבחרת, ללחוץ בה על מה שהגדרת ולהקליד את הטקסט שכתבת בשגרה. השירות רואה רק את האפליקציות של השגרות ולא מקליד בשדות סיסמה. במסך הנעילה הוא מקליד רק אם נשמר באפליקציה קוד נעילה והופעלה לשגרה פתיחת נעילה לבד: אז הוא מקליד את הקוד כשהשגרה מתחילה, ונועל את הטלפון שוב בסוף. תוכן המסך לא נשמר ולא יוצא מהטלפון.</string>
     <string name="routines_list_title">השגרות שלי</string>
     <string name="routine_numbered">%1$d · %2$s</string>
     <string name="routines_numbers_note">אפשר לבקש מהעוזר להפעיל שגרה לפי המספר שלה, למשל: \"בעוד רבע שעה תפעיל את שגרה 2\". מחיקת שגרה משנה את המספרים של השגרות שאחריה.</string>
@@ -204,6 +204,31 @@
     </plurals>
     <string name="routine_no_verify_note">אין שלב אימות, ולכן לא יהיה ידוע אם הפעולה נקלטה.</string>
     <string name="routine_unlock_prompt">⚙️ שגרה מתוזמנת מתחילה. אם הטלפון נעול, יש לפתוח אותו כדי שהיא תרוץ.</string>
+    <!-- Unlocking with the stored PIN (0.17) -->
+    <string name="routine_unlock_pin_prompt">⚙️ שגרה מתוזמנת מתחילה ופותחת את הנעילה.</string>
+    <string name="unlock_title">פתיחת נעילה לבד</string>
+    <string name="unlock_intro">אפשר לשמור כאן את קוד הנעילה של הטלפון, כדי ששגרה מתוזמנת תרוץ גם כשהטלפון נעול, בלי לגעת בו. הקוד נשמר מוצפן בטלפון הזה בלבד, ולא נשלח לשרת או לשום מקום אחר. בסוף השגרה הטלפון ננעל שוב.
+
+חשוב לדעת: שגרה שמותר לה לפתוח את הנעילה תפתח את הטלפון בזמן שלה, גם אם באותו רגע הוא אצל מישהו אחר. ההגנה על הקוד השמור חלשה יותר מהנעילה עצמה. אפשר לשמור רק קוד מספרי.</string>
+    <string name="unlock_old_android">פתיחת נעילה לבד דורשת אנדרואיד 9 ומעלה.</string>
+    <string name="unlock_status_none">לא נשמר קוד.</string>
+    <string name="unlock_status_saved">✓ נשמר קוד. לכל שגרה אפשר לבחור אם מותר לה לפתוח את הנעילה.</string>
+    <string name="unlock_status_failed">⚠️ הקוד השמור לא פתח את הטלפון, ולכן פתיחת הנעילה לבד הופסקה. אם הקוד הוחלף, יש לשמור כאן את הקוד החדש.</string>
+    <string name="unlock_save">שמירת קוד</string>
+    <string name="unlock_replace">החלפת הקוד</string>
+    <string name="unlock_remove">מחיקת הקוד</string>
+    <string name="unlock_dialog_title">קוד הנעילה של הטלפון</string>
+    <string name="unlock_pin_hint">הקוד</string>
+    <string name="unlock_pin_again_hint">הקוד שוב</string>
+    <string name="unlock_pin_bad">הקוד צריך להיות בין 4 ל-16 ספרות.</string>
+    <string name="unlock_pin_mismatch">שני הקודים לא זהים.</string>
+    <string name="unlock_saved">הקוד נשמר.</string>
+    <string name="unlock_save_failed">לא הצלחנו לשמור את הקוד בטלפון.</string>
+    <string name="unlock_remove_title">למחוק את הקוד השמור?</string>
+    <string name="unlock_remove_text">אחרי המחיקה שגרות לא יוכלו לפתוח את הנעילה לבד.</string>
+    <string name="unlock_routine_switch">מותר לה לפתוח את הנעילה לבד</string>
+    <string name="unlock_failed_title">פתיחת הנעילה לבד הופסקה</string>
+    <string name="unlock_failed_notice">הקוד השמור לא פתח את הטלפון, ולכן השגרה לא רצה. כדי להפעיל את זה מחדש, יש לשמור את הקוד שוב במסך השגרות.</string>
     <string name="routine_scan">🔍 מה רואים</string>
     <string name="scan_title">מה השגרה רואה במסך</string>
     <string name="scan_hint">רמז: %1$s</string>

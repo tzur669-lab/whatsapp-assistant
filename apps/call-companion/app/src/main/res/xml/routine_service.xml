@@ -2,16 +2,21 @@
 <!--
   Routines (0.13). Window changes only, so the service knows when a screen has
   settled; the package list is set at runtime to the routines' own apps, and
-  every step checks the active window's app again before it acts.
-  No gestures (canPerformGestures is off), no key events. Text is set only
-  through ACTION_SET_TEXT, with the text written into the routine (0.13.1).
+  every step checks the active window's app again before it acts. No key
+  events. Text is set only through ACTION_SET_TEXT, with the text written into
+  the routine (0.13.1).
+  Unlocking with the stored PIN (0.17): flagRetrieveInteractiveWindows lets the
+  service read the lock screen's keypad; canPerformGestures is on only so a
+  keypad key Android refuses to click can be tapped at its centre. That one
+  call and the relock are the only gesture and the only extra global action
+  (RoutineAccessibilityService.unlockNow / relock, pinned by UnlockScanTest).
 -->
 <accessibility-service xmlns:android="http://schemas.android.com/apk/res/android"
     android:accessibilityEventTypes="typeWindowStateChanged|typeWindowContentChanged"
     android:accessibilityFeedbackType="feedbackGeneric"
-    android:accessibilityFlags="flagReportViewIds"
+    android:accessibilityFlags="flagReportViewIds|flagRetrieveInteractiveWindows"
     android:canRetrieveWindowContent="true"
-    android:canPerformGestures="false"
+    android:canPerformGestures="true"
     android:notificationTimeout="100"
     android:packageNames="com.tzur.callcompanion"
     android:description="@string/routine_service_description" />

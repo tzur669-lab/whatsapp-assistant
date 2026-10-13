@@ -236,6 +236,16 @@ touch); then one signed claim (`/app/routine/claim`) returns the routine's id
 and step hash, the local routine must match it, the steps run, and the outcome
 goes back as codes (`/app/routine/result`). A claimed run is never retried.
 Locked for two minutes, or more than ten minutes late: nothing runs.
+
+**Unlocking with a stored PIN (0.17).** In ⚙️ שגרות → פתיחת נעילה לבד the
+user saves the phone's numeric PIN (`UnlockStore`: AES-GCM under a Keystore
+key, private prefs, never sent) and switches it on per routine (kept with the
+routine's step hash, so an edit turns it off). With the phone locked,
+`RoutineRunner.claimFirst` claims, then `RoutineAccessibilityService.unlockAndRun`
+matches every digit to one keypad key (`UnlockLogic`), types it, runs the
+steps and locks the phone again. One attempt: a PIN that does not open turns
+the feature off until it is saved again (`Notifier.unlockFailed`). Routines
+only; screen tasks still ask for the unlock.
 **Deploy the server first**: an older one answers the sync with 404.
 
 ## Screen agent (0.14.0)
@@ -355,6 +365,8 @@ server or wire change.
 - **Call log:** read when asked, never copied. Numbers never leave.
 - **Notifications:** the last day, in `notifications.db`, private and excluded
   from backup, until a phone read asks for some of them.
+- **The lock PIN (0.17):** Keystore-encrypted in private prefs, excluded from
+  backup; never sent, logged or shown.
 - **Watches (0.15):** notifications and SMS are matched here; only a watch's id
   and a time leave the phone. The queue and the handled list hold ids, hashes
   and times only.

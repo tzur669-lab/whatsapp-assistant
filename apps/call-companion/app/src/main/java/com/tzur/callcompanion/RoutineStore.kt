@@ -40,6 +40,8 @@ object RoutineStore {
     }
 
     fun delete(context: Context, id: String) {
+        // Its permission to unlock goes with it (0.17).
+        UnlockStore.forget(context, id)
         write(context, all(context).filter { it.id != id })
     }
 
