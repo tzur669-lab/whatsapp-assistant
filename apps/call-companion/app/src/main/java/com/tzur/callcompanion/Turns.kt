@@ -164,6 +164,11 @@ object Turns {
                 if (answer.row.seq > 0) Api.ack(app, listOf(answer.row.seq), Api.SHORT_TIMEOUT_MS)
                 Notifier.announce(app, fresh)
                 ChatEvents.changed()
+                // The direct answer, never a push: spoken if it answers a voice note and the setting is on (0.16).
+                if (fresh.isNotEmpty()) {
+                    val key = if (answer.row.seq > 0) "r:${answer.row.seq}" else "m:$id"
+                    Speech.onReply(app, id, key, answer.row.text)
+                }
                 true
             }
             Api.Answer.Done -> {

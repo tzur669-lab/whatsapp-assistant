@@ -104,6 +104,10 @@
     <string name="perm_grant">הפעלה</string>
     <string name="perm_ok">✓ פעיל</string>
     <string name="privacy_note">היסטוריית הצ׳אט שמורה רק בטלפון הזה ולא נכנסת לגיבוי. הקלטות נמחקות מהטלפון מיד אחרי השליחה. מספרי טלפון של אנשי קשר לא יוצאים מהטלפון. &#x2068;SMS&#x2069; והתראות נשלחים לעוזר רק כשמבקשים, בלי מספרי טלפון ובלי קודים חד־פעמיים.</string>
+    <!-- 0.16: spoken replies to voice notes (block J, J6). -->
+    <string name="speech_toggle">להקריא בקול תשובות להודעות קוליות</string>
+    <string name="speech_note">רק כשהטלפון לא במצב שקט או רטט, ורק לתשובה שמגיעה מיד. נגיעה במסך עוצרת את ההקראה.</string>
+    <string name="speech_no_hebrew">בטלפון אין קול בעברית, ולכן התשובות לא מוקראות. אפשר להוסיף קול בהגדרות הטלפון, בהמרת טקסט לדיבור.</string>
 
     <!-- Phone reads (PLAN §6.21) -->
     <string name="perm_reads_title">קריאה מהטלפון</string>

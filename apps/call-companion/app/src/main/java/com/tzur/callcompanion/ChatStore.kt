@@ -135,6 +135,13 @@ class ChatStore private constructor(context: Context) :
             arrayOf(messageId),
         ).use { if (it.moveToFirst()) it.getString(0) else null }
 
+    /** The kind of an outgoing message (`text`, `voice`, `button`), or null (0.16, speech). */
+    fun kindOfMessage(messageId: String): String? =
+        readableDatabase.rawQuery(
+            "SELECT kind FROM messages WHERE outgoing = 1 AND message_id = ? LIMIT 1",
+            arrayOf(messageId),
+        ).use { if (it.moveToFirst()) it.getString(0) else null }
+
     /** The conversation a row from the server was put in. */
     fun conversationOfSeq(seq: Long): String? =
         readableDatabase.rawQuery("SELECT conversation FROM messages WHERE seq = ? LIMIT 1", arrayOf(seq.toString()))

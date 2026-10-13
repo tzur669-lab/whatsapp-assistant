@@ -5,7 +5,7 @@ system is, where things live, and what breaks easily, then links out. It does
 **not** repeat the rules in `CLAUDE.md` (always loaded) or the spec in
 `PLAN.md` (read by section, never whole).
 
-_Last updated: 2026-10-13 · server at migration 0034 · agent prompt a10 + smart note s2 + screen step s1 · parser prompt v6 · app 0.15.0 · smart model gemini-3.5-flash-lite_
+_Last updated: 2026-10-13 · server at migration 0034 · agent prompt a10 + smart note s2 + screen step s1 · parser prompt v6 · app 0.16.0 · smart model gemini-3.5-flash-lite_
 
 ## 1. What this is
 
@@ -134,7 +134,8 @@ Network on the hotspot: `NODE_OPTIONS=--dns-result-order=ipv4first` for wrangler
   (migration 0034) and app 0.15.0 (`Watches.kt`, `WatchMatcher.kt`):
   **server first**, then the APK; `eval:agent --filter wh-` and the phone
   check owed. J5 done (digest conflicts and bills, `/digest conflicts|bills
-  on|off`, off by default). Next: J6 (spoken replies, app only).
+  on|off`, off by default). J6 done (app 0.16.0, spoken replies to voice
+  notes, off by default). Next: J7 (no duplicate facts).
   The plan's "Additions" and "Follow-up" sections win over the part sections.
 - **Next work:** [ROADMAP.md](ROADMAP.md) (Hebrew) — block H (2026-10-07):
   a smarter bot. Parts 15 (notes), 16 ("לא הבנת" capture), 17 (tool
@@ -172,6 +173,9 @@ Network on the hotspot: `NODE_OPTIONS=--dns-result-order=ipv4first` for wrangler
 | [SETUP.md](SETUP.md) | Setting up a new copy from zero: accounts, Groq key, models, secrets, deploy, app, AI agent. |
 
 ## 8. Session log (docs)
+
+- 2026-10-13: Block J6, app 0.16.0: `SpeechLogic.kt`, `Speech.kt`,
+  `ChatStore.kindOfMessage`, a settings switch. No server change.
 
 - 2026-10-13: Block J5: new `core/conflicts.ts`; `buildDigest` sections
   (`DigestContext.sections`, `gmail`), `readBills`/`billsDueWithin`/`billLine`

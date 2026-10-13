@@ -153,6 +153,18 @@ class PairActivity : Activity() {
             setOnClickListener { chooseHiddenApps() }
         })
 
+        // Spoken replies to voice notes (0.16): off by default.
+        column.addView(android.widget.Switch(this).apply {
+            text = getString(R.string.speech_toggle)
+            isChecked = Speech.enabled(this@PairActivity)
+            setPadding(0, pad, 0, 0)
+            setOnCheckedChangeListener { _, on -> Speech.setEnabled(this@PairActivity, on) }
+        })
+        column.addView(TextView(this).apply {
+            text = getString(if (Speech.noHebrew(this@PairActivity)) R.string.speech_no_hebrew else R.string.speech_note)
+            textSize = 13f
+        })
+
         column.addView(TextView(this).apply {
             text = getString(R.string.privacy_note)
             setPadding(0, pad, 0, 0)

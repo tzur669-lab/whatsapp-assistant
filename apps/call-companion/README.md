@@ -302,6 +302,18 @@ the watch; the phone matches it.
 
 **Deploy the server first**: an older one answers both routes with 404.
 
+## Spoken replies (0.16, block J)
+
+A switch in the settings screen, **off** by default: the answer to a voice
+note is read aloud with the phone's own `TextToSpeech` in `he-IL`. Only the
+direct answer to an outgoing `voice` message (never one that arrives by push),
+only when the ringer is normal (not silent or vibrate); a tap on the chat
+stops it. `SpeechLogic.kt` holds the rules, tested; `Speech.kt` follows one
+order — engine ready, Hebrew voice available, the reply's id committed (the
+last 50 in `SharedPreferences`), then `speak()` — so a reply is spoken at most
+once. No Hebrew voice: nothing is spoken and the settings screen says why. No
+server or wire change.
+
 ## Setup
 
 1. **Firebase**: project `tzur-call-companion`, Android app

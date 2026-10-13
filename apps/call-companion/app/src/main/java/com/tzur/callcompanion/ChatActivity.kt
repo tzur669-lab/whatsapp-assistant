@@ -93,6 +93,17 @@ class ChatActivity : Activity(), ChatEvents.Listener {
      */
     private var tapMode = false
 
+    /** Any tap on the chat stops a reply being read aloud (0.16). */
+    override fun dispatchTouchEvent(event: android.view.MotionEvent): Boolean {
+        if (event.actionMasked == android.view.MotionEvent.ACTION_DOWN) Speech.stop()
+        return super.dispatchTouchEvent(event)
+    }
+
+    override fun onDestroy() {
+        Speech.shutdown()
+        super.onDestroy()
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         // Before the pairing check: an install upgraded from 0.1 is never paired.
