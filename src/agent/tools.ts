@@ -10,6 +10,7 @@
  *
  * Wire names use `__` for the dot, which function names may not contain.
  */
+import { BRIEFS } from './briefs.js';
 import type { ZodTypeAny } from 'zod';
 import { timeSpecSchema } from '../nlu/slot-schemas.js';
 import { timeWordsNamed } from '../time/hebrew-lexicon.js';
@@ -241,15 +242,21 @@ export function smartOfferedTools(
   });
 }
 
-export function wireTools(names: readonly ToolName[]): WireTool[] {
+/**
+ * The tools as the model is offered them. `brief` (block J, J2b): a local turn
+ * offered the full set sends `BRIEFS` in place of the longest descriptions;
+ * the slot schemas are the same either way.
+ */
+export function wireTools(names: readonly ToolName[], options: { brief?: boolean } = {}): WireTool[] {
   return names.map((name) => {
     const spec = REGISTRY[name];
+    const description = (options.brief ? BRIEFS[name] : undefined) ?? spec.llmDescription;
     const shape = (spec.draftSchema as unknown as { shape: Record<string, ZodTypeAny> }).shape;
     return {
       type: 'function',
       function: {
         name: toWireName(name),
-        description: spec.llmDescription,
+        description,
         parameters: {
           type: 'object',
           properties: Object.fromEntries(

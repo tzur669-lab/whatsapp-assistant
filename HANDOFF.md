@@ -5,7 +5,7 @@ system is, where things live, and what breaks easily, then links out. It does
 **not** repeat the rules in `CLAUDE.md` (always loaded) or the spec in
 `PLAN.md` (read by section, never whole).
 
-_Last updated: 2026-10-13 · server at migration 0032 · agent prompt a10 + smart note s2 + screen step s1 · parser prompt v6 · app 0.14.3 · smart model gemini-3.5-flash-lite_
+_Last updated: 2026-10-13 · server at migration 0033 · agent prompt a10 + smart note s2 + screen step s1 · parser prompt v6 · app 0.14.3 · smart model gemini-3.5-flash-lite_
 
 ## 1. What this is
 
@@ -125,8 +125,10 @@ Network on the hotspot: `NODE_OPTIONS=--dns-result-order=ipv4first` for wrangler
   APK and the phone checks. Phase 3 needs its own plan.
 - **Block J** (2026-10-13, plan `docs/plans/block-j.md`, ROADMAP block J):
   seven free ideas from OpenClaw, J1–J7, one commit each, in order. J1 done
-  (a repeated refused call makes the next call text-only, Gemini only). Next:
-  J2 (inherit groups + brief descriptions; the block's only full `eval:agent`).
+  (a repeated refused call makes the next call text-only, Gemini only). J2
+  done (migration 0033 `last_selection`, `agent/briefs.ts`): the Groq
+  fingerprint moved, so a full `eval:agent` on qwen and gpt-oss-120b (with
+  `--resume`, and `--select-tools` on qwen) is owed before anything gates.
   The plan's "Additions" and "Follow-up" sections win over the part sections.
 - **Next work:** [ROADMAP.md](ROADMAP.md) (Hebrew) — block H (2026-10-07):
   a smarter bot. Parts 15 (notes), 16 ("לא הבנת" capture), 17 (tool
@@ -164,6 +166,12 @@ Network on the hotspot: `NODE_OPTIONS=--dns-result-order=ipv4first` for wrangler
 | [SETUP.md](SETUP.md) | Setting up a new copy from zero: accounts, Groq key, models, secrets, deploy, app, AI agent. |
 
 ## 8. Session log (docs)
+
+- 2026-10-13: Block J2: new `agent/last-selection.ts` (`LastSelections`,
+  `mayInherit`), `agent/briefs.ts`, migration 0033 `last_selection`;
+  `selectTools(text, offered, inherited)`, `wireTools(names, { brief })`,
+  `AgentDeps.onLocalSelection`, `AgentServices.selections`. Fingerprint
+  re-pinned; full evals owed.
 
 - 2026-10-13: Block J planned (`docs/plans/block-j.md`); J1 built: a
   refused call repeated in one turn makes the next call text-only, for a

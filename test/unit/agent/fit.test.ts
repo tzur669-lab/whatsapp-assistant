@@ -12,6 +12,9 @@ import { fitHistory, estimateTokens, FIT_HEADROOM, TURN_TOKEN_CAP } from '../../
 import type { HistoryEntry } from '../../../src/agent/history.js';
 import { languageLine, nowLine, SYSTEM_PROMPT } from '../../../src/agent/prompt.js';
 import { agentToolNames, wireTools } from '../../../src/agent/tools.js';
+import { BRIEF_MAX, BRIEFS } from '../../../src/agent/briefs.js';
+import { REGISTRY } from '../../../src/tools/registry.js';
+import type { ToolName } from '../../../src/tools/registry.js';
 import { Repository } from '../../../src/core/repo.js';
 import { handleInbound } from '../../../src/core/pipeline.js';
 import type { PipelineDeps, Services } from '../../../src/core/pipeline.js';
@@ -129,5 +132,42 @@ describe('a turn with long history and every tool', () => {
     const kept = (await history.recent(PRINCIPAL)).length;
     expect(seen).toContain('הודעה 6');
     expect(kept).toBeGreaterThan(1);
+  });
+});
+
+describe('the brief full catalog (block J, J2b)', () => {
+  const FULL = { cards: true, fileCards: true, phoneReads: true, grants: { gmail: true, tasks: true, drive: true } };
+  const firstCall = (brief: boolean) =>
+    estimateTokens(
+      [
+        { role: 'system', content: SYSTEM_PROMPT },
+        { role: 'user', content: `${nowLine(Date.UTC(2026, 9, 13))}\n${languageLine('he')}\n\nמה נשמע` },
+      ],
+      JSON.stringify(wireTools(agentToolNames(FULL), brief ? { brief: true } : {})).length,
+    );
+
+  it('keeps every brief within BRIEF_MAX and shorter than the description it replaces', () => {
+    for (const [name, brief] of Object.entries(BRIEFS) as Array<[ToolName, string]>) {
+      expect(brief.length, name).toBeLessThanOrEqual(BRIEF_MAX);
+      expect(brief.length, name).toBeLessThan(REGISTRY[name].llmDescription.length);
+    }
+  });
+
+  it('changes descriptions only: the same tools, slots and order', () => {
+    const names = agentToolNames(FULL);
+    const strip = (tools: ReturnType<typeof wireTools>) =>
+      tools.map((tool) => ({ name: tool.function.name, parameters: tool.function.parameters }));
+    expect(strip(wireTools(names, { brief: true }))).toEqual(strip(wireTools(names)));
+  });
+
+  it('frees room in the first call: measured, pinned so a growing catalog is seen', () => {
+    const full = firstCall(false);
+    const brief = firstCall(true);
+    // 2026-10-13: 6,561 → 5,710 estimated tokens. The slot schemas, not the
+    // descriptions, are most of the catalog, so briefs alone do not reach the
+    // plan's 5,500 target; a follow-up's inherited groups (J2a) do the rest.
+    expect(full - brief).toBeGreaterThanOrEqual(800);
+    expect(brief).toBeLessThanOrEqual(5_750);
+    expect(brief + 400).toBeLessThanOrEqual(TURN_TOKEN_CAP);
   });
 });

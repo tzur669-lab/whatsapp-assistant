@@ -76,6 +76,7 @@ import { examplesFor } from '../render/fallback.js';
 import { factText, personalQuestion } from '../render/personal.js';
 import type { ExchangeLog } from './exchanges.js';
 import { matchGroups } from '../agent/tool-groups.js';
+import type { GroupName } from '../agent/tool-groups.js';
 import { statusText } from '../render/status.js';
 import { eventText } from '../render/events.js';
 import { localPartsOf, offsetMinutesAt, ZONE } from '../time/tz.js';
@@ -87,6 +88,8 @@ import type { ConversationHistory } from '../agent/history.js';
 import { provenanceOf, replayByConsent } from '../agent/history.js';
 import type { AgentLock } from '../agent/lock.js';
 import { resumeAfterConsent, resumeAgentTurn, runAgentTurn } from '../agent/loop.js';
+import { mayInherit } from '../agent/last-selection.js';
+import type { LastSelections } from '../agent/last-selection.js';
 import type { AgentResult, ConsentDecision } from '../agent/loop.js';
 import type { SuspendedTurns } from '../agent/turns.js';
 import type { PhoneReadInput, PhoneReadResult } from '../tools/phone-reads.js';
@@ -124,6 +127,11 @@ export type AgentServices = {
   consents?: ConversationConsents;
   /** The turn benchmark's OLD config only (`test/evals/run-turn-evals.ts`). Never set in production. */
   legacyCatalog?: boolean;
+  /**
+   * The latest local turn's tool groups per conversation (block J, J2a). Absent:
+   * a message that names no group always gets the full set, as before.
+   */
+  selections?: LastSelections;
 };
 
 /** The stateful collaborators the Durable Object owns and hands in. */
@@ -822,6 +830,11 @@ async function respondWithAgent(
     const { entries: history, sources: historySources } = smartConversation
       ? replayByConsent(stored, granted, he.withheldPlaceholder)
       : { entries: stored, sources: provenanceOf(stored) };
+    // A short follow-up that names no group inherits the previous local turn's
+    // groups (block J, J2a). Local conversations' new messages only: never the
+    // read-only try, never a smart conversation, never a resume.
+    const selections = !smartConversation && !readOnly ? agent.selections : undefined;
+    const inheritedGroups = selections && mayInherit(text) ? selections.inherited(principal, conversation) : null;
     const ask =
       smartConversation &&
       !readOnly &&
@@ -858,6 +871,7 @@ async function respondWithAgent(
             deps.channel === 'app' &&
             (deps.deviceCaps ?? []).includes('device_query'),
           ...(smartConversation ? { smart: true, consent: { granted, ask }, historySources } : {}),
+          ...(inheritedGroups ? { inheritedGroups } : {}),
           // Only when the words name a synced routine (§6.27, decision D4).
           ...(deps.channel === 'app' && namesRoutine(text, deps.services?.routines, principal) ? { routines: true } : {}),
           // Only when the words name the screen agent or an app on its list (§6.28).
@@ -872,6 +886,14 @@ async function respondWithAgent(
           now: deps.now,
           ...(options.scope ? { scope: options.scope } : {}),
           ...(agent.legacyCatalog ? { legacyCatalog: true } : {}),
+          ...(selections
+            ? {
+                onLocalSelection: (groups: readonly GroupName[], tainted: boolean) => {
+                  const seq = repo.inboundSeq(event.wamid);
+                  if (seq !== null) selections.record(principal, conversation, seq, groups, tainted);
+                },
+              }
+            : {}),
         },
       ),
     );
@@ -946,6 +968,13 @@ async function settleAgentResult(
     // Only a turn that may suspend is offered a phone read; reaching here is a bug.
     repo.markInboundOutcome(wamid, { intent: 'agent', decision: 'ALLOW', errorCode: 'E_AGENT_PARTIAL' });
     return { action: 'reply', text: he.agentIncomplete };
+  }
+
+  // J2a: the turn that chose these groups ran tools from them; a follow-up may
+  // inherit them. Only that very turn (`seq =`), never the read-only try.
+  if (!secondTry && result.tools && result.tools.length > 0) {
+    const seq = agent?.selections ? repo.inboundSeq(wamid) : null;
+    if (seq !== null) agent?.selections?.markRan(principal, conversation, seq, result.tools);
   }
 
   if (result.kind === 'failed') {

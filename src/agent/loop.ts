@@ -43,7 +43,7 @@ import type { MessageScope, Reservation, TokenBudget } from './budget.js';
 import { CHARS_PER_TOKEN, newMessageScope, wasNeverSent } from './budget.js';
 import { DEFAULT_MAX_COMPLETION_TOKENS, modelEntry } from './models.js';
 import { selectionLabel, selectTools } from './tool-groups.js';
-import type { Selection } from './tool-groups.js';
+import type { GroupName, Selection } from './tool-groups.js';
 import type { HistoryEntry } from './history.js';
 import { languageLine, nowLine, READ_ONLY_NOTE, SMART_NOTE, SYSTEM_PROMPT } from './prompt.js';
 import type { AgentMessage, AgentProvider, AgentResponse, ToolCall, WireTool } from './provider.js';
@@ -180,6 +180,11 @@ export type AgentTurnInput = {
    * refuse to resend data whose source was revoked meanwhile.
    */
   historySources?: readonly ConsentSource[];
+  /**
+   * The previous local turn's tool groups (block J, J2a): a local model is
+   * offered them when the words would get the full set. Only ever narrows.
+   */
+  inheritedGroups?: readonly GroupName[];
 };
 
 /** The user's answer on a consent card (slice 5). */
@@ -295,6 +300,12 @@ export type AgentDeps = {
   legacyCatalog?: boolean;
   /** The clock the turn deadline is measured on. Absent: `Date.now`. */
   now?: () => number;
+  /**
+   * Called once, synchronously, when a local model takes the turn, with the
+   * groups it was offered (empty: the full set) and whether the turn started
+   * tainted (block J, J2a). Never for a smart model's turn or a resume.
+   */
+  onLocalSelection?: (groups: readonly GroupName[], tainted: boolean) => void;
 };
 
 /** One turn in progress. The same whether it started now or resumed after a phone read. */
@@ -411,8 +422,14 @@ export async function runAgentTurn(input: AgentTurnInput, deps: AgentDeps): Prom
   // first; the last one stays, because "כן, את זה" points at it. The facts are
   // small and worth more than old history: they go only if the first call
   // would not fit the cap at all — not merely the headroom above it.
-  const plan = (selection: Selection, system: string, turnCap: number, charsPerToken: number): Plan => {
-    const tools = wireTools(selection.tools);
+  const plan = (
+    selection: Selection,
+    system: string,
+    turnCap: number,
+    charsPerToken: number,
+    brief = false,
+  ): Plan => {
+    const tools = wireTools(selection.tools, brief ? { brief: true } : {});
     const toolChars = JSON.stringify(tools).length;
     deps.log.info('agent_tools', { group: selectionLabel(selection), offered: selection.tools.length });
     const estimate = (messages: readonly AgentMessage[]) => estimateTokens(messages, toolChars, charsPerToken);
@@ -430,9 +447,15 @@ export async function runAgentTurn(input: AgentTurnInput, deps: AgentDeps): Prom
   // the words name, or keeps it whole (§4) — it never adds a tool `offered`
   // lacks — and the cap is the lowest of the local models'.
   let localPlan: Plan | undefined;
-  const local = (): Plan =>
-    (localPlan ??= plan(
-      deps.legacyCatalog ? { tools: offered, groups: [] } : selectTools(input.text, offered),
+  // The full set goes with brief descriptions (block J, J2b); a narrowed
+  // selection has room for the full text. Never the benchmark's old config.
+  const local = (): Plan => {
+    if (localPlan) return localPlan;
+    const selection: Selection = deps.legacyCatalog
+      ? { tools: offered, groups: [] }
+      : selectTools(input.text, offered, input.inheritedGroups);
+    localPlan = plan(
+      selection,
       readOnly ? `${SYSTEM_PROMPT}\n${READ_ONLY_NOTE}` : SYSTEM_PROMPT,
       Math.min(
         ...providers
@@ -440,7 +463,10 @@ export async function runAgentTurn(input: AgentTurnInput, deps: AgentDeps): Prom
           .map((candidate) => modelEntry(candidate.model)?.turnCap ?? TURN_TOKEN_CAP),
       ),
       CHARS_PER_TOKEN,
-    ));
+      !deps.legacyCatalog && selection.groups.length === 0,
+    );
+    return localPlan;
+  };
   // A smart model's turn (2026-10-08): no selection — selection only ever
   // saved tokens, never guarded anything — the smart note, its own limits.
   const smartPlans = new Map<string, Plan>();
@@ -477,6 +503,8 @@ export async function runAgentTurn(input: AgentTurnInput, deps: AgentDeps): Prom
     return { kind: 'failed', errorCode: 'budget_exhausted', toolRan: false, tainted };
   }
   const chosen = planFor(provider);
+  // J2a: the groups this local turn is offered, for a follow-up to inherit.
+  if (!isSmart(provider)) deps.onLocalSelection?.(chosen.selection.groups, tainted);
 
   return drive(
     {

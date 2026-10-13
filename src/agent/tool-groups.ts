@@ -183,17 +183,25 @@ export const MAX_UNION_GROUPS = 3;
  * app without cards cannot set an alarm, and the reminder it can set is in
  * another group.
  */
-export function selectTools(text: string, offered: readonly ToolName[]): Selection {
+export function selectTools(
+  text: string,
+  offered: readonly ToolName[],
+  /**
+   * The previous local turn's groups (block J, J2a; `last-selection.ts`):
+   * used only where the words would get the full set, and only narrow it.
+   */
+  inherited?: readonly GroupName[],
+): Selection {
   // `routine.run` is offered only when the words name a routine (D4); then it
   // stays in whatever the other words select. The group itself never narrows.
-  const groups = matchGroups(text).filter((group) => group !== 'routine' && group !== 'screen');
+  const named = matchGroups(text).filter((group) => group !== 'routine' && group !== 'screen');
   const full = { tools: [...offered], groups: [] };
   // Code found a routine named and the words name nothing else: the routine and
   // the time tools ("תזכיר לי לפתוח את פיד" is still a reminder). The whole
   // catalog with the routine on top passed the turn cap (2026-10-11). The
   // screen agent, when offered too, stays: a routine named "פיד" must not hide
   // "סוכן מסך תחפש בפיד" (found on the phone, 2026-10-12).
-  if (groups.length === 0 && offered.includes('routine.run')) {
+  if (named.length === 0 && offered.includes('routine.run')) {
     const withScreen = offered.includes('screen.task');
     const members = new Set<ToolName>(['routine.run', ...GROUPS.time, ...(withScreen ? (['screen.task'] as const) : [])]);
     return {
@@ -203,10 +211,14 @@ export function selectTools(text: string, offered: readonly ToolName[]): Selecti
   }
   // The screen agent named and nothing else: it, and the phone's tools
   // ("תפתח את פיד" may still mean only opening the app).
-  if (groups.length === 0 && offered.includes('screen.task')) {
+  if (named.length === 0 && offered.includes('screen.task')) {
     const members = new Set<ToolName>(['screen.task', ...GROUPS.phone]);
     return { tools: offered.filter((tool) => members.has(tool)), groups: ['phone', 'screen'] };
   }
+  const groups =
+    named.length === 0 && inherited
+      ? inherited.filter((group) => group !== 'routine' && group !== 'screen').slice(0, MAX_UNION_GROUPS)
+      : named;
   if (groups.length === 0 || groups.length > MAX_UNION_GROUPS) return full;
   const members = new Set<ToolName>(offered.filter((tool) => tool === 'routine.run' || tool === 'screen.task'));
   for (const group of groups) {

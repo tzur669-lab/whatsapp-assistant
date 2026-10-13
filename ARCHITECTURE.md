@@ -2,7 +2,7 @@
 
 How the code is laid out and how the parts talk. The *why* behind each piece
 is in `PLAN.md` (section numbers given); the rules are in `CLAUDE.md`.
-Current as of 2026-10-11 (migration 0028).
+Current as of 2026-10-13 (migration 0033).
 
 ## 1. System diagram
 
@@ -47,7 +47,10 @@ Current as of 2026-10-11 (migration 0028).
    model call or tool starts past it, and then no parser either; as an
    `AbortSignal` it cuts the model call and a resolve's or read's requests in
    flight, bound by `tools/turn-signal.ts` — never a write's `execute`), encrypted short history (`history.ts`), code picks a tool
-   group (`tool-groups.ts`), budget reserves tokens before each call
+   group (`tool-groups.ts`; a short follow-up that names none inherits the
+   previous local turn's groups from `last-selection.ts`, block J2a, and the
+   full set goes with the short descriptions in `briefs.ts`, J2b), budget
+   reserves tokens before each call
    (`budget.ts`, `models.ts`). Each tool call → `fillUnstatedTime`
    (`tools.ts`: a TimeSpec's missing `meridiem`/`part_of_day` → 'unspecified'
    only where it cannot move the time; `liftMonthFromDate` for a calendar
@@ -166,6 +169,7 @@ One SQLite DB inside the DO. Schema = `migrations/0001…0028` (registered in
 | Agent | `conversation_turns` (encrypted history), `agent_turns` (suspended; 0027 adds `kind` phone/consent, `nonce_hash`, `source`, `conversation`), `agent_lock` |
 | Smart conversations (0026) | `conversation_modes` (mode per app conversation, recorded once), `conversation_consents` (sources allowed for one conversation); both purged after 30 days unused and by `/forget`, `/pair off` |
 | Misses (§6.23) | `last_exchange` (encrypted, 1 h), `misses` (encrypted, 30 days); `inbound_messages.seq` + `settings.inbound_seq` order arrivals |
+| Inherited groups (0033, block J2a) | `last_selection` (one row per conversation: the latest local agent turn's tool groups as code names, its starting taint, `ran` once that turn ran tools from them; ordered by `seq`, 10 min, purged on every alarm) |
 | Screen agent (0030, §6.28) | `screen_allow` (the phone's sync: package, label, ask-every-tap), `screen_tasks` (one row per confirmed task: sealed task and inputs, status confirmed → pushed → running ⇄ awaiting_approval → released → … → stopped/preempted/deadline/done/failed/unknown, the decided action as codes and the phone's binding, past steps as codes, the approval and stop nonces, tokens reserved, `mode` local/smart since 0031, `in_reply_to` since 0032: the confirming message, so the task's messages go to its conversation), `screen_model_day` (0031: screen tokens per Groq model per day) |
 | Routines (0028–0029, §6.27) | `routine_names` (the app's sync: id, name, app label, step hash, list position — never steps), `routine_runs` (one row per confirmed run, with its card time and the card's and notice's cancel hashes: scheduled → noticed → pushed → claimed → done/unverified/failed/unknown, or cancelled/expired/changed) |
 | Quota | `groq_limits`, `groq_token_spend`, `worker_requests`, `model_day_requests` (Gemini requests per Pacific day, 0026) |
@@ -188,7 +192,8 @@ the same code on Node SQLite (`test/integration/sqlite-driver.ts`).
 - Rendering ↔ logic: `resolve`/policy return codes; `render/` makes words.
 
 **Coupled on purpose (change together)**
-- `tools/registry.ts` ↔ `agent/tool-groups.ts` ↔ `test/evals/fingerprint.ts` ↔ `models.ts` evaluated fingerprint.
+- `tools/registry.ts` ↔ `agent/tool-groups.ts` ↔ `test/evals/fingerprint.ts` ↔ `models.ts` evaluated fingerprint. `agent/briefs.ts` is hashed too (the brief full catalog, J2b): editing a brief moves the Groq fingerprint.
+- Inherited groups (J2a): `core/pipeline.ts` reads `LastSelections.inherited` before the turn and passes `onLocalSelection` (writes at plan time, `seq` from `inboundSeq`) ↔ `agent/loop.ts` ↔ `selectTools(text, offered, inherited)`; `settleAgentResult` calls `markRan` for the same `seq` (never the read-only try).
 - `tools/registry.ts` `dataSource` and `consent` ↔ `agent/consents.ts` ↔ `render/consent.ts` ↔ the history gate in `pipeline.ts` ↔ the smart fingerprint (`SMART_CATALOG_POLICY`).
 - `channels/app/parse.ts` + `verify.ts` ↔ app's `Protocol.kt` (shared test vectors).
 - `migrations/*.sql` ↔ `platform/migrations.ts`.

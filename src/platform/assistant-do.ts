@@ -128,6 +128,7 @@ import { QuotaStore, SqlDayRequestCounter, meterGroqFetch } from '../core/quota.
 import type { ModelSpec, ServerLimits } from '../core/quota.js';
 import { AgentLock } from '../agent/lock.js';
 import { SuspendedTurns } from '../agent/turns.js';
+import { LastSelections } from '../agent/last-selection.js';
 import { ConversationConsents } from '../agent/consents.js';
 import { defangLinks } from '../security/scrub.js';
 import { DurableObjectSqlDriver } from './sql-repo.js';
@@ -198,6 +199,7 @@ export class AssistantDO implements DurableObject {
   private readonly agentLock: AgentLock;
   /** Agent turns waiting for the phone to read (§6.21), or for the user's consent (slice 5). */
   private readonly agentTurns: SuspendedTurns;
+  private readonly selections: LastSelections;
   /** The sources each smart conversation allowed (slice 5, 2026-10-08). */
   private readonly consents: ConversationConsents;
   /**
@@ -297,6 +299,7 @@ export class AssistantDO implements DurableObject {
     this.quotes = createQuoteSources(this.fetchImpl, this.env.QUOTES_API_KEY, now);
     this.agentLock = new AgentLock(this.sql, now);
     this.agentTurns = new SuspendedTurns(this.sql, now, keyringOnce);
+    this.selections = new LastSelections(this.sql, now);
     this.consents = new ConversationConsents(this.sql, now);
 
     // blockConcurrencyWhile keeps requests queued until the schema is ready.
@@ -365,6 +368,7 @@ export class AssistantDO implements DurableObject {
     this.history.purgeExpired();
     this.exchanges.purgeExpired();
     this.agentTurns.purgeOld();
+    this.selections.purgeExpired();
     this.routines.purgeOld(now);
     this.screen.purgeOld(now);
     // A turn the phone never answered gets its answer now, not on the next read.
@@ -2239,6 +2243,7 @@ export class AssistantDO implements DurableObject {
               lock: this.agentLock,
               turns: this.agentTurns,
               consents: this.consents,
+              selections: this.selections,
             },
           }
         : {}),

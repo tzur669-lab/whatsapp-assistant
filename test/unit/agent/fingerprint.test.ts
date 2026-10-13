@@ -35,7 +35,8 @@ describe('the eval fingerprint', () => {
     // 2026-10-12, one value per model, when the model's identity joined the
     // hash; no entry had recorded `evaluated`, so nothing recorded moved.
     // Re-pinned 2026-10-12 for the calendar's past reads (catalog and cases).
-    const pinned: Record<string, string> = { 'qwen/qwen3.8-27b': '514ae8e1119b2456', 'openai/gpt-oss-120b': 'fa4c97634f85f7ed' };
+    // Re-pinned 2026-10-13 for block J2b: the brief catalog joined the hash.
+    const pinned: Record<string, string> = { 'qwen/qwen3.8-27b': '8f90bbe3301a443e', 'openai/gpt-oss-120b': 'def28efe991df92c' };
     for (const entry of MODELS) expect(fingerprintFor(entry), entry.id).toBe(pinned[entry.id]);
   });
 
