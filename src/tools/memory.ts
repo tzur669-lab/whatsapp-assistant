@@ -19,6 +19,22 @@ import type { ExecuteResult, PersonalQuestion, ResolveOutcome, ToolContext, Tool
 
 const MAX_CHOICES = 5;
 
+const QUOTE_CHARS = `"'״׳“”„«»`;
+
+/** Case, spacing, surrounding quotes and one trailing period (block J, J7). Inner punctuation and digits stay. */
+function factKey(text: string): string {
+  let key = text.toLowerCase().replace(/\s+/g, ' ').trim();
+  while (key.length > 0 && QUOTE_CHARS.includes(key[0]!)) key = key.slice(1);
+  while (key.length > 0 && QUOTE_CHARS.includes(key[key.length - 1]!)) key = key.slice(0, -1);
+  if (key.endsWith('.')) key = key.slice(0, -1);
+  return key.trim();
+}
+
+/** The same fact, by equality only: a longer one may be a correction. */
+export function sameFact(a: string, b: string): boolean {
+  return factKey(a) === factKey(b);
+}
+
 const ask = (what: PersonalQuestion): ResolveOutcome => ({ kind: 'clarify', clarify: { code: 'personal', what } });
 
 function storeOf(ctx: ToolContext): FactStore {
@@ -54,7 +70,16 @@ export const memoryRemember: ToolDefinition = {
     // Execute runs with the turn's taint (`orchestrator.execute`): still refused.
     if (ctx.tainted) return { text: personalQuestion('fact_tainted', ctx.lang) };
     if (containsPrivateData(input.text)) return { text: personalQuestion('fact_private', ctx.lang) };
-    const outcome = await storeOf(ctx).add(ctx.principal, input.text);
+    // Best effort (block J, J7): read, then add. Decrypting is async, so the
+    // check cannot sit in the insert's synchronous transaction, and answers and
+    // buttons run without the agent lock: two saves of the same fact at the
+    // same moment can both insert. Never a lost fact; at worst a rare
+    // duplicate. The reply carries no Undo, which would delete the original.
+    const store = storeOf(ctx);
+    if ((await store.all(ctx.principal)).some((fact) => sameFact(fact.text, input.text))) {
+      return { text: factText.already(ctx.lang) };
+    }
+    const outcome = await store.add(ctx.principal, input.text);
     if (outcome.kind === 'full') return { text: personalQuestion('facts_full', ctx.lang) };
     return {
       text: factText.remembered(outcome.fact.text, ctx.lang),

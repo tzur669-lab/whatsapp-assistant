@@ -135,7 +135,10 @@ Network on the hotspot: `NODE_OPTIONS=--dns-result-order=ipv4first` for wrangler
   **server first**, then the APK; `eval:agent --filter wh-` and the phone
   check owed. J5 done (digest conflicts and bills, `/digest conflicts|bills
   on|off`, off by default). J6 done (app 0.16.0, spoken replies to voice
-  notes, off by default). Next: J7 (no duplicate facts).
+  notes, off by default). J7 done (a fact said twice is kept once). **Block
+  J is built.** Owed: the full `eval:agent` on both models (J2; qwen stopped
+  at 29/324 on 2026-10-13, `--resume`), `--filter wr-`, `wh-`, `inj-web-001`,
+  a staging deploy (approval), then APK 0.16.0 and the phone checks.
   The plan's "Additions" and "Follow-up" sections win over the part sections.
 - **Next work:** [ROADMAP.md](ROADMAP.md) (Hebrew) — block H (2026-10-07):
   a smarter bot. Parts 15 (notes), 16 ("לא הבנת" capture), 17 (tool
@@ -173,6 +176,9 @@ Network on the hotspot: `NODE_OPTIONS=--dns-result-order=ipv4first` for wrangler
 | [SETUP.md](SETUP.md) | Setting up a new copy from zero: accounts, Groq key, models, secrets, deploy, app, AI agent. |
 
 ## 8. Session log (docs)
+
+- 2026-10-13: Block J7: `sameFact` in `tools/memory.ts`, `factText.already`.
+  No new modules or tables. Block J complete in code.
 
 - 2026-10-13: Block J6, app 0.16.0: `SpeechLogic.kt`, `Speech.kt`,
   `ChatStore.kindOfMessage`, a settings switch. No server change.

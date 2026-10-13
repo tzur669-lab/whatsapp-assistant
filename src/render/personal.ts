@@ -229,6 +229,11 @@ export const factText = {
     return lang === 'he' ? 'העובדה נמחקה.' : 'Forgotten.';
   },
 
+  /** The same fact is already kept (block J, J7). Shown only when one was found. */
+  already(lang: Lang): string {
+    return lang === 'he' ? 'העובדה הזאת כבר שמורה. אין צורך לשמור אותה שוב.' : 'That fact is already kept.';
+  },
+
   gone(lang: Lang): string {
     return lang === 'he' ? 'העובדה הזאת כבר לא שמורה.' : 'That fact is no longer kept.';
   },
