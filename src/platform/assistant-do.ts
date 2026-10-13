@@ -615,20 +615,26 @@ export class AssistantDO implements DurableObject {
     }
   }
 
-  /** One message about a task, to the reminders conversation, like a routine's. */
-  private async sayScreen(principal: string, text: string, buttons?: OutboundButton[]): Promise<void> {
-    await this.send({ to: this.selfWaId(), text, ...(buttons ? { buttons } : {}) }, { kind: 'reminder', principal });
+  /**
+   * One message about a task, in the conversation that confirmed it (an answer
+   * to that message, 2026-10-13); a task with no link, to the reminders one.
+   */
+  private async sayScreen(task: ScreenTask, text: string, buttons?: OutboundButton[]): Promise<void> {
+    await this.send(
+      { to: this.selfWaId(), text, ...(buttons ? { buttons } : {}) },
+      { kind: 'reminder', principal: task.principal, ...(task.inReplyTo ? { inReplyTo: task.inReplyTo } : {}) },
+    );
   }
 
   /** The one message when a task ends. The model's words only as a quotation (`screenText.ended`). */
   private async sayScreenEnd(ended: Ended, modelText?: string): Promise<void> {
-    await this.sayScreen(ended.task.principal, screenText.ended(ended, modelText, 'he'));
+    await this.sayScreen(ended.task, screenText.ended(ended, modelText, 'he'));
   }
 
   /** The chat's approval card: the app, the kind of action and why — no screen text. */
   private async sayApprovalCard(task: ScreenTask): Promise<void> {
     if (!task.approvalNonce || !task.action) return;
-    await this.sayScreen(task.principal, screenText.approvalCard(task.appLabel, task.action.kind, task.why ?? 'unlabelled', 'he'), [
+    await this.sayScreen(task, screenText.approvalCard(task.appLabel, task.action.kind, task.why ?? 'unlabelled', 'he'), [
       { id: buttonId('sa', task.taskId, task.approvalNonce, 'ok'), title: screenText.approveButton('he') },
       { id: buttonId('sa', task.taskId, task.approvalNonce, 'no'), title: screenText.rejectButton('he') },
     ]);
@@ -1492,6 +1498,10 @@ export class AssistantDO implements DurableObject {
         row: { seq: 0, kind: 'reply', inReplyTo: messageId, text: outcome.text, buttons: [], createdAt: Date.now() },
       });
     }
+
+    // A screen task this turn confirmed answers this message, in its
+    // conversation. Before the alarm that pushes it, so before the phone can end it.
+    this.screen.linkLatest(principal, messageId, startedAt);
 
     let row: OutboxRow | null = null;
     if (outcome.action === 'reply') {

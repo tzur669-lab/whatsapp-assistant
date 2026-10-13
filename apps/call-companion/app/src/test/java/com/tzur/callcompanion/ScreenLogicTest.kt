@@ -126,6 +126,45 @@ class ScreenLogicTest {
         assertTrue(list[3].b != null)
     }
 
+    @Test fun anUnlabelledClickableTakesItsContainersLabel() {
+        // Waze's home screen (Compose, 2026-10-13): the search box's label sits on a
+        // container above the clickable, not under it; the field inside is disabled.
+        val nodes = listOf(
+            node(path = "", className = "android.view.View"),
+            node(desc = "START_STATE_SEARCH_FIELD", path = "0", className = "android.view.View"),
+            node(clickable = true, target = 2, path = "0.0", className = "android.view.View"),
+            node(editable = true, clickable = true, enabled = false, target = 3, path = "0.0.0", className = "android.widget.EditText"),
+            node(clickable = true, target = 4, path = "0.0.1", className = "android.view.View"),
+        )
+        val elements = ScreenLogic.elements(nodes, pkg)
+        // The container is not listed as a text the model could try to tap.
+        assertEquals(listOf("START_STATE_SEARCH_FIELD", null, null), elements.map { it.t })
+        assertEquals(listOf("c", "ced", "c"), elements.map { it.f })
+        assertEquals("START_STATE_SEARCH_FIELD", ScreenLogic.fullLabel(nodes, 2))
+        // Only the outermost clickable borrows it: the ones inside it stay unlabelled.
+        assertNull(ScreenLogic.fullLabel(nodes, 3))
+        assertNull(ScreenLogic.fullLabel(nodes, 4))
+    }
+
+    @Test fun aLabelInsideAClickableIsNeverLent() {
+        // The text is the clickable's own content (`childLabel`), not a container's.
+        val nodes = listOf(
+            node(clickable = true, target = 0, path = "", className = "android.view.View"),
+            node(desc = "inner", target = 0, path = "0", className = "android.view.View"),
+            node(clickable = true, target = 2, path = "0.0", className = "android.view.View"),
+        )
+        assertNull(ScreenLogic.fullLabel(nodes, 2))
+        assertEquals("inner", ScreenLogic.fullLabel(nodes, 0))
+    }
+
+    @Test fun aLabelledClickableKeepsItsOwnAndTheContainerStays() {
+        val nodes = listOf(
+            node(text = "תוצאות", path = "", className = "android.view.View"),
+            node(text = "סטימצקי", clickable = true, target = 1, path = "0"),
+        )
+        assertEquals(listOf("תוצאות", "סטימצקי"), ScreenLogic.elements(nodes, pkg).map { it.t })
+    }
+
     @Test fun flagsKeepTheWireOrder() {
         val all = node(clickable = true, editable = true, scrollable = true, checkable = true, checked = true, enabled = false, focused = true)
         assertEquals("ceskxdo", ScreenLogic.flags(all))

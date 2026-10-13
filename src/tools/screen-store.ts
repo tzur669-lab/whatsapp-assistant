@@ -106,6 +106,8 @@ export type ScreenTask = {
   package: string;
   appLabel: string;
   mode: ScreenMode;
+  /** The app message that confirmed it: its messages answer that one, in its conversation. Null: the reminders conversation. */
+  inReplyTo: string | null;
   inputCount: number;
   status: ScreenStatus;
   step: number;
@@ -244,6 +246,23 @@ export class ScreenStore {
       now,
     );
     return this.get(taskId)!;
+  }
+
+  /**
+   * After the turn that confirmed it, the task created during that turn
+   * answers its message (`inReplyTo`), so the app shows what the task says in
+   * that conversation. Set once, never moved.
+   */
+  linkLatest(principal: string, inReplyTo: string, sinceMs: number): void {
+    this.sql.exec(
+      `UPDATE screen_tasks SET in_reply_to = ?
+       WHERE task_id = (SELECT task_id FROM screen_tasks
+                         WHERE principal = ? AND in_reply_to IS NULL AND created_at >= ?
+                         ORDER BY created_at DESC LIMIT 1)`,
+      inReplyTo,
+      principal,
+      sinceMs,
+    );
   }
 
   /** The task's words and inputs, or null once the task ended (or the key changed). */
@@ -755,6 +774,7 @@ function taskOf(row: SqlRow): ScreenTask {
     package: String(row['package']),
     appLabel: String(row['app_label']),
     mode: row['mode'] === 'smart' ? 'smart' : 'local',
+    inReplyTo: typeof row['in_reply_to'] === 'string' ? row['in_reply_to'] : null,
     inputCount: Number(row['input_count']),
     status: String(row['status']) as ScreenStatus,
     step: Number(row['step']),

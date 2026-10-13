@@ -115,6 +115,21 @@ describe('the screen task store', () => {
     expect(await store.unseal(task.taskId)).toBeNull();
   });
 
+  it('links a new task to the message that confirmed it, once, so its messages go to that conversation', async () => {
+    const before = await store.create({ principal: PRINCIPAL, package: FID.package, appLabel: 'FID', task: 't', inputs: [] });
+    clock += 1000;
+    const startedAt = clock;
+    const task = await store.create({ principal: PRINCIPAL, package: FID.package, appLabel: 'FID', task: 't', inputs: [] });
+    expect(task.inReplyTo).toBeNull();
+    store.linkLatest(PRINCIPAL, 'msg-confirm', startedAt);
+    expect(store.get(task.taskId)?.inReplyTo).toBe('msg-confirm');
+    expect(store.get(before.taskId)?.inReplyTo).toBeNull(); // created before the turn
+    store.linkLatest(PRINCIPAL, 'msg-later', startedAt);
+    expect(store.get(task.taskId)?.inReplyTo).toBe('msg-confirm'); // never moved
+    store.linkLatest('someone_else', 'msg-x', 0);
+    expect(store.get(before.taskId)?.inReplyTo).toBeNull();
+  });
+
   it('is claimed exactly once, and never late', async () => {
     const task = await store.create({ principal: PRINCIPAL, package: FID.package, appLabel: 'FID', task: 't', inputs: [] });
     expect(store.claim(task.taskId, PRINCIPAL)).toEqual({ ok: false, reason: 'already' }); // not pushed yet

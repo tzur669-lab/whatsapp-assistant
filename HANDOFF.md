@@ -5,7 +5,7 @@ system is, where things live, and what breaks easily, then links out. It does
 **not** repeat the rules in `CLAUDE.md` (always loaded) or the spec in
 `PLAN.md` (read by section, never whole).
 
-_Last updated: 2026-10-13 · server at migration 0031 · agent prompt a10 + smart note s2 + screen step s1 · parser prompt v6 · app 0.14.2 · smart model gemini-3.5-flash-lite_
+_Last updated: 2026-10-13 · server at migration 0032 · agent prompt a10 + smart note s2 + screen step s1 · parser prompt v6 · app 0.14.3 · smart model gemini-3.5-flash-lite_
 
 ## 1. What this is
 
@@ -119,7 +119,7 @@ Network on the hotspot: `NODE_OPTIONS=--dns-result-order=ipv4first` for wrangler
   s2 — its `--filter` evals are owed. Open items in PLAN §13 (limits probe,
   Gemini calibration, s2 evals).
 - **Screen agent** (PLAN §6.28, plan `docs/plans/screen-agent.md`, ROADMAP
-  block I): phases 1–2 built (server migration 0030, app 0.14.1 on the phone; 2026-10-13: migration 0031 and app 0.14.2 — models by conversation, 10 a day — staging deployed 5d807cd8, APK in Downloads); staging
+  block I): phases 1–2 built (server migration 0030, app 0.14.1 on the phone; 2026-10-13: migration 0031 and app 0.14.2 — models by conversation, 10 a day — staging deployed 5d807cd8, APK in Downloads; then migration 0032 and app 0.14.3 — Compose container labels, messages in the task's conversation — not deployed); staging
   deployed 2026-10-12 (9643484a). Owed, in order (PLAN §13): `pnpm eval:screen`
   and `eval:agent --filter scr-` on qwen with a human read, then the 0.14.0
   APK and the phone checks. Phase 3 needs its own plan.
@@ -159,6 +159,14 @@ Network on the hotspot: `NODE_OPTIONS=--dns-result-order=ipv4first` for wrangler
 | [SETUP.md](SETUP.md) | Setting up a new copy from zero: accounts, Groq key, models, secrets, deploy, app, AI agent. |
 
 ## 8. Session log (docs)
+
+- 2026-10-13: First smart screen run in Waze failed twice. (1) The phone's
+  accessibility service was off and the `service_off` end went to the
+  reminders conversation: now a task's messages answer the confirming message
+  (`screen_tasks.in_reply_to`, migration 0032, `ScreenStore.linkLatest`).
+  (2) Gemini failed every step on Waze's Compose home screen: an unlabelled
+  clickable now borrows its container's label (`ScreenLogic.lender`, app
+  0.14.3, installed on the phone; APK in Downloads). Not deployed yet.
 
 - 2026-10-13: Screen agent follows the conversation: `screen_tasks.mode` and
   `screen_model_day` (migration 0031), `SCREEN_SMART_MODELS` and the

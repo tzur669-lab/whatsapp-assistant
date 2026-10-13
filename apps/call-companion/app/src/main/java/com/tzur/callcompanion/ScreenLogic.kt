@@ -234,9 +234,39 @@ object ScreenLogic {
     }
 
     /** The node's label, uncut: what the approval notification names on the phone. */
-    fun fullLabel(nodes: List<Node>, index: Int): String? {
+    fun fullLabel(nodes: List<Node>, index: Int): String? = fullLabel(nodes, index, pathIndex(nodes))
+
+    private fun fullLabel(nodes: List<Node>, index: Int, byPath: Map<String, Int>): String? {
         val node = nodes.getOrNull(index) ?: return null
-        return clean(node.text)?.takeUnless { node.password } ?: clean(node.description) ?: childLabel(nodes, index)
+        return clean(node.text)?.takeUnless { node.password }
+            ?: clean(node.description)
+            ?: childLabel(nodes, index)
+            ?: lender(nodes, index, byPath)?.let { ownLabel(nodes[it]) }
+    }
+
+    private fun ownLabel(node: Node): String? = clean(node.text)?.takeUnless { node.password } ?: clean(node.description)
+
+    private fun pathIndex(nodes: List<Node>): Map<String, Int> =
+        HashMap<String, Int>(nodes.size * 2).apply { nodes.forEachIndexed { i, n -> putIfAbsent(n.path, i) } }
+
+    /**
+     * The container that lends actionable node [index] its label (Compose
+     * screens such as Waze's, 2026-10-13: the label sits on a plain node above
+     * the clickable, not under it). The nearest labelled ancestor, only when it
+     * is visible, not inside a clickable, and no actionable node lies between
+     * them — so only the outermost actionable node of the container borrows it.
+     */
+    private fun lender(nodes: List<Node>, index: Int, byPath: Map<String, Int>): Int? {
+        if (!actionable(nodes[index])) return null
+        var path = nodes[index].path
+        while (path.isNotEmpty()) {
+            path = if ('.' in path) path.substringBeforeLast('.') else ""
+            val parent = byPath[path] ?: return null
+            val node = nodes[parent]
+            if (actionable(node)) return null
+            if (ownLabel(node) != null) return parent.takeIf { node.visible && node.target < 0 }
+        }
+        return null
     }
 
     // -- elements (spec D) ------------------------------------------------------
@@ -283,12 +313,18 @@ object ScreenLogic {
      * Node [index] as an element numbered [number], or null when it is not one
      * (invisible, or neither actionable nor a read-only text). Labels are cut.
      */
-    private fun elementOf(nodes: List<Node>, index: Int, packageName: String, number: Int): Element? {
+    private fun elementOf(
+        nodes: List<Node>,
+        index: Int,
+        packageName: String,
+        number: Int,
+        byPath: Map<String, Int> = pathIndex(nodes),
+    ): Element? {
         val node = nodes[index]
         if (!node.visible) return null
         val isActionable = actionable(node)
         val label = if (isActionable) {
-            fullLabel(nodes, index)
+            fullLabel(nodes, index, byPath)
         } else {
             // A read-only text: only one that no tap would click (no clickable ancestor).
             if (node.target >= 0) return null
@@ -317,8 +353,17 @@ object ScreenLogic {
     fun elements(nodes: List<Node>, packageName: String): List<Element> {
         val out = ArrayList<Element>()
         var chars = 0
+        val byPath = pathIndex(nodes)
+        // A container whose label an unlabelled clickable took is not listed again
+        // as a text: the model would tap it, and a text is not tappable.
+        val lenders = nodes.indices
+            .filter { nodes[it].visible && actionable(nodes[it]) && fullLabel(nodes, it, byPath) != null }
+            .filter { ownLabel(nodes[it]) == null && childLabel(nodes, it) == null }
+            .mapNotNull { lender(nodes, it, byPath) }
+            .toSet()
         for (index in nodes.indices) {
-            val element = elementOf(nodes, index, packageName, out.size) ?: continue
+            if (index in lenders) continue
+            val element = elementOf(nodes, index, packageName, out.size, byPath) ?: continue
             val size = (element.t?.length ?: 0) + (element.h?.length ?: 0) + (element.v?.length ?: 0)
             if (out.size >= MAX_ELEMENTS || chars + size > MAX_SCREEN_CHARS) break
             chars += size

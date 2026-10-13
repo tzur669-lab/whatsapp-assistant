@@ -34,6 +34,7 @@ import routines0028 from '../../migrations/0028_routines.sql';
 import routineCards0029 from '../../migrations/0029_routine_cards.sql';
 import screenTasks0030 from '../../migrations/0030_screen_tasks.sql';
 import screenTaskMode0031 from '../../migrations/0031_screen_task_mode.sql';
+import screenTaskReply0032 from '../../migrations/0032_screen_task_reply.sql';
 
 export const MIGRATIONS = [
   { id: 1, sql: init0001 },
@@ -67,4 +68,5 @@ export const MIGRATIONS = [
   { id: 29, sql: routineCards0029 },
   { id: 30, sql: screenTasks0030 },
   { id: 31, sql: screenTaskMode0031 },
+  { id: 32, sql: screenTaskReply0032 },
 ] as const;
