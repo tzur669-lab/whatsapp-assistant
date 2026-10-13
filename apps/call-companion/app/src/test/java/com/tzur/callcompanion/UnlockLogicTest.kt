@@ -8,8 +8,14 @@ import org.junit.Test
 
 /** Unlocking with the stored PIN (0.17): which key gets pressed, and when the runner may try. */
 class UnlockLogicTest {
-    private fun key(text: String? = null, desc: String? = null, id: String? = null, visible: Boolean = true, enabled: Boolean = true) =
-        UnlockLogic.Key(text, desc, id, visible, enabled)
+    private fun key(
+        text: String? = null,
+        desc: String? = null,
+        id: String? = null,
+        visible: Boolean = true,
+        enabled: Boolean = true,
+        clickable: Boolean = true,
+    ) = UnlockLogic.Key(text, desc, id, visible, enabled, clickable)
 
     /** A Pixel-like keypad: ids key0..key9, the digit as text, letters in the description. */
     private val pixel = (0..9).map { key(text = "$it", desc = "$it,ABC", id = "com.android.systemui:id/key$it") } +
@@ -74,6 +80,25 @@ class UnlockLogicTest {
     @Test fun aTimeOnTheLockScreenIsNotADigit() {
         val keys = (0..9).map { key(text = "$it") } + key(text = "1 12")
         assertEquals(listOf(1, 2, 3, 4), UnlockLogic.plan(pin("1234"), keys))
+    }
+
+    /** ColorOS 14 (OnePlus PJE110), read on the phone: digits in the description only, no ids, no Enter. */
+    @Test fun colorOsKeypad() {
+        val keys = listOf(
+            key(desc = "אזור קלט של סיסמה. הזנת 0 ספרות", clickable = false),
+            key(id = "com.android.systemui:id/pinColorNumericKeyboard", clickable = false),
+        ) + (1..9).map { key(desc = "$it") } + key(desc = "0") +
+            key(text = "חירום SOS", id = "com.android.systemui:id/kgd_security_emergency_button")
+        // Indexes: 2..10 are the keys 1..9, 11 is the key 0.
+        assertEquals(listOf(2, 10, 11, 5), UnlockLogic.plan(pin("1904"), keys))
+        assertNull(UnlockLogic.enterKey(keys))
+    }
+
+    @Test fun aClickableKeyWinsOverAClockDigit() {
+        val keys = listOf(key(text = "9", id = "com.android.systemui:id/tv_hour", clickable = false)) +
+            (0..9).map { key(desc = "$it") }
+        // Index 0 is the clock; the key for digit d is at d + 1.
+        assertEquals(listOf(10, 1, 1, 1), UnlockLogic.plan(pin("9000"), keys))
     }
 
     @Test fun decideNeedsEveryGate() {

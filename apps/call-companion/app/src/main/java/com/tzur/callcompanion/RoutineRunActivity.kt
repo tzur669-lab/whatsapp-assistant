@@ -23,8 +23,9 @@ import java.lang.ref.WeakReference
  * - **unclaimed** (no stored PIN): after the unlock the run is claimed and run;
  * - **claimed** (0.17, [EXTRA_CLAIMED_ROUTINE]): the runner claimed first; after
  *   the unlock it runs through [RoutineRunner.runClaimed], never a second claim;
- * - **pin** (0.17, [EXTRA_PIN_MODE]): the screen on and the keypad up while the
- *   accessibility service types the stored PIN. It never reports and never
+ * - **pin** (0.17, [EXTRA_PIN_MODE]): only turns the screen on, then steps
+ *   back behind the lock screen ([onResume]) so the accessibility service can
+ *   raise the keypad and type the stored PIN. It never reports and never
  *   starts anything: [RoutineRunner] owns that run and closes it
  *   ([closePinMode]), or it closes itself after [PIN_MODE_MAX_MS].
  */
@@ -68,8 +69,6 @@ class RoutineRunActivity : Activity() {
         if (pinMode) {
             pinActivity = WeakReference(this)
             main.postDelayed({ finish() }, PIN_MODE_MAX_MS)
-            // The keypad comes up for the service to type on; what happens next is the runner's.
-            if (keyguard.isKeyguardLocked) keyguard.requestDismissKeyguard(this, null)
             return
         }
         claimedRoutine = intent.getStringExtra(EXTRA_CLAIMED_ROUTINE)
@@ -87,6 +86,19 @@ class RoutineRunActivity : Activity() {
             override fun onDismissCancelled() = settle(runId, unlocked = false)
             override fun onDismissError() = settle(runId, unlocked = false)
         })
+    }
+
+    /**
+     * Pin mode: the screen is on now, so step back behind the lock screen.
+     * Shown over it, this screen hid the keypad (0.17.0 on the phone:
+     * `keyguard_occluded`, and nothing to press); the service swipes the
+     * keypad up and types (0.17.1).
+     */
+    override fun onResume() {
+        super.onResume()
+        if (pinActivity?.get() === this && Build.VERSION.SDK_INT >= 27) {
+            main.postDelayed({ setShowWhenLocked(false) }, STEP_BACK_MS)
+        }
     }
 
     override fun onDestroy() {
@@ -131,6 +143,8 @@ class RoutineRunActivity : Activity() {
         private const val UNLOCK_WAIT_MS = 2 * 60_000L
         /** A safety net only: the runner closes the pin mode as soon as its job ends. */
         private const val PIN_MODE_MAX_MS = 60_000L
+        /** Long enough for the screen to come on before the lock screen is back in front. */
+        private const val STEP_BACK_MS = 400L
 
         @Volatile private var pinActivity: WeakReference<RoutineRunActivity>? = null
 

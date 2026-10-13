@@ -19,6 +19,7 @@ object UnlockLogic {
         val viewId: String?,
         val visible: Boolean,
         val enabled: Boolean,
+        val clickable: Boolean = true,
     )
 
     /** Null when [pin] may be stored, else why not (a code). */
@@ -35,7 +36,9 @@ object UnlockLogic {
     /**
      * The index in [keys] of the one key for [digit], or null. By view id
      * first (`…/key5`, Pixel and Samsung), else a key whose whole text, or the
-     * first part of its description ("5,JKL"), is the digit.
+     * first part of its description ("5,JKL"; ColorOS: the description alone,
+     * no id), is the digit. A clickable match wins over a plain label (a
+     * clock's "9"); two of the same kind → null.
      */
     fun keyFor(digit: Char, keys: List<Key>): Int? {
         if (digit !in '0'..'9') return null
@@ -44,7 +47,8 @@ object UnlockLogic {
         if (byId.size == 1) return byId[0].index
         if (byId.size > 1) return null
         val byLabel = usable.filter { labelOf(it.value) == digit.toString() }
-        return if (byLabel.size == 1) byLabel[0].index else null
+        val pressable = byLabel.filter { it.value.clickable }.ifEmpty { byLabel }
+        return if (pressable.size == 1) pressable[0].index else null
     }
 
     /** The index of the one Enter key, or null (a keypad that confirms by itself has none). */

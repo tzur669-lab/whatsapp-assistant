@@ -126,3 +126,13 @@ the activity's timer could report a running run, relock could cut the next
 job, a crash between key and flag, opt-in survived a step edit, disclosure
 strings, invariant 6. Round 2 — an already-open phone was reported locked.
 All fixed above. Rejected objections: none.
+
+## After the first phone run (0.17.1)
+
+On the user's OnePlus PJE110 (ColorOS 14) 0.17.0 typed nothing: the
+pin-mode screen, shown over the lock screen, occluded it, and ColorOS raises
+no keypad for `requestDismissKeyguard`. The keypad, read with `uiautomator`:
+ten clickable views with the digit as their description only, no ids, no
+Enter. Fix: the pin-mode screen turns the screen on and steps back behind the
+lock screen; the service swipes up (at most twice) until the keypad is there;
+a clickable match wins over a plain label.

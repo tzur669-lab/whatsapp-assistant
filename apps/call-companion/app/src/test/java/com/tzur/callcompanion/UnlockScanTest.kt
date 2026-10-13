@@ -30,8 +30,13 @@ class UnlockScanTest {
         }
     }.toSet()
 
-    @Test fun gesturesOnlyPressAKey() {
-        assertEquals(setOf("RoutineAccessibilityService.kt:press"), usesOf("""\bdispatchGesture\b"""))
+    @Test fun gesturesOnlyPressAKeyOrRaiseTheKeypad() {
+        assertEquals(setOf("RoutineAccessibilityService.kt:gesture"), usesOf("""\bdispatchGesture\b"""))
+        assertEquals(
+            setOf("RoutineAccessibilityService.kt:press", "RoutineAccessibilityService.kt:swipeUp"),
+            usesOf("""\bgesture\(""") - "RoutineAccessibilityService.kt:gesture",
+        )
+        assertEquals(setOf("RoutineAccessibilityService.kt:unlockNow"), usesOf("""\bswipeUp\(""") - "RoutineAccessibilityService.kt:swipeUp")
     }
 
     @Test fun lockingOnlyAfterAnUnlock() {

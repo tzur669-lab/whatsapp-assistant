@@ -6,10 +6,11 @@
   events. Text is set only through ACTION_SET_TEXT, with the text written into
   the routine (0.13.1).
   Unlocking with the stored PIN (0.17): flagRetrieveInteractiveWindows lets the
-  service read the lock screen's keypad; canPerformGestures is on only so a
-  keypad key Android refuses to click can be tapped at its centre. That one
-  call and the relock are the only gesture and the only extra global action
-  (RoutineAccessibilityService.unlockNow / relock, pinned by UnlockScanTest).
+  service read the lock screen's keypad; canPerformGestures is on only to
+  swipe the keypad up (0.17.1: ColorOS ignores the system's dismiss request)
+  and to tap a key Android refuses to click. Those and the relock are the only
+  gestures and the only extra global action (RoutineAccessibilityService
+  press / swipeUp / relock, pinned by UnlockScanTest).
 -->
 <accessibility-service xmlns:android="http://schemas.android.com/apk/res/android"
     android:accessibilityEventTypes="typeWindowStateChanged|typeWindowContentChanged"

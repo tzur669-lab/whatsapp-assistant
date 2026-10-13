@@ -57,8 +57,9 @@ import java.util.concurrent.atomic.AtomicInteger
  * only through [unlockAndRun], only for a claimed routine the user opted in:
  * every digit is matched to exactly one key of the lock screen's keypad by
  * what the key says, before anything is pressed; a key is `ACTION_CLICK`, or,
- * only if Android refuses that, a tap at the key's centre — the one
- * `dispatchGesture` in the app. Afterwards `GLOBAL_ACTION_LOCK_SCREEN` locks
+ * only if Android refuses that, a tap at the key's centre. To raise the
+ * keypad it swipes up the lock screen (at most twice; ColorOS ignores the
+ * system's dismiss request). Those two are the app's only gestures. Afterwards `GLOBAL_ACTION_LOCK_SCREEN` locks
  * the phone again — the one other global action — when that job typed the
  * PIN and no other job waits. One attempt: see [UnlockStore].
  *
@@ -203,7 +204,9 @@ class RoutineAccessibilityService : AccessibilityService() {
     private fun unlockNow(pin: CharArray): String {
         if (!locked()) return UNLOCK_OPEN
         applyPackages(listOf(SYSTEM_UI))
-        val until = SystemClock.uptimeMillis() + KEYPAD_WAIT_MS
+        val start = SystemClock.uptimeMillis()
+        val until = start + KEYPAD_WAIT_MS
+        var swipes = 0
         var nodes: List<AccessibilityNodeInfo>
         var plan: List<Int>?
         var enter: Int?
@@ -216,7 +219,14 @@ class RoutineAccessibilityService : AccessibilityService() {
                 enter = UnlockLogic.enterKey(keys)
                 break
             }
-            if (SystemClock.uptimeMillis() >= until) return UNLOCK_NO_KEYPAD
+            val now = SystemClock.uptimeMillis()
+            if (now >= until) return UNLOCK_NO_KEYPAD
+            // The keypad is behind the lock screen's swipe: Android's own dismiss
+            // request does not raise it on ColorOS (0.17.1, found on the phone).
+            if (swipes < MAX_SWIPES && now - start >= SWIPE_AFTER_MS[swipes]) {
+                swipeUp()
+                swipes++
+            }
             SystemClock.sleep(POLL_MS)
         }
         if (!UnlockStore.beginAttempt(this)) return UNLOCK_NO_KEYPAD
@@ -255,6 +265,7 @@ class RoutineAccessibilityService : AccessibilityService() {
                         viewId = node.viewIdResourceName,
                         visible = node.isVisibleToUser,
                         enabled = node.isEnabled,
+                        clickable = node.isClickable,
                     ),
                 )
                 for (i in node.childCount - 1 downTo 0) node.getChild(i)?.let { stack.addLast(it) }
@@ -268,9 +279,25 @@ class RoutineAccessibilityService : AccessibilityService() {
         if (node.performAction(AccessibilityNodeInfo.ACTION_CLICK)) return
         val bounds = Rect().also { node.getBoundsInScreen(it) }
         if (bounds.isEmpty) return
-        val path = Path().apply { moveTo(bounds.exactCenterX(), bounds.exactCenterY()) }
+        gesture(Path().apply { moveTo(bounds.exactCenterX(), bounds.exactCenterY()) }, TAP_MS)
+    }
+
+    /** Up the middle of the lock screen, to raise its keypad. Only while locked. */
+    private fun swipeUp() {
+        if (!locked()) return
+        val metrics = resources.displayMetrics
+        val x = metrics.widthPixels / 2f
+        val path = Path().apply {
+            moveTo(x, metrics.heightPixels * SWIPE_FROM)
+            lineTo(x, metrics.heightPixels * SWIPE_TO)
+        }
+        gesture(path, SWIPE_MS)
+    }
+
+    /** The one place the app performs a gesture: [press] and [swipeUp] only (`UnlockScanTest`). */
+    private fun gesture(path: Path, durationMs: Long) {
         val gesture = GestureDescription.Builder()
-            .addStroke(GestureDescription.StrokeDescription(path, 0, TAP_MS))
+            .addStroke(GestureDescription.StrokeDescription(path, 0, durationMs))
             .build()
         val latch = CountDownLatch(1)
         val callback = object : GestureResultCallback() {
@@ -683,6 +710,12 @@ class RoutineAccessibilityService : AccessibilityService() {
         private const val OPEN_WAIT_MS = 5_000L
         private const val KEY_GAP_MS = 150L
         private const val TAP_MS = 50L
+        private const val SWIPE_MS = 300L
+        private const val SWIPE_FROM = 0.80f
+        private const val SWIPE_TO = 0.30f
+        /** A swipe once the screen is on, and one more if the keypad did not come up. */
+        private val SWIPE_AFTER_MS = longArrayOf(1_200L, 4_500L)
+        private val MAX_SWIPES = SWIPE_AFTER_MS.size
         private const val GESTURE_WAIT_MS = 1_000L
         const val UNLOCK_OPEN = "open"
         const val UNLOCK_TYPED = "unlocked"
