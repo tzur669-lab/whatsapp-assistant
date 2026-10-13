@@ -133,7 +133,8 @@ Network on the hotspot: `NODE_OPTIONS=--dns-result-order=ipv4first` for wrangler
   and a CPU check in `wrangler dev` owed. J4 (PLAN §6.30): server built
   (migration 0034) and app 0.15.0 (`Watches.kt`, `WatchMatcher.kt`):
   **server first**, then the APK; `eval:agent --filter wh-` and the phone
-  check owed. Next: J5 (smarter digest).
+  check owed. J5 done (digest conflicts and bills, `/digest conflicts|bills
+  on|off`, off by default). Next: J6 (spoken replies, app only).
   The plan's "Additions" and "Follow-up" sections win over the part sections.
 - **Next work:** [ROADMAP.md](ROADMAP.md) (Hebrew) — block H (2026-10-07):
   a smarter bot. Parts 15 (notes), 16 ("לא הבנת" capture), 17 (tool
@@ -171,6 +172,10 @@ Network on the hotspot: `NODE_OPTIONS=--dns-result-order=ipv4first` for wrangler
 | [SETUP.md](SETUP.md) | Setting up a new copy from zero: accounts, Groq key, models, secrets, deploy, app, AI agent. |
 
 ## 8. Session log (docs)
+
+- 2026-10-13: Block J5: new `core/conflicts.ts`; `buildDigest` sections
+  (`DigestContext.sections`, `gmail`), `readBills`/`billsDueWithin`/`billLine`
+  in `tools/bills.ts`, `Repository.digestSection`. No tables.
 
 - 2026-10-13: Block J4, app 0.15.0: `Watches.kt`, `WatchMatcher.kt` (fixture
   test), `NotificationCollector` hook, FCM `watches`, network-return retry

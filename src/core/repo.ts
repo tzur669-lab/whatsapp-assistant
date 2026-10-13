@@ -330,6 +330,19 @@ export class Repository {
     return this.getSetting(REST_HOLD_KEY) === 'on';
   }
 
+  /** Whether a digest section is on (block J, J5). Off unless stored. */
+  digestSection(section: 'conflicts' | 'bills'): boolean {
+    return this.getSetting(`digest_${section}`) === 'on';
+  }
+
+  setDigestSection(section: 'conflicts' | 'bills', on: boolean): void {
+    if (!on) {
+      this.sql.exec('DELETE FROM settings WHERE key = ?', `digest_${section}`);
+      return;
+    }
+    this.setSetting(`digest_${section}`, 'on');
+  }
+
   setRestHold(enabled: boolean): void {
     if (!enabled) {
       this.sql.exec('DELETE FROM settings WHERE key = ?', REST_HOLD_KEY);

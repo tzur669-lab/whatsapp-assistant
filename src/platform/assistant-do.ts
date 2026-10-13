@@ -1149,6 +1149,9 @@ export class AssistantDO implements DurableObject {
         ...(this.googleApi('tasks') ? { tasks: new TasksClient(this.googleApi('tasks')!) } : {}),
         ...(this.googleApi('contacts') ? { contacts: new ContactsClient(this.googleApi('contacts')!) } : {}),
         ...(this.calendarClient() ? { calendar: this.calendarClient()! } : {}),
+        // The optional sections the user turned on (block J, J5).
+        sections: { conflicts: this.repo.digestSection('conflicts'), bills: this.repo.digestSection('bills') },
+        ...(this.repo.digestSection('bills') && this.googleApi('gmail') ? { gmail: new GmailClient(this.googleApi('gmail')!) } : {}),
       });
     } finally {
       // Whatever the digest decided, the reported names go now, and the ask

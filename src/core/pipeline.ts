@@ -1584,6 +1584,11 @@ function digestSetting(command: Extract<Command, { kind: 'digest' }>, deps: Pipe
     return statusText.digestTurnedOff;
   }
 
+  if (typeof command.set === 'object') {
+    repo.setDigestSection(command.set.section, command.set.on);
+    return statusText.digestSection(command.set.section, command.set.on);
+  }
+
   repo.setDigestHour(command.set);
   return statusText.digestOn(command.set);
 }

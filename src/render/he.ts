@@ -47,6 +47,7 @@ function helpText(channel: 'whatsapp' | 'app'): string {
     'אפשר גם להקליט הודעה קולית במקום לכתוב. מה שנשמע יוצג בתשובה.',
     '',
     `לתקציר יומי: ${isolate('/digest 7')} — המספר הוא השעה. ביום ריק לא נשלחת הודעה.`,
+    `להוסיף לתקציר חפיפות ביומן של מחר: ${isolate('/digest conflicts on')}. חשבונות לתשלום בשבוע הקרוב: ${isolate('/digest bills on')}.`,
     `לחיבור יומן חיצוני: ${isolate('/ical')} ואחריו קישור ה-ics.`,
     `מזג אוויר, לוח עברי וזמני שבת, שערי מטבע וחדשות: פשוט לשאול. העיר נקבעת ב${isolate('/city')}.`,
     `מייל, רשימות ו־Drive: אחרי חיבור ב${isolate('/connect gmail')}, ${isolate('/connect tasks')}, ${isolate('/connect drive')}.`,

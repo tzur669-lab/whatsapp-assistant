@@ -58,6 +58,10 @@ export type DigestParts = {
   week?: DigestWeek | null;
   /** Calls missed in the last day, as the phone reported them (#20). Null name: not in the contacts. */
   missedCalls?: readonly { name: string | null; at: number }[];
+  /** Tomorrow's overlapping events, when that section is on (block J, J5). */
+  conflicts?: readonly { first: CalendarEvent; second: CalendarEvent }[];
+  /** Bills due within a week, one rendered line each, when that section is on (block J, J5). */
+  bills?: readonly string[];
 };
 
 export const digestText = {
@@ -96,6 +100,16 @@ export const digestText = {
       sections.push(section(heading('overdue', lang), parts.overdue, lang));
     }
 
+    if (parts.conflicts && parts.conflicts.length > 0) {
+      sections.push(conflictSection(parts.conflicts, lang));
+    }
+
+    if (parts.bills && parts.bills.length > 0) {
+      const header = lang === 'en' ? 'Bills due this week:' : 'חשבונות לתשלום בשבוע הקרוב:';
+      const footer = lang === 'en' ? 'Read from the mail: check it before paying.' : 'נלקח מהמייל: כדאי לבדוק בו לפני התשלום.';
+      sections.push([header, '', ...parts.bills, '', footer].join('\n'));
+    }
+
     if (parts.week && parts.week.days.length > 0) {
       // After today's business: the week is a look ahead, not a to-do.
       sections.push(weekSection(parts.week, lang));
@@ -111,6 +125,18 @@ function contextBlock(context: DigestContextLines | undefined): string | null {
   if (context.hebrewDate) lines.push(isolate(context.hebrewDate));
   if (context.weather) lines.push(context.weather);
   return lines.length > 0 ? lines.join('\n') : null;
+}
+
+/** Tomorrow's overlaps (block J, J5): each pair's times and titles, someone else's words isolated. */
+function conflictSection(conflicts: NonNullable<DigestParts['conflicts']>, lang: Lang): string {
+  const clock = (ms: number) => {
+    const local = localPartsOf(ms, ZONE);
+    return `${String(local.hour).padStart(2, '0')}:${String(local.minute).padStart(2, '0')}`;
+  };
+  const span = (event: CalendarEvent) => `${isolateLtr(`${clock(event.startUtc)}–${clock(event.endUtc)}`)} ${isolate(event.title)}`;
+  const day = formatDay(localPartsOf(conflicts[0]!.first.startUtc, ZONE), lang);
+  const header = lang === 'en' ? `Overlapping tomorrow, ${day}:` : `חפיפות ביומן מחר, ${day}:`;
+  return [header, '', ...conflicts.map((c) => `• ${span(c.first)} / ${span(c.second)}`)].join('\n');
 }
 
 function taskSection(tasks: readonly DigestTask[], lang: Lang): string {

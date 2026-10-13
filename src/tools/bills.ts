@@ -23,6 +23,8 @@ import type { BillFacts } from './bill-extract.js';
 import { parseInput } from './types.js';
 import type { ExecuteResult, ResolveOutcome, ToolDefinition } from './types.js';
 import { newestPerThread } from './mail.js';
+import type { GmailClient } from '../google/gmail.js';
+import type { GoogleResult } from '../google/api.js';
 
 const DEFAULT_DAYS = 45;
 /** Each one is a body read: a request of its own, against the Worker's subrequest cap. */
@@ -50,7 +52,53 @@ export function buildBillsQuery(days: number): string {
 const inputSchema = z.object({ query: z.string().min(1).max(400) }).strict();
 type BillsInput = z.infer<typeof inputSchema>;
 
-type Bill = { from: string; subject: string; at: number; facts: BillFacts };
+export type Bill = { from: string; subject: string; at: number; facts: BillFacts };
+
+/**
+ * Read up to `MAX_BILLS` bill mails by a query code built: one per thread,
+ * each body read for its amount and due date (`bill-extract.ts`). Shared by
+ * `mail.bills` and the digest (block J, J5).
+ */
+export async function readBills(gmail: GmailClient, query: string): Promise<GoogleResult<Bill[]>> {
+  const found = await gmail.search(query, MAX_BILLS);
+  if (!found.ok) return found;
+  // One bill per conversation: a reminder in the same thread is the same bill.
+  const mails = newestPerThread(found.value);
+  const bills: Bill[] = [];
+  for (const mail of mails) {
+    const read = await gmail.body(mail.id);
+    // A body that cannot be read still lists the mail, from its subject and snippet.
+    const body = read.ok ? read.value : '';
+    const text = `${mail.subject}\n${mail.snippet}\n${body}`;
+    bills.push({
+      from: cleanItemText(mail.fromName).slice(0, 60),
+      subject: cleanItemText(mail.subject).slice(0, MAX_SUBJECT_CHARS),
+      at: mail.at,
+      facts: billFacts(text, localPartsOf(mail.at, ZONE)),
+    });
+  }
+  return { ok: true, value: bills };
+}
+
+/** Bills whose parsed due day is from today to `days` ahead, soonest first (the digest, block J, J5). */
+export function billsDueWithin(bills: readonly Bill[], nowMs: number, days: number): Bill[] {
+  const today = dayNumber(localPartsOf(nowMs, ZONE));
+  const last = today + days * 86_400_000;
+  return bills
+    .filter((bill) => bill.facts.due !== null && dayNumber(bill.facts.due) >= today && dayNumber(bill.facts.due) <= last)
+    .sort((a, b) => dayNumber(a.facts.due!) - dayNumber(b.facts.due!));
+}
+
+/** One line per bill: who, what, how much, by when. */
+export function billLine(bill: Bill, lang: Lang): string {
+  const parts = [`${isolate(bill.from)}: ${isolate(bill.subject)}`];
+  if (bill.facts.amount !== null) parts.push(shekels(bill.facts.amount));
+  if (bill.facts.due) {
+    const day = formatDay(dueLocal(bill.facts.due), lang);
+    parts.push(lang === 'he' ? `לתשלום עד ${day}` : `due ${day}`);
+  }
+  return `• ${parts.join(' · ')}`;
+}
 
 function dayNumber(date: { year: number; month: number; day: number }): number {
   return Date.UTC(date.year, date.month - 1, date.day);
@@ -111,7 +159,7 @@ export const mailBills: ToolDefinition = {
     const input = parseInput<BillsInput>(inputSchema, rawInput, 'mail.bills');
     if (!ctx.gmail) return { text: eventText.grantNotConnected('gmail', ctx.lang) };
 
-    const found = await ctx.gmail.search(input.query, MAX_BILLS);
+    const found = await readBills(ctx.gmail, input.query);
     if (!found.ok) {
       if (found.error.code === 'not_connected' || found.error.code === 'disconnected') {
         return { text: eventText.grantNotConnected('gmail', ctx.lang) };
@@ -119,22 +167,6 @@ export const mailBills: ToolDefinition = {
       ctx.log.warn('mail_failed', { errorCode: found.error.code });
       return { text: mailText.unavailable(ctx.lang) };
     }
-
-    // One bill per conversation: a reminder in the same thread is the same bill.
-    const mails = newestPerThread(found.value);
-    const bills: Bill[] = [];
-    for (const mail of mails) {
-      const read = await ctx.gmail.body(mail.id);
-      // A body that cannot be read still lists the mail, from its subject and snippet.
-      const body = read.ok ? read.value : '';
-      const text = `${mail.subject}\n${mail.snippet}\n${body}`;
-      bills.push({
-        from: cleanItemText(mail.fromName).slice(0, 60),
-        subject: cleanItemText(mail.subject).slice(0, MAX_SUBJECT_CHARS),
-        at: mail.at,
-        facts: billFacts(text, localPartsOf(mail.at, ZONE)),
-      });
-    }
-    return { text: renderBills(bills, ctx.nowMs, ctx.lang), tainting: true };
+    return { text: renderBills(found.value, ctx.nowMs, ctx.lang), tainting: true };
   },
 };

@@ -49,7 +49,8 @@ SQLite schema, the reminder alarm, and every confirmation gate.
 
 **Chat commands** — `/help`, `/status`, `/digest`, `/shabbat`, `/ical`, `/city`,
 `/birthday`, `/pause`, `/resume`, `/forget`, `/budget`, `/connect google|gmail|tasks|drive|contacts`, `/pair`,
-`/pair off`, `/ping`. In the app, `/budget` says there is no budget and `/pair`
+`/pair off`, `/ping`. `/digest conflicts on|off` and `/digest bills on|off` add or
+drop the digest's optional sections (block J, PLAN §6.12). In the app, `/budget` says there is no budget and `/pair`
 says to pair with a code from the script; `/pair off` unpairs this phone.
 `/city` sets the home city for weather and Shabbat times (Jerusalem until set).
 `/forget` deletes the agent's encrypted conversation history (PLAN §6.19) and

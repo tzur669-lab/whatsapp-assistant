@@ -150,6 +150,12 @@ export const statusText = {
 
   digestTurnedOff: 'התקציר היומי כבוי.',
 
+  /** `/digest conflicts|bills on|off` (block J, J5). */
+  digestSection(section: 'conflicts' | 'bills', on: boolean): string {
+    const what = section === 'conflicts' ? 'חפיפות ביומן של מחר' : 'חשבונות לתשלום בשבוע הקרוב';
+    return on ? `מעכשיו התקציר היומי יכלול גם ${what}, כשיש כאלה.` : `התקציר היומי לא יכלול יותר ${what}.`;
+  },
+
   /**
    * `/shabbat` (PLAN §6.13). Says exactly what it does, including that it holds
    * everything and not only some things — there is no urgency flag to read.

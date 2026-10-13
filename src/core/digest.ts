@@ -50,10 +50,17 @@ import { nextOccurrence } from '../time/recur.js';
 import type { Place } from '../lookup/place.js';
 import { weatherFor } from '../lookup/weather.js';
 import { hebrewDate } from '../lookup/jewish.js';
+import type { GmailClient } from '../google/gmail.js';
+import { findConflicts } from './conflicts.js';
+import type { Conflict } from './conflicts.js';
+import { billLine, billsDueWithin, buildBillsQuery, readBills } from '../tools/bills.js';
+import type { Bill } from '../tools/bills.js';
 
 const MAX_EVENTS = 10;
 const MAX_REMINDERS = 10;
 const MAX_TASKS = 10;
+/** Tomorrow's events read for conflicts. */
+const MAX_CONFLICT_EVENTS = 25;
 /** Task lists read for the digest; each is one request. */
 const MAX_TASK_LISTS = 5;
 /** The week's reads. A week that reaches this is shown as "at least". */
@@ -87,8 +94,20 @@ export type DigestContext = {
   fetchImpl?: typeof fetch;
   /** Missed calls the phone reported for this digest (#20, 2026-10-06). */
   missedCalls?: readonly { name: string | null; at: number }[];
+  /**
+   * The optional sections the user turned on (block J, J5), off by default:
+   * tomorrow's calendar conflicts, and bills due within a week (needs `gmail`).
+   */
+  sections?: { conflicts?: boolean; bills?: boolean };
+  /** Gmail, when connected: the bills section reads it. */
+  gmail?: GmailClient;
   log: Logger;
 };
+
+/** How far ahead the bills section looks (block J, J5). */
+const BILL_DAYS = 7;
+/** How far back the bills section searches for them. */
+const BILL_SEARCH_DAYS = 45;
 
 /** The composed message, or null when there is nothing worth a notification. */
 export async function buildDigest(ctx: DigestContext): Promise<string | null> {
@@ -105,6 +124,9 @@ export async function buildDigest(ctx: DigestContext): Promise<string | null> {
   const tasks = await dueTasks(ctx);
   const week =
     localPartsOf(ctx.nowMs, ZONE).weekday === WEEK_DIGEST_DAY ? await weekAhead(ctx, endOfDay, everyone) : null;
+  // Each optional section on its own: one that fails never drops the others.
+  const conflicts = ctx.sections?.conflicts ? await tomorrowsConflicts(ctx, endOfDay) : [];
+  const bills = ctx.sections?.bills ? await billsDue(ctx) : [];
 
   if (
     events.length === 0 &&
@@ -113,7 +135,9 @@ export async function buildDigest(ctx: DigestContext): Promise<string | null> {
     birthdays.length === 0 &&
     tasks.length === 0 &&
     (ctx.missedCalls?.length ?? 0) === 0 &&
-    (week === null || week.days.length === 0)
+    (week === null || week.days.length === 0) &&
+    conflicts.length === 0 &&
+    bills.length === 0
   ) {
     // Silence is the feature. A digest that says "nothing today" every day is
     // a notification the user learns to dismiss, and then so is the real one.
@@ -129,6 +153,8 @@ export async function buildDigest(ctx: DigestContext): Promise<string | null> {
     tasks: tasks.length,
     missedCalls: ctx.missedCalls?.length ?? 0,
     weekDays: week?.days.length ?? -1,
+    conflicts: conflicts.length,
+    bills: bills.length,
   });
 
   return digestText.compose(
@@ -142,9 +168,53 @@ export async function buildDigest(ctx: DigestContext): Promise<string | null> {
       tasks,
       week,
       ...(ctx.missedCalls && ctx.missedCalls.length > 0 ? { missedCalls: ctx.missedCalls } : {}),
+      ...(conflicts.length > 0 ? { conflicts } : {}),
+      ...(bills.length > 0 ? { bills: bills.map((bill) => billLine(bill, ctx.lang)) } : {}),
     },
     ctx.lang,
   );
+}
+
+/**
+ * Tomorrow's overlapping timed events (block J, J5): the next local day, whole,
+ * through the zone (a DST day is 23 or 25 hours). A read that fails is logged
+ * and the section is left out.
+ */
+async function tomorrowsConflicts(ctx: DigestContext, endOfDay: number): Promise<Conflict[]> {
+  try {
+    const start = endOfDay + 1;
+    const end = endOfLocalDay(start, ZONE);
+    const subscribed = ctx.ical ? asCalendarEvents(ctx.ical.eventsBetween(ctx.principal, start, end, MAX_CONFLICT_EVENTS)) : [];
+    let events: CalendarEvent[] = subscribed;
+    if (ctx.calendar) {
+      const result = await ctx.calendar.listAllEvents({ startUtc: start, endUtc: end, limit: MAX_CONFLICT_EVENTS });
+      if (!result.ok) {
+        ctx.log.warn('digest_conflicts_failed', { errorCode: result.error.code });
+        return [];
+      }
+      events = [...result.value, ...subscribed];
+    }
+    return findConflicts(events);
+  } catch (error) {
+    ctx.log.warn('digest_conflicts_failed', { errorCode: error instanceof Error ? error.name : 'E_UNKNOWN' });
+    return [];
+  }
+}
+
+/** Bills in Gmail due from today to a week ahead (block J, J5). At most 8 bodies, as `mail.bills`. */
+async function billsDue(ctx: DigestContext): Promise<Bill[]> {
+  if (!ctx.gmail) return [];
+  try {
+    const read = await readBills(ctx.gmail, buildBillsQuery(BILL_SEARCH_DAYS));
+    if (!read.ok) {
+      ctx.log.warn('digest_bills_failed', { errorCode: read.error.code });
+      return [];
+    }
+    return billsDueWithin(read.value, ctx.nowMs, BILL_DAYS);
+  } catch (error) {
+    ctx.log.warn('digest_bills_failed', { errorCode: error instanceof Error ? error.name : 'E_UNKNOWN' });
+    return [];
+  }
 }
 
 /**

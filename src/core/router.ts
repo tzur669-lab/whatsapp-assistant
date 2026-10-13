@@ -5,6 +5,9 @@
 import { grantByCommand } from '../google/grants.js';
 import type { GrantName } from '../google/grants.js';
 
+/** The digest's optional sections (block J, J5), off by default. */
+export type DigestSection = 'conflicts' | 'bills';
+
 export type Command =
   | { kind: 'help' }
   | { kind: 'ping' }
@@ -34,7 +37,7 @@ export type Command =
    * `/digest`, `/digest 7`, `/digest off` (PLAN §6.12). The only command that
    * carries a value, so it is matched separately from the fixed table below.
    */
-  | { kind: 'digest'; set: number | 'off' | null }
+  | { kind: 'digest'; set: number | 'off' | null | { section: DigestSection; on: boolean } }
   /** `/shabbat`, `/shabbat on`, `/shabbat off` (PLAN §6.13). Off by default. */
   | { kind: 'shabbat'; set: boolean | null }
   /** `/city`, `/city <name>`: the home city for weather and Shabbat times (2026-10-01). */
@@ -72,6 +75,8 @@ const COMMANDS: ReadonlyArray<readonly [RegExp, Command]> = [
 ];
 
 const DIGEST = /^\/digest(?:\s+(off|\d{1,2}))?$/i;
+/** `/digest conflicts on`, `/digest bills off` (block J, J5): the optional sections. */
+const DIGEST_SECTION = /^\/digest\s+(conflicts|bills)\s+(on|off)$/i;
 
 /** The argument is a URL, so it is captured loosely here and validated in `ical/url.ts`. */
 const ICAL = /^\/ical(?:\s+(\S{1,2100}))?$/i;
@@ -154,6 +159,12 @@ export function matchCommand(text: string): Command | null {
     const argument = ical[1];
     if (argument === undefined) return { kind: 'ical', set: null };
     return { kind: 'ical', set: /^off$/i.test(argument) ? 'off' : argument };
+  }
+
+  const section = DIGEST_SECTION.exec(trimmed);
+  if (section) {
+    const name = section[1]!.toLowerCase() === 'bills' ? 'bills' : 'conflicts';
+    return { kind: 'digest', set: { section: name, on: section[2]!.toLowerCase() === 'on' } };
   }
 
   const digest = DIGEST.exec(trimmed);
