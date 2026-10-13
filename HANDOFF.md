@@ -159,7 +159,8 @@ Network on the hotspot: `NODE_OPTIONS=--dns-result-order=ipv4first` for wrangler
 
 - 2026-10-13: Screen agent: `soundOf` hears a word-initial ו or any וו as
   the w/v of an English app name ("וויז" = Waze, "ויבר" = Viber). No new
-  modules, tables or deploy.
+  modules or tables. Staging deployed
+  (109046f7).
 
 - 2026-10-12: First phone run of the screen agent (staging 9c5e9299, app
   0.14.1). Fixed: a routine named for the app hid `screen.task`
