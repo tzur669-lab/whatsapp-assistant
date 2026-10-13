@@ -35,6 +35,9 @@ class NotificationCollector : NotificationListenerService() {
         val text = (extras.getCharSequence(Notification.EXTRA_BIG_TEXT) ?: extras.getCharSequence(Notification.EXTRA_TEXT))
             ?.toString()?.takeIf { it.isNotBlank() }
         if (title == null && text == null) return
+        // Watches (0.15, PLAN §6.30): matched here, after the hidden-app check;
+        // only a watch's id ever leaves the phone. Before the buffer's own filters.
+        Watches.onNotification(this, sbn.packageName, sbn.key, title, text)
         if (PhoneReadLogic.looksLikeOtp("${title.orEmpty()} ${text.orEmpty()}")) return
 
         val app = try {

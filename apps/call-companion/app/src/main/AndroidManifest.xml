@@ -3,6 +3,8 @@
 
     <!-- Talk to the assistant's Worker. HTTPS only, every request signed. -->
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- 0.15: to send a watch match waiting for the network when it returns (install-time, no prompt). -->
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <!-- Hold-to-record voice messages. Asked for at the first press, not at install. -->
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <!-- Match a name to a contact. Read on the phone, never sent anywhere. -->

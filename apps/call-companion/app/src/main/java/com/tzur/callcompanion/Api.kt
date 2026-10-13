@@ -216,6 +216,27 @@ object Api {
         }
     }
 
+    /**
+     * The watches this phone matches (0.15, PLAN §6.30): ids, sources,
+     * normalized keywords and their ends. Null when the server could not be
+     * asked; then the stored list stays.
+     */
+    fun fetchWatches(context: Context): List<WatchMatcher.Watch>? {
+        val json = (signed(context, "GET", "/app/watches", null, ByteArray(0), SHORT_TIMEOUT_MS) as? Result.Ok)?.json
+            ?: return null
+        if (json.optJSONArray("watches") == null) return null
+        return Watches.parseList(json.toString())
+    }
+
+    /**
+     * A watch matched: its id and when, nothing of the event. True on any 2xx
+     * — claimed, nothing to claim, or too old — which marks it handled.
+     */
+    fun watchFired(context: Context, watchId: String, matchedAt: Long): Boolean {
+        val body = JSONObject().put("watchId", watchId).put("matchedAt", matchedAt)
+        return signed(context, "POST", "/app/watch/fired", JSON_TYPE, utf8(body), PUSH_TIMEOUT_MS) is Result.Ok
+    }
+
     /** One page of what the phone has not acked yet. */
     fun fetchOutbox(context: Context, timeoutMs: Int): Pair<Result, Page?> {
         val result = signed(context, "GET", "/app/outbox", null, ByteArray(0), timeoutMs)

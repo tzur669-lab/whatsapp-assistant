@@ -278,6 +278,30 @@ phone is its eyes and hands and has the last word on every action.
 Nothing here logs screen text. **Deploy the server first**: an older one
 answers the new routes with 404 and never sends a `screen` push.
 
+## Watches (0.15, PLAN §6.30)
+
+"כשתגיע הודעת SMS עם המילה חבילה, תזכיר לי לאסוף אותה": the server keeps
+the watch; the phone matches it.
+
+- `Watches.kt` fetches the list signed (`GET /app/watches`: id, source,
+  normalized keywords, end) at start and on an FCM `kind: watches` push.
+- `NotificationCollector` hands each notification to it after the hidden-app
+  check. From the default SMS app, the newest SMS (`_id` and body, the existing
+  `READ_SMS` grant) is matched against `sms` watches; anything else, its title
+  and text against `notification` watches. One SMS never fires both kinds.
+- `WatchMatcher.kt` is the server's `core/watch-match.ts` in Kotlin, both
+  checked against `test/fixtures/watch-normalize.json`.
+- A match posts `POST /app/watch/fired {watchId, matchedAt}`: no text. It is
+  handled only after a 2xx; until then it waits in a queue of 20 in
+  `SharedPreferences` (ids and times), sent again on the next network or start
+  with a fresh nonce, and dropped after 10 minutes (the server would refuse
+  it). The last 100 handled events are kept so a re-posted notification never
+  fires again; an SMS is known by its `_id`, a notification by its key and a
+  local hash of its text.
+- New: `ACCESS_NETWORK_STATE` (install-time, no prompt), for that retry.
+
+**Deploy the server first**: an older one answers both routes with 404.
+
 ## Setup
 
 1. **Firebase**: project `tzur-call-companion`, Android app
@@ -319,6 +343,9 @@ answers the new routes with 404 and never sends a `screen` push.
 - **Call log:** read when asked, never copied. Numbers never leave.
 - **Notifications:** the last day, in `notifications.db`, private and excluded
   from backup, until a phone read asks for some of them.
+- **Watches (0.15):** notifications and SMS are matched here; only a watch's id
+  and a time leave the phone. The queue and the handled list hold ids, hashes
+  and times only.
 
 The only dependency is Firebase Messaging. HTTP, JSON, SQLite, crypto and the
 recorder all come from the platform.

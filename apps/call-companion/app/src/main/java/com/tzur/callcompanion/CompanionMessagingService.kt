@@ -18,6 +18,8 @@ import com.google.firebase.messaging.RemoteMessage
  * - `kind: routine` — a scheduled routine is due (0.13): its run id only; the
  *   routine comes back from the signed claim (`RoutineRunner`). It stops a
  *   running screen task first.
+ * - `kind: watches` (0.15) — the watch list changed: fetch it again, signed
+ *   (`Watches`). No ids, no words in the push.
  * - `kind: screen` / `screen_release` / `screen_stop` (0.14) — a screen task
  *   to claim, an approval decided (the wait polls now), or a task the server
  *   ended (its stop flag). `task_id` only (`ScreenAgentRunner`).
@@ -32,6 +34,7 @@ class CompanionMessagingService : FirebaseMessagingService() {
         if (!Signer(this).isPaired) return
         if (message.data["kind"] == "outbox") return onOutbox()
         if (message.data["kind"] == "calls_report") return onCallsReport()
+        if (message.data["kind"] == "watches") return Watches.refresh(this)
         when (message.data["kind"]) {
             "routine" -> {
                 // A routine is due: a running screen task stops first (the server preempts it).
