@@ -411,7 +411,10 @@ function promptLabel(): string {
 function toolsFor(input: string): WireTool[] {
   // A smart turn has no selection: the whole smart catalog, as the loop offers it.
   const tools = offered(namesEvalRoutine(input), namesScreenTask(input, EVAL_SCREEN_APPS));
-  return wireTools(selecting && !smart ? selectTools(input, tools).tools : tools);
+  if (smart) return wireTools(tools);
+  // A local turn offered the full set gets the brief descriptions (block J, J2b).
+  const selection = selecting ? selectTools(input, tools) : { tools, groups: [] };
+  return wireTools(selection.tools, selection.groups.length === 0 ? { brief: true } : {});
 }
 
 async function ask(provider: AgentProvider, id: string, messages: AgentMessage[], tools: WireTool[]): Promise<Recorded> {
