@@ -39,6 +39,10 @@ function helpText(channel: 'whatsapp' | 'app'): string {
     'תיק מניות: "יש לי 10 מניות אפל ב־150 דולר", "קניתי 50 טבע בת״א ב־118 שקל", "מה שווי התיק?".',
     // Smart conversations exist only in the app (2026-10-08).
     ...(channel === 'app' ? [`בשיחה חכמה: ${isolate('/consents')} מציג את הגישות שאושרו, ואפשר לבטל אותן.`] : []),
+    // Event-triggered reminders exist only in the app (block J, J4).
+    ...(channel === 'app'
+      ? [`תזכורת כשמשהו מגיע: "כשיגיע מייל מ־DHL, תזכיר לי לבדוק את המשלוח". ${isolate('/watches')} מציג ומבטל.`]
+      : []),
     '',
     'אפשר גם להקליט הודעה קולית במקום לכתוב. מה שנשמע יוצג בתשובה.',
     '',

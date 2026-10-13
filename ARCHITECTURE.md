@@ -2,7 +2,7 @@
 
 How the code is laid out and how the parts talk. The *why* behind each piece
 is in `PLAN.md` (section numbers given); the rules are in `CLAUDE.md`.
-Current as of 2026-10-13 (migration 0033).
+Current as of 2026-10-13 (migration 0034).
 
 ## 1. System diagram
 
@@ -169,6 +169,7 @@ One SQLite DB inside the DO. Schema = `migrations/0001…0028` (registered in
 | Agent | `conversation_turns` (encrypted history), `agent_turns` (suspended; 0027 adds `kind` phone/consent, `nonce_hash`, `source`, `conversation`), `agent_lock` |
 | Smart conversations (0026) | `conversation_modes` (mode per app conversation, recorded once), `conversation_consents` (sources allowed for one conversation); both purged after 30 days unused and by `/forget`, `/pair off` |
 | Misses (§6.23) | `last_exchange` (encrypted, 1 h), `misses` (encrypted, 30 days); `inbound_messages.seq` + `settings.inbound_seq` order arrivals |
+| Watches (0034, block J4) | `watches` (source, normalized and said keywords, sender, the reminder text in plain text like `reminders.text`, fires left, cooldown, end, Gmail `last_checked` and the last 50 seen ids; active → spent / cancelled; purged 90 days after) |
 | Inherited groups (0033, block J2a) | `last_selection` (one row per conversation: the latest local agent turn's tool groups as code names, its starting taint, `ran` once that turn ran tools from them; ordered by `seq`, 10 min, purged on every alarm) |
 | Screen agent (0030, §6.28) | `screen_allow` (the phone's sync: package, label, ask-every-tap), `screen_tasks` (one row per confirmed task: sealed task and inputs, status confirmed → pushed → running ⇄ awaiting_approval → released → … → stopped/preempted/deadline/done/failed/unknown, the decided action as codes and the phone's binding, past steps as codes, the approval and stop nonces, tokens reserved, `mode` local/smart since 0031, `in_reply_to` since 0032: the confirming message, so the task's messages go to its conversation), `screen_model_day` (0031: screen tokens per Groq model per day) |
 | Routines (0028–0029, §6.27) | `routine_names` (the app's sync: id, name, app label, step hash, list position — never steps), `routine_runs` (one row per confirmed run, with its card time and the card's and notice's cancel hashes: scheduled → noticed → pushed → claimed → done/unverified/failed/unknown, or cancelled/expired/changed) |
@@ -193,6 +194,7 @@ the same code on Node SQLite (`test/integration/sqlite-driver.ts`).
 
 **Coupled on purpose (change together)**
 - `tools/registry.ts` ↔ `agent/tool-groups.ts` ↔ `test/evals/fingerprint.ts` ↔ `models.ts` evaluated fingerprint. `agent/briefs.ts` is hashed too (the brief full catalog, J2b): editing a brief moves the Groq fingerprint.
+- Watches (J4, §6.30): `tools/watch.ts` (`reminders.when`, `namesWatch`) ↔ `tools/watch-store.ts` (`fire` = claim + `ReminderStore.schedule` in one transaction; `checkMailWatches`, `mailQuery`) ↔ `core/watch-match.ts` = the app's `WatchMatcher.kt` (both against `test/fixtures/watch-normalize.json`) ↔ `channels/app/parse.ts` (`parseWatchFired`) / `ingress.ts` ↔ `assistant-do.ts` (`appWatches`, `appWatchFired`, the tick, `pushWatches` → `device/fcm.ts` `watchesChanged`) ↔ the app's `CompanionMessagingService` (`kind: watches`); `core/pipeline.ts` (`watch` offer on the app channel, `/watches`); `google/gmail.ts` `listIds`.
 - `web.read` (J3, §6.29): `core/pipeline.ts` (`singleHttpsUrl` → `webRead` offer) ↔ `agent/tools.ts` (`OfferOptions.webRead`, `TAINTING_TOOLS`) ↔ `agent/tool-groups.ts` (rides along in any selection) ↔ `tools/web-read.ts` (link from `userText`) ↔ `lookup/web-page.ts` (guard, fetch) ↔ `platform/html-text.ts` (`HTMLRewriter`, `ToolContext.pageText`, wired in `assistant-do.ts`); `test/security/turn-signal-fetch.test.ts` places its fetch.
 - Inherited groups (J2a): `core/pipeline.ts` reads `LastSelections.inherited` before the turn and passes `onLocalSelection` (writes at plan time, `seq` from `inboundSeq`) ↔ `agent/loop.ts` ↔ `selectTools(text, offered, inherited)`; `settleAgentResult` calls `markRan` for the same `seq` (never the read-only try).
 - `tools/registry.ts` `dataSource` and `consent` ↔ `agent/consents.ts` ↔ `render/consent.ts` ↔ the history gate in `pipeline.ts` ↔ the smart fingerprint (`SMART_CATALOG_POLICY`).

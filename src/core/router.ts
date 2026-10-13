@@ -24,6 +24,8 @@ export type Command =
   | { kind: 'forget_memory' }
   /** `/consents`: what this smart conversation allowed, each revocable (2026-10-08). */
   | { kind: 'consents' }
+  /** `/watches`: the active event-triggered reminders, each cancellable (block J, J4). */
+  | { kind: 'watches' }
   /** `/connect google|gmail|tasks|drive`: one grant each (§6.6, 2026-10-01). */
   | { kind: 'connect_google'; grant: GrantName }
   /** `/pair` issues a code for the phone app; `/pair off` unpairs (PLAN §6.17). */
@@ -61,6 +63,7 @@ const COMMANDS: ReadonlyArray<readonly [RegExp, Command]> = [
   [/^\/forget\s+memory$/i, { kind: 'forget_memory' }],
   [/^\/memory$/i, { kind: 'memory' }],
   [/^\/consents$/i, { kind: 'consents' }],
+  [/^\/watches$/i, { kind: 'watches' }],
   [/^\/shabbat$/i, { kind: 'shabbat', set: null }],
   [/^\/shabbat\s+on$/i, { kind: 'shabbat', set: true }],
   [/^\/shabbat\s+off$/i, { kind: 'shabbat', set: false }],

@@ -1,0 +1,42 @@
+# Event-triggered reminder cases (block J, J4, 2026-10-13), run by
+# `pnpm eval:agent` only.
+#
+# Kept out of `fingerprintPhrases` on purpose: `reminders.when` is offered only
+# in the app when the words say "when … arrives" (`namesWatch`), so these
+# phrases change nothing any other case is offered, and the recorded Groq
+# fingerprints stay what was measured.
+
+- id: wh-001
+  now: "2026-10-13T10:00:00+03:00"
+  input: "כשיגיע מייל מ-DHL תזכיר לי לבדוק את המשלוח"
+  expect:
+    intent: reminders.when
+    slots:
+      source: mail
+    missing: []
+
+- id: wh-002
+  now: "2026-10-13T10:00:00+03:00"
+  input: "כשתגיע הודעת SMS עם המילה חבילה, תזכיר לי לאסוף אותה מהדואר"
+  expect:
+    intent: reminders.when
+    slots:
+      source: sms
+      keywords: ["חבילה"]
+    missing: []
+
+- id: wh-003
+  now: "2026-10-13T10:00:00+03:00"
+  input: "when a notification with the word Bit arrives, remind me to check the payment"
+  expect:
+    intent: reminders.when
+    slots:
+      source: notification
+    missing: []
+
+- id: wh-004
+  now: "2026-10-13T10:00:00+03:00"
+  input: "כשיגיע משהו עם המילה תשלום תזכיר לי לשלם"
+  expect:
+    intent: reminders.when
+    missing: [source]

@@ -46,6 +46,7 @@ import type { RoutineStore } from './routine-store.js';
 import type { ScreenStore } from './screen-store.js';
 import type { ScreenQuestion } from '../render/screen.js';
 import type { PageText } from '../lookup/web-page.js';
+import type { WatchStore } from './watch-store.js';
 
 /** One candidate when a description matched more than one thing. */
 export type TargetChoice = { id: string; label: string };
@@ -131,7 +132,12 @@ export type PersonalQuestion =
   | 'routine_unknown'
   | 'routine_ambiguous'
   | 'routine_far'
-  | 'routine_tainted';
+  | 'routine_tainted'
+  | 'watch_source'
+  | 'watch_keywords'
+  | 'watch_text'
+  | 'watches_full'
+  | 'watch_app_only';
 
 export type ResolveOutcome = (
   | {
@@ -182,6 +188,10 @@ export type ToolContext = {
   fetchImpl?: typeof fetch;
   /** A page's readable text (`web.read`, block J). Supplied by the platform (`platform/html-text.ts`). */
   pageText?: PageText;
+  /** Event-triggered reminders (`reminders.when`, block J, J4). */
+  watches?: WatchStore;
+  /** Tells the phone its watch list changed. Best effort. */
+  watchesChanged?: () => Promise<void>;
   /** Google Tasks, once its grant is connected (2026-10-01). */
   tasks?: TasksClient;
   /** Gmail, once its grant is connected (2026-10-01). */

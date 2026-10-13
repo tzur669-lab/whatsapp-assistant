@@ -305,7 +305,11 @@ describe('smart conversations: private tools and own-input writes', () => {
     ];
 
     it('cover every exempt tool', () => {
-      expect(CALLS.map((call) => call.tool).sort()).toEqual(TOOL_NAMES.filter((name) => consentRuleOf(name) === 'exempt-own-input').sort());
+      // `reminders.when` is offered only for "when … arrives" in the app: its
+      // smart case is in `test/unit/tools/watch.test.ts` (block J, J4).
+      expect(CALLS.map((call) => call.tool).sort()).toEqual(
+        TOOL_NAMES.filter((name) => consentRuleOf(name) === 'exempt-own-input' && name !== 'reminders.when').sort(),
+      );
     });
 
     for (const call of CALLS) {

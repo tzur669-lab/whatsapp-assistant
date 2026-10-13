@@ -62,6 +62,10 @@ export const APP_ROUTES: readonly AppRoute[] = [
   { method: 'POST', pattern: /^\/app\/routines$/, maxBytes: 16_384, contentType: JSON_TYPE, channels: ['app'] },
   { method: 'POST', pattern: /^\/app\/routine\/claim$/, maxBytes: 1_024, contentType: JSON_TYPE, channels: ['app'] },
   { method: 'POST', pattern: /^\/app\/routine\/result$/, maxBytes: 1_024, contentType: JSON_TYPE, channels: ['app'] },
+  // Event-triggered reminders (block J, J4): the phone's list of watches to
+  // match, and a match — a watch id and a time, nothing of the event.
+  { method: 'GET', pattern: /^\/app\/watches$/, maxBytes: 0, channels: ['app'] },
+  { method: 'POST', pattern: /^\/app\/watch\/fired$/, maxBytes: 1_024, contentType: JSON_TYPE, channels: ['app'] },
   // The screen agent (§6.28): twenty apps; a step's screen — eighty elements
   // with 32-hex bindings and 2,500 characters of text, two bytes each in
   // Hebrew, plus JSON; the claim, the approval and the end, ids and codes only.

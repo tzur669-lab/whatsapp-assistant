@@ -104,6 +104,14 @@ export class FcmClient {
     return this.post(pushToken, { kind, task_id: taskId }, ROUTINE_TTL);
   }
 
+  /**
+   * The watch list changed (block J, J4): the phone fetches it again, signed.
+   * No ids, no words: only that something changed.
+   */
+  watchesChanged(pushToken: string): Promise<PushResult> {
+    return this.post(pushToken, { kind: 'watches' }, ASK_TTL);
+  }
+
   private async post(pushToken: string, data: Record<string, string>, ttl: string): Promise<PushResult> {
     if (!this.account) return { ok: false, reason: 'not_configured' };
 

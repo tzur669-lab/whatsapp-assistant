@@ -62,6 +62,13 @@ exchange, not the misses the user kept; they expire after 30 days.
 `/consents` (app, smart conversations, 2026-10-08) lists the data sources the
 conversation allowed, each with a button that revokes it; anywhere else it says
 consents exist only in smart conversations. `/forget` deletes every consent too.
+`/watches` (app only, block J, PLAN §6.30) lists the active event-triggered
+reminders ("כשיגיע מייל מ־DHL, תזכיר לי…"), each with a cancel button (a
+one-shot Undo offer, 24 h). The phone fetches its watches signed
+(`GET /app/watches`, after an FCM `watches` push) and reports a match with
+only the watch's id (`POST /app/watch/fired`); mail watches are checked on
+the hourly tick before the digest (`watch_mail_list_failed` in the log means
+Gmail refused that tick; the next one looks further back).
 
 **Smart conversations (PLAN §6.19, 2026-10-08).** A conversation is `smart`
 (Gemini first, then qwen) or `local`, fixed by its first message

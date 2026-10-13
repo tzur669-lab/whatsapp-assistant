@@ -48,6 +48,7 @@ import {
   portfolioUpdateSlots,
   portfolioShowSlots,
   webReadSlots,
+  remindersWhenSlots,
   expensesAddSlots,
   expensesSummarySlots,
   expensesExportSlots,
@@ -142,6 +143,9 @@ export const TOOL_NAMES = [
   // Block J, J3 (2026-10-13): one public page the message links to. Offered
   // only when the message holds exactly one https link.
   'web.read',
+  // Block J, J4 (2026-10-13): a reminder when a mail, SMS or notification with
+  // given words arrives. Offered only in the app, when the words say so.
+  'reminders.when',
 ] as const;
 
 export type ToolName = (typeof TOOL_NAMES)[number];
@@ -941,6 +945,20 @@ export const REGISTRY: Readonly<Record<ToolName, ToolSpec>> = {
     rateLimit: { perHour: 30, perDay: 150 },
     implementedIn: 6,
     private: true,
+  },
+  'reminders.when': {
+    name: 'reminders.when',
+    // Every reply echoes only its own call (the user's words, a code-computed
+    // end date, fixed text): it never names a mail or notification it found.
+    dataSource: 'reminders',
+    consent: 'exempt-own-input',
+    llmDescription:
+      'A reminder that fires when a mail, SMS or phone notification arrives whose text holds ALL the keywords (whole words). source: mail, sms or notification; keywords: 1-3 words from the message; text: the reminder; sender: a mail sender, if said; days: how long to wait, if said; repeat only if said "every time". SMS works only when the SMS app shows a notification.',
+    draftSchema: remindersWhenSlots,
+    tier: 1,
+    scopes: [],
+    rateLimit: { perHour: 10, perDay: 30 },
+    implementedIn: 6,
   },
   'web.read': {
     name: 'web.read',

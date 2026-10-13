@@ -35,6 +35,7 @@ const INVOCATIONS: Record<Command['kind'], string> = {
   memory: '/memory',
   forget_memory: '/forget memory',
   consents: '/consents',
+  watches: '/watches',
   connect_google: '/connect google',
   pair: '/pair',
   digest: '/digest',
@@ -55,6 +56,8 @@ const HIDDEN: ReadonlySet<Command['kind']> = new Set([
   // Smart conversations exist only in the app: its /help lists /consents, the
   // WhatsApp /help does not (2026-10-08).
   'consents',
+  // Watches too: there is no outbox on WhatsApp (block J, J4).
+  'watches',
 ]);
 
 const helpText = stripIsolates(he.help);
@@ -88,6 +91,11 @@ describe('every command a user can see is documented', () => {
   it("lists /consents in the app's /help, where smart conversations are", () => {
     expect(stripIsolates(he.helpApp)).toContain('/consents');
     expect(helpText).not.toContain('/consents');
+  });
+
+  it("lists /watches in the app's /help only (block J, J4)", () => {
+    expect(stripIsolates(he.helpApp)).toContain('/watches');
+    expect(helpText).not.toContain('/watches');
   });
 
   it('offers nothing in /help that is not a command', () => {

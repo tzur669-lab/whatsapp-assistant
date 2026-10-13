@@ -95,6 +95,7 @@ import {
   parseActionReport,
   parseRoutineClaim,
   parseRoutineResult,
+  parseWatchFired,
   parseRoutineSync,
   parseScreenAllow,
   parseScreenApprove,
@@ -130,12 +131,16 @@ import { AgentLock } from '../agent/lock.js';
 import { SuspendedTurns } from '../agent/turns.js';
 import { LastSelections } from '../agent/last-selection.js';
 import { htmlText } from './html-text.js';
+import { checkMailWatches, WatchStore } from '../tools/watch-store.js';
 import { ConversationConsents } from '../agent/consents.js';
 import { defangLinks } from '../security/scrub.js';
 import { DurableObjectSqlDriver } from './sql-repo.js';
 import { MIGRATIONS } from './migrations.js';
 
 const RETENTION_INBOUND_MS = 30 * 24 * 60 * 60 * 1000;
+/** A watch match older than this is not fired (invariant 12), nor one this far ahead (block J, J4). */
+const WATCH_STALE_MS = 10 * 60 * 1000;
+const WATCH_FUTURE_MS = 2 * 60 * 1000;
 
 /** Late enough to be worth mentioning. Below this, nobody would notice. */
 const LATE_THRESHOLD_MS = 60_000;
@@ -187,6 +192,7 @@ export class AssistantDO implements DurableObject {
   private readonly routines: RoutineStore;
   /** The screen agent's allowlist and tasks (§6.28). */
   private readonly screen: ScreenStore;
+  private readonly watches: WatchStore;
   private readonly quotes: QuoteSources;
   private readonly missedCalls: MissedCallStore;
   private readonly expenses: ExpenseStore;
@@ -296,6 +302,7 @@ export class AssistantDO implements DurableObject {
     this.holdings = new HoldingStore(this.sql, now);
     this.routines = new RoutineStore(this.sql, now);
     this.screen = new ScreenStore(this.sql, now, keyringOnce);
+    this.watches = new WatchStore(this.sql, now);
     // The key only in a header, inside `lookup/quotes.ts`; never logged (§6.24).
     this.quotes = createQuoteSources(this.fetchImpl, this.env.QUOTES_API_KEY, now);
     this.agentLock = new AgentLock(this.sql, now);
@@ -344,6 +351,13 @@ export class AssistantDO implements DurableObject {
     }
 
     if (url.pathname === '/do/tick' && request.method === 'POST') {
+      // Mail watches first, on their own: a digest that fails or returns early
+      // never skips them (block J, J4).
+      try {
+        await this.checkMailWatches();
+      } catch (error) {
+        this.log.warn('watch_mail_tick_failed', { errorCode: error instanceof Error ? error.name : 'E_UNKNOWN' });
+      }
       await this.maybeSendDigest();
       return new Response(null, { status: 204 });
     }
@@ -600,6 +614,81 @@ export class AssistantDO implements DurableObject {
       this.log.info('screen_task_ended', { reason: ended.reason, outcome: ended.outcome });
       await this.sayScreenEnd(ended);
       await this.pushScreen(principal, ended.task.taskId, 'screen_stop');
+    }
+  }
+
+  /**
+   * The watches the phone matches itself (block J, J4, PLAN §6.30): ids,
+   * sources, keywords ready to match and the end. Mail watches stay here.
+   */
+  private appWatches(principal: string): Response {
+    const watches = this.watches
+      .active(principal)
+      .filter((watch) => watch.source !== 'mail')
+      .map((watch) => ({ id: watch.id, source: watch.source, keywords: watch.keywords, expiresAt: watch.expiresAt }));
+    return json({ watches });
+  }
+
+  /**
+   * The phone matched a watch: claim it and schedule its reminder, or nothing
+   * (spent, cancelled, expired, cooling down, another principal's, a mail
+   * watch). Too old or too far ahead is refused as stale (invariant 12). Any
+   * 2xx tells the phone it is handled; it carries no text of the event.
+   */
+  private async appWatchFired(body: Uint8Array, principal: string): Promise<Response> {
+    const parsed = parseWatchFired(body);
+    if (!parsed) return appError(400, 'bad_request');
+    const now = Date.now();
+    if (parsed.matchedAt < now - WATCH_STALE_MS || parsed.matchedAt > now + WATCH_FUTURE_MS) {
+      this.log.info(parsed.matchedAt < now ? 'watch_stale' : 'watch_future', {});
+      return json({ status: 'stale' });
+    }
+    const outcome = this.watches.fire(principal, parsed.watchId, this.reminders, ['notification', 'sms']);
+    this.repo.audit({
+      ts: now,
+      principal,
+      tool: 'reminders.when',
+      tier: 1,
+      decision: 'WATCH_FIRED',
+      outcome: outcome,
+      externalRef: parsed.watchId,
+    });
+    if (outcome === 'claimed') await this.armAlarm();
+    return json({ status: outcome });
+  }
+
+  /**
+   * The hourly tick's mail watches (block J, J4): one Gmail list per watch, ids
+   * only, by a query code built. Any id not seen before makes one claim.
+   * `last_checked` is the tick's start, written only after a successful list;
+   * a failed one (a 429 included) waits for the next tick, no retry.
+   */
+  private async checkMailWatches(): Promise<void> {
+    const principal = await this.selfPrincipal();
+    if (this.watches.mailWatches(principal).length === 0) return;
+    const api = this.googleApi('gmail');
+    if (!api) return;
+    const fired = await checkMailWatches({
+      principal,
+      watches: this.watches,
+      reminders: this.reminders,
+      gmail: new GmailClient(api),
+      tickStart: Date.now(),
+      onListFailed: (errorCode) => this.log.info('watch_mail_list_failed', { errorCode }),
+    });
+    if (fired > 0) await this.armAlarm();
+  }
+
+  private async pushWatches(principal: string): Promise<void> {
+    const device = this.devices.activeDevice(principal);
+    const token = device ? await this.devices.pushTokenOf(device.id) : null;
+    const fcm = this.fcmClient();
+    if (!device || !token || !fcm) return;
+    const pushed = await fcm.watchesChanged(token);
+    this.log.info('watches_pushed', { ok: pushed.ok });
+    if (!pushed.ok && pushed.reason === 'unregistered') {
+      this.devices.forgetPushToken(device.id);
+      this.repo.setLastErrorCode('E_PUSH_UNREGISTERED');
     }
   }
 
@@ -949,7 +1038,8 @@ export class AssistantDO implements DurableObject {
     // Rows that ended long ago (T11, D3 = 90 days): counts only in the log.
     const settled = this.reminders.purgeSettledBefore(Date.now() - SETTLED_RETENTION_MS);
     const audited = this.repo.purgeAuditBefore(Date.now() - AUDIT_RETENTION_MS);
-    if (settled + audited > 0) this.log.info('retention_purged', { reminders: settled, audit: audited });
+    const watched = this.watches.purge();
+    if (settled + audited + watched > 0) this.log.info('retention_purged', { reminders: settled, audit: audited, watches: watched });
     this.pending.expireStale();
     this.pending.purgeOld();
     this.history.purgeExpired();
@@ -1285,6 +1375,8 @@ export class AssistantDO implements DurableObject {
     if (app && method === 'POST' && path === '/app/routines') return this.appRoutineSync(body, principal);
     if (app && method === 'POST' && path === '/app/routine/claim') return this.appRoutineClaim(body, principal);
     if (app && method === 'POST' && path === '/app/routine/result') return this.appRoutineResult(body, principal);
+    if (app && method === 'GET' && path === '/app/watches') return this.appWatches(principal);
+    if (app && method === 'POST' && path === '/app/watch/fired') return this.appWatchFired(body, principal);
     if (app && method === 'POST' && path === '/app/screen/allow') return this.appScreenAllow(body, principal);
     if (app && method === 'POST' && path === '/app/screen/claim') return this.appScreenClaim(body, principal);
     if (app && method === 'POST' && path === '/app/screen/step') return this.appScreenStep(body, principal);
@@ -2211,6 +2303,8 @@ export class AssistantDO implements DurableObject {
       routines: this.routines,
       screen: this.screen,
       screenPush: async (taskId, kind) => this.pushScreen(await this.selfPrincipal(), taskId, kind),
+      watches: this.watches,
+      watchesChanged: async () => this.pushWatches(await this.selfPrincipal()),
       quotes: this.quotes,
       expenses: this.expenses,
       pending: this.pending,

@@ -27,6 +27,7 @@ import { mailBills } from '../../../src/tools/bills.js';
 import { routineRun } from '../../../src/tools/routines.js';
 import { screenTask } from '../../../src/tools/screen.js';
 import { webRead } from '../../../src/tools/web-read.js';
+import { remindersWhen } from '../../../src/tools/watch.js';
 import type { ToolDefinition } from '../../../src/tools/types.js';
 import { INTENT_NAMES } from '../../../src/nlu/intent-schema.js';
 
@@ -53,6 +54,7 @@ const IMPLEMENTATIONS: Record<string, ToolDefinition> = {
   'routine.run': routineRun,
   'screen.task': screenTask,
   'web.read': webRead,
+  'reminders.when': remindersWhen,
 };
 
 describe('every registered tool is real', () => {

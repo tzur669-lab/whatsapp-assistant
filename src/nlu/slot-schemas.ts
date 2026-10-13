@@ -489,6 +489,23 @@ export const portfolioUpdateSlots = z
 /** "מה שווי התיק?", "איך המניות שלי?". */
 export const portfolioShowSlots = z.object({}).strict();
 
+/**
+ * "כשמגיע מייל מ-DHL תזכיר לי לבדוק את המשלוח" (block J, J4, PLAN §6.30):
+ * where to watch, the words that must all appear, the reminder in the user's
+ * words, optionally a mail sender's words, for how many days (code computes the
+ * end; 30 by default) and whether it fires again (up to five times).
+ */
+export const remindersWhenSlots = z
+  .object({
+    source: z.enum(['mail', 'notification', 'sms']).optional(),
+    keywords: z.array(z.string().min(1).max(30)).min(1).max(3).optional(),
+    sender: z.string().min(1).max(40).optional(),
+    text: z.string().min(1).max(200).optional(),
+    days: z.number().int().min(1).max(90).optional(),
+    repeat: z.enum(['yes']).optional(),
+  })
+  .strict();
+
 /** "תסכם לי את הכתבה הזאת https://…" (block J, J3): no slots, code takes the link from the words. */
 export const webReadSlots = z.object({}).strict();
 

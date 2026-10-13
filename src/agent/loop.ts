@@ -176,6 +176,8 @@ export type AgentTurnInput = {
   screen?: boolean;
   /** The message holds exactly one https link, so `web.read` is offered (block J, J3). */
   webRead?: boolean;
+  /** The app channel, and the words say "when … arrives": `reminders.when` is offered (block J, J4). */
+  watch?: boolean;
   /**
    * The consent sources of the history entries replayed in full (2026-10-12,
    * `replayByConsent`). A smart turn that pauses keeps them, so a resume can
@@ -386,6 +388,7 @@ export async function runAgentTurn(input: AgentTurnInput, deps: AgentDeps): Prom
     ...(input.routines ? { routines: true } : {}),
     ...(input.screen ? { screen: true } : {}),
     ...(input.webRead ? { webRead: true } : {}),
+    ...(input.watch ? { watch: true } : {}),
   });
   // A smart conversation's turn is offered the same tools whichever model takes
   // it: consent belongs to the conversation (2026-10-08). Those that never ask

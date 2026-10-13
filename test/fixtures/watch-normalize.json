@@ -1,0 +1,27 @@
+{
+  "_comment": "Block J, J4 (PLAN §6.30): one file, checked by the server (test/unit/core/watch-match.test.ts) and the app (WatchMatcherFixtureTest.kt). normalize: input -> output. match: text, normalized keywords -> expected.",
+  "normalize": [
+    ["חבילה", "חבילה"],
+    ["  ה-חבילה!!  שלך ", "ה חבילה שלכ"],
+    ["שָׁלוֹם", "שלומ"],
+    ["צה\"ל", "צהל"],
+    ["צה״ל ומשרד", "צהל ומשרד"],
+    ["Amazon Package", "amazon package"],
+    ["DHL: your parcel #123", "dhl your parcel 123"],
+    ["ארץ, דרך, זמן, כף, קיץ", "ארצ דרכ זמנ כפ קיצ"],
+    ["", ""]
+  ],
+  "match": [
+    ["החבילה שלך הגיעה לסניף", ["חבילה"], true],
+    ["וכשהחבילה תגיע", ["חבילה"], true],
+    ["חבילות חדשות", ["חבילה"], false],
+    ["Your Amazon package has shipped", ["amazon", "package"], true],
+    ["Your Amazon order has shipped", ["amazon", "package"], false],
+    ["packages are here", ["package"], false],
+    ["הודעה מבית הספר על טיול", ["בית ספר"], true],
+    ["נפגשים בבית קפה", ["בית ספר"], false],
+    ["הודעה מבית ספר אחר", ["בית ספר"], true],
+    ["קיבלת שלום", ["שלומ"], true],
+    ["anything", [], false]
+  ]
+}

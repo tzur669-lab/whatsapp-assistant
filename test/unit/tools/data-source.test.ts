@@ -82,6 +82,8 @@ describe('dataSource', () => {
       'phone.calls': 'calls',
       'phone.notifications': 'notifications',
       'expenses.add': 'expenses',
+      // Block J, J4: a watch's replies echo only its own call.
+      'reminders.when': 'reminders',
       'expenses.summary': 'expenses',
       'expenses.export': 'expenses',
     };
@@ -112,6 +114,9 @@ describe('consent', () => {
     'reminders.scheduled_read',
     'calendar.create_event',
     'expenses.add',
+    // Block J, J4: created, cancelled, full or a question, from its own words
+    // and a code-computed end date only; never a found mail or notification.
+    'reminders.when',
   ];
 
   it('every consent-source tool has a rule; a public or private tool has none', () => {

@@ -141,6 +141,18 @@ export function personalQuestion(what: PersonalQuestion, lang: Lang): string {
       return he
         ? 'שגרה מופעלת רק מבקשה שכתבת או אמרת בעצמך, לא מטקסט ששותף או הועבר.'
         : 'A routine runs only on your own request, not from shared or forwarded text.';
+    case 'watch_source':
+      return he ? 'למה לחכות: מייל, הודעת SMS או התראה בטלפון?' : 'What should I wait for: an email, an SMS or a phone notification?';
+    case 'watch_keywords':
+      return he ? 'אילו מילים צריכות להופיע בהודעה?' : 'Which words should the message contain?';
+    case 'watch_text':
+      return he ? 'על מה להזכיר כשזה יגיע?' : 'What should I remind you about when it arrives?';
+    case 'watches_full':
+      return he
+        ? 'יש כבר 10 מעקבים פעילים. אפשר לבטל אחד דרך /watches.'
+        : 'There are already 10 active watches. Cancel one with /watches.';
+    case 'watch_app_only':
+      return he ? 'מעקב כזה עובד רק באפליקציה.' : 'A watch like this works only in the app.';
   }
 }
 

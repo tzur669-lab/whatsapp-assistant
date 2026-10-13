@@ -91,6 +91,9 @@ import { resumeAfterConsent, resumeAgentTurn, runAgentTurn } from '../agent/loop
 import { mayInherit } from '../agent/last-selection.js';
 import { singleHttpsUrl } from '../lookup/web-page.js';
 import type { PageText } from '../lookup/web-page.js';
+import { namesWatch } from '../tools/watch.js';
+import { watchText } from '../render/watches.js';
+import type { WatchStore } from '../tools/watch-store.js';
 import type { LastSelections } from '../agent/last-selection.js';
 import type { AgentResult, ConsentDecision } from '../agent/loop.js';
 import type { SuspendedTurns } from '../agent/turns.js';
@@ -190,6 +193,10 @@ export type Services = {
   fetchImpl?: typeof fetch;
   /** A page's readable text, for `web.read` (block J, J3). */
   pageText?: PageText;
+  /** Event-triggered reminders (block J, J4). */
+  watches?: WatchStore;
+  /** Tells the phone its watch list changed (FCM `watches`). */
+  watchesChanged?: () => Promise<void>;
   /** Reaches the paired phone (§6.17). Absent until calls are configured. */
   calls?: CallDispatcher;
   /** Pairing and unpairing the phone (§6.17). Absent without a device pepper. */
@@ -512,6 +519,7 @@ async function respondToText(
     if (command.kind === 'memory' || command.kind === 'forget_memory') {
       return memoryCommand(command.kind, deps);
     }
+    if (command.kind === 'watches') return watchesCommand(deps);
     if (command.kind === 'consents') return consentsCommand(event, deps);
     return {
       action: 'reply',
@@ -878,6 +886,8 @@ async function respondWithAgent(
           ...(inheritedGroups ? { inheritedGroups } : {}),
           // Only when the words hold exactly one https link (block J, J3).
           ...(singleHttpsUrl(text) !== null ? { webRead: true } : {}),
+          // Only in the app, and only when the words say "when … arrives" (block J, J4).
+          ...(deps.channel === 'app' && deps.services?.watches && namesWatch(text) ? { watch: true } : {}),
           // Only when the words name a synced routine (§6.27, decision D4).
           ...(deps.channel === 'app' && namesRoutine(text, deps.services?.routines, principal) ? { routines: true } : {}),
           // Only when the words name the screen agent or an app on its list (§6.28).
@@ -1291,6 +1301,34 @@ function consentsCommand(event: Extract<InboundEvent, { kind: 'text' | 'audio' }
   return { action: 'reply', text: consentText.list(granted, 'he'), buttons };
 }
 
+/** How long a `/watches` cancel button stays usable. */
+const WATCH_CANCEL_EXPIRY_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * `/watches` (block J, J4): the active event-triggered reminders, each with a
+ * cancel button — a one-shot Undo offer of `reminders.when`, so the tap goes
+ * through the same nonce, sender and expiry gates as any Undo. No model.
+ */
+function watchesCommand(deps: PipelineDeps): PipelineOutcome {
+  const watches = deps.services?.watches;
+  const deferred = deps.services?.deferred;
+  if (deps.channel !== 'app' || !watches || !deferred) {
+    return { action: 'reply', text: personalQuestion('watch_app_only', 'he') };
+  }
+  const active = watches.active(deps.principal);
+  if (active.length === 0) return { action: 'reply', text: watchText.none('he') };
+  const buttons = active.map((watch, index) => {
+    const offer = deferred.offer({
+      tool: 'reminders.when',
+      compensating: { watchId: watch.id },
+      principal: deps.principal,
+      expiryMs: WATCH_CANCEL_EXPIRY_MS,
+    });
+    return { id: buttonId('undo', offer.id, offer.nonce, 'ok'), title: watchText.cancelButton(index + 1, 'he') };
+  });
+  return { action: 'reply', text: watchText.list(active, 'he'), buttons };
+}
+
 /** Hebrew if there is any Hebrew in it; the assistant's default user writes Hebrew. */
 function languageOf(text: string): Lang {
   return /[֐-׿]/.test(text) || !/[A-Za-z]/.test(text) ? 'he' : 'en';
@@ -1702,6 +1740,8 @@ function turnOf(
       ...(services.calls ? { calls: services.calls } : {}),
       ...(services.fetchImpl ? { fetchImpl: services.fetchImpl } : {}),
       ...(services.pageText ? { pageText: services.pageText } : {}),
+      ...(services.watches ? { watches: services.watches } : {}),
+      ...(services.watchesChanged ? { watchesChanged: services.watchesChanged } : {}),
       ...(event.location ? { location: event.location } : {}),
       ...(services.tasks ? { tasks: services.tasks } : {}),
       ...(services.gmail ? { gmail: services.gmail } : {}),

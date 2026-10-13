@@ -5,7 +5,7 @@ system is, where things live, and what breaks easily, then links out. It does
 **not** repeat the rules in `CLAUDE.md` (always loaded) or the spec in
 `PLAN.md` (read by section, never whole).
 
-_Last updated: 2026-10-13 · server at migration 0033 · agent prompt a10 + smart note s2 + screen step s1 · parser prompt v6 · app 0.14.3 · smart model gemini-3.5-flash-lite_
+_Last updated: 2026-10-13 · server at migration 0034 · agent prompt a10 + smart note s2 + screen step s1 · parser prompt v6 · app 0.14.3 · smart model gemini-3.5-flash-lite_
 
 ## 1. What this is
 
@@ -130,7 +130,8 @@ Network on the hotspot: `NODE_OPTIONS=--dns-result-order=ipv4first` for wrangler
   fingerprint moved, so a full `eval:agent` on qwen and gpt-oss-120b (with
   `--resume`, and `--select-tools` on qwen) is owed before anything gates.
   J3 done (`web.read`, PLAN §6.29): evals `--filter wr-` and `inj-web-001`
-  and a CPU check in `wrangler dev` owed. Next: J4 (its PLAN section is §6.30).
+  and a CPU check in `wrangler dev` owed. J4 (PLAN §6.30): server built
+  (migration 0034); the app half (0.15.0) next — **server first**.
   The plan's "Additions" and "Follow-up" sections win over the part sections.
 - **Next work:** [ROADMAP.md](ROADMAP.md) (Hebrew) — block H (2026-10-07):
   a smarter bot. Parts 15 (notes), 16 ("לא הבנת" capture), 17 (tool
@@ -168,6 +169,11 @@ Network on the hotspot: `NODE_OPTIONS=--dns-result-order=ipv4first` for wrangler
 | [SETUP.md](SETUP.md) | Setting up a new copy from zero: accounts, Groq key, models, secrets, deploy, app, AI agent. |
 
 ## 8. Session log (docs)
+
+- 2026-10-13: Block J4, server: `reminders.when` — new `tools/watch.ts`,
+  `tools/watch-store.ts`, `core/watch-match.ts`, `render/watches.ts`,
+  migration 0034 `watches`, routes `GET /app/watches`, `POST /app/watch/fired`,
+  FCM `watches`, `/watches`, the mail check on `/do/tick`, `GmailClient.listIds`.
 
 - 2026-10-13: Block J3: `web.read` — new `tools/web-read.ts`,
   `lookup/web-page.ts`, `platform/html-text.ts`; `ToolContext.pageText`,

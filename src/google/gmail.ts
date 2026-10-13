@@ -164,6 +164,20 @@ export class GmailClient {
     return { ok: true, value: out };
   }
 
+  /**
+   * The ids of up to `max` messages matching a query code built, one page and
+   * no bodies (block J, J4: a mail watch only needs to know one arrived).
+   */
+  async listIds(query: string, max: number): Promise<GoogleResult<string[]>> {
+    const list = await this.api.call(`${BASE}/messages?q=${encodeURIComponent(query)}&maxResults=${max}`);
+    if (!list.ok) return list;
+    const ids = ((list.value as { messages?: unknown }).messages ?? []) as Array<{ id?: unknown }>;
+    return {
+      ok: true,
+      value: (Array.isArray(ids) ? ids : []).flatMap((entry) => (typeof entry.id === 'string' ? [entry.id] : [])).slice(0, max),
+    };
+  }
+
   /** One message's text, for "what does it say". */
   async body(id: string): Promise<GoogleResult<string>> {
     const message = await this.api.call(`${BASE}/messages/${encodeURIComponent(id)}?format=full`);

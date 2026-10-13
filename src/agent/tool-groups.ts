@@ -30,6 +30,7 @@ export const GROUPS: Readonly<Record<GroupName, readonly ToolName[]>> = {
     'reminders.at_rest',
     'reminders.scheduled_read',
     'reminders.leave',
+    'reminders.when',
     'calendar.list_events',
     'calendar.create_event',
     'calendar.move_event',
@@ -222,7 +223,7 @@ export function selectTools(
   if (groups.length === 0 || groups.length > MAX_UNION_GROUPS) return full;
   // Offered only when named or linked, these ride along in any selection.
   const members = new Set<ToolName>(
-    offered.filter((tool) => tool === 'routine.run' || tool === 'screen.task' || tool === 'web.read'),
+    offered.filter((tool) => tool === 'routine.run' || tool === 'screen.task' || tool === 'web.read' || tool === 'reminders.when'),
   );
   for (const group of groups) {
     const available = GROUPS[group].filter((tool) => offered.includes(tool));

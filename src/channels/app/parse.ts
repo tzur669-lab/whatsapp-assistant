@@ -265,6 +265,21 @@ export function parseRoutineResult(body: Uint8Array): z.infer<typeof routineResu
 }
 
 /**
+ * A watch the phone matched (block J, J4, PLAN §6.30): its id and when the
+ * phone saw the event. No text of the event: it never leaves the phone.
+ */
+const watchFiredSchema = z
+  .object({
+    watchId: z.string().regex(/^[0-9a-f]{32}$/),
+    matchedAt: z.number().int().positive(),
+  })
+  .strict();
+
+export function parseWatchFired(body: Uint8Array): z.infer<typeof watchFiredSchema> | null {
+  return parseWith(watchFiredSchema, body);
+}
+
+/**
  * The screen agent (PLAN §6.28). The allowlist is package names, the app's own
  * label and the "ask before every tap" switch. A step carries the screen — raw
  * element text, kept in memory for this one request, never stored or logged —
