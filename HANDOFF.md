@@ -119,7 +119,7 @@ Network on the hotspot: `NODE_OPTIONS=--dns-result-order=ipv4first` for wrangler
   s2 — its `--filter` evals are owed. Open items in PLAN §13 (limits probe,
   Gemini calibration, s2 evals).
 - **Screen agent** (PLAN §6.28, plan `docs/plans/screen-agent.md`, ROADMAP
-  block I): phases 1–2 built (server migration 0030, app 0.14.1 on the phone; 2026-10-13: migration 0031 and app 0.14.2 — models by conversation, 10 a day — built, not deployed); staging
+  block I): phases 1–2 built (server migration 0030, app 0.14.1 on the phone; 2026-10-13: migration 0031 and app 0.14.2 — models by conversation, 10 a day — staging deployed 5d807cd8, APK in Downloads); staging
   deployed 2026-10-12 (9643484a). Owed, in order (PLAN §13): `pnpm eval:screen`
   and `eval:agent --filter scr-` on qwen with a human read, then the 0.14.0
   APK and the phone checks. Phase 3 needs its own plan.
@@ -165,7 +165,7 @@ Network on the hotspot: `NODE_OPTIONS=--dns-result-order=ipv4first` for wrangler
   screen-only `gemini-3.5-flash` (`SCREEN_ONLY_MODELS`), the next model of the
   family within a step, `TokenBudget.isOutForDay`, `ToolContext.smart`; cap
   3 → 10 a day; app 0.14.2 (disclosure names Gemini; APK in Downloads). Plan
-  `docs/plans/screen-model-by-mode.md`. Not deployed.
+  `docs/plans/screen-model-by-mode.md`. Staging deployed (5d807cd8).
 
 - 2026-10-13: Screen agent: `soundOf` hears a word-initial ו or any וו as
   the w/v of an English app name ("וויז" = Waze, "ויבר" = Viber). No new
