@@ -115,7 +115,7 @@ export const calendarListEvents: ToolDefinition = {
 
     if (!calendar) {
       return subscribed.length > 0
-        ? { text: eventText.list(subscribed, ctx.lang) }
+        ? { text: eventText.list(subscribed, ctx.lang, ctx.nowMs) }
         : { text: eventText.notConnected(ctx.lang) };
     }
 
@@ -140,7 +140,7 @@ export const calendarListEvents: ToolDefinition = {
       }
     }
 
-    return { text: eventText.list(result.value, ctx.lang) };
+    return { text: eventText.list(result.value, ctx.lang, ctx.nowMs) };
   },
 };
 

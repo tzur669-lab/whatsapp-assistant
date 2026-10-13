@@ -13,14 +13,11 @@
 import { GRANTS } from '../google/grants.js';
 import type { GrantName } from '../google/grants.js';
 import { isolate, isolateLtr } from './bidi.js';
-import { formatRange, formatWhen } from './format-time.js';
+import { formatDay, formatRange, formatWhen } from './format-time.js';
 import type { Lang } from './format-time.js';
 import type { CalendarEvent } from '../google/calendar.js';
 import type { LocalParts } from '../time/tz.js';
 import { localPartsOf, ZONE } from '../time/tz.js';
-
-const HE_WEEKDAYS = ['יום א׳', 'יום ב׳', 'יום ג׳', 'יום ד׳', 'יום ה׳', 'יום ו׳', 'שבת'] as const;
-const EN_WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'] as const;
 
 /** What each Google grant is called in a reply (2026-10-01). */
 export const GRANT_LABELS: Readonly<Record<GrantName, string>> = {
@@ -40,14 +37,30 @@ const GRANT_LABELS_EN: Readonly<Record<GrantName, string>> = {
 };
 
 export const eventText = {
-  list(events: readonly CalendarEvent[], lang: Lang): string {
+  /**
+   * Grouped by day (2026-10-13, the user's request): one heading per day, then
+   * one line per event, time first. With `nowMs` the heading also says
+   * today / tomorrow / yesterday.
+   */
+  list(events: readonly CalendarEvent[], lang: Lang, nowMs?: number): string {
     if (events.length === 0) return eventText.empty(lang);
 
-    const lines = events.map(
-      (event, index) => `${isolateLtr(String(index + 1))}. ${describe(event, lang)}`,
-    );
+    const sorted = [...events].sort((a, b) => a.startUtc - b.startUtc);
+    const days: { key: string; heading: string; lines: string[] }[] = [];
+    for (const event of sorted) {
+      const start = localPartsOf(event.startUtc, ZONE);
+      const key = `${start.year}-${start.month}-${start.day}`;
+      let day = days[days.length - 1];
+      if (!day || day.key !== key) {
+        day = { key, heading: dayHeading(start, lang, nowMs), lines: [] };
+        days.push(day);
+      }
+      day.lines.push(describe(event, lang));
+    }
+
     const header = lang === 'he' ? 'ביומן:' : 'On your calendar:';
-    return [header, '', ...lines].join('\n');
+    const blocks = days.map((day) => [day.heading, ...day.lines].join('\n'));
+    return [header, ...blocks].join('\n\n');
   },
 
   empty(lang: Lang): string {
@@ -179,18 +192,53 @@ function onCalendar(event: CalendarEvent): string {
   return event.calendarName ? ` (${isolate(event.calendarName)})` : '';
 }
 
+/** Right-to-left mark: keeps a Hebrew line RTL even when it opens with a time. */
+const RLM = '‏';
+
+const DAY_WORDS: Readonly<Record<Lang, readonly [string, string, string]>> = {
+  he: ['אתמול', 'היום', 'מחר'],
+  en: ['Yesterday', 'Today', 'Tomorrow'],
+};
+
+/** `היום · יום ג׳ 13.10` — the word only for yesterday, today and tomorrow. */
+function dayHeading(local: LocalParts, lang: Lang, nowMs: number | undefined): string {
+  const day = formatDay(local, lang);
+  if (nowMs === undefined) return day;
+  const now = localPartsOf(nowMs, ZONE);
+  const offset = Math.round(
+    (Date.UTC(local.year, local.month - 1, local.day) - Date.UTC(now.year, now.month - 1, now.day)) / 86_400_000,
+  );
+  const word = DAY_WORDS[lang][offset + 1];
+  return word ? `${word} · ${day}` : day;
+}
+
+/** One event under its day's heading: `09:00–10:00 · title`. */
 function describe(event: CalendarEvent, lang: Lang): string {
   const start = localPartsOf(event.startUtc, ZONE);
+  const lead = lang === 'he' ? RLM : '';
+  const title = `${isolate(event.title)}${onCalendar(event)}`;
 
   if (event.allDay) {
-    const names = lang === 'he' ? HE_WEEKDAYS : EN_WEEKDAYS;
-    const date = lang === 'he' ? `${start.day}.${start.month}` : `${start.day}/${start.month}`;
-    const allDay = lang === 'he' ? 'כל היום' : 'all day';
-    return `${names[start.weekday] ?? ''} ${isolateLtr(date)} · ${allDay} — ${isolate(event.title)}${onCalendar(event)}`;
+    // Google's all-day end is the midnight after the last day.
+    const last = localPartsOf(Math.max(event.startUtc, event.endUtc - 1), ZONE);
+    const allDay = lang === 'he' ? 'כל היום' : 'All day';
+    const until = sameDay(start, last) ? '' : `${lang === 'he' ? ', עד ' : ', until '}${formatDay(last, lang)}`;
+    return `${lead}${allDay}${until} · ${title}`;
   }
 
+  if (event.endUtc <= event.startUtc) return `${lead}${isolateLtr(timeOf(start))} · ${title}`;
+
   const end = localPartsOf(event.endUtc, ZONE);
-  const when =
-    event.endUtc > event.startUtc ? formatRange(start, end, lang) : formatWhen(start, lang);
-  return `${when} — ${isolate(event.title)}${onCalendar(event)}`;
+  const when = sameDay(start, end)
+    ? isolateLtr(`${timeOf(start)}–${timeOf(end)}`)
+    : `${isolateLtr(timeOf(start))}${lang === 'he' ? ' עד ' : ' until '}${formatWhen(end, lang)}`;
+  return `${lead}${when} · ${title}`;
+}
+
+function sameDay(a: LocalParts, b: LocalParts): boolean {
+  return a.year === b.year && a.month === b.month && a.day === b.day;
+}
+
+function timeOf(local: LocalParts): string {
+  return `${String(local.hour).padStart(2, '0')}:${String(local.minute).padStart(2, '0')}`;
 }

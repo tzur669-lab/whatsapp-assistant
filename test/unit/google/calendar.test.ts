@@ -472,7 +472,7 @@ describe('calendar.list_events', () => {
     );
 
     expect(plain(result.text)).toContain('פגישה עם יוסי');
-    expect(plain(result.text)).toContain('14:00-15:00');
+    expect(plain(result.text)).toContain('14:00–15:00');
   });
 
   it('says so plainly when the day is empty', async () => {

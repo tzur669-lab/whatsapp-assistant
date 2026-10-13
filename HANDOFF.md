@@ -179,6 +179,10 @@ Network on the hotspot: `NODE_OPTIONS=--dns-result-order=ipv4first` for wrangler
 
 ## 8. Session log (docs)
 
+- 2026-10-13: Calendar lists grouped by day, time first (`eventText.list`
+  takes an optional clock for היום/מחר/אתמול). Render only; no new modules
+  or tables. Not deployed.
+
 - 2026-10-13: Staging deployed (8e7e006c) with block J (J1–J7); APK 0.16.0
   in Downloads.
 
