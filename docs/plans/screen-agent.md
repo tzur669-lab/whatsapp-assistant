@@ -25,7 +25,7 @@ are not part of this build.
 | `MAX_INPUTS` / `MAX_INPUT` | 3 inputs of ≤60 chars | server |
 | `MAX_TASK` | 200 chars | server |
 | `MAX_APPS` | 20 allowlisted apps | both |
-| `TASKS_PER_DAY` | 3 (Asia/Jerusalem day) | server |
+| `TASKS_PER_DAY` | 10 (Asia/Jerusalem day; 3 until 2026-10-13) | server |
 | `TASK_TOKEN_CEILING` | 18,000 tokens (reservation limit) | server |
 | `STEP_MAX_COMPLETION` | 150 tokens | server |
 | `ROUTINE_GUARD_MS` | 7 min: no task when a routine run is due sooner | server |
@@ -210,7 +210,7 @@ The user asked for a review of [GiggleWang/MobileAgent-Android](https://github.c
 **What the bot already has:** `RoutineAccessibilityService.kt` already reads the screen. `snapshot()` flattens the accessibility tree into `RoutineLogic.Node`. The service taps, types and submits with re-checks before every action: unlocked, same package, visible, enabled, not a password field. What it lacks is a model in the loop. Today routines are fixed and "never written by a model" (PLAN §6.27).
 
 **The user's decisions (2026-10-12):**
-1. The model sees the **accessibility tree as text**: a numbered element list passed through `scrubForModel`. No screenshots. Groq models only, never Gemini.
+1. The model sees the **accessibility tree as text**: a numbered element list passed through `scrubForModel`. No screenshots. Groq models only, never Gemini. *2026-10-13: a task confirmed in a smart conversation uses Gemini only — `docs/plans/screen-model-by-mode.md`.*
    - **The data flow, stated exactly:** the **raw** element text leaves the phone over TLS, signed, and reaches only the bot's own Worker and Durable Object. There it lives in memory for one request: never persisted, never logged. Inbound records keep ids and times only.
    - Only the **scrubbed** text goes on to Groq, which is a **hosted** service, not on-device.
    - Phone reads such as notifications already work this way: raw to the Worker, scrubbed before any model sees them. Scrubbing on the phone was rejected because a Kotlin copy of `scrubForModel` would drift from the original.
@@ -320,8 +320,8 @@ Each allowlisted app also has a per-app setting, "לשאול לפני כל לח�
 
 - Per step about 1.5K tokens; a 12-step task at most about 18K.
 - Each task has a ceiling of **18K measured tokens** (a reservation limit): before each step the reservation (estimated prompt × 1.3 plus `max_tokens` 150) must fit in what is left; after it, measured usage replaces the reservation; a failed or 429 call is charged its reservation. The measured total can pass 18K by one call only (worst case: the prompt's UTF-8 byte count plus 150).
-- At most **3 tasks a day** (Asia/Jerusalem day). A day-type 429 ends the task.
-- `SCREEN_MODELS` starts as qwen; moving to a second Groq model only after a human reads its `eval:screen` report.
+- At most **10 tasks a day** (Asia/Jerusalem day; 3 until 2026-10-13). A task ends `quota` only when every model of its family is out for the day.
+- `SCREEN_MODELS` starts as qwen; moving to a second Groq model only after a human reads its `eval:screen` report. *2026-10-13: the user added gpt-oss-120b and the Gemini list before that read (PLAN §14).*
 
 ### 7. Thin trees and the full privacy path
 

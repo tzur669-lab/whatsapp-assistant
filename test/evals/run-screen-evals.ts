@@ -15,7 +15,8 @@
  * Expectations (reported, a human reads them): the action the case wants.
  *
  * Every request is charged to the shared eval ledger before it is sent.
- * Usage: pnpm eval:screen [--model <groq id>] [--filter fid-]
+ * Usage: pnpm eval:screen [--model <SCREEN_MODELS or SCREEN_SMART_MODELS id>] [--filter fid-]
+ * A Gemini id runs as a smart task and needs GEMINI_API_KEY in .dev.vars.
  * Exit: 0 every gate held, 1 a gate missed, 2 the run was incomplete.
  */
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
@@ -24,12 +25,12 @@ import { ScreenStore } from '../../src/tools/screen-store.js';
 import type { AllowedApp, ScreenAction } from '../../src/tools/screen-store.js';
 import { runScreenStep, SCREEN_PROMPT_VERSION } from '../../src/agent/screen-step.js';
 import type { Screen, StepAnswer } from '../../src/agent/screen-step.js';
-import { createGroqAgentProvider } from '../../src/agent/provider.js';
+import { createGeminiAgentProvider, createGroqAgentProvider } from '../../src/agent/provider.js';
 import type { AgentProvider } from '../../src/agent/provider.js';
 import { TokenBudget } from '../../src/agent/budget.js';
 import { AgentLock } from '../../src/agent/lock.js';
-import { modelEntry, SCREEN_MODELS } from '../../src/agent/models.js';
-import { SCREEN_MAX_COMPLETION_TOKENS } from '../../src/agent/screen-step.js';
+import { modelEntry, SCREEN_MODELS, SCREEN_SMART_MODELS } from '../../src/agent/models.js';
+import { stepCompletionTokens } from '../../src/agent/screen-step.js';
 import { parseKeyring } from '../../src/security/crypto.js';
 import { TestSqlDriver } from '../integration/sqlite-driver.js';
 import { createFakeLogger } from '../integration/fake-logger.js';
@@ -196,10 +197,12 @@ type Result = { id: string; answer: StepAnswer; ended?: string | undefined; call
 async function main(): Promise<void> {
   const args = parseArgs(process.argv.slice(2));
   loadDevVars();
-  const apiKey = process.env['GROQ_API_KEY'];
-  if (!apiKey) fail('GROQ_API_KEY is not set. Put it in .dev.vars (git-ignored).');
   const model = args.model ?? SCREEN_MODELS[0]!;
-  if (!modelEntry(model) || modelEntry(model)!.provider !== 'groq') fail(`${model} is not a Groq model in the table: screen steps never go to Gemini.`);
+  const smart = SCREEN_SMART_MODELS.includes(model);
+  if (!SCREEN_MODELS.includes(model) && !smart) fail(`${model} is in neither screen list (SCREEN_MODELS, SCREEN_SMART_MODELS).`);
+  const keyName = smart ? 'GEMINI_API_KEY' : 'GROQ_API_KEY';
+  const apiKey = process.env[keyName];
+  if (!apiKey) fail(`${keyName} is not set. Put it in .dev.vars (git-ignored).`);
 
   const ledger = EvalLedger.open(fileURLToPath(new URL('./recordings/', import.meta.url)));
   const cases = args.filter ? CASES.filter((c) => c.id.includes(args.filter!)) : CASES;
@@ -240,17 +243,20 @@ async function runCase(testCase: Case, model: string, apiKey: string, ledger: Ev
   const driver = new TestSqlDriver();
   // tsx cannot import the `.sql` migrations; the two tables a step touches, from the files.
   driver.exec(`CREATE TABLE agent_lock (principal TEXT PRIMARY KEY, turn_id TEXT NOT NULL, started_at INTEGER NOT NULL, expires_at INTEGER NOT NULL)`);
-  for (const statement of readFileSync(fileURLToPath(new URL('../../migrations/0030_screen_tasks.sql', import.meta.url)), 'utf8')
-    .replace(/--.*$/gm, '')
-    .split(';')
-    .map((part) => part.trim())
-    .filter((part) => part.length > 0)) {
-    driver.exec(statement);
+  for (const file of ['0030_screen_tasks.sql', '0031_screen_task_mode.sql']) {
+    for (const statement of readFileSync(fileURLToPath(new URL(`../../migrations/${file}`, import.meta.url)), 'utf8')
+      .replace(/--.*$/gm, '')
+      .split(';')
+      .map((part) => part.trim())
+      .filter((part) => part.length > 0)) {
+      driver.exec(statement);
+    }
   }
+  const smart = SCREEN_SMART_MODELS.includes(model);
   const key = btoa(String.fromCharCode(...new Uint8Array(32).fill(9)));
   const store = new ScreenStore(driver, Date.now, () => parseKeyring({ TOKEN_ENC_KEY_V1: key }));
   store.replaceAllow(PRINCIPAL, [testCase.app]);
-  const created = await store.create({ principal: PRINCIPAL, package: testCase.app.package, appLabel: testCase.app.label, task: testCase.task, inputs: testCase.inputs });
+  const created = await store.create({ principal: PRINCIPAL, package: testCase.app.package, appLabel: testCase.app.label, task: testCase.task, inputs: testCase.inputs, mode: smart ? 'smart' : 'local' });
   store.takePushes();
   store.claim(created.taskId, PRINCIPAL);
 
@@ -266,28 +272,28 @@ async function runCase(testCase: Case, model: string, apiKey: string, ledger: Ev
 
   let calls = 0;
   let raw: string | null = null;
-  const groq = createGroqAgentProvider({
+  const config = {
     apiKey,
     model,
-    role: 'primary',
-    maxCompletionTokens: SCREEN_MAX_COMPLETION_TOKENS,
+    maxCompletionTokens: stepCompletionTokens(model),
     params: modelEntry(model)?.params ?? {},
-  });
+  };
+  const real = smart ? createGeminiAgentProvider({ ...config, role: 'smart' }) : createGroqAgentProvider({ ...config, role: 'primary' });
   const provider: AgentProvider = {
     model,
-    role: 'primary',
-    maxCompletionTokens: SCREEN_MAX_COMPLETION_TOKENS,
+    role: smart ? 'smart' : 'primary',
+    maxCompletionTokens: stepCompletionTokens(model),
     async complete(messages, tools, options) {
       calls++;
       const charge = ledger.begin(model, 2_000);
-      const response = await groq.complete(messages, tools, options);
+      const response = await real.complete(messages, tools, options);
       ledger.settle(charge, response.ok ? response.usage.promptTokens + response.usage.completionTokens : 0);
       raw = response.ok ? response.text : `error ${response.error.code}`;
       return response;
     },
   };
   const result = await runScreenStep(
-    { store, budget: new TokenBudget(Date.now), providers: [provider], lock: new AgentLock(driver, Date.now), log: createFakeLogger(), now: Date.now },
+    { store, budget: new TokenBudget(Date.now), providersFor: () => [provider], lock: new AgentLock(driver, Date.now), log: createFakeLogger(), now: Date.now },
     { taskId: created.taskId, principal: PRINCIPAL, step, screen: testCase.screen, ...(report ? { report } : {}) },
   );
   driver.close();

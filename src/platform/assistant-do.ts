@@ -60,7 +60,7 @@ import { buttonId } from '../confirm/pending.js';
 import { SCREEN_MAX_STEPS, ScreenStore } from '../tools/screen-store.js';
 import type { Ended, ScreenTask } from '../tools/screen-store.js';
 import { screenText } from '../render/screen.js';
-import { answerFor, runScreenStep, SCREEN_MAX_COMPLETION_TOKENS } from '../agent/screen-step.js';
+import { answerFor, runScreenStep, stepCompletionTokens } from '../agent/screen-step.js';
 import type { StepDeps } from '../agent/screen-step.js';
 import { createQuoteSources } from '../lookup/quotes.js';
 import type { QuoteSources } from '../lookup/quotes.js';
@@ -119,7 +119,7 @@ import { callText } from '../render/calls.js';
 import { agentEnabled } from '../core/env.js';
 import { createGeminiAgentProvider, createGroqAgentProvider } from '../agent/provider.js';
 import { TokenBudget } from '../agent/budget.js';
-import { MODELS, modelEntry, SCREEN_MODELS, SMART_MODELS } from '../agent/models.js';
+import { MODELS, modelEntry, SCREEN_MODELS, SCREEN_SMART_MODELS, SMART_MODELS } from '../agent/models.js';
 import type { ModelEntry } from '../agent/models.js';
 import { TURN_TOKEN_CAP } from '../agent/loop.js';
 import { ConversationHistory } from '../agent/history.js';
@@ -774,21 +774,40 @@ export class AssistantDO implements DurableObject {
     return json({ status: 'ok' });
   }
 
-  /** The step's dependencies: Groq models only, never a smart one (§6.28). */
+  /**
+   * The step's dependencies (§6.28, 2026-10-13): a local task's steps ask Groq's
+   * screen models only, a smart task's Gemini's only. Without the Gemini key a
+   * smart list is empty and the task ends `quota`; it never falls to Groq.
+   */
   private screenStepDeps(): StepDeps {
     return {
       store: this.screen,
       budget: this.tokenBudget,
-      providers: SCREEN_MODELS.map((id) =>
-        createGroqAgentProvider({
-          apiKey: this.env.GROQ_API_KEY,
-          model: id,
-          role: 'primary',
-          maxCompletionTokens: SCREEN_MAX_COMPLETION_TOKENS,
-          params: modelEntry(id)?.params ?? {},
-          fetchImpl: this.groqFetch,
-        }),
-      ),
+      providersFor: (mode) =>
+        mode === 'smart'
+          ? this.env.GEMINI_API_KEY
+            ? SCREEN_SMART_MODELS.map((id) =>
+                createGeminiAgentProvider({
+                  apiKey: this.env.GEMINI_API_KEY ?? '',
+                  model: id,
+                  role: 'smart',
+                  maxCompletionTokens: stepCompletionTokens(id),
+                  params: modelEntry(id)?.params ?? {},
+                  // Not through `groqFetch`: Groq's rate-limit headers are not Gemini's.
+                  fetchImpl: this.fetchImpl,
+                }),
+              )
+            : []
+          : SCREEN_MODELS.map((id) =>
+              createGroqAgentProvider({
+                apiKey: this.env.GROQ_API_KEY,
+                model: id,
+                role: 'primary',
+                maxCompletionTokens: stepCompletionTokens(id),
+                params: modelEntry(id)?.params ?? {},
+                fetchImpl: this.groqFetch,
+              }),
+            ),
       lock: this.agentLock,
       log: this.log,
       now: () => Date.now(),

@@ -164,6 +164,8 @@ export type BudgetSnapshot = {
 export class TokenBudget {
   private readonly spends = new Map<string, Spend[]>();
   private readonly exhaustedUntil = new Map<string, number>();
+  /** Set aside by a 429 that named the day (or Groq's long `retry-after`): until when. In memory only. */
+  private readonly dayOutUntil = new Map<string, number>();
   private readonly learnedLimits = new Map<string, number>();
   private readonly observations = new Map<string, Observation>();
   private readonly open = new Map<number, Reservation>();
@@ -194,6 +196,23 @@ export class TokenBudget {
     if (until === undefined) return false;
     if (until <= this.now()) {
       this.exhaustedUntil.delete(model);
+      return false;
+    }
+    return true;
+  }
+
+  /**
+   * Out for the day, not resting for a minute (the screen agent, 2026-10-13):
+   * the day's requests are spent, or a 429 named the day and its block still
+   * holds. A rest after a minute 429 or a 503 is not.
+   */
+  isOutForDay(model: string): boolean {
+    const entry = modelEntry(model);
+    if (entry?.dayRequests !== undefined && this.dayCounter.get(quotaDay(this.now()), model) >= entry.dayRequests) return true;
+    const until = this.dayOutUntil.get(model);
+    if (until === undefined) return false;
+    if (until <= this.now() || !this.isExhausted(model)) {
+      this.dayOutUntil.delete(model);
       return false;
     }
     return true;
@@ -436,10 +455,12 @@ export class TokenBudget {
     }
     if (modelEntry(model)?.minuteRequests !== undefined) {
       this.backOff(model, seconds, kind === 'day');
+      if (kind === 'day') this.dayOutUntil.set(model, this.exhaustedUntil.get(model) ?? now);
       return;
     }
     if (kind === 'day' || seconds > DAILY_SIGNAL_SECONDS) {
       this.exhaustedUntil.set(model, now + seconds * 1000);
+      this.dayOutUntil.set(model, now + seconds * 1000);
       return;
     }
     // Fill the window so the next turn waits out the minute instead of retrying

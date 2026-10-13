@@ -5,7 +5,7 @@
  *
  *   screen (raw, from the signed request, in memory only)
  *     -> usable? (no model call when nothing labelled can be tapped)
- *     -> scrubForModel on every string -> one Groq call -> strict Zod
+ *     -> scrubForModel on every string -> one model call -> strict Zod
  *     -> the element exists and takes that action -> the risk class (code)
  *     -> stored once with an actionId and the phone's binding -> the answer
  *
@@ -23,25 +23,35 @@ import { z } from 'zod';
 import { scrubForModel } from '../security/scrub.js';
 import type { Logger } from '../security/redact.js';
 import type { AgentLock } from './lock.js';
-import type { AgentMessage, AgentProvider } from './provider.js';
-import type { TokenBudget } from './budget.js';
+import type { AgentMessage, AgentProvider, AgentResponse } from './provider.js';
+
+type AgentOk = Extract<AgentResponse, { ok: true }>;
+import type { Reservation, TokenBudget } from './budget.js';
 import { wasNeverSent } from './budget.js';
 import { modelEntry } from './models.js';
 import { isSearchField, riskClass, usableScreen } from './screen-policy.js';
 import type { PolicyAction, RiskClass } from './screen-policy.js';
-import { MAX_SCREEN_INPUTS, SCREEN_MAX_STEPS } from '../tools/screen-store.js';
-import type { Ended, HistoryEntry, ScreenAction, ScreenStore, ScreenTask, StepReport } from '../tools/screen-store.js';
+import { MAX_SCREEN_INPUTS, SCREEN_GROQ_DAY_TOKENS, SCREEN_MAX_STEPS } from '../tools/screen-store.js';
+import type { Ended, HistoryEntry, ScreenAction, ScreenMode, ScreenStore, ScreenTask, StepReport } from '../tools/screen-store.js';
 
 export const SCREEN_PROMPT_VERSION = 's1';
-/** Reserved in full before each call (PLAN §6.28, budget). */
+/** Reserved in full before each call (PLAN §6.28, budget): a Groq model's completion. */
 export const SCREEN_MAX_COMPLETION_TOKENS = 150;
-/** The most one task may reserve, all steps together: a reservation limit, with a one-call overshoot. */
+/**
+ * A Gemini model's completion. Gemini 3 thinks inside `max_tokens`, and a
+ * small cap ended `length` with an empty message (models.ts, 2026-10-08).
+ */
+export const SCREEN_GEMINI_COMPLETION_TOKENS = 1_024;
+/** The most one local task may reserve, all steps together: a reservation limit, with a one-call overshoot. */
 export const SCREEN_TASK_TOKEN_CEILING = 18_000;
+/** The same for a smart task: Gemini is limited by requests, and each call reserves a larger completion. */
+export const SCREEN_SMART_TASK_TOKEN_CEILING = 48_000;
 /** The prompt estimate is multiplied by this for the reservation. */
 export const SCREEN_ESTIMATE_MARGIN = 1.3;
 export const SCREEN_MAX_WAITS = 6;
 export const SCREEN_WAIT_MIN_MS = 2_000;
 export const SCREEN_WAIT_MAX_MS = 15_000;
+/** One step, every model it asks together: below `SCREEN_INFLIGHT_MS`, so a phone retry never runs beside it. */
 const STEP_TIMEOUT_MS = 25_000;
 /** A free string the model may write: the cap before anything else touches it. */
 export const MAX_MODEL_TEXT = 200;
@@ -265,12 +275,31 @@ export type StepResult = {
 export type StepDeps = {
   store: ScreenStore;
   budget: TokenBudget;
-  /** `SCREEN_MODELS`' providers, in order. */
-  providers: readonly AgentProvider[];
+  /** The task's models, in order: `SCREEN_MODELS` for a local task, `SCREEN_SMART_MODELS` for a smart one. */
+  providersFor: (mode: ScreenMode) => readonly AgentProvider[];
   lock: AgentLock;
   log: Logger;
   now: () => number;
 };
+
+/** The completion a step reserves and asks for on this model. */
+export function stepCompletionTokens(model: string): number {
+  return modelEntry(model)?.provider === 'gemini' ? SCREEN_GEMINI_COMPLETION_TOKENS : SCREEN_MAX_COMPLETION_TOKENS;
+}
+
+/** The most a task of this mode may reserve, all steps together. */
+export function taskTokenCeiling(mode: ScreenMode): number {
+  return mode === 'smart' ? SCREEN_SMART_TASK_TOKEN_CEILING : SCREEN_TASK_TOKEN_CEILING;
+}
+
+function isGroq(model: string): boolean {
+  return modelEntry(model)?.provider === 'groq';
+}
+
+/** A provider that is busy, not broken (as `loop.ts`): worth asking again in a while. */
+function isOverloaded(error: { code: string; status?: number }): boolean {
+  return error.code === 'provider_error' && (error.status === 503 || error.status === 500);
+}
 
 /** The stored state as the phone's answer. */
 export function answerFor(task: ScreenTask): StepAnswer {
@@ -388,47 +417,70 @@ export async function runScreenStep(
     ];
 
     const chars = messages.reduce((sum, m) => sum + (typeof m.content === 'string' ? m.content.length : 0), 0);
-    let reservation = null;
-    let provider: AgentProvider | null = null;
-    let reserved = 0;
-    for (const candidate of deps.providers) {
+    const providers = deps.providersFor(task.mode);
+    const ceiling = taskTokenCeiling(task.mode);
+    const stepDeadline = deps.now() + STEP_TIMEOUT_MS;
+    const dayShare = (model: string) => (isGroq(model) ? store.modelDayTokens(request.principal, model) : 0);
+    let spent = task.tokens;
+    let answered: { provider: AgentProvider; reservation: Reservation; response: AgentOk } | null = null;
+    let failedCall = false;
+    let waitMs: number = SCREEN_WAIT_MAX_MS;
+    const started = deps.now();
+    // The task's models in order; a refusal or a failure moves to the next
+    // within this step, since nothing was decided yet. Never another family.
+    for (const candidate of providers) {
       const perToken = modelEntry(candidate.model)?.charsPerToken ?? 3;
-      reserved = Math.ceil((chars / perToken) * SCREEN_ESTIMATE_MARGIN) + SCREEN_MAX_COMPLETION_TOKENS;
-      if (task.tokens + reserved > SCREEN_TASK_TOKEN_CEILING) return ending('failed', 'budget');
+      const reserved = Math.ceil((chars / perToken) * SCREEN_ESTIMATE_MARGIN) + stepCompletionTokens(candidate.model);
+      if (spent + reserved > ceiling) return ending('failed', 'budget');
       if (deps.budget.isExhausted(candidate.model)) continue;
-      reservation = deps.budget.reserve(candidate.model, reserved);
-      if (reservation) {
-        provider = candidate;
+      if (isGroq(candidate.model) && dayShare(candidate.model) + reserved > SCREEN_GROQ_DAY_TOKENS) continue;
+      const remaining = stepDeadline - deps.now();
+      if (remaining < 1_000) break;
+      const reservation = deps.budget.reserve(candidate.model, reserved);
+      if (!reservation) continue;
+
+      const response = await candidate.complete(messages, [], { signal: AbortSignal.timeout(remaining) });
+      if (response.ok) {
+        answered = { provider: candidate, reservation, response };
         break;
       }
-    }
-    if (!provider || !reservation) {
-      if (deps.providers.every((p) => deps.budget.isExhausted(p.model))) return ending('failed', 'quota');
-      return waitOr(deps, task, SCREEN_WAIT_MAX_MS, 'busy');
-    }
-
-    const started = deps.now();
-    const response = await provider.complete(messages, [], { signal: AbortSignal.timeout(STEP_TIMEOUT_MS) });
-    if (!response.ok) {
       const error = response.error;
-      log.warn('screen_step_model_failed', { code: error.code, ...(error.status ? { status: error.status } : {}) });
+      log.warn('screen_step_model_failed', { model: candidate.model, code: error.code, ...(error.status ? { status: error.status } : {}) });
       if (error.code === 'rate_limited') {
         deps.budget.refused(reservation, error.retryAfterSeconds, error.daily === true ? 'day' : undefined);
-        if (deps.budget.isExhausted(provider.model)) return ending('failed', 'quota');
-        return waitOr(deps, task, (error.retryAfterSeconds ?? 5) * 1000, 'busy');
+        if (error.retryAfterSeconds !== undefined) waitMs = Math.min(waitMs, error.retryAfterSeconds * 1000);
+        continue;
+      }
+      if (candidate.role === 'smart' && isOverloaded(error)) {
+        // As a smart chat turn: busy, not out of quota; it rests on the 429 ladder.
+        deps.budget.refused(reservation, undefined, 'overloaded');
+        continue;
       }
       if (wasNeverSent(error)) {
         deps.budget.release(reservation);
       } else {
         deps.budget.chargeUnanswered(reservation);
         store.addTokens(task.taskId, reservation.tokens);
+        if (isGroq(candidate.model)) store.addModelDayTokens(request.principal, candidate.model, reservation.tokens);
+        spent += reservation.tokens;
       }
       if (error.code === 'invalid_json') return ending('failed', 'model_error');
-      return waitOr(deps, task, SCREEN_WAIT_MIN_MS * 2, 'model_error');
+      failedCall = true;
     }
+    if (!answered) {
+      const outForDay = (model: string) =>
+        deps.budget.isOutForDay(model) || (isGroq(model) && dayShare(model) >= SCREEN_GROQ_DAY_TOKENS - SCREEN_MAX_COMPLETION_TOKENS);
+      if (providers.every((p) => outForDay(p.model))) return ending('failed', 'quota');
+      if (failedCall) return waitOr(deps, task, SCREEN_WAIT_MIN_MS * 2, 'model_error');
+      return waitOr(deps, task, waitMs, 'busy');
+    }
+
+    const { provider, reservation, response } = answered;
     const measured = response.usage.promptTokens + response.usage.completionTokens;
     deps.budget.settle(reservation, measured);
-    store.addTokens(task.taskId, measured > 0 ? measured : reservation.tokens);
+    const charged = measured > 0 ? measured : reservation.tokens;
+    store.addTokens(task.taskId, charged);
+    if (isGroq(provider.model)) store.addModelDayTokens(request.principal, provider.model, charged);
     log.info('screen_step', { step: request.step, model: provider.model, tokens: measured, ms: deps.now() - started });
 
     const action = parseStepAction(response.text);

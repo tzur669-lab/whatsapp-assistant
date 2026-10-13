@@ -325,7 +325,7 @@ export const REGISTRY: Readonly<Record<ToolName, ToolSpec>> = {
     // It acts inside another app: the request is confirmed first, always.
     tier: 2,
     scopes: [],
-    rateLimit: { perHour: 3, perDay: 3 },
+    rateLimit: { perHour: 10, perDay: 10 },
     implementedIn: 6,
   },
   'reminders.create': {

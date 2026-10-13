@@ -5,7 +5,7 @@ system is, where things live, and what breaks easily, then links out. It does
 **not** repeat the rules in `CLAUDE.md` (always loaded) or the spec in
 `PLAN.md` (read by section, never whole).
 
-_Last updated: 2026-10-12 · server at migration 0030 · agent prompt a10 + smart note s2 + screen step s1 · parser prompt v6 · app 0.14.1 · smart model gemini-3.5-flash-lite_
+_Last updated: 2026-10-13 · server at migration 0031 · agent prompt a10 + smart note s2 + screen step s1 · parser prompt v6 · app 0.14.2 · smart model gemini-3.5-flash-lite_
 
 ## 1. What this is
 
@@ -29,8 +29,11 @@ Contacts birthdays, phone actions and reads, public lookups, notes, lists, facts
   and never reach Gemini.
 - **Screen agent** (2026-10-12, PLAN §6.28): `screen.task` does one task
   inside one app the user turned on, reading its screen as text. The phone is
-  eyes and hands; each step is one Groq call on the server (never Gemini), and
-  code stops before every sensitive or uncertain tap.
+  eyes and hands; each step is one model call on the server, in the family of
+  the conversation the task was confirmed in (2026-10-13): a regular one asks
+  qwen then gpt-oss-120b (Groq), a smart one Gemini Flash-Lite then 3.5 Flash,
+  never crossing. 10 tasks a day; each Groq model gives the screen at most 50K
+  tokens a day. Code stops before every sensitive or uncertain tap.
 
 ## 2. The one idea
 
@@ -71,7 +74,7 @@ Full map with every module: [ARCHITECTURE.md](ARCHITECTURE.md).
 | time/date logic | Only `src/time/resolve.ts` (forward), `src/time/past-day.ts` (expenses, backward) or the calendar read windows in `src/time/range.ts` (either way, 2026-10-12). DST: next fall-back 2026-10-25. Never default a missing time. |
 | routines (`tools/routine*.ts`, `routine_runs`) | A run moves one way, one conditional `UPDATE` at a time; the claim is the only thing that lets the phone run it, once, on time, with the confirmed step hash. Never retry a claimed run. `routine.run` is offered only when `namesRoutine` says so — never add it to the full catalog. Reason codes are closed on both sides (`RUN_REASONS` ↔ the app's `RoutineRunner`). PLAN §6.27. |
 | a migration | Add `migrations/00NN_*.sql` **and** register it in `src/platform/migrations.ts`. Backward-compatible for one version. |
-| the screen agent (`tools/screen*.ts`, `agent/screen-*.ts`, the app's `Screen*.kt`) | Read `docs/plans/screen-agent.md` first. The word lists live in code on both sides and must equal `test/fixtures/screen-policy.json` (a test on each side). Every status move is one conditional UPDATE; never retry an action — a `started` journal entry is `uncertain`. Screen text is never stored, logged or put in history, and goes to `SCREEN_MODELS` (Groq) only. `screen.task` is offered only when named: never add it to the full catalog. A step prompt change is `pnpm eval:screen`. |
+| the screen agent (`tools/screen*.ts`, `agent/screen-*.ts`, the app's `Screen*.kt`) | Read `docs/plans/screen-agent.md` first. The word lists live in code on both sides and must equal `test/fixtures/screen-policy.json` (a test on each side). Every status move is one conditional UPDATE; never retry an action — a `started` journal entry is `uncertain`. Screen text is never stored, logged or put in history, and goes only to the task's family: `SCREEN_MODELS` (Groq) for `mode: 'local'`, `SCREEN_SMART_MODELS` (Gemini) for `'smart'` — the mode rides in the confirmed input and the task row, never re-read from the turn. A Groq model's screen share is `SCREEN_GROQ_DAY_TOKENS`. `screen.task` is offered only when named: never add it to the full catalog. A step prompt change is `pnpm eval:screen`. |
 | `src/channels/app/parse.ts` or the wire protocol | The app has a matching `Protocol.kt` with test vectors. **Deploy the server before installing a new APK**, or the old server rejects the new app. |
 | a Tier 0–1 write's `execute` that calls Google (or the turn deadline) | The enumeration in `src/agent/limits.ts`: more sequential `GoogleApi.call`s than `MAX_WRITE_CALLS` means raising it, or the lock can expire under a running write. `TURN_DEADLINE_MS` is provisional (M6). |
 | outbound `fetch` | Call `fetch` through a closure, never `this.fetchImpl(...)` — Workers throws "Illegal invocation" (tests use `test/integration/workers-fetch.ts` to catch it). A new call site must be placed in `test/security/turn-signal-fetch.test.ts`; one a tool reaches takes the turn signal (`AbortSignal.any`), and a new network client on `ToolContext` is bound in `tools/turn-signal.ts`. |
@@ -116,7 +119,7 @@ Network on the hotspot: `NODE_OPTIONS=--dns-result-order=ipv4first` for wrangler
   s2 — its `--filter` evals are owed. Open items in PLAN §13 (limits probe,
   Gemini calibration, s2 evals).
 - **Screen agent** (PLAN §6.28, plan `docs/plans/screen-agent.md`, ROADMAP
-  block I): phases 1–2 built (server migration 0030, app 0.14.1 on the phone); staging
+  block I): phases 1–2 built (server migration 0030, app 0.14.1 on the phone; 2026-10-13: migration 0031 and app 0.14.2 — models by conversation, 10 a day — built, not deployed); staging
   deployed 2026-10-12 (9643484a). Owed, in order (PLAN §13): `pnpm eval:screen`
   and `eval:agent --filter scr-` on qwen with a human read, then the 0.14.0
   APK and the phone checks. Phase 3 needs its own plan.
@@ -156,6 +159,13 @@ Network on the hotspot: `NODE_OPTIONS=--dns-result-order=ipv4first` for wrangler
 | [SETUP.md](SETUP.md) | Setting up a new copy from zero: accounts, Groq key, models, secrets, deploy, app, AI agent. |
 
 ## 8. Session log (docs)
+
+- 2026-10-13: Screen agent follows the conversation: `screen_tasks.mode` and
+  `screen_model_day` (migration 0031), `SCREEN_SMART_MODELS` and the
+  screen-only `gemini-3.5-flash` (`SCREEN_ONLY_MODELS`), the next model of the
+  family within a step, `TokenBudget.isOutForDay`, `ToolContext.smart`; cap
+  3 → 10 a day; app 0.14.2 (disclosure names Gemini; APK in Downloads). Plan
+  `docs/plans/screen-model-by-mode.md`. Not deployed.
 
 - 2026-10-13: Screen agent: `soundOf` hears a word-initial ו or any וו as
   the w/v of an English app name ("וויז" = Waze, "ויבר" = Viber). No new

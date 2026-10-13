@@ -281,3 +281,40 @@ describe('a smart model that is overloaded (503/500, 2026-10-08)', () => {
     expect(counter.get(quotaDay(NOON), GEMINI.id)).toBe(1);
   });
 });
+
+describe('isOutForDay (the screen agent, 2026-10-13)', () => {
+  it('a minute 429 or a busy 503 rests a model but is not the day', () => {
+    const c = clock();
+    const budget = new TokenBudget(c.now);
+    budget.rateLimited(GEMINI.id, 5);
+    expect(budget.isExhausted(GEMINI.id)).toBe(true);
+    expect(budget.isOutForDay(GEMINI.id)).toBe(false);
+    budget.rateLimited(QWEN, 5, 'overloaded');
+    expect(budget.isOutForDay(QWEN)).toBe(false);
+    budget.rateLimited(QWEN, 30);
+    expect(budget.isOutForDay(QWEN)).toBe(false);
+  });
+
+  it('a 429 that names the day, or a long Groq retry-after, is out until its block ends', () => {
+    const c = clock();
+    const budget = new TokenBudget(c.now);
+    budget.rateLimited(GEMINI.id, 5, 'day');
+    expect(budget.isOutForDay(GEMINI.id)).toBe(true);
+    c.set(nextQuotaMidnight(NOON) + 1);
+    expect(budget.isOutForDay(GEMINI.id)).toBe(false);
+
+    budget.rateLimited(QWEN, 3_600);
+    expect(budget.isOutForDay(QWEN)).toBe(true);
+    c.advance(3_600_000 + 1);
+    expect(budget.isOutForDay(QWEN)).toBe(false);
+  });
+
+  it("a model whose day's requests are spent is out", () => {
+    const c = clock();
+    const counter = new MemoryDayRequestCounter();
+    const budget = new TokenBudget(c.now, undefined, counter);
+    for (let i = 0; i < GEMINI.dayRequests!; i++) counter.bump(quotaDay(NOON), GEMINI.id, 1);
+    expect(budget.isOutForDay(GEMINI.id)).toBe(true);
+    expect(budget.isOutForDay(QWEN)).toBe(false);
+  });
+});

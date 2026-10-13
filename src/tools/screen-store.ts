@@ -32,7 +32,13 @@ export const MAX_SCREEN_TASK = 200;
 export const MAX_SCREEN_INPUTS = 3;
 export const MAX_SCREEN_INPUT = 60;
 export const SCREEN_MAX_STEPS = 12;
-export const SCREEN_TASKS_PER_DAY = 3;
+export const SCREEN_TASKS_PER_DAY = 10;
+/**
+ * The most screen-step tokens one Groq model gives the screen agent in an
+ * Asia/Jerusalem day (2026-10-13): a quarter of its 200K, so the chat keeps the
+ * rest whatever the screen does.
+ */
+export const SCREEN_GROQ_DAY_TOKENS = 50_000;
 /** From the claim to the last action. */
 export const SCREEN_TASK_DEADLINE_MS = 4 * 60_000;
 /** A card not answered in this long stops the task (never past the deadline). */
@@ -89,6 +95,9 @@ export type StepReport = { actionId: string; status: ReportStatus; reason?: stri
 /** One past step, codes only: the action's kind and what the phone reported. */
 export type HistoryEntry = { k: ScreenAction['kind']; r: 'd' | 'n' | 'r' | 'p'; a: string; ns?: true };
 
+/** The conversation a task was confirmed in: which models' family its steps ask (2026-10-13). */
+export type ScreenMode = 'local' | 'smart';
+
 export type AllowedApp = { package: string; label: string; askEveryTap: boolean };
 
 export type ScreenTask = {
@@ -96,6 +105,7 @@ export type ScreenTask = {
   principal: string;
   package: string;
   appLabel: string;
+  mode: ScreenMode;
   inputCount: number;
   status: ScreenStatus;
   step: number;
@@ -212,18 +222,21 @@ export class ScreenStore {
     appLabel: string;
     task: string;
     inputs: readonly string[];
+    /** Absent: local. */
+    mode?: ScreenMode;
   }): Promise<ScreenTask> {
     const taskId = randomHex(16);
     const keyring = this.requireKeyring();
     const sealed = await encryptToken(JSON.stringify({ task: params.task, inputs: params.inputs }), keyring, aad(taskId));
     const now = this.now();
     this.sql.exec(
-      `INSERT INTO screen_tasks (task_id, principal, package, app_label, sealed, input_count, status, stop_nonce, local_day, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, 'confirmed', ?, ?, ?)`,
+      `INSERT INTO screen_tasks (task_id, principal, package, app_label, mode, sealed, input_count, status, stop_nonce, local_day, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, 'confirmed', ?, ?, ?)`,
       taskId,
       params.principal,
       params.package,
       params.appLabel,
+      params.mode ?? 'local',
       sealed,
       params.inputs.length,
       randomHex(16),
@@ -414,6 +427,30 @@ export class ScreenStore {
 
   addTokens(taskId: string, tokens: number): void {
     if (tokens > 0) this.sql.exec(`UPDATE screen_tasks SET tokens = tokens + ? WHERE task_id = ?`, Math.ceil(tokens), taskId);
+  }
+
+  /** Screen-step tokens this model spent for this principal today (Asia/Jerusalem). */
+  modelDayTokens(principal: string, model: string): number {
+    const row = this.sql.exec(
+      `SELECT tokens FROM screen_model_day WHERE principal = ? AND local_day = ? AND model = ?`,
+      principal,
+      localDay(this.now()),
+      model,
+    )[0];
+    return Number(row?.['tokens'] ?? 0);
+  }
+
+  /** Counts a step's tokens against the model's screen share for today. */
+  addModelDayTokens(principal: string, model: string, tokens: number): void {
+    if (tokens <= 0) return;
+    this.sql.exec(
+      `INSERT INTO screen_model_day (principal, local_day, model, tokens) VALUES (?, ?, ?, ?)
+       ON CONFLICT (principal, local_day, model) DO UPDATE SET tokens = tokens + excluded.tokens`,
+      principal,
+      localDay(this.now()),
+      model,
+      Math.ceil(tokens),
+    );
   }
 
   /**
@@ -614,6 +651,7 @@ export class ScreenStore {
       `DELETE FROM screen_tasks WHERE status NOT IN ('confirmed', 'pushed', 'running', 'awaiting_approval', 'released') AND created_at < ?`,
       now - 7 * 24 * 60 * 60_000,
     );
+    this.sql.exec(`DELETE FROM screen_model_day WHERE local_day < ?`, localDay(now - 7 * 24 * 60 * 60_000));
   }
 
   // -- internals -------------------------------------------------------------
@@ -716,6 +754,7 @@ function taskOf(row: SqlRow): ScreenTask {
     principal: String(row['principal']),
     package: String(row['package']),
     appLabel: String(row['app_label']),
+    mode: row['mode'] === 'smart' ? 'smart' : 'local',
     inputCount: Number(row['input_count']),
     status: String(row['status']) as ScreenStatus,
     step: Number(row['step']),

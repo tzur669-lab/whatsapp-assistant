@@ -1068,7 +1068,7 @@ export async function resumeFromPhone(
     }
 
     const now = deps.now();
-    const turn = turnOf(deps, { sentAtMs: request.sentAtMs, forwarded: false }, now, { kind: 'text' }, state.lang);
+    const turn = turnOf(deps, { sentAtMs: request.sentAtMs, forwarded: false, ...(state.mode ? { mode: state.mode } : {}) }, now, { kind: 'text' }, state.lang);
     // The stored mode picks the providers (2026-10-08): a smart conversation's
     // turn may have started on its smart model.
     const smart = state.mode === 'smart';
@@ -1166,7 +1166,8 @@ async function consentAnswer(
     const conversation = state.conversation ?? claimed.conversation;
     // The asking message's signed time, for the staleness rule, as after a phone read.
     const sentAtMs = Number(repo.getInbound(claimed.wamid)?.['sent_at'] ?? now);
-    const turn = turnOf(deps, { sentAtMs, forwarded: false }, now, { kind: 'text' }, state.lang);
+    // A consent card is asked only in a smart conversation.
+    const turn = turnOf(deps, { sentAtMs, forwarded: false, mode: 'smart' }, now, { kind: 'text' }, state.lang);
     const providers = [...(agent.smartProviders ?? []), ...agent.providers];
     const result = await timed(deps, 'agent', () =>
       resumeAfterConsent(state, decision, consents.list(principal, conversation), turn, { providers, budget: agent.budget, log, now: deps.now }),
@@ -1637,7 +1638,7 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 
 function turnOf(
   deps: PipelineDeps,
-  event: Pick<Extract<InboundEvent, { kind: 'text' | 'audio' | 'button' }>, 'sentAtMs' | 'forwarded'> & {
+  event: Pick<Extract<InboundEvent, { kind: 'text' | 'audio' | 'button' }>, 'sentAtMs' | 'forwarded' | 'mode'> & {
     location?: DeviceLocation;
   },
   now: number,
@@ -1681,6 +1682,10 @@ function turnOf(
       ...(services.routines ? { routines: services.routines } : {}),
       ...(services.screen ? { screen: services.screen } : {}),
       ...(services.screenPush ? { screenPush: services.screenPush } : {}),
+      // A smart conversation's own words, with its models here: a screen task
+      // confirmed from it stays with Gemini (2026-10-13). Without them the
+      // turn ran locally (the note above), and so does the task.
+      ...(event.mode === 'smart' && !event.forwarded && services.agent?.smartProviders?.length ? { smart: true as const } : {}),
       ...(text !== undefined ? { userText: text } : {}),
     },
     pending: services.pending,

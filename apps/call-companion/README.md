@@ -247,7 +247,8 @@ phone is its eyes and hands and has the last word on every action.
 
 - **The allowlist** (☰ → ⚙️ סוכן מסך, `ScreenAllowActivity`): at most 20 apps,
   each with "לשאול לפני כל לחיצה" (off by default), and the disclosure that
-  the app's text goes to the bot's server and, scrubbed, to Groq. Settings, the
+  the app's text goes to the bot's server and, scrubbed, to Groq in a regular
+  conversation or to Gemini (which may train on it) in a smart one (0.14.2). Settings, the
   system UI, launchers, messaging, mail, banks, payments and stores can never
   be added (`ScreenLogic.blocked`). Every change is synced
   (`POST /app/screen/allow`) and once per process; removing an app stops a

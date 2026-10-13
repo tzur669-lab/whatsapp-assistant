@@ -138,9 +138,39 @@ export const SMART_MODELS: readonly ModelEntry[] = [
   },
 ];
 
-/** Both tables: a smart model found by id gets its own limits, never qwen's defaults. */
+export const GEMINI_FLASH = 'gemini-3.5-flash';
+
+/**
+ * Models only the screen agent may use (2026-10-13), never a chat turn: not in
+ * `MODELS` or `SMART_MODELS` (unit test). Gemini 3.5 Flash is a smart screen
+ * task's second model, after Flash-Lite. Its free tier stopped after about 25
+ * requests on 2026-10-08, so its day is capped at 20; everything else is
+ * Flash-Lite's, unmeasured too (PLAN §13).
+ */
+export const SCREEN_ONLY_MODELS: readonly ModelEntry[] = [
+  {
+    id: GEMINI_FLASH,
+    provider: 'gemini',
+    role: 'smart',
+    minuteTokens: 250_000,
+    minuteRequests: 5,
+    dayRequests: 20,
+    maxCompletionTokens: 4_096,
+    params: { reasoningEffort: 'low' },
+    turnCap: 60_000,
+    maxModelCalls: 6,
+    charsPerToken: GROQ_CHARS_PER_TOKEN,
+    canWrite: false,
+  },
+];
+
+/** Every table: a smart or screen model found by id gets its own limits, never qwen's defaults. */
 export function modelEntry(id: string): ModelEntry | undefined {
-  return MODELS.find((entry) => entry.id === id) ?? SMART_MODELS.find((entry) => entry.id === id);
+  return (
+    MODELS.find((entry) => entry.id === id) ??
+    SMART_MODELS.find((entry) => entry.id === id) ??
+    SCREEN_ONLY_MODELS.find((entry) => entry.id === id)
+  );
 }
 
 /** The bucket this server assumes for a model it does not know. */
@@ -149,10 +179,16 @@ export const DEFAULT_TURN_CAP = 7_000;
 export const DEFAULT_MAX_COMPLETION_TOKENS = 1_024;
 
 /**
- * The Groq models a screen-agent step may use (PLAN §6.28, 2026-10-12): never
- * a smart model, so screen text never reaches Gemini. qwen first. Groq quotas
- * are per model, so moving the steps to a model chat does not use would cost
- * chat nothing — a change made only after a human reads that model's
- * `pnpm eval:screen` report, like `canWrite`.
+ * The models a screen-agent step may use, by the conversation the task was
+ * confirmed in (PLAN §6.28; the user's decision, 2026-10-13). A local task asks
+ * only Groq (`SCREEN_MODELS`), a smart one only Gemini
+ * (`SCREEN_SMART_MODELS`): screen text from a local conversation never reaches
+ * Gemini, and a task never crosses. In each list the next model is asked when
+ * the one before is out. Groq quotas are per model; each Groq model gives the
+ * screen at most `SCREEN_GROQ_DAY_TOKENS` a day, so chat keeps the rest. The
+ * user added gpt-oss-120b and both Gemini models before their
+ * `pnpm eval:screen` reports were read (2026-10-13, PLAN §14); code's risk
+ * policy still stops every sensitive or uncertain tap.
  */
-export const SCREEN_MODELS: readonly string[] = [QWEN];
+export const SCREEN_MODELS: readonly string[] = [QWEN, GPT_OSS_120B];
+export const SCREEN_SMART_MODELS: readonly string[] = [GEMINI_FLASH_LITE, GEMINI_FLASH];

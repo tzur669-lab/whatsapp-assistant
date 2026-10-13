@@ -35,6 +35,8 @@ export const screenInputSchema = z
     appLabel: z.string().min(1).max(MAX_SCREEN_LABEL),
     task: z.string().min(1).max(MAX_SCREEN_TASK),
     inputs: z.array(z.string().min(1).max(MAX_SCREEN_INPUT)).max(MAX_SCREEN_INPUTS),
+    /** Confirmed in a smart conversation: Gemini's screen models (2026-10-13). Set by code from the turn, never by the model. */
+    smart: z.literal(true).optional(),
   })
   .strict();
 
@@ -109,7 +111,7 @@ export const screenTask: ToolDefinition = {
     const blocked = startBlocked(ctx);
     if (blocked) return ask(blocked);
 
-    const input: ScreenInput = { package: app.package, appLabel: app.label, task, inputs };
+    const input: ScreenInput = { package: app.package, appLabel: app.label, task, inputs, ...(ctx.smart ? { smart: true as const } : {}) };
     return { kind: 'ready', input };
   },
 
@@ -137,12 +139,14 @@ export const screenTask: ToolDefinition = {
       appLabel: app.label,
       task: input.task,
       inputs: input.inputs,
+      // From the stored input, confirmed with it; a card from before 2026-10-13 is local.
+      mode: input.smart ? 'smart' : 'local',
     });
     return { text: screenText.started(app.label, ctx.lang), externalRef: task.taskId, rescheduleAlarm: true };
   },
 };
 
-/** Why no task may start now, or null: one at a time, three a day, routines first. */
+/** Why no task may start now, or null: one at a time, ten a day, routines first. */
 function startBlocked(ctx: ToolContext): ScreenQuestion | null {
   const store = ctx.screen;
   if (!store) return 'no_apps';

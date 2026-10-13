@@ -210,6 +210,12 @@ export type ToolContext = {
   routines?: RoutineStore;
   /** The screen agent's allowlist and tasks (§6.28). */
   screen?: ScreenStore;
+  /**
+   * The message is a smart conversation's own words and its models are here
+   * (2026-10-13): a screen task confirmed from it asks Gemini's screen models,
+   * never Groq's. Absent: local.
+   */
+  smart?: true;
   /** Wakes the phone about a screen task (an approval decided, the task stopped). Best effort. */
   screenPush?: (taskId: string, kind: 'screen_release' | 'screen_stop') => Promise<void>;
   /**

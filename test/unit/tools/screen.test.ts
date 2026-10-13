@@ -6,17 +6,42 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { Repository } from '../../../src/core/repo.js';
 import { MIGRATIONS } from '../../../src/platform/migrations.js';
-import { ScreenStore, SCREEN_APPROVAL_TTL_MS, SCREEN_CLAIM_TTL_MS, SCREEN_DEADLINE_GRACE_MS, SCREEN_TASK_DEADLINE_MS } from '../../../src/tools/screen-store.js';
-import type { AllowedApp, ScreenTask, StepReport } from '../../../src/tools/screen-store.js';
+import {
+  ScreenStore,
+  SCREEN_APPROVAL_TTL_MS,
+  SCREEN_CLAIM_TTL_MS,
+  SCREEN_DEADLINE_GRACE_MS,
+  SCREEN_GROQ_DAY_TOKENS,
+  SCREEN_TASK_DEADLINE_MS,
+  SCREEN_TASKS_PER_DAY,
+} from '../../../src/tools/screen-store.js';
+import type { AllowedApp, ScreenMode, ScreenTask, StepReport } from '../../../src/tools/screen-store.js';
 import {
   answerFor,
   parseStepAction,
   runScreenStep,
+  SCREEN_GEMINI_COMPLETION_TOKENS,
+  SCREEN_MAX_COMPLETION_TOKENS,
+  SCREEN_SMART_TASK_TOKEN_CEILING,
   SCREEN_TASK_TOKEN_CEILING,
+  stepCompletionTokens,
   stepUserMessage,
+  taskTokenCeiling,
 } from '../../../src/agent/screen-step.js';
 import type { Screen, ScreenElement, StepDeps } from '../../../src/agent/screen-step.js';
 import { TokenBudget } from '../../../src/agent/budget.js';
+import {
+  GEMINI_FLASH,
+  GEMINI_FLASH_LITE,
+  GPT_OSS_120B,
+  MODELS,
+  modelEntry,
+  QWEN,
+  SCREEN_MODELS,
+  SCREEN_ONLY_MODELS,
+  SCREEN_SMART_MODELS,
+  SMART_MODELS,
+} from '../../../src/agent/models.js';
 import { AgentLock } from '../../../src/agent/lock.js';
 import { findApp, inputsSaid, namesScreenTask, screenTask, soundOf } from '../../../src/tools/screen.js';
 import { screenText } from '../../../src/render/screen.js';
@@ -298,11 +323,29 @@ describe('one screen step', () => {
   });
   afterEach(() => driver.close());
 
-  const deps = (model: FakeAgent): StepDeps => ({ store, budget, providers: [model], lock, log, now: () => clock });
+  const deps = (model: FakeAgent): StepDeps => ({ store, budget, providersFor: () => [model], lock, log, now: () => clock });
+  /** Two families, as the Durable Object builds them: each mode gets only its own list. */
+  const byMode = (local: FakeAgent[], smart: FakeAgent[]): StepDeps => ({
+    store,
+    budget,
+    providersFor: (mode: ScreenMode) => (mode === 'smart' ? smart : local),
+    lock,
+    log,
+    now: () => clock,
+  });
   const model = (steps: FakeStep[]) => createFakeAgent(steps, 'qwen/qwen3.8-27b', 1_200);
+  const named = (id: string, steps: FakeStep[]) => createFakeAgent(steps, id, 1_200, modelEntry(id)?.provider === 'gemini' ? 'smart' : 'primary');
+  const step1 = (t: ScreenTask) => ({ taskId: t.taskId, principal: PRINCIPAL, step: 1, screen: searchScreen() });
 
-  async function task(app = FID, inputs = ['סטימצקי']): Promise<ScreenTask> {
-    const created = await store.create({ principal: PRINCIPAL, package: app.package, appLabel: app.label, task: 'חפש סטימצקי', inputs });
+  async function task(app = FID, inputs = ['סטימצקי'], mode?: ScreenMode): Promise<ScreenTask> {
+    const created = await store.create({
+      principal: PRINCIPAL,
+      package: app.package,
+      appLabel: app.label,
+      task: 'חפש סטימצקי',
+      inputs,
+      ...(mode ? { mode } : {}),
+    });
     store.takePushes();
     store.claim(created.taskId, PRINCIPAL);
     return store.get(created.taskId)!;
@@ -417,6 +460,97 @@ describe('one screen step', () => {
     expect(m.calls).toHaveLength(0);
   });
 
+  it('a local task asks only Groq, a smart one only Gemini (the user, 2026-10-13)', async () => {
+    const qwen = named(QWEN, [{ text: '{"action":"tap","i":1}' }]);
+    const lite = named(GEMINI_FLASH_LITE, [{ text: '{"action":"tap","i":1}' }]);
+    const local = await task();
+    expect(local.mode).toBe('local');
+    expect((await runScreenStep(byMode([qwen], [lite]), step1(local))).answer.status).toBe('act');
+    expect(qwen.calls).toHaveLength(1);
+    expect(lite.calls).toHaveLength(0);
+
+    store.finish(local.taskId, 'stopped', 'stopped_user');
+    const smart = await task(FID, ['סטימצקי'], 'smart');
+    expect(smart.mode).toBe('smart');
+    expect((await runScreenStep(byMode([qwen], [lite]), step1(smart))).answer.status).toBe('act');
+    expect(qwen.calls).toHaveLength(1);
+    expect(lite.calls).toHaveLength(1);
+  });
+
+  it('a smart task with no Gemini model ends quota, never falling to Groq', async () => {
+    const qwen = named(QWEN, []);
+    const smart = await task(FID, ['סטימצקי'], 'smart');
+    const result = await runScreenStep(byMode([qwen], []), step1(smart));
+    expect(result.ended?.reason).toBe('quota');
+    expect(qwen.calls).toHaveLength(0);
+  });
+
+  it('asks the next model of the family in the same step after a 429', async () => {
+    const qwen = named(QWEN, [{ error: 'rate_limited', retryAfterSeconds: 5 }]);
+    const oss = named(GPT_OSS_120B, [{ text: '{"action":"tap","i":1}' }]);
+    const t = await task();
+    const result = await runScreenStep(byMode([qwen, oss], []), step1(t));
+    expect(result.answer).toMatchObject({ status: 'act', action: { kind: 'tap', b: b(2) } });
+    expect(qwen.calls).toHaveLength(1);
+    expect(oss.calls).toHaveLength(1);
+  });
+
+  it('a busy Gemini (503) moves to the next Gemini model', async () => {
+    const lite = named(GEMINI_FLASH_LITE, [{ error: 'provider_error', status: 503 }]);
+    const flash = named(GEMINI_FLASH, [{ text: '{"action":"tap","i":1}' }]);
+    const t = await task(FID, ['סטימצקי'], 'smart');
+    expect((await runScreenStep(byMode([], [lite, flash]), step1(t))).answer.status).toBe('act');
+    expect(flash.calls).toHaveLength(1);
+  });
+
+  it('a minute 429 on every model waits; it never ends the task as quota', async () => {
+    const lite = named(GEMINI_FLASH_LITE, [{ error: 'rate_limited', retryAfterSeconds: 5 }]);
+    const flash = named(GEMINI_FLASH, [{ error: 'rate_limited', retryAfterSeconds: 5 }]);
+    const t = await task(FID, ['סטימצקי'], 'smart');
+    const result = await runScreenStep(byMode([], [lite, flash]), step1(t));
+    expect(result.answer.status).toBe('wait');
+    expect(result.ended).toBeUndefined();
+  });
+
+  it('ends quota when every model of the family is out for the day', async () => {
+    const lite = named(GEMINI_FLASH_LITE, [{ error: 'rate_limited', retryAfterSeconds: 60, daily: true }]);
+    const flash = named(GEMINI_FLASH, [{ error: 'rate_limited', retryAfterSeconds: 60, daily: true }]);
+    const t = await task(FID, ['סטימצקי'], 'smart');
+    expect((await runScreenStep(byMode([], [lite, flash]), step1(t))).ended?.reason).toBe('quota');
+  });
+
+  it('takes at most a Groq model daily screen share, then the next model', async () => {
+    store.addModelDayTokens(PRINCIPAL, QWEN, SCREEN_GROQ_DAY_TOKENS - 100);
+    const qwen = named(QWEN, []);
+    const oss = named(GPT_OSS_120B, [{ text: '{"action":"tap","i":1}' }]);
+    const t = await task();
+    expect((await runScreenStep(byMode([qwen, oss], []), step1(t))).answer.status).toBe('act');
+    expect(qwen.calls).toHaveLength(0);
+    expect(store.modelDayTokens(PRINCIPAL, GPT_OSS_120B)).toBe(1_200);
+
+    store.finish(t.taskId, 'stopped', 'stopped_user');
+    store.addModelDayTokens(PRINCIPAL, GPT_OSS_120B, SCREEN_GROQ_DAY_TOKENS);
+    const next = await task();
+    const result = await runScreenStep(byMode([named(QWEN, []), named(GPT_OSS_120B, [])], []), step1(next));
+    expect(result.ended?.reason).toBe('quota');
+  });
+
+  it('reserves a larger completion and a larger task ceiling for Gemini', () => {
+    expect(stepCompletionTokens(QWEN)).toBe(SCREEN_MAX_COMPLETION_TOKENS);
+    expect(stepCompletionTokens(GPT_OSS_120B)).toBe(SCREEN_MAX_COMPLETION_TOKENS);
+    expect(stepCompletionTokens(GEMINI_FLASH_LITE)).toBe(SCREEN_GEMINI_COMPLETION_TOKENS);
+    expect(stepCompletionTokens(GEMINI_FLASH)).toBe(SCREEN_GEMINI_COMPLETION_TOKENS);
+    expect(taskTokenCeiling('local')).toBe(SCREEN_TASK_TOKEN_CEILING);
+    expect(taskTokenCeiling('smart')).toBe(SCREEN_SMART_TASK_TOKEN_CEILING);
+  });
+
+  it('the two screen lists never cross families, and the screen-only model never reaches chat', () => {
+    for (const id of SCREEN_MODELS) expect(modelEntry(id)?.provider).toBe('groq');
+    for (const id of SCREEN_SMART_MODELS) expect(modelEntry(id)?.provider).toBe('gemini');
+    const chat = [...MODELS, ...SMART_MODELS].map((entry) => entry.id);
+    for (const entry of SCREEN_ONLY_MODELS) expect(chat).not.toContain(entry.id);
+  });
+
   it('ends on a day-type 429', async () => {
     const t = await task();
     const m = model([{ error: 'rate_limited', retryAfterSeconds: 3_600, daily: true }]);
@@ -504,11 +638,12 @@ describe('screen.task, the tool', () => {
     expect(screenTask.resolve({ app: 'FID', task: 't' }, ctx('x', { channel: 'whatsapp' }))).toMatchObject({ clarify: { what: 'not_app' } });
   });
 
-  it('allows three a day, one at a time, and never right before a routine', async () => {
+  it('allows ten a day, one at a time, and never right before a routine', async () => {
+    expect(SCREEN_TASKS_PER_DAY).toBe(10);
     const said = 'תחפש בFID';
-    for (let i = 0; i < 3; i++) {
+    for (let i = 0; i < SCREEN_TASKS_PER_DAY; i++) {
       const t = await store.create({ principal: PRINCIPAL, package: FID.package, appLabel: 'FID', task: 't', inputs: [] });
-      if (i < 2) store.finish(t.taskId, 'done', 'done', 'completed_unverified');
+      if (i < SCREEN_TASKS_PER_DAY - 1) store.finish(t.taskId, 'done', 'done', 'completed_unverified');
     }
     expect(screenTask.resolve({ app: 'FID', task: 't' }, ctx(said))).toMatchObject({ clarify: { what: 'busy' } });
     const open = store.active(PRINCIPAL)!;
@@ -530,6 +665,22 @@ describe('screen.task, the tool', () => {
     const result = await screenTask.execute({ package: 'il.co.fid', appLabel: 'FID', task: 'חפש', inputs: [] }, ctx(''));
     expect(plain(result.text)).toContain('סוכן המסך מתחיל');
     expect(store.active(PRINCIPAL)?.status).toBe('confirmed');
+    // A card stored before 2026-10-13 has no `smart`: local, whatever the turn now.
+    expect(store.active(PRINCIPAL)?.mode).toBe('local');
+  });
+
+  it('carries a smart turn into the confirmed input, and from it into the task', async () => {
+    const out = screenTask.resolve({ app: 'FID', task: 'חפש', inputs: [] }, ctx('תחפש בFID', { smart: true }));
+    expect(out).toMatchObject({ kind: 'ready', input: { smart: true } });
+    const local = screenTask.resolve({ app: 'FID', task: 'חפש', inputs: [] }, ctx('תחפש בFID'));
+    expect((local as { input: Record<string, unknown> }).input).not.toHaveProperty('smart');
+    // The model's slots cannot set it: only the turn does.
+    const forged = screenTask.resolve({ app: 'FID', task: 'חפש', inputs: [], smart: true }, ctx('תחפש בFID'));
+    expect((forged as { input: Record<string, unknown> }).input).not.toHaveProperty('smart');
+
+    // Execute reads the stored input, not the turn's mode.
+    await screenTask.execute((out as { input: unknown }).input, ctx(''));
+    expect(store.active(PRINCIPAL)?.mode).toBe('smart');
   });
 
   it('matches the message to its inputs with Hebrew normalization', () => {
