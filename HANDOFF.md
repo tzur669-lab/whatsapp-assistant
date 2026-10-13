@@ -119,7 +119,7 @@ Network on the hotspot: `NODE_OPTIONS=--dns-result-order=ipv4first` for wrangler
   s2 — its `--filter` evals are owed. Open items in PLAN §13 (limits probe,
   Gemini calibration, s2 evals).
 - **Screen agent** (PLAN §6.28, plan `docs/plans/screen-agent.md`, ROADMAP
-  block I): phases 1–2 built (server migration 0030, app 0.14.1 on the phone; 2026-10-13: migration 0031 and app 0.14.2 — models by conversation, 10 a day — staging deployed 5d807cd8, APK in Downloads; then migration 0032 and app 0.14.3 — Compose container labels, messages in the task's conversation — not deployed); staging
+  block I): phases 1–2 built (server migration 0030, app 0.14.1 on the phone; 2026-10-13: migration 0031 and app 0.14.2 — models by conversation, 10 a day — staging deployed 5d807cd8, APK in Downloads; then migration 0032 and app 0.14.3 — Compose container labels, messages in the task's conversation — staging deployed e12ae6d6); staging
   deployed 2026-10-12 (9643484a). Owed, in order (PLAN §13): `pnpm eval:screen`
   and `eval:agent --filter scr-` on qwen with a human read, then the 0.14.0
   APK and the phone checks. Phase 3 needs its own plan.
@@ -166,7 +166,7 @@ Network on the hotspot: `NODE_OPTIONS=--dns-result-order=ipv4first` for wrangler
   (`screen_tasks.in_reply_to`, migration 0032, `ScreenStore.linkLatest`).
   (2) Gemini failed every step on Waze's Compose home screen: an unlabelled
   clickable now borrows its container's label (`ScreenLogic.lender`, app
-  0.14.3, installed on the phone; APK in Downloads). Not deployed yet.
+  0.14.3, installed on the phone; APK in Downloads). Staging deployed (e12ae6d6).
 
 - 2026-10-13: Screen agent follows the conversation: `screen_tasks.mode` and
   `screen_model_day` (migration 0031), `SCREEN_SMART_MODELS` and the
