@@ -87,7 +87,7 @@ Full map with every module: [ARCHITECTURE.md](ARCHITECTURE.md).
 `pnpm typecheck && pnpm lint && pnpm test` before calling anything done.
 `pnpm eval` / `pnpm eval:agent [--filter p-] [--resume] [--select-tools] [--model <id>]` (a `SMART_MODELS` id runs as a smart turn and needs `GEMINI_API_KEY` in `.dev.vars`).
 `eval:agent` exits 0 only for a complete pass, 1 on a gate miss, 2 when incomplete; a recording from another environment is refused (header of `test/evals/run-agent-evals.ts`).
-`pnpm deploy:staging` only with approval. Production, secrets, rollback: human only.
+`pnpm deploy:staging` at the end of every task that changes server code (standing approval, 2026-10-13). Production, secrets, rollback: human only.
 App: `cd apps/call-companion && ./gradlew testDebugUnitTest`.
 Network on the hotspot: `NODE_OPTIONS=--dns-result-order=ipv4first` for wrangler.
 
@@ -181,7 +181,8 @@ Network on the hotspot: `NODE_OPTIONS=--dns-result-order=ipv4first` for wrangler
 
 - 2026-10-13: Calendar lists grouped by day, time first (`eventText.list`
   takes an optional clock for היום/מחר/אתמול). Render only; no new modules
-  or tables. Not deployed.
+  or tables. Staging deployed (b93a416e). From now on every server
+  change is deployed to staging at the end (standing approval).
 
 - 2026-10-13: Staging deployed (8e7e006c) with block J (J1–J7); APK 0.16.0
   in Downloads.

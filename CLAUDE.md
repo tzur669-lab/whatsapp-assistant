@@ -19,7 +19,7 @@ Keep the script names stable.
 - `pnpm eval` — NLU evals against the real provider (needs `GROQ_API_KEY` in `.dev.vars`). Required after any change to `src/nlu/`.
 - `pnpm eval:agent` — agent evals (first tool choice on the same corpus, plus injection-through-data). Required after any change to `src/agent/` prompt, catalog or provider. Resumable with `--resume`; one full run can exceed a model's daily budget.
 - `pnpm dev` — `wrangler dev` with staging config.
-- `pnpm deploy:staging` — only with explicit approval in the session.
+- `pnpm deploy:staging` — standing approval (the user, 2026-10-13): run it at the end of every task that changes server code, after typecheck, lint and test are green and the commit is pushed. Record the version id in HANDOFF §8.
 - **Never** run production deploys, `wrangler secret put`, `wrangler rollback`, or anything with `--env production`. The human does those.
 
 ## Architecture invariants (non-negotiable)
