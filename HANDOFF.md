@@ -196,6 +196,7 @@ Network on the hotspot: `NODE_OPTIONS=--dns-result-order=ipv4first` for wrangler
   `ResolveOutcome.unrequested`, policy reason `unrequested`, `factText.offer`;
   caps 40 / 1,600; the fitter drops facts oldest first under the one-call
   budget (`promptCeiling` in `agent/loop.ts`). No new modules or tables.
+  Staging deployed (9d9b460e).
 
 - 2026-10-14: Block K, K1: the learning journal — new `core/learn-store.ts`,
   `render/learn.ts`, migration 0035 (`learn_events`, `learn_weeks`), `/learn`;
