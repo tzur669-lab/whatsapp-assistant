@@ -27,7 +27,6 @@ import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
 import android.view.inputmethod.InputMethodManager
-import android.widget.ArrayAdapter
 import android.widget.BaseAdapter
 import android.widget.Button
 import android.widget.EditText
@@ -411,6 +410,11 @@ class ChatActivity : Activity(), ChatEvents.Listener {
         slashPopup = ListPopupWindow(this).apply {
             anchorView = input
             isModal = false
+            setBackgroundDrawable(GradientDrawable().apply {
+                setColor(INCOMING)
+                cornerRadius = dp(12).toFloat()
+                setStroke(1, DIVIDER)
+            })
             setOnItemClickListener { _, _, position, _ ->
                 val command = slashItems.getOrNull(position) ?: return@setOnItemClickListener
                 slashChosen = command.insert
@@ -766,11 +770,51 @@ class ChatActivity : Activity(), ChatEvents.Listener {
             slashPopup.dismiss()
             return
         }
-        slashPopup.setAdapter(
-            ArrayAdapter(this, android.R.layout.simple_list_item_1, slashItems.map { "${Ui.isolate(it.usage)}   ${it.description}" }),
-        )
-        slashPopup.height = if (slashItems.size > 5) dp(300) else ViewGroup.LayoutParams.WRAP_CONTENT
+        slashPopup.setAdapter(SlashAdapter(slashItems))
+        // The whole chat's width, not the field's: the explanations need the room.
+        slashPopup.width = window.decorView.width - dp(16)
+        val at = IntArray(2).also { input.getLocationOnScreen(it) }
+        slashPopup.setDropDownGravity(Gravity.LEFT)
+        slashPopup.horizontalOffset = -at[0] + dp(8)
+        slashPopup.height = if (slashItems.size > 4) dp(340) else ViewGroup.LayoutParams.WRAP_CONTENT
         slashPopup.show()
+        slashPopup.listView?.apply {
+            divider = ColorDrawable(DIVIDER)
+            dividerHeight = 1
+            layoutDirection = View.LAYOUT_DIRECTION_RTL
+        }
+    }
+
+    /** One command per row: the command itself on top, what it does underneath, wrapped. */
+    private inner class SlashAdapter(private val items: List<ChatLogic.Command>) : BaseAdapter() {
+        override fun getCount(): Int = items.size
+        override fun getItem(position: Int): Any = items[position]
+        override fun getItemId(position: Int): Long = position.toLong()
+
+        override fun getView(position: Int, convertView: View?, parent: ViewGroup): View {
+            val command = items[position]
+            return LinearLayout(this@ChatActivity).apply {
+                orientation = LinearLayout.VERTICAL
+                layoutDirection = View.LAYOUT_DIRECTION_RTL
+                setPadding(dp(14), dp(10), dp(14), dp(10))
+                addView(TextView(this@ChatActivity).apply {
+                    // The command reads left to right inside the Hebrew row.
+                    text = Ui.isolate(command.usage)
+                    textSize = 16f
+                    setTextColor(HEADER)
+                    setTypeface(Typeface.MONOSPACE, Typeface.BOLD)
+                    // Flush right like its explanation; the isolate keeps it left to right inside.
+                    textDirection = View.TEXT_DIRECTION_RTL
+                })
+                addView(TextView(this@ChatActivity).apply {
+                    text = command.description
+                    textSize = 14f
+                    setTextColor(TEXT)
+                    setPadding(0, dp(2), 0, 0)
+                    textDirection = View.TEXT_DIRECTION_ANY_RTL
+                })
+            }
+        }
     }
 
     // -- copying ------------------------------------------------------------------
@@ -1103,5 +1147,6 @@ class ChatActivity : Activity(), ChatEvents.Listener {
         private val NOTICE = Color.rgb(0xE1, 0xF0, 0xFA)
         private val TEXT = Color.rgb(0x11, 0x1B, 0x21)
         private val META = Color.rgb(0x66, 0x77, 0x81)
+        private val DIVIDER = Color.rgb(0xE0, 0xE4, 0xE7)
     }
 }
