@@ -163,8 +163,8 @@ Network on the hotspot: `NODE_OPTIONS=--dns-result-order=ipv4first` for wrangler
   `docs/learn-log.md`. Owed: the phone checks (PLAN §13) and the export's CPU
   in `wrangler dev`.
 - **Images** (2026-10-14, PLAN §6.32, plan `docs/plans/image-input.md`):
-  built, server and app 0.19.0 (📎 and a share target for images; APK in
-  Downloads; **server first**). Owed (PLAN §13): the human confirms the Groq
+  built, server and app 0.19.0 (📎 and a share target for images; staging
+  deployed f8ffb42b, so the APK in Downloads can be installed). Owed (PLAN §13): the human confirms the Groq
   vision model id and limits in the console, the phone check, the CPU of a
   full image in `wrangler dev`. "Make it a routine" waits for the plan where
   the bot builds a routine.
@@ -214,7 +214,9 @@ Network on the hotspot: `NODE_OPTIONS=--dns-result-order=ipv4first` for wrangler
   `core/pipeline.ts`, `composeImage`, `VISION_ONLY_MODELS` /
   `VISION_MODELS` / `VISION_SMART_MODELS`, quota role `vision` and `images`;
   CLAUDE.md invariant 2 amended. No tables or migrations. App 0.19.0
-  (`ImageLogic.kt`, `ImagePrep.kt`, 📎, image share target).
+  (`ImageLogic.kt`, `ImagePrep.kt`, 📎, image share target). Staging
+  deployed (f8ffb42b; `/app/image` answers 401 unsigned); APK 0.19.0 in
+  Downloads, not yet installed.
 
 - 2026-10-14: Screen agent smarter, from a failed Israel Rail run (the
   station picker hides its search box; qwen typed into a button, `model_error`):
