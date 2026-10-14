@@ -217,7 +217,7 @@ Network on the hotspot: `NODE_OPTIONS=--dns-result-order=ipv4first` for wrangler
   CLAUDE.md invariant 2 amended. No tables or migrations. App 0.19.0
   (`ImageLogic.kt`, `ImagePrep.kt`, 📎, image share target). Staging
   deployed (f8ffb42b; `/app/image` answers 401 unsigned); APK 0.19.0 in
-  Downloads, not yet installed.
+  Downloads, not yet installed. Then Gemini-only reading: staging d80642ac.
 
 - 2026-10-14: Screen agent smarter, from a failed Israel Rail run (the
   station picker hides its search box; qwen typed into a button, `model_error`):
