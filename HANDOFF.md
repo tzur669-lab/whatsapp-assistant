@@ -194,6 +194,7 @@ Network on the hotspot: `NODE_OPTIONS=--dns-result-order=ipv4first` for wrangler
   `render/learn.ts`, migration 0035 (`learn_events`, `learn_weeks`), `/learn`;
   `TurnContext.learn`, `ExchangeLog.seal`/`writeSealed`/`latest`,
   `Exchange.understood`, `reminders.leave` `stated`, `AppOutbox.expireDue` seqs.
+  Staging deployed (d53db582, migration 0035).
 
 - 2026-10-13: Apps 0.17.2–0.17.3, from phone runs: the swipe spans the full
   height (85% → 15%), and keys are taps once the keypad has settled
