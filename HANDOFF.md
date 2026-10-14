@@ -200,7 +200,8 @@ Network on the hotspot: `NODE_OPTIONS=--dns-result-order=ipv4first` for wrangler
   `/learn export`, `lp:` buttons, route `GET /app/learn/export`,
   `Repository.leaveDefaultMinutes`, `router.ts` `COMMAND_KINDS`; app 0.18.0
   (`LearnExportLogic.kt`, `DownloadsSave.kt`); `scripts/learn-to-evals.ts`, skill
-  `learn-review`, `docs/learn-log.md`.
+  `learn-review`, `docs/learn-log.md`. Staging deployed (ab7c7087, migration
+  0036; the export route answers 401 unsigned).
 
 - 2026-10-14: Facts said in passing are offered on a card (§6.26):
   `namesRememberAboutMe` (`agent/tool-groups.ts`), `ToolContext.explicitFact`,
