@@ -134,6 +134,25 @@ const loginWall: Screen = {
   ],
 };
 
+// The Israel Rail station picker as the phone read it (2026-10-14): its search
+// box is hidden from accessibility, so the list has no field at all.
+const RAIL: AllowedApp = { package: 'com.moblin.israeltrain', label: 'רכבת ישראל', askEveryTap: false };
+const railPicker: Screen = {
+  hash: h(9),
+  elements: [
+    { i: 0, t: 'מאיפה?, לא בטוח/ה באיזו תחנה כדאי לעלות?, אפשר להזין כתובת', f: 'c', b: b(81) },
+    { i: 1, t: 'חזרה', f: 'c', b: b(82) },
+    { i: 2, t: 'סגירה', f: 'c', b: b(83) },
+    { i: 3, f: 's', b: b(84) },
+    { i: 4, t: 'אופקים', f: 'c', b: b(85) },
+    { i: 5, t: 'אופקים מידע על תחנות', f: 'c', b: b(86) },
+    { i: 6, t: 'אחיהוד', f: 'c', b: b(87) },
+    { i: 7, t: 'אחיהוד מידע על תחנות', f: 'c', b: b(88) },
+    { i: 8, t: 'אשקלון', f: 'c', b: b(89) },
+    { i: 9, t: 'אשקלון מידע על תחנות', f: 'c', b: b(90) },
+  ],
+};
+
 const thin: Screen = { hash: h(8), elements: [{ i: 0, f: 'c', b: b(71) }, { i: 1, f: 'c', b: b(72) }, { i: 2, t: 'טוען…', f: '' }] };
 
 const CASES: Case[] = [
@@ -188,6 +207,18 @@ const CASES: Case[] = [
     never: [2],
   },
   { id: 'login-wall', app: FID, task: 'לחפש בפיד סטימצקי', inputs: ['סטימצקי'], before: [], screen: loginWall, want: { kinds: ['fail', 'ask'] }, never: [1, 2] },
+  {
+    id: 'rail-no-field',
+    app: RAIL,
+    task: 'לבדוק נסיעה ברכבת עכשיו מראש העין צפון להרצליה',
+    inputs: ['ראש העין צפון', 'הרצליה'],
+    before: [{ kind: 'tap', b: b(80) }],
+    screen: railPicker,
+    // Scroll the station list (or tap into it); never type into a button.
+    want: { kinds: ['scroll', 'tap'] },
+    // None of the stations on screen is the one asked for.
+    never: [4, 5, 6, 7, 8, 9],
+  },
   { id: 'thin-tree', app: FID, task: 'לחפש בפיד סטימצקי', inputs: ['סטימצקי'], before: [], screen: thin, want: { kinds: [] }, thin: true },
 ];
 

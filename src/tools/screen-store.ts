@@ -93,7 +93,8 @@ export type ReportStatus = 'dispatched' | 'not_accepted' | 'refused' | 'uncertai
 export type StepReport = { actionId: string; status: ReportStatus; reason?: string | undefined };
 
 /** One past step, codes only: the action's kind and what the phone reported. */
-export type HistoryEntry = { k: ScreenAction['kind']; r: 'd' | 'n' | 'r' | 'p'; a: string; ns?: true };
+/** One past step, as codes only: `in` is the approved input a `type` typed (its number, never screen text). */
+export type HistoryEntry = { k: ScreenAction['kind']; r: 'd' | 'n' | 'r' | 'p'; a: string; ns?: true; in?: number };
 
 /** The conversation a task was confirmed in: which models' family its steps ask (2026-10-13). */
 export type ScreenMode = 'local' | 'smart';
@@ -763,7 +764,13 @@ export function withinGrant(phoneClass: RiskClass, maxClass: RiskClass): boolean
 }
 
 function historyEntry(action: ScreenAction & { ns?: true }, actionId: string): HistoryEntry {
-  return { k: action.kind, r: 'p', a: actionId, ...(action.ns ? { ns: true as const } : {}) };
+  return {
+    k: action.kind,
+    r: 'p',
+    a: actionId,
+    ...(action.ns ? { ns: true as const } : {}),
+    ...(action.kind === 'type' ? { in: action.input } : {}),
+  };
 }
 
 function taskOf(row: SqlRow): ScreenTask {

@@ -5,7 +5,7 @@ system is, where things live, and what breaks easily, then links out. It does
 **not** repeat the rules in `CLAUDE.md` (always loaded) or the spec in
 `PLAN.md` (read by section, never whole).
 
-_Last updated: 2026-10-14 · server at migration 0036 · agent prompt a10 + smart note s2 + screen step s1 · parser prompt v6 · app 0.18.2 (on the phone) · smart model gemini-3.5-flash-lite_
+_Last updated: 2026-10-14 · server at migration 0036 · agent prompt a10 + smart note s2 + screen step s2 · parser prompt v6 · app 0.18.2 (on the phone) · smart model gemini-3.5-flash-lite_
 
 ## 1. What this is
 
@@ -194,6 +194,13 @@ Network on the hotspot: `NODE_OPTIONS=--dns-result-order=ipv4first` for wrangler
 | [SETUP.md](SETUP.md) | Setting up a new copy from zero: accounts, Groq key, models, secrets, deploy, app, AI agent. |
 
 ## 8. Session log (docs)
+
+- 2026-10-14: Screen agent smarter, from a failed Israel Rail run (the
+  station picker hides its search box; qwen typed into a button, `model_error`):
+  one corrective call per step on the same model (`whyNot`, `askAgain` in
+  `agent/screen-step.ts`), 1,024 completion tokens (qwen's thinking was cut
+  off at 150/256), task ceiling 24K, `HistoryEntry.in`, prompt s2, eval case
+  `rail-no-field`. No new modules or tables.
 
 - 2026-10-14: App 0.18.2: the `/` list shows each command on its own row,
   the command over what it does, the chat's full width, and offers every

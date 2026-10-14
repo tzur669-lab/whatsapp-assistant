@@ -34,16 +34,21 @@ import type { PolicyAction, RiskClass } from './screen-policy.js';
 import { MAX_SCREEN_INPUTS, SCREEN_GROQ_DAY_TOKENS, SCREEN_MAX_STEPS } from '../tools/screen-store.js';
 import type { Ended, HistoryEntry, ScreenAction, ScreenMode, ScreenStore, ScreenTask, StepReport } from '../tools/screen-store.js';
 
-export const SCREEN_PROMPT_VERSION = 's1';
-/** Reserved in full before each call (PLAN §6.28, budget): a Groq model's completion. */
-export const SCREEN_MAX_COMPLETION_TOKENS = 150;
+export const SCREEN_PROMPT_VERSION = 's2';
+/**
+ * Reserved in full before each call (PLAN §6.28, budget): a Groq model's
+ * completion, as the chat's. qwen reasons inside it: on the Israel Rail picker
+ * (2026-10-14) a short thought (98 tokens) typed into a button, a full one
+ * (288) scrolled the list, and 150 or 256 cut it off with no answer at all.
+ */
+export const SCREEN_MAX_COMPLETION_TOKENS = 1_024;
 /**
  * A Gemini model's completion. Gemini 3 thinks inside `max_tokens`, and a
  * small cap ended `length` with an empty message (models.ts, 2026-10-08).
  */
 export const SCREEN_GEMINI_COMPLETION_TOKENS = 1_024;
 /** The most one local task may reserve, all steps together: a reservation limit, with a one-call overshoot. */
-export const SCREEN_TASK_TOKEN_CEILING = 18_000;
+export const SCREEN_TASK_TOKEN_CEILING = 24_000;
 /** The same for a smart task: Gemini is limited by requests, and each call reserves a larger completion. */
 export const SCREEN_SMART_TASK_TOKEN_CEILING = 48_000;
 /** The prompt estimate is multiplied by this for the reservation. */
@@ -160,11 +165,11 @@ Reply with exactly one JSON object and nothing else, one of:
 {"action":"unsure","summary":"…"} the screen does not settle the question: say what you saw, in Hebrew
 {"action":"ask","question":"…"} you need something only the user knows: one short question in Hebrew
 {"action":"fail","reason":"cannot_see"|"not_found"|"login_needed"|"blocked"|"off_task"|"other"}
-Rules: use only element numbers from the current list, with an action it allows (tap: button; type and submit: field; scroll: list). Never invent text to type. Do not buy, pay, send, delete or confirm anything the task did not ask for; code will ask the user before such taps anyway. Never type an input again once a step says it was typed: submit the field, or go on. If the task cannot be done in this app, fail with off_task. Say "done" only from what the screen shows, never from what you expect.`;
+Rules: use only element numbers from the current list, with an action its kind allows: tap a button, type into and submit a field, scroll a list. A text cannot be tapped, and nothing can be typed into a button. If the task needs typing but the list has no field, tap the button that opens the search or the place to type (a search icon, a "from"/"to" box), or find the item itself in a list, scrolling it. Before acting, read the whole list: when the answer is already on the screen, say done. Steps so far are your own past actions: do not repeat one that changed nothing. Never invent text to type. Do not buy, pay, send, delete or confirm anything the task did not ask for; code will ask the user before such taps anyway. Never type an input again once a step says it was typed: submit the field, or go on. If the task cannot be done in this app, fail with off_task. Say "done" only from what the screen shows, never from what you expect.`;
 
-/** One element as the model reads it: every string scrubbed, never the binding. */
-function elementLine(el: ScreenElement): string {
-  const kind = el.f.includes('e')
+/** What the model is told an element is: the kind decides the actions it takes. */
+function kindOf(el: ScreenElement): string {
+  return el.f.includes('e')
     ? 'field'
     : el.f.includes('s')
       ? 'list'
@@ -175,7 +180,11 @@ function elementLine(el: ScreenElement): string {
         : el.f.includes('c')
           ? 'button'
           : 'text';
-  const parts = [`${el.i}`, kind];
+}
+
+/** One element as the model reads it: every string scrubbed, never the binding. */
+function elementLine(el: ScreenElement): string {
+  const parts = [`${el.i}`, kindOf(el)];
   if (el.t !== undefined && el.t.trim() !== '') parts.push(JSON.stringify(clean(el.t)));
   if (el.h !== undefined && el.h.trim() !== '') parts.push(`hint ${JSON.stringify(clean(el.h))}`);
   if (el.v !== undefined && el.v.trim() !== '') parts.push(`id ${JSON.stringify(clean(el.v))}`);
@@ -199,7 +208,8 @@ const KIND_WORD: Readonly<Record<ScreenAction['kind'], string>> = {
 
 function historyLine(entry: HistoryEntry, number: number): string {
   const result = entry.r === 'd' ? 'done' : entry.r === 'n' ? 'not accepted by the app' : entry.r === 'r' ? 'not done (the screen changed)' : 'pending';
-  return `${number}. ${KIND_WORD[entry.k]}: ${result}`;
+  const what = entry.k === 'type' && entry.in !== undefined ? `type input ${entry.in}` : KIND_WORD[entry.k];
+  return `${number}. ${what}: ${result}`;
 }
 
 /** The step's user message, built by code from scrubbed parts only. */
@@ -225,6 +235,51 @@ export function stepUserMessage(params: {
     params.history.length > 0 ? `Steps so far:\n${params.history.map((h, i) => historyLine(h, i + 1)).join('\n')}` : 'Steps so far: none',
     `Screen elements (number | kind | text):\n${params.elements.map(elementLine).join('\n')}`,
   ].join('\n');
+}
+
+// -- an action that cannot run ----------------------------------------------
+
+export type Refusal = {
+  code: 'unparsed' | 'no_element' | 'not_field' | 'not_button' | 'not_list' | 'disabled' | 'no_input';
+  text: string;
+};
+
+/**
+ * Why `action` cannot run on this screen, in code's own words for one more try
+ * (found on the phone, 2026-10-14: the Israel Rail station picker lists no
+ * field, the model typed into a button, and the task ended); null when it can.
+ * Names only element numbers and kinds, never screen text.
+ */
+export function whyNot(action: StepAction | null, elements: readonly ScreenElement[], inputCount: number): Refusal | null {
+  if (action === null) return { code: 'unparsed', text: 'That was not one JSON object from the list.' };
+  if (action.action !== 'tap' && action.action !== 'type' && action.action !== 'submit' && action.action !== 'scroll') return null;
+  const el = elements[action.i];
+  if (!el) return { code: 'no_element', text: `There is no element ${action.i} on this screen.` };
+  const kind = kindOf(el);
+  if (action.action === 'type' || action.action === 'submit') {
+    if (!el.f.includes('e')) {
+      const none = elements.some((other) => other.f.includes('e'))
+        ? ''
+        : ' This screen lists no field: tap what opens a search, or find the item in a list (scroll it).';
+      return { code: 'not_field', text: `Element ${action.i} is a ${kind}, not a field: ${action.action} takes only a field.${none}` };
+    }
+  } else if (action.action === 'tap' && !el.f.includes('c')) {
+    return { code: 'not_button', text: `Element ${action.i} is a ${kind} and cannot be tapped: tap takes only a button.` };
+  } else if (action.action === 'scroll' && !el.f.includes('s')) {
+    return { code: 'not_list', text: `Element ${action.i} is a ${kind}, not a list: scroll takes only a list.` };
+  }
+  if (el.b === undefined) return { code: 'not_button', text: `Element ${action.i} takes no action.` };
+  if (el.f.includes('d')) return { code: 'disabled', text: `Element ${action.i} is disabled.` };
+  if (action.action === 'type' && action.input > inputCount) {
+    return {
+      code: 'no_input',
+      text:
+        inputCount === 0
+          ? 'There are no approved inputs: nothing may be typed.'
+          : `There is no input ${action.input}: the approved inputs are 1 to ${inputCount}.`,
+    };
+  }
+  return null;
 }
 
 // -- one step -----------------------------------------------------------------
@@ -476,19 +531,83 @@ export async function runScreenStep(
     }
 
     const { provider, reservation, response } = answered;
+    spent += settleCall(deps, task, request.principal, provider.model, reservation, response);
     const measured = response.usage.promptTokens + response.usage.completionTokens;
-    deps.budget.settle(reservation, measured);
-    const charged = measured > 0 ? measured : reservation.tokens;
-    store.addTokens(task.taskId, charged);
-    if (isGroq(provider.model)) store.addModelDayTokens(request.principal, provider.model, charged);
     log.info('screen_step', { step: request.step, model: provider.model, tokens: measured, ms: deps.now() - started });
 
-    const action = parseStepAction(response.text);
+    let action = parseStepAction(response.text);
+    const refused = whyNot(action, request.screen.elements, sealed.inputs.length);
+    if (refused) {
+      // One more try on the same model, told why in code's words; never a third.
+      log.info('screen_step_retry', { step: request.step, model: provider.model, why: refused.code });
+      const retry: AgentMessage[] = [
+        ...messages,
+        // Only a parsed action goes back: never the model's free text.
+        { role: 'assistant', content: action ? JSON.stringify(action) : '(not one JSON action)' },
+        { role: 'user', content: `${refused.text} Reply with one JSON object from the list and nothing else.` },
+      ];
+      action = await askAgain(deps, task, request.principal, provider, retry, spent, ceiling, stepDeadline);
+      if (whyNot(action, request.screen.elements, sealed.inputs.length)) return ending('failed', 'model_error');
+    }
     if (!action) return ending('failed', 'model_error');
     return decideStep(deps, task, request.step, action, request.screen.elements, sealed.inputs.length, app.askEveryTap, ending);
   } finally {
     deps.lock.release(request.principal, turnId);
   }
+}
+
+/** Charges an answered call to the budget, the task and the model's day share; returns what it charged. */
+function settleCall(deps: StepDeps, task: ScreenTask, principal: string, model: string, reservation: Reservation, response: AgentOk): number {
+  const measured = response.usage.promptTokens + response.usage.completionTokens;
+  deps.budget.settle(reservation, measured);
+  const charged = measured > 0 ? measured : reservation.tokens;
+  deps.store.addTokens(task.taskId, charged);
+  if (isGroq(model)) deps.store.addModelDayTokens(principal, model, charged);
+  return charged;
+}
+
+/**
+ * The one corrective call of a step: the same model, only when it fits the
+ * task ceiling, the model's screen share and the step's time. Any refusal or
+ * failure is null, never another model or another try.
+ */
+async function askAgain(
+  deps: StepDeps,
+  task: ScreenTask,
+  principal: string,
+  provider: AgentProvider,
+  messages: AgentMessage[],
+  spent: number,
+  ceiling: number,
+  stepDeadline: number,
+): Promise<StepAction | null> {
+  const model = provider.model;
+  const chars = messages.reduce((sum, m) => sum + (typeof m.content === 'string' ? m.content.length : 0), 0);
+  const perToken = modelEntry(model)?.charsPerToken ?? 3;
+  const reserved = Math.ceil((chars / perToken) * SCREEN_ESTIMATE_MARGIN) + stepCompletionTokens(model);
+  if (spent + reserved > ceiling) return null;
+  if (isGroq(model) && deps.store.modelDayTokens(principal, model) + reserved > SCREEN_GROQ_DAY_TOKENS) return null;
+  const remaining = stepDeadline - deps.now();
+  if (remaining < 1_000) return null;
+  const reservation = deps.budget.reserve(model, reserved);
+  if (!reservation) return null;
+  const response = await provider.complete(messages, [], { signal: AbortSignal.timeout(remaining) });
+  if (!response.ok) {
+    const error = response.error;
+    deps.log.warn('screen_step_model_failed', { model, code: error.code, ...(error.status ? { status: error.status } : {}) });
+    if (error.code === 'rate_limited') {
+      deps.budget.refused(reservation, error.retryAfterSeconds, error.daily === true ? 'day' : undefined);
+    } else if (wasNeverSent(error)) {
+      deps.budget.release(reservation);
+    } else {
+      deps.budget.chargeUnanswered(reservation);
+      deps.store.addTokens(task.taskId, reservation.tokens);
+      if (isGroq(model)) deps.store.addModelDayTokens(principal, model, reservation.tokens);
+    }
+    return null;
+  }
+  settleCall(deps, task, principal, model, reservation, response);
+  return parseStepAction(response.text);
 }
 
 /** A bounded wait: one request per wait, at most six, never past the deadline. */
@@ -532,9 +651,7 @@ function decideStep(
     case 'submit':
     case 'scroll': {
       const el = elements[action.i];
-      const needs = action.action === 'tap' ? 'c' : action.action === 'scroll' ? 's' : 'e';
-      if (!el || el.b === undefined || !el.f.includes(needs) || el.f.includes('d')) return ending('failed', 'model_error');
-      if (action.action === 'type' && action.input > inputCount) return ending('failed', 'model_error');
+      if (!el || el.b === undefined || whyNot(action, elements, inputCount)) return ending('failed', 'model_error');
       const wire: ScreenAction & { ns?: true } =
         action.action === 'type'
           ? { kind: 'type', b: el.b, input: action.input, ...(isSearchField(el) ? {} : { ns: true as const }) }

@@ -191,7 +191,8 @@ Each move is one conditional `UPDATE`. Outcomes shown to the user:
 - The stop button is `ss:<taskId>:<nonce>:no`; its nonce is kept as is too.
   It can only stop a task.
 - Past steps reach the step model as codes ("tap → done"), never as the
-  label of what was tapped: no screen text is kept between steps.
+  label of what was tapped: no screen text is kept between steps. A `type`
+  step names its input's number ("type input 1 → done", 2026-10-14).
 - The step model answers with one JSON object as text, not a tool call.
 - The agent eval cases are `scr-` (`sc-` already prefixes other cases).
 - A report's `reason` is the closed list `screen_changed`, `target_ambiguous`, `tap_refused`, `not_allowed`, `left_app`, `stopped`, `error` (`stepReportSchema`); the phone maps its own codes onto it. The end codes of `/result` are the list in section C.
@@ -318,8 +319,8 @@ Each allowlisted app also has a per-app setting, "לשאול לפני כל לח�
 
 ### 6. Budget
 
-- Per step about 1.5K tokens; a 12-step task at most about 18K.
-- Each task has a ceiling of **18K measured tokens** (a reservation limit): before each step the reservation (estimated prompt × 1.3 plus `max_tokens` 150) must fit in what is left; after it, measured usage replaces the reservation; a failed or 429 call is charged its reservation. The measured total can pass 18K by one call only (worst case: the prompt's UTF-8 byte count plus 150).
+- Per step about 1.5K tokens (1.1–1.3K measured on qwen, 2026-10-14; a corrective call about doubles its step); a 12-step task at most about 24K.
+- Each task has a ceiling of **24K measured tokens** (a reservation limit; 18K with `max_tokens` 150 until 2026-10-14, when qwen's thinking was cut off): before each step the reservation (estimated prompt × 1.3 plus `max_tokens` 1,024) must fit in what is left; a step's one corrective call (2026-10-14, PLAN §6.28) reserves the same way; after it, measured usage replaces the reservation; a failed or 429 call is charged its reservation. The measured total can pass 18K by one call only (worst case: the prompt's UTF-8 byte count plus 150).
 - At most **10 tasks a day** (Asia/Jerusalem day; 3 until 2026-10-13). A task ends `quota` only when every model of its family is out for the day.
 - `SCREEN_MODELS` starts as qwen; moving to a second Groq model only after a human reads its `eval:screen` report. *2026-10-13: the user added gpt-oss-120b and the Gemini list before that read (PLAN §14).*
 

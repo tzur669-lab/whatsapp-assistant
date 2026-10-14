@@ -420,12 +420,89 @@ describe('one screen step', () => {
     expect(m.calls).toHaveLength(0);
   });
 
-  it('refuses an action the element does not take, an unknown index or an input that does not exist', async () => {
+  it('refuses an action the element does not take, an unknown index or an input that does not exist, twice in a row', async () => {
     for (const text of ['{"action":"type","i":1,"input":1}', '{"action":"tap","i":40}', '{"action":"type","i":0,"input":2}', '{"action":"tap","i":1,"x":5,"y":9}', 'tap 1']) {
       const t = await task();
-      const result = await runScreenStep(deps(model([{ text }])), { taskId: t.taskId, principal: PRINCIPAL, step: 1, screen: searchScreen() });
+      const m = model([{ text }, { text }]);
+      const result = await runScreenStep(deps(m), { taskId: t.taskId, principal: PRINCIPAL, step: 1, screen: searchScreen() });
       expect(result.ended?.reason, text).toBe('model_error');
+      expect(m.calls, text).toHaveLength(2);
+      // Two calls each: a new minute, so the per-minute bucket never decides.
+      clock += 60_000;
     }
+  });
+
+  // Found on the phone (Israel Rail, 2026-10-14): the station picker lists no
+  // field, the model typed into a button, and the whole task ended.
+  it('asks the same model once more, saying in code why, when its action cannot run', async () => {
+    const t = await task();
+    const m = model([{ text: '{"action":"type","i":1,"input":1}' }, { text: '{"action":"tap","i":1}' }]);
+    const result = await runScreenStep(deps(m), { taskId: t.taskId, principal: PRINCIPAL, step: 1, screen: searchScreen() });
+    expect(result.answer).toMatchObject({ status: 'act', action: { kind: 'tap', b: b(2) } });
+    expect(m.calls).toHaveLength(2);
+    const retry = m.calls[1]!;
+    expect(retry.slice(0, 2)).toEqual(m.calls[0]);
+    expect(retry[2]).toEqual({ role: 'assistant', content: '{"action":"type","i":1,"input":1}' });
+    expect(retry[3]?.role).toBe('user');
+    expect(String(retry[3]?.content)).toContain('Element 1 is a button, not a field');
+    expect(store.get(t.taskId)?.tokens).toBe(2_400);
+  });
+
+  it('tells the model when the screen has no field at all', async () => {
+    const t = await task();
+    const noField: Screen = {
+      hash: hash(9),
+      elements: [
+        { i: 0, t: 'מאיפה?', f: 'c', b: b(1) },
+        { i: 1, t: 'אופקים', f: 'c', b: b(2) },
+        { i: 2, f: 's', b: b(3) },
+      ],
+    };
+    const m = model([{ text: '{"action":"type","i":0,"input":1}' }, { text: '{"action":"scroll","i":2,"dir":"fwd"}' }]);
+    const result = await runScreenStep(deps(m), { taskId: t.taskId, principal: PRINCIPAL, step: 1, screen: noField });
+    expect(result.answer).toMatchObject({ status: 'act', action: { kind: 'scroll', b: b(3) } });
+    expect(String(m.calls[1]![3]?.content)).toContain('This screen lists no field');
+  });
+
+  it('never echoes text that is not one JSON action back to the model', async () => {
+    const t = await task();
+    const m = model([{ text: '<think>secret</think>tap the first one' }, { text: '{"action":"tap","i":1}' }]);
+    const result = await runScreenStep(deps(m), { taskId: t.taskId, principal: PRINCIPAL, step: 1, screen: searchScreen() });
+    expect(result.answer.status).toBe('act');
+    expect(JSON.stringify(m.calls[1])).not.toContain('secret');
+    expect(JSON.stringify(m.calls[1])).not.toContain('tap the first one');
+  });
+
+  it('never retries past the task ceiling, nor after a failed call', async () => {
+    const t = await task();
+    // Room for the first call (charged 1,200), not for the retry after it.
+    store.addTokens(t.taskId, SCREEN_TASK_TOKEN_CEILING - 3_000);
+    const m = model([{ text: '{"action":"type","i":1,"input":1}' }]);
+    const result = await runScreenStep(deps(m), { taskId: t.taskId, principal: PRINCIPAL, step: 1, screen: searchScreen() });
+    expect(result.ended?.reason).toBe('model_error');
+    expect(m.calls).toHaveLength(1);
+
+    const u = await task();
+    const failing = model([{ text: '{"action":"tap","i":40}' }, { error: 'timeout' }]);
+    const second = await runScreenStep(deps(failing), { taskId: u.taskId, principal: PRINCIPAL, step: 1, screen: searchScreen() });
+    expect(second.ended?.reason).toBe('model_error');
+    expect(failing.calls).toHaveLength(2);
+  });
+
+  it('names the approved input a past step typed, never a screen label', () => {
+    const text = stepUserMessage({
+      task: 'חפש',
+      inputs: ['סטימצקי'],
+      appLabel: 'FID',
+      step: 3,
+      history: [
+        { k: 'tap', r: 'd', a: b(1) },
+        { k: 'type', r: 'd', a: b(2), in: 1 },
+      ],
+      elements: searchScreen().elements,
+    });
+    expect(text).toContain('1. tap: done');
+    expect(text).toContain('2. type input 1: done');
   });
 
   it('done is "from what I saw", never "✓ done", and unsure is "I could not tell"', async () => {
