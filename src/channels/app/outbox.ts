@@ -208,11 +208,13 @@ export class AppOutbox {
    * failed; the reminders among them are returned for `retireSent`, which the
    * caller runs in the same transaction.
    */
-  expireDue(): { reminderIds: string[]; expired: number } {
+  expireDue(): { reminderIds: string[]; expired: number; seqs: number[] } {
     const now = this.now();
     const rows = this.sql.exec('DELETE FROM app_outbox WHERE expires_at <= ? RETURNING seq, reminder_id', now);
     const reminderIds: string[] = [];
+    const seqs: number[] = [];
     for (const row of rows) {
+      seqs.push(Number(row['seq']));
       const failed = this.repo.applyDeliveryStatus({
         wamid: outboxWamid(Number(row['seq'])),
         status: 'failed',
@@ -221,7 +223,7 @@ export class AppOutbox {
       });
       if (failed.failedReminderId) reminderIds.push(failed.failedReminderId);
     }
-    return { reminderIds, expired: rows.length };
+    return { reminderIds, expired: rows.length, seqs };
   }
 
   /**

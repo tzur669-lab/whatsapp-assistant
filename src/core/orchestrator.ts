@@ -16,6 +16,7 @@
  *
  * One command produces at most one action and one reply (invariant 10).
  */
+import type { LearnSink } from './learn-store.js';
 import type { IntentDraft } from '../nlu/intent-schema.js';
 import type { OutboundButton } from '../channels/types.js';
 import { decide } from '../policy/engine.js';
@@ -159,6 +160,8 @@ export type TurnContext = {
    * not started; never reaches a write's execute (`tools/turn-signal.ts`).
    */
   signal?: AbortSignal;
+  /** What this turn tells the learning journal (block K, K1). Filled here, written by the pipeline. */
+  learn?: LearnSink;
 };
 
 /** The tools with an executable body. The rest parse but cannot yet run. */
@@ -524,6 +527,7 @@ async function execute(
   // says so, and names the dispatch rather than anything about the call.
   const verdict = decision.confirmOnDevice ? 'CONFIRM_ON_DEVICE' : 'ALLOW';
   audit(turn, tool.name, decision, verdict, result.replyLater ? 'dispatched' : 'ok', result.externalRef);
+  if (!result.replyLater) turn.learn?.signals.push({ kind: 'executed', tool: tool.name, input });
 
   if (result.replyLater) return { text: '', silent: true };
 
@@ -690,6 +694,7 @@ async function runConfirmed(
     // The stored input, never a re-parse of the original message.
     const result = await tool.execute(checked.action.input, ctx);
     audit(turn, tool.name, null, 'CONFIRMED', 'ok', checked.action.id);
+    turn.learn?.signals.push({ kind: 'executed', tool: tool.name, input: checked.action.input });
     return { text: result.text, ...(result.rescheduleAlarm ? { rescheduleAlarm: true } : {}) };
   } catch (error) {
     ctx.log.error('confirmed_execute_failed', {
@@ -703,6 +708,7 @@ async function runConfirmed(
 
 function cancelPending(id: string, nonce: string, turn: TurnContext): Reply {
   const result = turn.pending.cancel(id, nonce, turn.tool.principal);
+  if (result.ok) turn.learn?.signals.push({ kind: 'confirm_no', tool: result.tool, createdAt: result.createdAt });
   return { text: result.ok ? statusText.cancelled : confirmFailureText(result.reason) };
 }
 
@@ -734,6 +740,7 @@ async function runDeferred(
   try {
     const result = await tool.undo(used.compensating, ctx);
     audit(turn, tool.name, null, 'UNDO', 'ok');
+    turn.learn?.signals.push({ kind: 'undo', tool: used.tool, createdAt: used.createdAt });
     return withPrivacy(used.tool, { text: result.text, rescheduleAlarm: true });
   } catch (error) {
     ctx.log.error('undo_failed', {
@@ -822,6 +829,10 @@ function audit(
   outcome: string,
   externalRef?: string,
 ): void {
+  if (turn.learn && UNDERSTOOD_VERDICTS.has(verdict) && outcome !== 'error') {
+    turn.learn.understood = true;
+    turn.learn.tools.push(tool);
+  }
   turn.tool.repo.audit({
     ts: turn.tool.nowMs,
     principal: turn.tool.principal,
@@ -832,6 +843,15 @@ function audit(
     externalRef: externalRef ?? null,
   });
 }
+
+/** A verdict that means the request was understood: a tool ran, or a confirmation or card was shown. */
+const UNDERSTOOD_VERDICTS: ReadonlySet<string> = new Set([
+  'ALLOW',
+  'CONFIRM',
+  'CONFIRM_ON_DEVICE',
+  'DEVICE_QUERY',
+  'CARD',
+]);
 
 /**
  * Attendees turn a Tier 1 event create into a Tier 3 external-facing action.

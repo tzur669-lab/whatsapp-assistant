@@ -137,7 +137,7 @@ describe('PendingActions', () => {
 
   it('cancels without executing', () => {
     const action = create();
-    expect(pending.cancel(action.id, action.nonce, SENDER)).toEqual({ ok: true });
+    expect(pending.cancel(action.id, action.nonce, SENDER)).toMatchObject({ ok: true, tool: action.tool });
     expect(pending.confirm(action.id, action.nonce, SENDER)).toEqual({
       ok: false,
       reason: 'not_pending',
@@ -254,7 +254,7 @@ describe('action cards (PLAN §6.20)', () => {
 
   it('can be refused once, through the card path', () => {
     const action = card();
-    expect(pending.cancel(action.id, action.nonce, SENDER, 'card')).toEqual({ ok: true });
+    expect(pending.cancel(action.id, action.nonce, SENDER, 'card')).toMatchObject({ ok: true, tool: action.tool });
     expect(pending.confirm(action.id, action.nonce, SENDER, 'card')).toEqual({ ok: false, reason: 'not_pending' });
   });
 

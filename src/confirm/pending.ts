@@ -175,7 +175,7 @@ export class PendingActions {
     nonce: string,
     principal: string,
     channel: PendingChannel = 'chat',
-  ): { ok: true } | { ok: false; reason: ConfirmFailure } {
+  ): { ok: true; tool: string; createdAt: number } | { ok: false; reason: ConfirmFailure } {
     const checked = this.check(id, nonce, principal, channel);
     if (!checked.ok) return checked;
 
@@ -183,7 +183,7 @@ export class PendingActions {
       `UPDATE pending_actions SET status = 'cancelled' WHERE id = ? AND status = 'pending'`,
       id,
     );
-    return { ok: true };
+    return { ok: true, tool: checked.action.tool, createdAt: checked.action.createdAt };
   }
 
   /**

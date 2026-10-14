@@ -38,7 +38,7 @@ export type UndoOffer = {
 export type UndoFailure = 'not_found' | 'not_pending' | 'expired' | 'wrong_sender' | 'bad_nonce';
 
 export type UndoResult =
-  | { ok: true; tool: string; compensating: unknown }
+  | { ok: true; tool: string; compensating: unknown; createdAt: number }
   | { ok: false; reason: UndoFailure };
 
 export class UndoActions {
@@ -93,6 +93,7 @@ export class UndoActions {
       ok: true,
       tool: String(row['tool']),
       compensating: JSON.parse(String(row['compensating_json'])),
+      createdAt: Number(row['created_at']),
     };
   }
 

@@ -60,6 +60,11 @@ for review; `/misses` shows the last 10 (PLAN §6.23). `/forget` deletes the lat
 exchange, not the misses the user kept; they expire after 30 days.
 `/memory` lists the facts kept about the user, which the agent sees on every turn
 (PLAN §6.26); `/forget memory` deletes them all, and `/forget` alone keeps them.
+`/learn` (block K, PLAN §6.31) shows the learning journal's state and counts;
+`/learn on` sends the notice of what is kept, and collecting starts only when it is
+delivered (the phone's ack of its row; on WhatsApp, an accepted send); `/learn off`
+stops collecting and keeps the data; `/learn forget` deletes the journal and its
+weekly counters (not the misses). `/forget`, `/forget memory` and `/pair off` leave it.
 `/consents` (app, smart conversations, 2026-10-08) lists the data sources the
 conversation allowed, each with a button that revokes it; anywhere else it says
 consents exist only in smart conversations. `/forget` deletes every consent too.

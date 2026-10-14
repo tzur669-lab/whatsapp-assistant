@@ -43,6 +43,7 @@ const INVOCATIONS: Record<Command['kind'], string> = {
   ical: '/ical',
   city: '/city',
   birthday: '/birthday',
+  learn: '/learn',
 };
 
 /**

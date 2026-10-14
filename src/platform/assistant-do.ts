@@ -124,6 +124,8 @@ import { MODELS, modelEntry, SCREEN_MODELS, SCREEN_SMART_MODELS, SMART_MODELS } 
 import type { ModelEntry } from '../agent/models.js';
 import { TURN_TOKEN_CAP } from '../agent/loop.js';
 import { ConversationHistory } from '../agent/history.js';
+import { LearnStore } from '../core/learn-store.js';
+import { learnText } from '../render/learn.js';
 import { ExchangeLog } from '../core/exchanges.js';
 import { QuotaStore, SqlDayRequestCounter, meterGroqFetch } from '../core/quota.js';
 import type { ModelSpec, ServerLimits } from '../core/quota.js';
@@ -203,6 +205,8 @@ export class AssistantDO implements DurableObject {
   private readonly history: ConversationHistory;
   /** "לא הבנת" capture (§6.23). Given to the pipeline only, never to the agent. */
   private readonly exchanges: ExchangeLog;
+  /** The learning journal (block K, K1). Given to the pipeline only, never to the agent. */
+  private readonly learn: LearnStore;
   private readonly agentLock: AgentLock;
   /** Agent turns waiting for the phone to read (§6.21), or for the user's consent (slice 5). */
   private readonly agentTurns: SuspendedTurns;
@@ -298,6 +302,7 @@ export class AssistantDO implements DurableObject {
     };
     this.history = new ConversationHistory(this.sql, now, keyringOnce);
     this.exchanges = new ExchangeLog(this.sql, now, keyringOnce);
+    this.learn = new LearnStore(this.sql, this.repo, now, keyringOnce);
     this.facts = new FactStore(this.sql, now, keyringOnce);
     this.holdings = new HoldingStore(this.sql, now);
     this.routines = new RoutineStore(this.sql, now);
@@ -359,6 +364,11 @@ export class AssistantDO implements DurableObject {
         this.log.warn('watch_mail_tick_failed', { errorCode: error instanceof Error ? error.name : 'E_UNKNOWN' });
       }
       await this.maybeSendDigest();
+      try {
+        await this.maybeSendLearnNotice();
+      } catch (error) {
+        this.log.warn('learn_notice_tick_failed', { errorCode: error instanceof Error ? error.name : 'E_UNKNOWN' });
+      }
       return new Response(null, { status: 204 });
     }
 
@@ -1044,6 +1054,8 @@ export class AssistantDO implements DurableObject {
     this.pending.purgeOld();
     this.history.purgeExpired();
     this.exchanges.purgeExpired();
+    const learned = this.learn.purge();
+    if (learned.events + learned.weeks > 0) this.log.info('learn_purged', learned);
     this.lists.purgeRemoved();
     this.holdings.purge();
     this.agentTurns.purgeOld();
@@ -1164,6 +1176,31 @@ export class AssistantDO implements DurableObject {
   }
 
   /**
+   * The learning notice, again, when it is on and its notice was never
+   * delivered — expired unacked, or a send that failed (block K, K1). Hourly.
+   * On the app, the row and its marker are one transaction, so a second tick
+   * finds it outstanding and sends nothing.
+   */
+  private async maybeSendLearnNotice(): Promise<void> {
+    const version = this.learn.staleNotice();
+    if (version === null) return;
+    const principal = await this.selfPrincipal();
+    const seen = this.learn.state().seen;
+    const text = learnText.notice(seen, true);
+    if (this.channel() === 'app') {
+      this.sql.transaction(() => {
+        const accepted = this.outbox.accept({ kind: 'notice', text, principal });
+        this.learn.noticeQueued(version, accepted.seq);
+      });
+      await this.pushOutbox();
+      return;
+    }
+    if (!this.canDeliver(principal, Date.now())) return;
+    const sent = await this.send({ to: this.selfWaId(), text }, { kind: 'notice', principal });
+    if (sent.ok) this.learn.noticeDelivered(version);
+  }
+
+  /**
    * Ask the phone for the calls it missed (#20, 2026-10-06), and wait for its
    * answer a little: an empty push, a signed report back (`/app/calls-report`).
    * Only an app that declared `calls_report`; nothing on WhatsApp. No answer in
@@ -1238,11 +1275,14 @@ export class AssistantDO implements DurableObject {
       principal,
       services: this.services(),
       exchanges: this.exchanges,
+      learn: this.learn,
       ...(this.env.GROQ_API_KEY ? { transcribe: this.voiceTranscriber() } : {}),
     });
 
     if (outcome.action === 'reply' && event.kind !== 'status') {
-      await this.reply(event.from, outcome);
+      const sent = await this.reply(event.from, outcome);
+      // WhatsApp's strongest signal: Meta took the notice (block K, K1).
+      if (sent.ok && outcome.learnNotice !== undefined) this.learn.noticeDelivered(outcome.learnNotice);
     }
 
     // A new or cancelled reminder moves when the next alarm should fire, and so
@@ -1253,8 +1293,8 @@ export class AssistantDO implements DurableObject {
     }
   }
 
-  private async reply(to: string, outcome: Extract<PipelineOutcome, { action: 'reply' }>): Promise<void> {
-    await this.send({
+  private async reply(to: string, outcome: Extract<PipelineOutcome, { action: 'reply' }>): Promise<SendOutcome> {
+    return this.send({
       to,
       text: outcome.text,
       ...(outcome.buttons ? { buttons: outcome.buttons } : {}),
@@ -1537,6 +1577,7 @@ export class AssistantDO implements DurableObject {
         deviceCaps: this.devices.capsOf(deviceId),
         services: this.services(),
         exchanges: this.exchanges,
+        learn: this.learn,
         ...(this.env.GROQ_API_KEY ? { transcribe: this.voiceTranscriber() } : {}),
       });
     } catch (error) {
@@ -1617,6 +1658,7 @@ export class AssistantDO implements DurableObject {
         outcome.keepLinks === true,
         outcome.card,
         outcome.private === true,
+        outcome.learnNotice,
       );
     } else if (outcome.reason === 'reply_deferred') {
       // A call: its outcome comes later, as an answer to this same message.
@@ -1639,9 +1681,11 @@ export class AssistantDO implements DurableObject {
     keepLinks = false,
     card?: OutboxCard,
     isPrivate = false,
+    /** The learning notice's version (block K, K1): its row's seq is marked with the row, in one step. */
+    learnNotice?: number,
   ): OutboxRow {
-    const accepted = this.sql.transaction(() =>
-      this.outbox.accept({
+    const accepted = this.sql.transaction(() => {
+      const row = this.outbox.accept({
         kind: 'reply',
         text: storedText,
         buttons,
@@ -1650,8 +1694,10 @@ export class AssistantDO implements DurableObject {
         keepLinks,
         ...(card ? { card } : {}),
         ...(isPrivate ? { private: true } : {}),
-      }),
-    );
+      });
+      if (learnNotice !== undefined) this.learn.noticeQueued(learnNotice, row.seq);
+      return row;
+    });
     const row = this.outbox.get(accepted.seq);
     return { ...(row ?? { seq: accepted.seq, kind: 'reply', inReplyTo: messageId, buttons: [...buttons], createdAt: Date.now() }), text: httpText };
   }
@@ -1701,7 +1747,12 @@ export class AssistantDO implements DurableObject {
     const ack = parseAck(body);
     if (!ack) return appError(400, 'bad_request');
 
-    const { reminderIds } = this.sql.transaction(() => this.outbox.ack(ack.seqs));
+    const { reminderIds } = this.sql.transaction(() => {
+      const acked = this.outbox.ack(ack.seqs);
+      // The learning notice is delivered once the phone has its row (block K, K1).
+      this.learn.acked(ack.seqs);
+      return acked;
+    });
 
     // Delivered, so a calendar stand-in written back on WhatsApp would be a
     // second copy. Its removal is separate from the ack: a leftover popup is
@@ -1815,6 +1866,7 @@ export class AssistantDO implements DurableObject {
           deviceCaps: this.devices.capsOf(device.id),
           services: this.services(),
           exchanges: this.exchanges,
+        learn: this.learn,
         },
       );
     } catch (error) {
@@ -1898,6 +1950,8 @@ export class AssistantDO implements DurableObject {
     const expired = this.sql.transaction(() => {
       const result = this.outbox.expireDue();
       for (const id of result.reminderIds) this.reminders.retireSent(id);
+      // A learning notice nobody fetched is queued again by the next tick (block K, K1).
+      this.learn.expired(result.seqs);
       return result;
     });
     if (expired.expired > 0) {

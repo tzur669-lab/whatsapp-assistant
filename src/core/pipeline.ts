@@ -74,7 +74,7 @@ import { he } from '../render/he.js';
 import { missText } from '../render/misses.js';
 import { examplesFor } from '../render/fallback.js';
 import { factText, personalQuestion } from '../render/personal.js';
-import type { ExchangeLog } from './exchanges.js';
+import type { Exchange, ExchangeLog } from './exchanges.js';
 import { matchGroups } from '../agent/tool-groups.js';
 import type { GroupName } from '../agent/tool-groups.js';
 import { statusText } from '../render/status.js';
@@ -102,6 +102,10 @@ import { CONSENT_REVOKE_TOOL, consentSourceOf, echoesOwnInput, isConsentSource, 
 import type { ConsentButton, ConversationConsents } from '../agent/consents.js';
 import type { ConsentSource } from '../tools/registry.js';
 import { consentButtons, consentText } from '../render/consent.js';
+import { LEARN_NOTICE_VERSION, REPHRASE_WINDOW_MS, newLearnSink } from './learn-store.js';
+import type { LearnSink, LearnStore, SealedEvent } from './learn-store.js';
+import type { LearnAction } from './router.js';
+import { learnText } from '../render/learn.js';
 
 /** The agent and what it keeps (PLAN §6.19). Absent: the parser answers, as before. */
 export type AgentServices = {
@@ -219,6 +223,10 @@ export type PipelineDeps = {
   services?: Services;
   /** "לא הבנת" capture (§6.23). Never handed to the agent or a model. */
   exchanges?: ExchangeLog;
+  /** The learning journal (block K, K1). Like `exchanges`: the pipeline's only, never the agent's. */
+  learn?: LearnStore;
+  /** Set by `handleInbound` for the turn it is handling: what the turn tells the journal. */
+  learnSink?: LearnSink;
   /** Set by `handleInbound` for the turn it is handling (§6.14). */
   watch?: Stopwatch;
   /** The channel this turn arrived on. WhatsApp when absent (§6.18). */
@@ -252,6 +260,12 @@ export type PipelineOutcome =
       card?: ActionCard;
       /** Carries text someone else wrote: the app notifies generically (§6.21). */
       private?: true;
+      /**
+       * This reply is the learning notice of this version (block K, K1). Its
+       * delivery — the phone's ack of its row, or WhatsApp's accepted send —
+       * is what starts collecting.
+       */
+      learnNotice?: number;
     }
   /** The agent's turn waits for the phone to read this (§6.21). */
   | { action: 'device_query'; queryId: string; query: PhoneReadInput }
@@ -276,7 +290,9 @@ export async function handleInbound(
   // One stopwatch per turn, threaded through rather than global, so a test can
   // drive two turns at once and so nothing here is ambient state (§6.14).
   const watch = new Stopwatch();
-  const outcome = await route(event, { ...deps, watch });
+  const learnSink = newLearnSink();
+  const outcome = await route(event, { ...deps, watch, learnSink });
+  writeLearnSignals(deps, learnSink);
 
   // Numbers only, and the field names are a closed set — there is nowhere here
   // a message body could reach (§6.9).
@@ -520,6 +536,7 @@ async function respondToText(
       return memoryCommand(command.kind, deps);
     }
     if (command.kind === 'watches') return watchesCommand(deps);
+    if (command.kind === 'learn') return learnCommand(command.action, deps);
     if (command.kind === 'consents') return consentsCommand(event, deps);
     return {
       action: 'reply',
@@ -527,6 +544,9 @@ async function respondToText(
       ...(command.kind === 'connect_google' ? { keepLinks: true } : {}),
     };
   }
+
+  // A message that is not a command counts toward the week (block K, K1).
+  deps.learn?.bumpWeek(principal, 'messages');
 
   if (!deps.services) {
     log.info('nlu_not_configured', { wamid: event.wamid, stale });
@@ -582,7 +602,10 @@ async function respondToText(
       ? { ...answered, text: `${answered.text}\n\n${examplesFor(matchGroups(text))}` }
       : answered;
   if (!BUSY_REPLIES.has(outcome) && outcome.action === 'reply') {
-    await keepExchange(deps, event.wamid, event.conversationId ?? '', source.kind === 'voice' ? he.voicePlaceholder : text, text, outcome);
+    await keepExchange(deps, event.wamid, event.conversationId ?? '', source.kind === 'voice' ? he.voicePlaceholder : text, text, outcome, {
+      // Typed words of the user's own only: a voice note or shared text is never a rephrase.
+      rephrase: source.kind === 'text' && !event.forwarded,
+    });
   }
   // A smart conversation answered without its smart model, because none is
   // configured, says so on the first line (2026-10-08). Shared text is local
@@ -707,6 +730,8 @@ async function keepExchange(
   /** The words themselves, for the tool groups only. */
   words: string,
   outcome: Extract<PipelineOutcome, { action: 'reply' }>,
+  /** May this turn be the rephrase of the one before it (block K, K1)? */
+  options: { rephrase: boolean } = { rephrase: false },
 ): Promise<void> {
   const exchanges = deps.exchanges;
   if (!exchanges) return;
@@ -719,16 +744,120 @@ async function keepExchange(
     const intent = typeof row?.['intent'] === 'string' ? row['intent'] : null;
     // A private reply (notes) or someone else's words keep placeholders only.
     const kept = outcome.private === true;
-    await exchanges.record(deps.principal, conversation, seq, {
+    const exchange: Exchange = {
       user: kept ? he.privatePlaceholder : userText,
       reply: kept ? he.privatePlaceholder : (outcome.withoutEcho ?? outcome.text),
       outcome: errorCode ? `${decision}/${errorCode}` : decision,
       intent,
       groups: matchGroups(words),
       at: deps.now(),
+      understood: deps.learnSink?.understood ?? false,
+    };
+
+    // Read the previous exchange before this one replaces it: was this turn
+    // the rephrase of a request that failed a moment ago?
+    const pair = options.rephrase && !kept ? await rephrasePair(deps, exchanges, conversation, seq, exchange) : null;
+    const sealed = await exchanges.seal(deps.principal, conversation, exchange);
+    // One synchronous step: the pair only when nothing newer landed while
+    // this one was encrypting, so the pair is the two turns it names.
+    deps.repo.transaction(() => {
+      const before = exchanges.currentSeq(deps.principal, conversation);
+      exchanges.writeSealed(deps.principal, conversation, seq, sealed);
+      if (pair && deps.learn && before === pair.prevSeq) {
+        deps.learn.insertSealed(pair.event);
+        deps.learn.bumpWeek(deps.principal, 'rephrases');
+      }
     });
   } catch {
     deps.log.warn('exchange_keep_failed', { wamid });
+  }
+}
+
+/**
+ * The previous exchange failed (no tool ran, no card was shown), was the
+ * user's own typed words, is under three minutes old, and this turn — also the
+ * user's own words — was understood: one heuristic `rephrase` row holding both
+ * (block K, K1). The placeholders `keepExchange` writes are the exclusions.
+ */
+async function rephrasePair(
+  deps: PipelineDeps,
+  exchanges: ExchangeLog,
+  conversation: string,
+  seq: number,
+  current: Exchange,
+): Promise<{ prevSeq: number; event: SealedEvent } | null> {
+  const learn = deps.learn;
+  const sink = deps.learnSink;
+  if (!learn || !sink || !current.understood || !learn.collectable('rephrase')) return null;
+  if (sink.tools.includes('screen.task')) return null;
+  const previous = await exchanges.latest(deps.principal, conversation);
+  if (!previous || previous.seq >= seq) return null;
+  const prev = previous.exchange;
+  if (prev.understood !== false) return null;
+  if (current.at < prev.at || current.at - prev.at >= REPHRASE_WINDOW_MS) return null;
+  if (PLACEHOLDERS.has(prev.user) || PLACEHOLDERS.has(prev.reply)) return null;
+  const start = learn.startOf('rephrase');
+  if (start === null || prev.at < start) return null;
+  const event = await learn.sealRephrase(
+    deps.principal,
+    { user: prev.user, reply: prev.reply, outcome: prev.outcome, intent: prev.intent },
+    { user: current.user, reply: current.reply, outcome: current.outcome, intent: current.intent },
+    { gapSeconds: (current.at - prev.at) / 1000, tools: sink.tools },
+  );
+  return event ? { prevSeq: previous.seq, event } : null;
+}
+
+/** What `keepExchange` stores instead of words that are not the user's own typed text. */
+const PLACEHOLDERS: ReadonlySet<string> = new Set([he.privatePlaceholder, he.voicePlaceholder]);
+
+/**
+ * Write what the turn told the journal (block K, K1): an Undo, a declined
+ * confirmation, a "time to leave" that was set. Tool names and numbers only.
+ * Never throws: the journal is never worth the user's answer.
+ */
+function writeLearnSignals(deps: PipelineDeps, sink: LearnSink): void {
+  const learn = deps.learn;
+  if (!learn || sink.signals.length === 0) return;
+  try {
+    const now = deps.now();
+    for (const signal of sink.signals) {
+      if (signal.kind === 'executed') {
+        if (signal.tool !== 'reminders.leave') continue;
+        const input = signal.input as { minutes?: unknown; stated?: unknown } | null;
+        // Older rows carry no `stated`: they teach nothing.
+        if (typeof input?.minutes === 'number' && typeof input.stated === 'boolean') {
+          learn.addLeave(deps.principal, input.minutes, input.stated);
+        }
+      } else {
+        learn.addTap(deps.principal, signal.kind, signal.tool, (now - signal.createdAt) / 1000);
+      }
+    }
+  } catch {
+    deps.log.warn('learn_signal_failed', {});
+  }
+}
+
+/** `/learn`, `/learn on|off|forget` (block K, K1). Code only; nothing here reaches a model. */
+function learnCommand(action: LearnAction, deps: PipelineDeps): PipelineOutcome {
+  const learn = deps.learn;
+  if (!learn) return { action: 'reply', text: learnText.unavailable };
+  switch (action) {
+    case 'status':
+      return { action: 'reply', text: learnText.status(learn.status(deps.principal)) };
+    case 'on': {
+      const before = learn.state();
+      if (learn.turnOn() === 'already') return { action: 'reply', text: learnText.alreadyOn };
+      // Re-sent while it was on: a stale version, or one still waiting for the phone.
+      return {
+        action: 'reply',
+        text: learnText.notice(before.seen, before.on),
+        learnNotice: LEARN_NOTICE_VERSION,
+      };
+    }
+    case 'off':
+      return { action: 'reply', text: learn.turnOff() ? learnText.off : learnText.alreadyOff };
+    case 'forget':
+      return { action: 'reply', text: learnText.forgotten(learn.forget(deps.principal)) };
   }
 }
 
@@ -761,11 +890,30 @@ async function missCommand(
     return { action: 'reply', text: missText.stillRunning, private: true };
   }
   const captured = await exchanges.capture(deps.principal, conversation);
+  if (captured.kind === 'saved') await copyMissToJournal(deps, captured.exchange);
   return {
     action: 'reply',
     text: captured.kind === 'saved' ? missText.saved(captured.exchange.user) : missText.none,
     private: true,
   };
+}
+
+/** A kept miss, copied into the journal with its own ciphertext (block K, K1). */
+async function copyMissToJournal(deps: PipelineDeps, exchange: Exchange): Promise<void> {
+  const learn = deps.learn;
+  if (!learn) return;
+  try {
+    const start = learn.startOf('miss');
+    if (start === null || exchange.at < start) return;
+    const sealed = await learn.sealMiss(deps.principal, exchange);
+    if (!sealed) return;
+    deps.repo.transaction(() => {
+      learn.insertSealed(sealed);
+      learn.bumpWeek(deps.principal, 'misses');
+    });
+  } catch {
+    deps.log.warn('learn_miss_failed', {});
+  }
 }
 
 /** Failures of the turn itself, not of the model: another model would hit them too. */
@@ -1082,7 +1230,18 @@ async function settleAgentResult(
  * taken here before anything awaits. A lock held by someone else means a newer
  * turn started meanwhile; this one is then cancelled, never interleaved.
  */
+/** A turn the phone's read resumed (§6.21), with its own learning sink (block K, K1). */
 export async function resumeFromPhone(
+  request: Parameters<typeof resumeTurn>[0],
+  deps: PipelineDeps,
+): Promise<PipelineOutcome> {
+  const learnSink = newLearnSink();
+  const outcome = await resumeTurn(request, { ...deps, learnSink });
+  writeLearnSignals(deps, learnSink);
+  return outcome;
+}
+
+async function resumeTurn(
   request: {
     queryId: string;
     wamid: string;
@@ -1461,6 +1620,7 @@ async function renderCommand(command: Command, deps: PipelineDeps, now: number):
     case 'memory':
     case 'forget_memory':
     case 'consents':
+    case 'learn':
       // Answered before this, with the conversation it belongs to (§6.23).
       return missText.none;
 
@@ -1730,6 +1890,7 @@ function turnOf(
   const marketWords = text !== undefined ? marketWordsIn(text) : undefined;
 
   return {
+    ...(deps.learnSink ? { learn: deps.learnSink } : {}),
     tool: {
       principal: deps.principal,
       nowMs: now,

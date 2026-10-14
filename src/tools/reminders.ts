@@ -686,6 +686,8 @@ const leaveInputSchema = createInputSchema
     eventStartUtc: z.number().int().positive(),
     minutes: z.number().int().min(5).max(240),
     held: z.boolean(),
+    /** The user said the travel time (block K, K1): only those teach a default. Absent on older rows. */
+    stated: z.boolean().optional(),
   })
   .strict();
 
@@ -745,6 +747,7 @@ export const remindersLeave: ToolDefinition = {
       eventStartUtc: target.startUtc,
       minutes,
       held: ctx.repo.restHoldEnabled() && restPeriodAt(dueAtUtc) !== null,
+      stated: slots.minutes !== undefined,
     };
     return { kind: 'ready', input, tainting: true };
   },

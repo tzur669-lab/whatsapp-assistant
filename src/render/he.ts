@@ -36,6 +36,7 @@ function helpText(channel: 'whatsapp' | 'app'): string {
     `למחיקת זיכרון השיחה: ${isolate('/forget')}`,
     `כשלא הבנתי: לשלוח "לא הבנת" (או ${isolate('/missed')}), וההודעה תישמר מוצפנת לבדיקה. ${isolate('/misses')} מציג אותן.`,
     `מה לזכור עליך: "תזכור עליי ש…". ${isolate('/memory')} מציג, ${isolate('/forget memory')} מוחק.`,
+    `למידה: ${isolate('/learn on')} — הבוט לומד מטעויות ומהרגלים, מוצפן ובלי מודל. ${isolate('/learn')} מציג מצב.`,
     'תיק מניות: "יש לי 10 מניות אפל ב־150 דולר", "קניתי 50 טבע בת״א ב־118 שקל", "מה שווי התיק?".',
     // Smart conversations exist only in the app (2026-10-08).
     ...(channel === 'app' ? [`בשיחה חכמה: ${isolate('/consents')} מציג את הגישות שאושרו, ואפשר לבטל אותן.`] : []),

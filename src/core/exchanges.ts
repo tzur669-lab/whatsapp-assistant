@@ -34,6 +34,11 @@ export type Exchange = {
   /** The tool groups the words matched (`agent/tool-groups.ts`). */
   groups: string[];
   at: number;
+  /**
+   * A tool ran or a confirmation card was shown (block K, K1). Absent on rows
+   * written before it: such a row is never taken for a failed request.
+   */
+  understood?: boolean;
 };
 
 export type Miss = Exchange & { id: string };
@@ -52,7 +57,17 @@ export class ExchangeLog {
    * already is. Encrypts first, then writes in one synchronous statement.
    */
   async record(principal: string, conversation: string, seq: number, exchange: Exchange): Promise<void> {
-    const ciphertext = await encryptToken(JSON.stringify(cut(exchange)), this.keyring(), lastAad(principal, conversation));
+    const ciphertext = await this.seal(principal, conversation, exchange);
+    this.writeSealed(principal, conversation, seq, ciphertext);
+  }
+
+  /** Encrypt an exchange for `writeSealed`. Split so a caller can write it with something else, in one step. */
+  seal(principal: string, conversation: string, exchange: Exchange): Promise<string> {
+    return encryptToken(JSON.stringify(cut(exchange)), this.keyring(), lastAad(principal, conversation));
+  }
+
+  /** Synchronous: callable inside the caller's transaction. */
+  writeSealed(principal: string, conversation: string, seq: number, ciphertext: string): void {
     const now = this.now();
     this.sql.exec(
       `INSERT INTO last_exchange (principal, conversation, seq, ciphertext, expires_at)
@@ -67,6 +82,34 @@ export class ExchangeLog {
       now + EXCHANGE_TTL_MS,
       now,
     );
+  }
+
+  /** The `seq` of the conversation's live latest exchange, or null. Synchronous. */
+  currentSeq(principal: string, conversation: string): number | null {
+    const seq = this.sql.exec(
+      'SELECT seq FROM last_exchange WHERE principal = ? AND conversation = ? AND expires_at > ?',
+      principal,
+      conversation,
+      this.now(),
+    )[0]?.['seq'];
+    return typeof seq === 'number' ? seq : null;
+  }
+
+  /** The conversation's live latest exchange and its `seq`, decrypted; null when none or unreadable. */
+  async latest(principal: string, conversation: string): Promise<{ seq: number; exchange: Exchange } | null> {
+    const row = this.sql.exec(
+      'SELECT seq, ciphertext FROM last_exchange WHERE principal = ? AND conversation = ? AND expires_at > ?',
+      principal,
+      conversation,
+      this.now(),
+    )[0];
+    if (!row || typeof row['ciphertext'] !== 'string') return null;
+    try {
+      const exchange = parseExchange(await decryptToken(row['ciphertext'], this.keyring(), lastAad(principal, conversation)));
+      return { seq: Number(row['seq']), exchange };
+    } catch {
+      return null;
+    }
   }
 
   /** Copy the conversation's latest exchange into the misses. */
@@ -173,6 +216,7 @@ function parseExchange(json: string): Exchange {
     intent: typeof raw['intent'] === 'string' ? raw['intent'] : null,
     groups,
     at: Number(raw['at'] ?? 0),
+    ...(typeof raw['understood'] === 'boolean' ? { understood: raw['understood'] } : {}),
   };
 }
 

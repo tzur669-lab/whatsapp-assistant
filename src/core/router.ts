@@ -5,6 +5,9 @@
 import { grantByCommand } from '../google/grants.js';
 import type { GrantName } from '../google/grants.js';
 
+/** What `/learn` asks for: its status, or a change (block K, K1). */
+export type LearnAction = 'status' | 'on' | 'off' | 'forget';
+
 /** The digest's optional sections (block J, J5), off by default. */
 export type DigestSection = 'conflicts' | 'bills';
 
@@ -29,6 +32,8 @@ export type Command =
   | { kind: 'consents' }
   /** `/watches`: the active event-triggered reminders, each cancellable (block J, J4). */
   | { kind: 'watches' }
+  /** `/learn`, `/learn on|off|forget`: the learning journal (block K, K1, PLAN §6.31). Off by default. */
+  | { kind: 'learn'; action: LearnAction }
   /** `/connect google|gmail|tasks|drive`: one grant each (§6.6, 2026-10-01). */
   | { kind: 'connect_google'; grant: GrantName }
   /** `/pair` issues a code for the phone app; `/pair off` unpairs (PLAN §6.17). */
@@ -73,6 +78,8 @@ const COMMANDS: ReadonlyArray<readonly [RegExp, Command]> = [
   [/^\/pair$/i, { kind: 'pair', off: false }],
   [/^\/pair\s+off$/i, { kind: 'pair', off: true }],
 ];
+
+const LEARN = /^\/learn(?:\s+(on|off|forget))?$/i;
 
 const DIGEST = /^\/digest(?:\s+(off|\d{1,2}))?$/i;
 /** `/digest conflicts on`, `/digest bills off` (block J, J5): the optional sections. */
@@ -159,6 +166,12 @@ export function matchCommand(text: string): Command | null {
     const argument = ical[1];
     if (argument === undefined) return { kind: 'ical', set: null };
     return { kind: 'ical', set: /^off$/i.test(argument) ? 'off' : argument };
+  }
+
+  const learn = LEARN.exec(trimmed);
+  if (learn) {
+    const action = (learn[1]?.toLowerCase() ?? 'status') as LearnAction;
+    return { kind: 'learn', action };
   }
 
   const section = DIGEST_SECTION.exec(trimmed);

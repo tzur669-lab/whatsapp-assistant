@@ -5,7 +5,7 @@ system is, where things live, and what breaks easily, then links out. It does
 **not** repeat the rules in `CLAUDE.md` (always loaded) or the spec in
 `PLAN.md` (read by section, never whole).
 
-_Last updated: 2026-10-13 · server at migration 0034 · agent prompt a10 + smart note s2 + screen step s1 · parser prompt v6 · app 0.17.3 · smart model gemini-3.5-flash-lite_
+_Last updated: 2026-10-14 · server at migration 0035 · agent prompt a10 + smart note s2 + screen step s1 · parser prompt v6 · app 0.17.3 · smart model gemini-3.5-flash-lite_
 
 ## 1. What this is
 
@@ -73,6 +73,7 @@ Full map with every module: [ARCHITECTURE.md](ARCHITECTURE.md).
 | `pipeline.ts` return paths, `core/exchanges.ts` | Only turns that reached a model write `last_exchange` (via `respondWithModels` and `resumeFromPhone`); commands, confirmations, answers and the busy reply must not. Never hand `ExchangeLog` to the agent (PLAN §6.23). |
 | time/date logic | Only `src/time/resolve.ts` (forward), `src/time/past-day.ts` (expenses, backward) or the calendar read windows in `src/time/range.ts` (either way, 2026-10-12). DST: next fall-back 2026-10-25. Never default a missing time. |
 | routines (`tools/routine*.ts`, `routine_runs`) | A run moves one way, one conditional `UPDATE` at a time; the claim is the only thing that lets the phone run it, once, on time, with the confirmed step hash. Never retry a claimed run. `routine.run` is offered only when `namesRoutine` says so — never add it to the full catalog. Reason codes are closed on both sides (`RUN_REASONS` ↔ the app's `RoutineRunner`). PLAN §6.27. |
+| the learning journal (`core/learn-store.ts`, `/learn`, block K) | Never give `LearnStore` to the agent or a model. A new kind needs a `KIND_SINCE` entry, a `LEARN_NOTICE_VERSION` bump and its notice line (`render/learn.ts`, tested): nothing is collected before its notice is delivered. Every computation reads from `startOf(feature)`, never earlier. Plan `docs/plans/block-k.md` (K1 build notes win). |
 | a migration | Add `migrations/00NN_*.sql` **and** register it in `src/platform/migrations.ts`. Backward-compatible for one version. |
 | the stored-PIN unlock (the app's `UnlockLogic.kt`, `UnlockStore.kt`) | Routines only, never a screen task. The PIN never leaves the phone; the claim comes before the unlock; one attempt until the PIN is saved again. `dispatchGesture` and `GLOBAL_ACTION_LOCK_SCREEN` live only in `press`/`relock` (`UnlockScanTest`). PLAN §6.27. |
 | the screen agent (`tools/screen*.ts`, `agent/screen-*.ts`, the app's `Screen*.kt`) | Read `docs/plans/screen-agent.md` first. The word lists live in code on both sides and must equal `test/fixtures/screen-policy.json` (a test on each side). Every status move is one conditional UPDATE; never retry an action — a `started` journal entry is `uncertain`. Screen text is never stored, logged or put in history, and goes only to the task's family: `SCREEN_MODELS` (Groq) for `mode: 'local'`, `SCREEN_SMART_MODELS` (Gemini) for `'smart'` — the mode rides in the confirmed input and the task row, never re-read from the turn. A Groq model's screen share is `SCREEN_GROQ_DAY_TOKENS`. `screen.task` is offered only when named: never add it to the full catalog. A step prompt change is `pnpm eval:screen`. |
@@ -146,6 +147,11 @@ Network on the hotspot: `NODE_OPTIONS=--dns-result-order=ipv4first` for wrangler
   watch routes answer 401 unsigned); APK 0.16.0 in Downloads, not yet
   installed, then the phone checks.
   The plan's "Additions" and "Follow-up" sections win over the part sections.
+- **Block K** (2026-10-14, plan `docs/plans/block-k.md`, PLAN §6.31): the bot
+  learns the user. K1 done (migration 0035, `/learn`): the journal, off by
+  default, collected only after its notice is delivered. Owed: the phone
+  check. Next: K2 (weekly review and proposals, migration 0036), K3 (export,
+  app 0.18.0, server first), K4 (Claude Code side).
 - **Next work:** [ROADMAP.md](ROADMAP.md) (Hebrew) — block H (2026-10-07):
   a smarter bot. Parts 15 (notes), 16 ("לא הבנת" capture), 17 (tool
   unions, calibrated token estimate, history fitter, named lists) and 18
@@ -174,6 +180,7 @@ Network on the hotspot: `NODE_OPTIONS=--dns-result-order=ipv4first` for wrangler
 | [ROADMAP.md](ROADMAP.md) | Starting the next feature block. |
 | `docs/plans/routines.md` | Routines (PLAN §6.27): the reviewed plan, stages and decisions D1–D4. |
 | `docs/plans/block-h.md` | Building a block H part: the reviewed plan, by part. |
+| `docs/plans/block-k.md` | The learning journal (PLAN §6.31): the reviewed plan, K1–K4, and the K1 build notes. |
 | `docs/plans/screen-agent.md` | The screen agent (PLAN §6.28): the build spec (wire protocol, elements, binding, risk policy, journal) and the reviewed plan. |
 | `ops/runbook.md` | Routes, crons, chat commands, deploy, diagnosing. Other `ops/*.md`: secret rotation, token revoke, restore. |
 | `apps/call-companion/README.md` | Anything in the Android app or the app ↔ server protocol. |
@@ -182,6 +189,11 @@ Network on the hotspot: `NODE_OPTIONS=--dns-result-order=ipv4first` for wrangler
 | [SETUP.md](SETUP.md) | Setting up a new copy from zero: accounts, Groq key, models, secrets, deploy, app, AI agent. |
 
 ## 8. Session log (docs)
+
+- 2026-10-14: Block K, K1: the learning journal — new `core/learn-store.ts`,
+  `render/learn.ts`, migration 0035 (`learn_events`, `learn_weeks`), `/learn`;
+  `TurnContext.learn`, `ExchangeLog.seal`/`writeSealed`/`latest`,
+  `Exchange.understood`, `reminders.leave` `stated`, `AppOutbox.expireDue` seqs.
 
 - 2026-10-13: Apps 0.17.2–0.17.3, from phone runs: the swipe spans the full
   height (85% → 15%), and keys are taps once the keypad has settled
