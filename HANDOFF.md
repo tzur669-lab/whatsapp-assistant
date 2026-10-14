@@ -200,7 +200,7 @@ Network on the hotspot: `NODE_OPTIONS=--dns-result-order=ipv4first` for wrangler
   one corrective call per step on the same model (`whyNot`, `askAgain` in
   `agent/screen-step.ts`), 1,024 completion tokens (qwen's thinking was cut
   off at 150/256), task ceiling 24K, `HistoryEntry.in`, prompt s2, eval case
-  `rail-no-field`. No new modules or tables.
+  `rail-no-field`. No new modules or tables. Staging deployed (4ce52fbf).
 
 - 2026-10-14: App 0.18.2: the `/` list shows each command on its own row,
   the command over what it does, the chat's full width, and offers every
