@@ -7,6 +7,10 @@ import type { ConversationMode } from '../channels/types.js';
 
 const SCHEMA_VERSION_KEY = 'schema_version';
 const DIGEST_HOUR_KEY = 'digest_hour';
+const LEAVE_DEFAULT_KEY = 'leave_default_min';
+/** `/leave` accepts these minutes (block K, K2). */
+export const LEAVE_DEFAULT_MIN = 10;
+export const LEAVE_DEFAULT_MAX = 120;
 const DIGEST_SENT_KEY = 'digest_sent_on';
 const REST_HOLD_KEY = 'rest_hold';
 /** A durable counter: never reset, unlike the pruned table's rowid (§6.23). */
@@ -328,6 +332,28 @@ export class Repository {
    */
   restHoldEnabled(): boolean {
     return this.getSetting(REST_HOLD_KEY) === 'on';
+  }
+
+  /**
+   * The travel time `reminders.leave` uses when none is said (`/leave`, block
+   * K, K2), or null for the built-in half hour.
+   */
+  leaveDefaultMinutes(): number | null {
+    const raw = this.getSetting(LEAVE_DEFAULT_KEY);
+    if (raw === null) return null;
+    const minutes = Number(raw);
+    return Number.isInteger(minutes) && minutes >= LEAVE_DEFAULT_MIN && minutes <= LEAVE_DEFAULT_MAX ? minutes : null;
+  }
+
+  setLeaveDefaultMinutes(minutes: number | null): void {
+    if (minutes === null) {
+      this.sql.exec('DELETE FROM settings WHERE key = ?', LEAVE_DEFAULT_KEY);
+      return;
+    }
+    if (!Number.isInteger(minutes) || minutes < LEAVE_DEFAULT_MIN || minutes > LEAVE_DEFAULT_MAX) {
+      throw new RangeError('leave_default_out_of_range');
+    }
+    this.setSetting(LEAVE_DEFAULT_KEY, String(minutes));
   }
 
   /** Whether a digest section is on (block J, J5). Off unless stored. */

@@ -605,6 +605,9 @@ export async function runButton(raw: string, turn: TurnContext): Promise<Reply> 
         : { text: statusText.confirmNotFound };
     case 'ss':
       return parsed.verb === 'no' ? stopScreenTask(parsed.id, parsed.nonce, turn) : { text: statusText.confirmNotFound };
+    case 'lp':
+      // The pipeline answers these before a turn exists (block K, K2).
+      return { text: statusText.confirmNotFound };
   }
 }
 

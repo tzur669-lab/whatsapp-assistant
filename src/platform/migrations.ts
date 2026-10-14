@@ -38,6 +38,7 @@ import screenTaskReply0032 from '../../migrations/0032_screen_task_reply.sql';
 import lastSelection0033 from '../../migrations/0033_last_selection.sql';
 import watches0034 from '../../migrations/0034_watches.sql';
 import learning0035 from '../../migrations/0035_learning.sql';
+import learnProposals0036 from '../../migrations/0036_learn_proposals.sql';
 
 export const MIGRATIONS = [
   { id: 1, sql: init0001 },
@@ -75,4 +76,5 @@ export const MIGRATIONS = [
   { id: 33, sql: lastSelection0033 },
   { id: 34, sql: watches0034 },
   { id: 35, sql: learning0035 },
+  { id: 36, sql: learnProposals0036 },
 ] as const;

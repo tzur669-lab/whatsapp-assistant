@@ -120,4 +120,68 @@ describe('the learning notice in the app', () => {
     await ack(phone, [queued!.seq]);
     expect(learn.collectable('miss')).toBe(true);
   });
+  const started = async () => {
+    const phone = await pair();
+    const seq = (await say(phone, '/learn on')).row!.seq;
+    await ack(phone, [seq]);
+    expect(learn.collectable('weeks')).toBe(true);
+    return phone;
+  };
+  const principalOf = () => String(fake.driver.exec('SELECT principal FROM inbound_messages LIMIT 1')[0]?.['principal']);
+  const outboxTexts = async (phone: FakePhone) =>
+    ((await send(await phone.toDo('GET', '/app/outbox'))).body as unknown as { rows: Array<{ text: string }> }).rows.map((r) => r.text);
+  const tick = () => assistant.fetch(new Request('https://do/do/tick', { method: 'POST' }));
+
+  it('the weekly review goes once, Sunday from 10:00, across the fall-back', async () => {
+    const phone = await started();
+    // 2026-10-25 is the fall-back Sunday: 09:30 local is 07:30Z, 10:30 is 08:30Z.
+    vi.setSystemTime(Date.UTC(2026, 9, 25, 7, 30));
+    await tick();
+    expect((await outboxTexts(phone)).filter((t) => t.includes('סיכום הלמידה'))).toHaveLength(0);
+    vi.setSystemTime(Date.UTC(2026, 9, 25, 8, 30));
+    await Promise.all([tick(), tick()]);
+    await tick();
+    expect((await outboxTexts(phone)).filter((t) => t.includes('סיכום הלמידה'))).toHaveLength(1);
+  });
+
+  it('no review while learning is off', async () => {
+    const phone = await started();
+    await say(phone, '/learn off');
+    vi.setSystemTime(Date.UTC(2026, 9, 25, 8, 30));
+    await tick();
+    expect((await outboxTexts(phone)).filter((t) => t.includes('סיכום הלמידה'))).toHaveLength(0);
+  });
+
+  it('a proposal button applies its stored value once; after /learn off it has expired', async () => {
+    const phone = await started();
+    const [row] = learn.insertGroup(principalOf(), [{ kind: 'leave_min', value: 20 }]);
+    const tap = async (id: string, nonce: string) =>
+      (await send(await phone.toDo('POST', '/app/message', { id: messageId(), kind: 'button', buttonId: `lp:${id}:${nonce}:ok` }))).body;
+    expect((await tap(row!.id, row!.nonce)).row?.text).toContain('עודכן');
+    expect(new Repository(fake.driver).leaveDefaultMinutes()).toBe(20);
+    expect((await tap(row!.id, row!.nonce)).row?.text).toContain('כבר נענה');
+
+    const [later] = learn.insertGroup(principalOf(), [{ kind: 'leave_min', value: 45 }]);
+    await say(phone, '/learn off');
+    expect((await tap(later!.id, later!.nonce)).row?.text).toContain('פג התוקף');
+    expect(new Repository(fake.driver).leaveDefaultMinutes()).toBe(20);
+  });
+
+  it('the export answers the signed device only, never cached', async () => {
+    const phone = await started();
+    learn.addLeave(principalOf(), 25, true);
+    learn.addLeave('p_other', 99, true);
+    const response = await assistant.fetch(await phone.toDo('GET', '/app/learn/export'));
+    expect(response.status).toBe(200);
+    expect(response.headers.get('cache-control')).toBe('no-store');
+    const body = (await response.json()) as { schema: number; leave: { count: number; medianStatedMinutes: number } };
+    expect(body.schema).toBe(1);
+    expect(body.leave).toMatchObject({ count: 1, medianStatedMinutes: 25 });
+
+    const unsigned = await assistant.fetch(await phone.toDo('GET', '/app/learn/export', undefined, { unsigned: true }));
+    expect(unsigned.status).toBe(401);
+    const stranger = new FakePhone();
+    stranger.deviceId = 'd'.repeat(32);
+    expect((await assistant.fetch(await stranger.toDo('GET', '/app/learn/export'))).status).toBe(401);
+  });
 });

@@ -283,6 +283,22 @@ class ProtocolTest {
         assertEquals("/app/screen/step", Protocol.SCREEN_STEP_PATH)
     }
 
+    @Test fun `the learning export is a GET signed over an empty body`() {
+        val expected = listOf(
+            "ASSISTANT-REQ-v1",
+            "GET",
+            "/app/learn/export",
+            "00112233445566778899aabbccddeeff",
+            "1790000000000",
+            "ffeeddccbbaa99887766554433221100",
+            "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        ).joinToString("\n")
+        assertEquals(
+            expected,
+            Protocol.canonical("get", LearnExportLogic.PATH, "00112233445566778899aabbccddeeff", 1_790_000_000_000L, "ffeeddccbbaa99887766554433221100", ByteArray(0)),
+        )
+    }
+
     @Test fun `only server-shaped button ids pass`() {
         assertTrue(Protocol.BUTTON_ID.matches("snooze:0a1b2c:9f8e7d:m10"))
         assertFalse(Protocol.BUTTON_ID.matches("Snooze"))

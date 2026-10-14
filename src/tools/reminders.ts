@@ -734,7 +734,8 @@ export const remindersLeave: ToolDefinition = {
     const target = candidates[0];
     if (!target) return { kind: 'clarify', clarify: { code: 'not_found' } };
 
-    const minutes = slots.minutes ?? DEFAULT_TRAVEL_MINUTES;
+    // The user's own default (`/leave`, block K, K2), else half an hour. Never learned silently.
+    const minutes = slots.minutes ?? ctx.repo.leaveDefaultMinutes() ?? DEFAULT_TRAVEL_MINUTES;
     const dueAtUtc = target.startUtc - minutes * 60_000;
     if (dueAtUtc <= ctx.nowMs + 60_000) return { kind: 'clarify', clarify: { code: 'leave_too_late' }, tainting: true };
 

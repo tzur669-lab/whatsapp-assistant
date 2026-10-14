@@ -247,7 +247,7 @@ describe('LearnStore', () => {
       learn.bumpWeek(PRINCIPAL, 'messages');
       driver.exec("INSERT INTO misses (id, principal, ciphertext, created_at) VALUES ('m1', ?, 'x', ?)", PRINCIPAL, now);
       now += 1_000;
-      expect(learn.forget(PRINCIPAL)).toEqual({ events: 1, weeks: 1 });
+      expect(learn.forget(PRINCIPAL)).toEqual({ events: 1, weeks: 1, proposals: 0 });
       expect(driver.exec('SELECT * FROM misses')).toHaveLength(1);
       expect(learn.state().since).toBe(now);
       expect(learn.status(PRINCIPAL).counts.undo).toBe(0);
@@ -372,7 +372,7 @@ describe('/learn through the pipeline', () => {
   it('/learn off, /learn forget', async () => {
     startLearning(learn);
     expect(plain((await send('/learn off')).text)).toBe(plain(learnText.off));
-    expect(plain((await send('/learn forget')).text)).toBe(plain(learnText.forgotten({ events: 0, weeks: 0 })));
+    expect(plain((await send('/learn forget')).text)).toBe(plain(learnText.forgotten({ events: 0, weeks: 0, proposals: 0 })));
   });
 
   it('a failed request rephrased within 3 minutes is one rephrase row, counted', async () => {

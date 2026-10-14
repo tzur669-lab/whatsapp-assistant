@@ -182,6 +182,13 @@
     <string name="widget_talk">🎤 לדבר</string>
     <!-- Routines (0.13): steps the user builds, run inside one app -->
     <string name="routines_open">⚙️ שגרות</string>
+    <string name="learn_export_open">ייצוא למידה</string>
+    <string name="learn_export_title">ייצוא למידה</string>
+    <string name="learn_export_warning">הקובץ עלול להכיל טקסט אישי. מחיקה בבוט לא מוחקת אותו.</string>
+    <string name="learn_export_save">שמירה</string>
+    <string name="learn_export_cancel">ביטול</string>
+    <string name="learn_export_saved">נשמר בתיקיית ההורדות: %1$s</string>
+    <string name="learn_export_failed">הייצוא נכשל. אפשר לנסות שוב.</string>
     <string name="routines_title">שגרות</string>
     <string name="routines_intro">שגרה היא רצף קבוע של פעולות בתוך אפליקציה אחת: לחיצות, והקלדה של טקסט קבוע. למשל: לפתוח את שעון הנוכחות וללחוץ על \"כניסה\", או לפתוח אפליקציית קניות ולחפש בה \"סטימצקי\". בונים אותה כאן פעם אחת. בשלב הבא אפשר יהיה לבקש מהעוזר להפעיל אותה, גם בעוד זמן מה.
 

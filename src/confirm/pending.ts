@@ -292,11 +292,13 @@ export class PendingActions {
 /**
  * `rt`: cancel a scheduled routine run (§6.27), only with `no`. The screen
  * agent (§6.28): `sa` answers an approval card (`ok` / `no`), `ss` stops a task.
+ * `lp`: a weekly-review proposal or question answer (block K, K2), handled
+ * in the pipeline by the learning store.
  */
-export type ButtonKind = 'pa' | 'undo' | 'snooze' | 'rt' | 'sa' | 'ss';
+export type ButtonKind = 'pa' | 'undo' | 'snooze' | 'rt' | 'sa' | 'ss' | 'lp';
 export type ButtonVerb = 'ok' | 'no' | 'done' | 'm10' | 'h1';
 
-const BUTTON_KINDS = new Set<string>(['pa', 'undo', 'snooze', 'rt', 'sa', 'ss']);
+const BUTTON_KINDS = new Set<string>(['pa', 'undo', 'snooze', 'rt', 'sa', 'ss', 'lp']);
 const BUTTON_VERBS = new Set<string>(['ok', 'no', 'done', 'm10', 'h1']);
 
 /** `pa:<id>:<nonce>:ok` — the format WhatsApp echoes back verbatim. */

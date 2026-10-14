@@ -94,6 +94,15 @@ describe('reminders.leave', () => {
     expect(stripIsolates(remindersLeave.preview(out.input, 'he'))).not.toContain('Waze');
   });
 
+  it('uses the /leave default when no travel time is said, and it is not "stated"', async () => {
+    repo.setLeaveDefaultMinutes(20);
+    const calendar = calendarWith([event('ישיבה', NOW + 3 * HOUR)]);
+    const out = await remindersLeave.resolveAsync!({ next_event: true }, ctx(calendar));
+    expect(out).toMatchObject({ kind: 'ready', input: { dueAtUtc: NOW + 3 * HOUR - 20 * 60_000, minutes: 20, stated: false } });
+    const said = await remindersLeave.resolveAsync!({ next_event: true, minutes: 45 }, ctx(calendar));
+    expect(said).toMatchObject({ kind: 'ready', input: { minutes: 45, stated: true } });
+  });
+
   it('asks rather than guesses', async () => {
     const calendar = calendarWith([event('ישיבה', NOW + 20 * 60_000)]);
     expect(await remindersLeave.resolveAsync!({}, ctx(calendar))).toEqual({ kind: 'clarify', clarify: { code: 'missing_slot', slot: 'target' } });

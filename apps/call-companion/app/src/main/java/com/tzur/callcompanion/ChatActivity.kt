@@ -520,6 +520,14 @@ class ChatActivity : Activity(), ChatEvents.Listener {
             }
         })
         panel.addView(Button(this).apply {
+            text = getString(R.string.learn_export_open)
+            isAllCaps = false
+            setOnClickListener {
+                closeDrawer()
+                confirmLearnExport()
+            }
+        })
+        panel.addView(Button(this).apply {
             text = getString(R.string.guide_open)
             isAllCaps = false
             setOnClickListener {
@@ -528,6 +536,28 @@ class ChatActivity : Activity(), ChatEvents.Listener {
             }
         })
         return panel
+    }
+
+    /** Asks first, then fetches the learning export off the main thread and saves it to Downloads (0.18). */
+    private fun confirmLearnExport() {
+        AlertDialog.Builder(this)
+            .setTitle(R.string.learn_export_title)
+            .setMessage(R.string.learn_export_warning)
+            .setPositiveButton(R.string.learn_export_save) { _, _ ->
+                val app = applicationContext
+                Thread {
+                    val name = LearnExportLogic.fileName(Date())
+                    val text = Api.learnExport(app)
+                    val saved = text != null && LearnExportLogic.isExport(text) &&
+                        DownloadsSave.save(app, name, LearnExportLogic.MIME, text.toByteArray(Charsets.UTF_8))
+                    runOnUiThread {
+                        val message = if (saved) getString(R.string.learn_export_saved, name) else getString(R.string.learn_export_failed)
+                        Toast.makeText(this, message, Toast.LENGTH_LONG).show()
+                    }
+                }.start()
+            }
+            .setNegativeButton(R.string.learn_export_cancel, null)
+            .show()
     }
 
     /**

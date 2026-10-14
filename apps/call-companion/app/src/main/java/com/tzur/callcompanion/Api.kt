@@ -229,7 +229,18 @@ object Api {
     }
 
     /**
-     * A watch matched: its id and when, nothing of the event. True on any 2xx
+     * The learning export (0.18, PLAN §6.31 K3) as JSON text, or null when the
+     * server could not be asked or the answer is not an export.
+     */
+    fun learnExport(context: Context): String? {
+        val json = (signed(context, "GET", LearnExportLogic.PATH, null, ByteArray(0), TEXT_TIMEOUT_MS) as? Result.Ok)?.json
+            ?: return null
+        if (!json.has("schema")) return null
+        return json.toString(2)
+    }
+
+    /**
+     * A watch matched:its id and when, nothing of the event. True on any 2xx
      * — claimed, nothing to claim, or too old — which marks it handled.
      */
     fun watchFired(context: Context, watchId: String, matchedAt: Long): Boolean {

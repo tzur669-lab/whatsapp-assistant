@@ -64,7 +64,14 @@ exchange, not the misses the user kept; they expire after 30 days.
 `/learn on` sends the notice of what is kept, and collecting starts only when it is
 delivered (the phone's ack of its row; on WhatsApp, an accepted send); `/learn off`
 stops collecting and keeps the data; `/learn forget` deletes the journal and its
-weekly counters (not the misses). `/forget`, `/forget memory` and `/pair off` leave it.
+weekly counters and proposals (not the misses). `/forget`, `/forget memory` and
+`/pair off` leave it. While it collects, Sunday from 10:00 the hourly tick sends a
+weekly review (K2): rates per 100 messages, at most two proposals (`lp:` buttons,
+6 days) and one question; a tap applies the stored value through `/digest N` or
+`/leave N`. `/learn export` points to the app's ☰ ← ייצוא למידה, which fetches
+`GET /app/learn/export` (K3) and saves `bot-learn-YYYY-MM-DD.json` to Downloads.
+`/leave`, `/leave N` (10–120), `/leave off`: the travel time "time to leave" uses
+when none is said (default 30).
 `/consents` (app, smart conversations, 2026-10-08) lists the data sources the
 conversation allowed, each with a button that revokes it; anywhere else it says
 consents exist only in smart conversations. `/forget` deletes every consent too.

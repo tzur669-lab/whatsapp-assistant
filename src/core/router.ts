@@ -4,9 +4,10 @@
  */
 import { grantByCommand } from '../google/grants.js';
 import type { GrantName } from '../google/grants.js';
+import { LEAVE_DEFAULT_MAX, LEAVE_DEFAULT_MIN } from './repo.js';
 
 /** What `/learn` asks for: its status, or a change (block K, K1). */
-export type LearnAction = 'status' | 'on' | 'off' | 'forget';
+export type LearnAction = 'status' | 'on' | 'off' | 'forget' | 'export';
 
 /** The digest's optional sections (block J, J5), off by default. */
 export type DigestSection = 'conflicts' | 'bills';
@@ -34,6 +35,11 @@ export type Command =
   | { kind: 'watches' }
   /** `/learn`, `/learn on|off|forget`: the learning journal (block K, K1, PLAN §6.31). Off by default. */
   | { kind: 'learn'; action: LearnAction }
+  /**
+   * `/leave`, `/leave 20`, `/leave off`: the travel time "time to leave" uses
+   * when none is said (block K, K2). `invalid`: the command, out of 10–120.
+   */
+  | { kind: 'leave'; set: number | 'off' | 'invalid' | null }
   /** `/connect google|gmail|tasks|drive`: one grant each (§6.6, 2026-10-01). */
   | { kind: 'connect_google'; grant: GrantName }
   /** `/pair` issues a code for the phone app; `/pair off` unpairs (PLAN §6.17). */
@@ -79,7 +85,8 @@ const COMMANDS: ReadonlyArray<readonly [RegExp, Command]> = [
   [/^\/pair\s+off$/i, { kind: 'pair', off: true }],
 ];
 
-const LEARN = /^\/learn(?:\s+(on|off|forget))?$/i;
+const LEARN = /^\/learn(?:\s+(on|off|forget|export))?$/i;
+const LEAVE = /^\/leave(?:\s+(off|\d{1,4}))?$/i;
 
 const DIGEST = /^\/digest(?:\s+(off|\d{1,2}))?$/i;
 /** `/digest conflicts on`, `/digest bills off` (block J, J5): the optional sections. */
@@ -174,6 +181,15 @@ export function matchCommand(text: string): Command | null {
     return { kind: 'learn', action };
   }
 
+  const leave = LEAVE.exec(trimmed);
+  if (leave) {
+    const argument = leave[1];
+    if (argument === undefined) return { kind: 'leave', set: null };
+    if (/^off$/i.test(argument)) return { kind: 'leave', set: 'off' };
+    const minutes = Number(argument);
+    return { kind: 'leave', set: minutes >= LEAVE_DEFAULT_MIN && minutes <= LEAVE_DEFAULT_MAX ? minutes : 'invalid' };
+  }
+
   const section = DIGEST_SECTION.exec(trimmed);
   if (section) {
     const name = section[1]!.toLowerCase() === 'bills' ? 'bills' : 'conflicts';
@@ -192,3 +208,37 @@ export function matchCommand(text: string): Command | null {
   // is better than clamping it to something the user did not ask for.
   return hour >= 0 && hour <= 23 ? { kind: 'digest', set: hour } : null;
 }
+
+/**
+ * Every command kind. A command's inbound row is marked `intent = kind`, so
+ * learning (block K, K2) leaves commands out of the first-message times by
+ * this list. The check below fails to compile when a kind is missing.
+ */
+export const COMMAND_KINDS = [
+  'help',
+  'ping',
+  'status',
+  'pause',
+  'resume',
+  'budget',
+  'forget',
+  'missed',
+  'misses',
+  'memory',
+  'forget_memory',
+  'consents',
+  'watches',
+  'learn',
+  'leave',
+  'connect_google',
+  'pair',
+  'digest',
+  'shabbat',
+  'city',
+  'ical',
+  'birthday',
+] as const satisfies ReadonlyArray<Command['kind']>;
+
+type MissingKind = Exclude<Command['kind'], (typeof COMMAND_KINDS)[number]>;
+const everyKindListed: [MissingKind] extends [never] ? true : never = true;
+void everyKindListed;

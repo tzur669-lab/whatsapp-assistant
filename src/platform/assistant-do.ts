@@ -126,6 +126,8 @@ import { TURN_TOKEN_CAP } from '../agent/loop.js';
 import { ConversationHistory } from '../agent/history.js';
 import { LearnStore } from '../core/learn-store.js';
 import { learnText } from '../render/learn.js';
+import { planReview, reviewDue } from '../core/learn-review.js';
+import { buildLearnExport } from '../core/learn-export.js';
 import { ExchangeLog } from '../core/exchanges.js';
 import { QuotaStore, SqlDayRequestCounter, meterGroqFetch } from '../core/quota.js';
 import type { ModelSpec, ServerLimits } from '../core/quota.js';
@@ -368,6 +370,11 @@ export class AssistantDO implements DurableObject {
         await this.maybeSendLearnNotice();
       } catch (error) {
         this.log.warn('learn_notice_tick_failed', { errorCode: error instanceof Error ? error.name : 'E_UNKNOWN' });
+      }
+      try {
+        await this.maybeSendLearnReview();
+      } catch (error) {
+        this.log.warn('learn_review_tick_failed', { errorCode: error instanceof Error ? error.name : 'E_UNKNOWN' });
       }
       return new Response(null, { status: 204 });
     }
@@ -625,6 +632,20 @@ export class AssistantDO implements DurableObject {
       await this.sayScreenEnd(ended);
       await this.pushScreen(principal, ended.task.taskId, 'screen_stop');
     }
+  }
+
+  /**
+   * The learning export (block K, K3): only the device's own principal's
+   * rows, decrypted in memory for this answer, scrubbed, capped at 256 KB, and
+   * never cached. Nothing decrypted is stored.
+   */
+  private async appLearnExport(principal: string): Promise<Response> {
+    const body = await buildLearnExport({ store: this.learn, principal, nowMs: Date.now() });
+    this.log.info('learn_exported', { bytes: new TextEncoder().encode(body).length });
+    return new Response(body, {
+      status: 200,
+      headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' },
+    });
   }
 
   /**
@@ -1054,6 +1075,8 @@ export class AssistantDO implements DurableObject {
     this.pending.purgeOld();
     this.history.purgeExpired();
     this.exchanges.purgeExpired();
+    const proposals = this.learn.purgeProposals();
+    if (proposals.expired + proposals.deleted > 0) this.log.info('learn_proposals_purged', proposals);
     const learned = this.learn.purge();
     if (learned.events + learned.weeks > 0) this.log.info('learn_purged', learned);
     this.lists.purgeRemoved();
@@ -1198,6 +1221,64 @@ export class AssistantDO implements DurableObject {
     if (!this.canDeliver(principal, Date.now())) return;
     const sent = await this.send({ to: this.selfWaId(), text }, { kind: 'notice', principal });
     if (sent.ok) this.learn.noticeDelivered(version);
+  }
+
+  /**
+   * The weekly review (block K, K2): Sunday from 10:00 local, while learning
+   * collects its counters. Planned from local SQL only; then, on the app, ONE
+   * transaction marks the week, writes the proposal rows and queues every
+   * message, so it is exactly once into the outbox and the existing push
+   * retries deliver it. On WhatsApp (frozen) it is marked before the send,
+   * the digest's at-most-once.
+   */
+  async maybeSendLearnReview(nowMs = Date.now()): Promise<void> {
+    if (!reviewDue(nowMs) || !this.learn.collectable('weeks')) return;
+    const dayKey = Repository.dayKey(nowMs);
+    if (this.learn.reviewSentOn() === dayKey) return;
+    const principal = await this.selfPrincipal();
+    const app = this.channel() === 'app';
+    if (!app && !this.canDeliver(principal, nowMs)) return;
+
+    const messages = this.sql.transaction(() => {
+      // Again inside: a second tick that raced the first finds the week done.
+      if (this.learn.reviewSentOn() === dayKey) return null;
+      const plan = planReview({ nowMs, principal, store: this.learn, repo: this.repo });
+      this.learn.markReviewSent(dayKey);
+      const out: Array<{ text: string; buttons?: OutboundButton[] }> = [
+        { text: learnText.review(plan.trend, plan.exportDue) },
+      ];
+      for (const proposal of plan.proposals) {
+        const [row] = this.learn.insertGroup(principal, [{ kind: proposal.kind, value: proposal.value }]);
+        out.push({
+          text: learnText.proposal(proposal.kind, proposal.value, proposal),
+          buttons: [
+            { id: buttonId('lp', row!.id, row!.nonce, 'ok'), title: learnText.proposalYes(proposal.kind) },
+            { id: buttonId('lp', row!.id, row!.nonce, 'no'), title: learnText.proposalNo },
+          ],
+        });
+      }
+      if (plan.question) {
+        const kind = plan.question.kind;
+        const rows = this.learn.insertGroup(principal, plan.question.values.map((value) => ({ kind, value })));
+        out.push({
+          text: learnText.question(kind),
+          buttons: rows.map((row) => ({ id: buttonId('lp', row.id, row.nonce, 'ok'), title: learnText.answerButton(kind, row.value) })),
+        });
+      }
+      if (app) {
+        for (const message of out) this.outbox.accept({ kind: 'notice', text: message.text, principal, ...(message.buttons ? { buttons: message.buttons } : {}) });
+      }
+      return out;
+    });
+    if (messages === null) return;
+    this.log.info('learn_review_queued', { messages: messages.length });
+    if (app) {
+      await this.pushOutbox();
+      return;
+    }
+    for (const message of messages) {
+      await this.send({ to: this.selfWaId(), text: message.text, ...(message.buttons ? { buttons: message.buttons } : {}) }, { kind: 'notice', principal });
+    }
   }
 
   /**
@@ -1420,6 +1501,7 @@ export class AssistantDO implements DurableObject {
     if (app && method === 'POST' && path === '/app/routine/result') return this.appRoutineResult(body, principal);
     if (app && method === 'GET' && path === '/app/watches') return this.appWatches(principal);
     if (app && method === 'POST' && path === '/app/watch/fired') return this.appWatchFired(body, principal);
+    if (app && method === 'GET' && path === '/app/learn/export') return this.appLearnExport(principal);
     if (app && method === 'POST' && path === '/app/screen/allow') return this.appScreenAllow(body, principal);
     if (app && method === 'POST' && path === '/app/screen/claim') return this.appScreenClaim(body, principal);
     if (app && method === 'POST' && path === '/app/screen/step') return this.appScreenStep(body, principal);

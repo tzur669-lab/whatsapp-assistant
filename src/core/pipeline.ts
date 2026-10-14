@@ -23,7 +23,7 @@ import type { RoutineStore } from '../tools/routine-store.js';
 import type { ScreenStore } from '../tools/screen-store.js';
 import { namesScreenTask } from '../tools/screen.js';
 import { screenText } from '../render/screen.js';
-import { buttonId } from '../confirm/pending.js';
+import { buttonId, parseButtonId } from '../confirm/pending.js';
 import { foldForMatch } from '../tools/match.js';
 import type { QuoteSources } from '../lookup/quotes.js';
 import { marketWordsIn } from '../tools/portfolio.js';
@@ -105,7 +105,9 @@ import { consentButtons, consentText } from '../render/consent.js';
 import { LEARN_NOTICE_VERSION, REPHRASE_WINDOW_MS, newLearnSink } from './learn-store.js';
 import type { LearnSink, LearnStore, SealedEvent } from './learn-store.js';
 import type { LearnAction } from './router.js';
-import { learnText } from '../render/learn.js';
+import { learnText, leaveText } from '../render/learn.js';
+import { LEAVE_DEFAULT_MAX, LEAVE_DEFAULT_MIN } from './repo.js';
+import { DEFAULT_TRAVEL_MINUTES } from '../tools/reminders.js';
 
 /** The agent and what it keeps (PLAN §6.19). Absent: the parser answers, as before. */
 export type AgentServices = {
@@ -448,6 +450,10 @@ async function handleButtonReply(
   const consent = parseConsentButton(event.buttonId);
   if (consent) return consentButton(consent, event, deps, now);
 
+  // A weekly-review proposal (block K, K2): the learning store's own rows.
+  const button = parseButtonId(event.buttonId);
+  if (button?.kind === 'lp') return learnProposalButton(button, event, deps, now);
+
   // Deterministic, and never near the LLM (invariant 7).
   const reply = await runButton(event.buttonId, turnOf(deps, event, now, { kind: 'text' }, 'he'));
   repo.markInboundOutcome(event.wamid, { decision: 'BUTTON' });
@@ -537,6 +543,7 @@ async function respondToText(
     }
     if (command.kind === 'watches') return watchesCommand(deps);
     if (command.kind === 'learn') return learnCommand(command.action, deps);
+    if (command.kind === 'leave') return leaveCommand(command.set, deps);
     if (command.kind === 'consents') return consentsCommand(event, deps);
     return {
       action: 'reply',
@@ -859,6 +866,53 @@ function learnCommand(action: LearnAction, deps: PipelineDeps): PipelineOutcome 
       return { action: 'reply', text: learn.turnOff() ? learnText.off : learnText.alreadyOff };
     case 'forget':
       return { action: 'reply', text: learnText.forgotten(learn.forget(deps.principal)) };
+    case 'export':
+      return { action: 'reply', text: learnText.exportWhere };
+  }
+}
+
+/** `/leave`, `/leave N`, `/leave off` (block K, K2): the setter a `leave_min` proposal shares. */
+function leaveCommand(set: Extract<Command, { kind: 'leave' }>['set'], deps: PipelineDeps): PipelineOutcome {
+  const { repo } = deps;
+  if (set === 'invalid') return { action: 'reply', text: leaveText.invalid(LEAVE_DEFAULT_MIN, LEAVE_DEFAULT_MAX) };
+  if (set === 'off') {
+    repo.setLeaveDefaultMinutes(null);
+    return { action: 'reply', text: leaveText.reset(DEFAULT_TRAVEL_MINUTES) };
+  }
+  if (set === null) {
+    const stored = repo.leaveDefaultMinutes();
+    return { action: 'reply', text: leaveText.current(stored ?? DEFAULT_TRAVEL_MINUTES, stored === null) };
+  }
+  repo.setLeaveDefaultMinutes(set);
+  return { action: 'reply', text: leaveText.set(set) };
+}
+
+/**
+ * A weekly-review button (`lp:`, block K, K2). Deterministic, before any
+ * await, and in the pipeline: the learning store is never on a tool's or the
+ * agent's context. The reply is the row's status after the transaction.
+ */
+function learnProposalButton(
+  parsed: { id: string; nonce: string; verb: string },
+  event: Extract<InboundEvent, { kind: 'button' }>,
+  deps: PipelineDeps,
+  now: number,
+): PipelineOutcome {
+  const { repo, principal } = deps;
+  repo.markInboundOutcome(event.wamid, { decision: 'BUTTON' });
+  if (!deps.learn || (parsed.verb !== 'ok' && parsed.verb !== 'no')) return { action: 'reply', text: learnText.expired };
+  const answer = deps.learn.answerProposal(principal, parsed.id, parsed.nonce, parsed.verb === 'ok');
+  repo.audit({ ts: now, principal, tool: 'learn.proposal', tier: 0, decision: 'BUTTON', outcome: answer.kind });
+  switch (answer.kind) {
+    case 'applied':
+      return { action: 'reply', text: learnText.applied(answer.proposal, answer.value) };
+    case 'declined':
+      return { action: 'reply', text: learnText.declined };
+    case 'answered':
+      return { action: 'reply', text: learnText.answered };
+    case 'expired':
+    case 'gone':
+      return { action: 'reply', text: learnText.expired };
   }
 }
 

@@ -20,7 +20,9 @@
 import type { SqlDriver } from './sql.js';
 import type { Repository } from './repo.js';
 import type { Keyring } from '../security/crypto.js';
-import { encryptToken } from '../security/crypto.js';
+import { decryptToken, encryptToken } from '../security/crypto.js';
+import { sha256Hex } from '../confirm/pending.js';
+import { COMMAND_KINDS } from './router.js';
 import { REGISTRY } from '../tools/registry.js';
 import { addDays, localPartsOf, ZONE } from '../time/tz.js';
 
@@ -55,6 +57,27 @@ const SEEN_KEY = 'learn_notice_seen';
 const SENT_KEY = 'learn_notice_sent';
 const SINCE_KEY = 'learn_since';
 const VERSION_SINCE_KEY = 'learn_version_since';
+const REVIEW_SENT_KEY = 'learn_review_sent_on';
+
+/** What a proposal may change: a preference with its own command (K2). Closed. */
+export const PROPOSAL_KINDS = ['digest_hour', 'leave_min'] as const;
+export type ProposalKind = (typeof PROPOSAL_KINDS)[number];
+export const PROPOSAL_STATUSES = ['pending', 'accepted', 'declined', 'superseded', 'expired', 'cancelled'] as const;
+export type ProposalStatus = (typeof PROPOSAL_STATUSES)[number];
+/** A proposal's buttons stay good this long. */
+export const PROPOSAL_TTL_MS = 6 * 24 * 60 * 60 * 1000;
+/** Ended proposals are kept this long, for the export's outcome counts. */
+export const PROPOSAL_KEPT_MS = 90 * 24 * 60 * 60 * 1000;
+
+export type NewProposal = { id: string; nonce: string; kind: ProposalKind; value: number };
+
+/** What a tap did, read from the row after the transaction. */
+export type ProposalAnswer =
+  | { kind: 'gone' }
+  | { kind: 'applied'; proposal: ProposalKind; value: number }
+  | { kind: 'declined' }
+  | { kind: 'answered' }
+  | { kind: 'expired' };
 
 export type LearnState = {
   on: boolean;
@@ -83,6 +106,18 @@ export type SealedEvent = {
 };
 
 export type WeekCounter = 'messages' | 'misses' | 'rephrases';
+
+export type WeekRow = { week: string; messages: number; misses: number; rephrases: number };
+
+/** A `learn_events` row as stored: text only as ciphertext. */
+export type StoredEvent = {
+  id: string;
+  kind: string;
+  confidence: string | null;
+  ciphertext: string | null;
+  meta: string;
+  createdAt: number;
+};
 
 export class LearnStore {
   constructor(
@@ -132,11 +167,15 @@ export class LearnStore {
    * only from its delivery.
    */
   turnOff(): boolean {
-    const wasOn = this.state().on;
-    for (const key of [ON_KEY, SEEN_KEY, SENT_KEY, SINCE_KEY, VERSION_SINCE_KEY]) {
-      this.sql.exec('DELETE FROM settings WHERE key = ?', key);
-    }
-    return wasOn;
+    return this.sql.transaction(() => {
+      const wasOn = this.state().on;
+      for (const key of [ON_KEY, SEEN_KEY, SENT_KEY, SINCE_KEY, VERSION_SINCE_KEY]) {
+        this.sql.exec('DELETE FROM settings WHERE key = ?', key);
+      }
+      // Their buttons then answer "expired" (K2).
+      this.sql.exec("UPDATE learn_proposals SET status = 'cancelled', settled_at = ? WHERE status = 'pending'", this.now());
+      return wasOn;
+    });
   }
 
   /** The app queued the notice as this outbox row. Inside the caller's transaction. */
@@ -202,12 +241,13 @@ export class LearnStore {
    * their own rules, and a file already exported is not ours to touch. While
    * collecting, the journal starts again now.
    */
-  forget(principal: string): { events: number; weeks: number } {
+  forget(principal: string): { events: number; weeks: number; proposals: number } {
     return this.sql.transaction(() => {
       const events = this.sql.exec('DELETE FROM learn_events WHERE principal = ? RETURNING id', principal).length;
       const weeks = this.sql.exec('DELETE FROM learn_weeks WHERE principal = ? RETURNING week_start', principal).length;
+      const proposals = this.sql.exec('DELETE FROM learn_proposals WHERE principal = ? RETURNING id', principal).length;
       if (this.state().since !== null) this.repo.setSetting(SINCE_KEY, String(this.now()));
-      return { events, weeks };
+      return { events, weeks, proposals };
     });
   }
 
@@ -280,6 +320,248 @@ export class LearnStore {
     const oldestWeek = weekStartOf(now - LEARN_WEEKS_KEPT * 7 * 24 * 60 * 60 * 1000);
     const weeks = this.sql.exec('DELETE FROM learn_weeks WHERE week_start < ? RETURNING week_start', oldestWeek).length;
     return { events, weeks };
+  }
+
+  // -- the weekly review (K2) -------------------------------------------------
+
+  /** The local day the weekly review was dealt with, or null. */
+  reviewSentOn(): string | null {
+    return this.repo.getSetting(REVIEW_SENT_KEY);
+  }
+
+  /** Inside the review's transaction, with its outbox rows. */
+  markReviewSent(dayKey: string): void {
+    this.repo.setSetting(REVIEW_SENT_KEY, dayKey);
+  }
+
+  /** The counters of the weeks starting at or after `fromWeek` (a `YYYY-MM-DD` Sunday), oldest first. */
+  weeks(principal: string, fromWeek: string): WeekRow[] {
+    return this.sql
+      .exec(
+        'SELECT week_start, messages, misses, rephrases FROM learn_weeks WHERE principal = ? AND week_start >= ? ORDER BY week_start',
+        principal,
+        fromWeek,
+      )
+      .map((row) => ({
+        week: String(row['week_start']),
+        messages: Number(row['messages']),
+        misses: Number(row['misses']),
+        rephrases: Number(row['rephrases']),
+      }));
+  }
+
+  /** The travel times the user said (`stated`), at or after `fromMs`. */
+  statedLeaves(principal: string, fromMs: number): number[] {
+    const out: number[] = [];
+    for (const row of this.sql.exec(
+      "SELECT meta FROM learn_events WHERE principal = ? AND kind = 'leave' AND created_at >= ? ORDER BY created_at",
+      principal,
+      fromMs,
+    )) {
+      try {
+        const meta = JSON.parse(String(row['meta'])) as { minutes?: unknown; stated?: unknown };
+        if (meta.stated === 1 && Number.isInteger(meta.minutes)) out.push(meta.minutes as number);
+      } catch {
+        // A damaged row teaches nothing.
+      }
+    }
+    return out;
+  }
+
+  /**
+   * When the user wrote, at or after `fromMs`: the existing `inbound_messages`
+   * (one row per message, kept 30 days). Buttons and commands are left out, so
+   * `/digest 7` as the day's first message is never a habit. Plain integers;
+   * the day grouping is done in `habits.ts`.
+   */
+  firstMessageTimes(principal: string, fromMs: number): number[] {
+    const placeholders = COMMAND_KINDS.map(() => '?').join(', ');
+    return this.sql
+      .exec(
+        `SELECT received_at FROM inbound_messages
+         WHERE principal = ? AND received_at >= ? AND kind != 'button'
+           AND (decision IS NULL OR decision != 'BUTTON')
+           AND (intent IS NULL OR intent NOT IN (${placeholders}))
+         ORDER BY received_at`,
+        principal,
+        fromMs,
+        ...COMMAND_KINDS,
+      )
+      .map((row) => Number(row['received_at']));
+  }
+
+  /** The kinds with a proposal still waiting: a new one of the same kind waits too. */
+  pendingKinds(principal: string): Set<ProposalKind> {
+    const kinds = new Set<ProposalKind>();
+    for (const row of this.sql.exec(
+      "SELECT DISTINCT kind FROM learn_proposals WHERE principal = ? AND status = 'pending' AND expires_at > ?",
+      principal,
+      this.now(),
+    )) {
+      const kind = String(row['kind']);
+      if (isProposalKind(kind)) kinds.add(kind);
+    }
+    return kinds;
+  }
+
+  /**
+   * A group of answers: one row each, one `group_id`. Synchronous, inside the
+   * review's transaction. Returns the button nonces; only their hashes are stored.
+   */
+  insertGroup(principal: string, answers: ReadonlyArray<{ kind: ProposalKind; value: number }>): NewProposal[] {
+    const now = this.now();
+    const groupId = randomHex(8);
+    return answers.map((answer) => {
+      const id = randomHex(8);
+      const nonce = randomHex(8);
+      this.sql.exec(
+        `INSERT INTO learn_proposals (id, principal, group_id, kind, value, status, nonce_hash, created_at, expires_at)
+         VALUES (?, ?, ?, ?, ?, 'pending', ?, ?, ?)`,
+        id,
+        principal,
+        groupId,
+        answer.kind,
+        answer.value,
+        nonceHash(nonce),
+        now,
+        now + PROPOSAL_TTL_MS,
+      );
+      return { id, nonce, kind: answer.kind, value: answer.value };
+    });
+  }
+
+  /**
+   * A tapped proposal button (`lp:`). One transaction, no awaits: claim the
+   * row only while it is pending, unexpired, its nonce matches and no sibling
+   * was taken; then supersede the siblings and apply the stored value through
+   * the command's own setter. A throw rolls all of it back. `no` declines a
+   * proposal (a group of one) and does nothing to a question's answer. The
+   * reply comes from the row's status afterwards, never from the tap.
+   */
+  answerProposal(principal: string, id: string, nonce: string, accept: boolean): ProposalAnswer {
+    return this.sql.transaction((): ProposalAnswer => {
+      const now = this.now();
+      const row = this.sql.exec(
+        'SELECT group_id, kind, value, nonce_hash FROM learn_proposals WHERE id = ? AND principal = ?',
+        id,
+        principal,
+      )[0];
+      if (!row || String(row['nonce_hash']) !== nonceHash(nonce)) return { kind: 'gone' };
+      const groupId = String(row['group_id']);
+      const kind = String(row['kind']);
+      const value = Number(row['value']);
+      if (!isProposalKind(kind)) return { kind: 'gone' };
+
+      if (accept) {
+        const claimed = this.sql.exec(
+          `UPDATE learn_proposals SET status = 'accepted', settled_at = ?
+           WHERE id = ? AND status = 'pending' AND expires_at > ?
+             AND NOT EXISTS (SELECT 1 FROM learn_proposals WHERE group_id = ? AND status = 'accepted')
+           RETURNING id`,
+          now,
+          id,
+          now,
+          groupId,
+        ).length;
+        if (claimed === 1) {
+          this.sql.exec(
+            "UPDATE learn_proposals SET status = 'superseded', settled_at = ? WHERE group_id = ? AND id != ? AND status = 'pending'",
+            now,
+            groupId,
+            id,
+          );
+          this.apply(kind, value);
+          return { kind: 'applied', proposal: kind, value };
+        }
+      } else {
+        const size = Number(this.sql.exec('SELECT COUNT(*) AS n FROM learn_proposals WHERE group_id = ?', groupId)[0]?.['n']);
+        if (size === 1) {
+          const declined = this.sql.exec(
+            "UPDATE learn_proposals SET status = 'declined', settled_at = ? WHERE id = ? AND status = 'pending' AND expires_at > ? RETURNING id",
+            now,
+            id,
+            now,
+          ).length;
+          if (declined === 1) return { kind: 'declined' };
+        }
+      }
+      return this.answerFromStatus(id, now);
+    });
+  }
+
+  /**
+   * Daily: pending rows past their time become `expired`, then ended rows
+   * older than 90 days go. Pending rows are never deleted.
+   */
+  purgeProposals(): { expired: number; deleted: number } {
+    const now = this.now();
+    const expired = this.sql.exec(
+      "UPDATE learn_proposals SET status = 'expired', settled_at = ? WHERE status = 'pending' AND expires_at <= ? RETURNING id",
+      now,
+      now,
+    ).length;
+    const deleted = this.sql.exec(
+      "DELETE FROM learn_proposals WHERE status != 'pending' AND COALESCE(settled_at, created_at) <= ? RETURNING id",
+      now - PROPOSAL_KEPT_MS,
+    ).length;
+    return { expired, deleted };
+  }
+
+  /** Outcome counts per kind, from the rows still kept (K3). */
+  proposalOutcomes(principal: string): Array<{ kind: ProposalKind; status: ProposalStatus; count: number }> {
+    const out: Array<{ kind: ProposalKind; status: ProposalStatus; count: number }> = [];
+    for (const row of this.sql.exec(
+      'SELECT kind, status, COUNT(*) AS n FROM learn_proposals WHERE principal = ? GROUP BY kind, status ORDER BY kind, status',
+      principal,
+    )) {
+      const kind = String(row['kind']);
+      const status = String(row['status']);
+      if (isProposalKind(kind) && (PROPOSAL_STATUSES as readonly string[]).includes(status)) {
+        out.push({ kind, status: status as ProposalStatus, count: Number(row['n']) });
+      }
+    }
+    return out;
+  }
+
+  /** Every event of a principal, newest first, for the export (K3). Ciphertext as stored. */
+  eventsForExport(principal: string): StoredEvent[] {
+    return this.sql
+      .exec(
+        'SELECT id, kind, confidence, ciphertext, meta, created_at FROM learn_events WHERE principal = ? ORDER BY created_at DESC, id DESC',
+        principal,
+      )
+      .map((row) => ({
+        id: String(row['id']),
+        kind: String(row['kind']),
+        confidence: row['confidence'] === null || row['confidence'] === undefined ? null : String(row['confidence']),
+        ciphertext: row['ciphertext'] === null || row['ciphertext'] === undefined ? null : String(row['ciphertext']),
+        meta: String(row['meta']),
+        createdAt: Number(row['created_at']),
+      }));
+  }
+
+  /** Decrypt one sealed event's body (K3). */
+  async open(principal: string, event: StoredEvent): Promise<unknown> {
+    if (event.ciphertext === null) return null;
+    return JSON.parse(await decryptToken(event.ciphertext, this.keyring(), learnAad(principal, event.id)));
+  }
+
+  private answerFromStatus(id: string, now: number): ProposalAnswer {
+    const row = this.sql.exec('SELECT status, expires_at FROM learn_proposals WHERE id = ?', id)[0];
+    const status = String(row?.['status'] ?? '');
+    if (status === 'accepted' || status === 'superseded' || status === 'declined') return { kind: 'answered' };
+    if (status === 'pending' && Number(row?.['expires_at']) > now) return { kind: 'answered' };
+    return { kind: 'expired' };
+  }
+
+  /** The same setters as `/digest N` and `/leave N`. */
+  private apply(kind: ProposalKind, value: number): void {
+    if (kind === 'digest_hour') {
+      if (!Number.isInteger(value) || value < 0 || value > 23) throw new RangeError('digest_hour_out_of_range');
+      this.repo.setDigestHour(value);
+      return;
+    }
+    this.repo.setLeaveDefaultMinutes(value);
   }
 
   // -- internals ------------------------------------------------------------
@@ -383,6 +665,14 @@ function cutTurn(turn: LearnTurn): LearnTurn {
 
 function isToolName(name: string): boolean {
   return Object.prototype.hasOwnProperty.call(REGISTRY, name);
+}
+
+function isProposalKind(kind: string): kind is ProposalKind {
+  return (PROPOSAL_KINDS as readonly string[]).includes(kind);
+}
+
+function nonceHash(nonce: string): string {
+  return sha256Hex(new TextEncoder().encode(`learn:${nonce}`));
 }
 
 function randomHex(bytes: number): string {

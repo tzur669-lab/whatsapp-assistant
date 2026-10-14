@@ -299,6 +299,10 @@ the watch; the phone matches it.
   check. From the default SMS app, the newest SMS (`_id` and body, the existing
   `READ_SMS` grant) is matched against `sms` watches; anything else, its title
   and text against `notification` watches. One SMS never fires both kinds.
+
+**Learning export (0.18, block K3).** ☰ → ייצוא למידה asks first, then fetches
+`GET /app/learn/export` (signed, empty body, up to 256 KB) and saves
+`bot-learn-YYYY-MM-DD.json` to Downloads (`LearnExportLogic.kt`, `DownloadsSave.kt`). Server first, then the APK.
 - `WatchMatcher.kt` is the server's `core/watch-match.ts` in Kotlin, both
   checked against `test/fixtures/watch-normalize.json`.
 - A match posts `POST /app/watch/fired {watchId, matchedAt}`: no text. It is

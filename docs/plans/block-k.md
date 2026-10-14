@@ -401,3 +401,34 @@ when the strings are written.
    its WhatsApp send failed (on, `seen` null, nothing outstanding).
 7. K2 adds what belongs to `learn_proposals`: `/learn off` cancelling pending
    proposals, and `/learn forget` deleting them.
+
+## K2–K4 build notes (2026-10-14) — where the code differs from the text above
+
+1. **When.** The review goes on the first hourly tick on Sunday at or after
+   10:00 local (`reviewDue`), not only in the 10:00 hour, so a missed tick does
+   not lose the week; `learn_review_sent_on` (the local day) stops a second
+   one, checked again inside the transaction.
+2. **Outbox.** Review messages are outbox kind `notice`: like every non-reminder
+   row they expire after 24 h if the phone never fetches them.
+3. **Nonce.** `learn_proposals.nonce_hash` stores SHA-256 of the nonce (as
+   `pending_actions` does), not the nonce. The `lp:` tap is answered in the
+   pipeline before `runButton`, since the store is never on `TurnContext`;
+   `runButton` answers an `lp` it should never see with "not found".
+4. **Question.** The bank has 8 entries (4 digest hours, 4 travel times),
+   rotated by `floor(now / week) % 8`. Today's value is removed from the
+   answers; fewer than 2 left → no question. A digest question is skipped
+   while the digest is off. A kind pending, or proposed this week, blocks its
+   question.
+5. **Export reminder.** "The first review of each month" = a review in the
+   first 7 days of the local month.
+6. **Proposal text.** The `digest_hour` proposal names the observed time (the
+   median, as wall clock) and the current and proposed hours. `leave_min`
+   abstains outside `/leave`'s bounds (10–120), like the digest hour.
+7. **Export.** Answers even while learning is off (the data is kept until
+   `/learn forget`). Compact JSON (the app pretty-prints it before saving). A
+   row that does not decrypt or parse is counted in `unreadable`, never shown.
+   The app asks with the warning **before** fetching.
+8. **K4.** `learn-to-evals.ts` writes `evals-private/drafts/` and
+   `evals-private/candidates/` and prints the taps, leave stats, weeks and
+   proposal outcomes; the skill lives in the bot repo
+   (`.claude/skills/learn-review/SKILL.md`).
