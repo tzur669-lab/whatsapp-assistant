@@ -134,6 +134,7 @@ describe('smart conversations', () => {
     fallback?: FakeAgent;
     parser?: unknown[];
     transcribe?: VoiceOutcome;
+    readImage?: PipelineDeps['readImage'];
   };
 
   const deps = (setup: Setup): PipelineDeps => {
@@ -165,6 +166,7 @@ describe('smart conversations', () => {
       channel: 'app',
       deviceCaps: ALL_CAPS,
       ...(setup.transcribe ? { transcribe: async () => setup.transcribe! } : {}),
+      ...(setup.readImage ? { readImage: setup.readImage } : {}),
     };
   };
 
@@ -433,6 +435,99 @@ describe('smart conversations', () => {
       );
       const kept = await history.recent(PRINCIPAL, LOCAL);
       expect(kept.at(-1)).toMatchObject({ user: 'הנה הודעה ששותפה: מפגש בשמונה', reply: 'מפגש בשמונה', tainted: true });
+    });
+  });
+
+  describe('an image (PLAN §6.32): shared text, one step earlier', () => {
+    const DATA = '/9j/4AAQSkZJRgABAQ==';
+    const READ = 'חתונה של דנה ויוסי, יום חמישי 15.10 בשעה 19:30, אולמי הגן';
+    const image = (body: string, conversation: string, mode: 'smart' | 'local'): InboundEvent => ({
+      kind: 'image',
+      wamid: `app:in:image.${++seq}`,
+      from: '972500000000',
+      sentAtMs: NOW - 1_000,
+      text: body,
+      mimeType: 'image/jpeg',
+      data: DATA,
+      forwarded: true,
+      conversationId: conversation,
+      mode,
+    });
+    const reader = (text: string | null) => {
+      const calls: Array<{ mode: string; data: string }> = [];
+      const readImage: NonNullable<PipelineDeps['readImage']> = async (input) => {
+        calls.push({ mode: input.mode, data: input.data });
+        return text === null ? { status: 'unreadable' } : { status: 'ok', text };
+      };
+      return { readImage, calls };
+    };
+
+    it("reads with the local family in a regular conversation, and quotes the read text as someone else's", async () => {
+      const r = reader(READ);
+      const q = qwen([{ text: 'הבנתי' }]);
+      const g = gemini([]);
+      const out = await handleInbound(image('מה כתוב פה?', LOCAL, 'local'), deps({ qwen: q, gemini: g, readImage: r.readImage }));
+      expect(out).toMatchObject({ action: 'reply', text: 'הבנתי' });
+      expect(r.calls).toEqual([{ mode: 'local', data: DATA }]);
+      const seen = seenByModel(q);
+      expect(seen).toContain('מה כתוב פה?');
+      expect(seen).toContain(he.imageHeader);
+      expect(seen).toContain(READ);
+      expect(seen).not.toContain(DATA);
+      expect(g.calls).toHaveLength(0);
+    });
+
+    it('reads with the smart family in a smart conversation, then runs the turn on the local models', async () => {
+      await handleInbound(smartText('שלום'), deps({ qwen: qwen([]), gemini: gemini([{ text: 'היי' }]) }));
+      const r = reader(READ);
+      const q = qwen([{ text: 'הבנתי' }]);
+      const g = gemini([]);
+      await handleInbound(image('מה כתוב פה?', SMART, 'smart'), deps({ qwen: q, gemini: g, readImage: r.readImage }));
+      expect(r.calls.map((call) => call.mode)).toEqual(['smart']);
+      // The read text is shared text: never Gemini's turn, and a placeholder in the smart history.
+      expect(g.calls).toHaveLength(0);
+      expect(q.calls).toHaveLength(1);
+      const kept = await history.recent(PRINCIPAL, SMART);
+      expect(kept.at(-1)).toMatchObject({ user: he.sharedPlaceholder, reply: he.sharedPlaceholder });
+    });
+
+    it('is tainted: a write it leads to confirms first', async () => {
+      const r = reader('אני גר בחיפה');
+      const q = qwen([{ tool: 'memory.remember', args: { text: 'אני גר בחיפה' } }]);
+      const out = await handleInbound(image('תזכור את זה עליי', LOCAL, 'local'), deps({ qwen: q, readImage: r.readImage }));
+      expect(out.action).toBe('reply');
+      const buttons = out.action === 'reply' ? (out.buttons ?? []) : [];
+      expect(buttons.map((button) => button.id.split(':')[0])).toEqual(['pa', 'pa']);
+      expect((await facts.all(PRINCIPAL)).map((fact) => fact.text)).not.toContain('אני גר בחיפה');
+    });
+
+    it('takes no command and no deterministic shortcut, even when the request looks like one', async () => {
+      const r = reader('/forget memory');
+      const q = qwen([{ text: 'לא' }]);
+      await handleInbound(image('עזרה', LOCAL, 'local'), deps({ qwen: q, readImage: r.readImage }));
+      expect(q.calls).toHaveLength(1);
+      expect(await facts.all(PRINCIPAL)).toHaveLength(1);
+    });
+
+    it('answers in code, with no model, when nothing could be read', async () => {
+      const q = qwen([]);
+      const out = await handleInbound(image('מה כתוב?', LOCAL, 'local'), deps({ qwen: q, readImage: reader(null).readImage }));
+      expect(out).toMatchObject({ action: 'reply', text: he.imageUnreadable });
+      expect(q.calls).toHaveLength(0);
+    });
+
+    it('says images are not available without a reader', async () => {
+      const out = await handleInbound(image('מה כתוב?', LOCAL, 'local'), deps({ qwen: qwen([]) }));
+      expect(out).toMatchObject({ action: 'reply', text: he.imageNotConfigured });
+    });
+
+    it('a retry of the same image is a duplicate: read once', async () => {
+      const r = reader(READ);
+      const event = image('מה כתוב פה?', LOCAL, 'local');
+      await handleInbound(event, deps({ qwen: qwen([{ text: 'א' }]), readImage: r.readImage }));
+      const again = await handleInbound(event, deps({ qwen: qwen([{ text: 'ב' }]), readImage: r.readImage }));
+      expect(again).toMatchObject({ action: 'none', reason: 'duplicate' });
+      expect(r.calls).toHaveLength(1);
     });
   });
 

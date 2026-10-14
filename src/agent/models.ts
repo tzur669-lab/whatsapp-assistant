@@ -164,12 +164,39 @@ export const SCREEN_ONLY_MODELS: readonly ModelEntry[] = [
   },
 ];
 
-/** Every table: a smart or screen model found by id gets its own limits, never qwen's defaults. */
+export const LLAMA_4_SCOUT = 'meta-llama/llama-4-scout-17b-16e-instruct';
+
+/**
+ * Models only the image reader may use (PLAN §6.32, 2026-10-14), never a chat
+ * turn or a screen step: not in `MODELS`, `SMART_MODELS` or the screen lists
+ * (unit test). qwen and gpt-oss-120b see no images, so a regular
+ * conversation's image goes to Groq's Llama 4 Scout. The id and every limit
+ * here are placeholders until the human reads them in the Groq console and
+ * probes once (PLAN §13); a 429 rests it on the existing ladder.
+ */
+export const VISION_ONLY_MODELS: readonly ModelEntry[] = [
+  {
+    id: LLAMA_4_SCOUT,
+    provider: 'groq',
+    role: 'backup',
+    // Tokens only, like the other Groq models: a long `retry-after` is the day.
+    minuteTokens: 30_000,
+    maxCompletionTokens: 1_024,
+    params: {},
+    turnCap: 6_000,
+    maxModelCalls: 1,
+    charsPerToken: GROQ_CHARS_PER_TOKEN,
+    canWrite: false,
+  },
+];
+
+/** Every table: a smart, screen or vision model found by id gets its own limits, never qwen's defaults. */
 export function modelEntry(id: string): ModelEntry | undefined {
   return (
     MODELS.find((entry) => entry.id === id) ??
     SMART_MODELS.find((entry) => entry.id === id) ??
-    SCREEN_ONLY_MODELS.find((entry) => entry.id === id)
+    SCREEN_ONLY_MODELS.find((entry) => entry.id === id) ??
+    VISION_ONLY_MODELS.find((entry) => entry.id === id)
   );
 }
 
@@ -192,3 +219,13 @@ export const DEFAULT_MAX_COMPLETION_TOKENS = 1_024;
  */
 export const SCREEN_MODELS: readonly string[] = [QWEN, GPT_OSS_120B];
 export const SCREEN_SMART_MODELS: readonly string[] = [GEMINI_FLASH_LITE, GEMINI_FLASH];
+
+/**
+ * The models that may read an image (PLAN §6.32; the user's decision,
+ * 2026-10-14), by the conversation it was sent in, as the screen: a regular
+ * conversation's image goes only to Groq (`VISION_MODELS`), a smart one's only
+ * to Gemini Flash-Lite (`VISION_SMART_MODELS`, which may train on it), never
+ * crossing. Not Gemini 3.5 Flash: its 20 a day are the screen agent's.
+ */
+export const VISION_MODELS: readonly string[] = [LLAMA_4_SCOUT];
+export const VISION_SMART_MODELS: readonly string[] = [GEMINI_FLASH_LITE];

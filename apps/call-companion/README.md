@@ -180,6 +180,39 @@ that a reminder came. Cleared when the server unpairs the phone.
 **Time to leave.** A reminder set with "תזכיר לי מתי לצאת…" arrives with a Waze
 card to the event's place, if it has one. The card can be claimed for two hours.
 
+## Pictures (0.19, PLAN §6.32)
+
+**Sending one.** 📎 next to the 🎤 opens the system's own picker
+(`MediaStore.ACTION_PICK_IMAGES` from Android 13, else `ACTION_GET_CONTENT` for
+`image/*`), so the app asks for no storage permission. Any app's Share →
+העוזר works for an image too (`image/*`, `EXTRA_STREAM`): it opens a new
+conversation, like shared text, and the picture is read **at once** while the
+grant on it holds. Text that came with the share becomes the start of the
+request. The picture waits above the field ("📷 תמונה מצורפת ✕"; a tap drops
+it); the user writes what to do with it ("תכניס ליומן") and sends. It is never
+sent on its own, never with a `/` command, and the 🎤 is off while it waits. A
+picture and shared text do not travel together: the picture wins.
+
+**What leaves the phone.** `ImagePrep` decodes the picture at a reduced size
+(`inSampleSize`), scales it to at most 1,600 px on the long edge, turns it
+upright by its EXIF tag and encodes a JPEG, from quality 85 down to 40 until it
+is at most `MAX_IMAGE_BYTES` (700,000 bytes, not KiB; equal to the server's).
+Encoding again drops the EXIF block, so the place a photo was taken never
+leaves the phone. A picture that is still too large gets a notice. Nothing is
+written to disk, and the chat keeps only "📷 תמונה" and the request.
+
+**On the wire.** `POST /app/image`, signed like `/app/message`, JSON:
+`{ id, text, image (base64, no line breaks), mimeType: "image/jpeg",
+conversationId?, mode?, location? }`. Answers have the message route's shape.
+Like a voice note it is not asked about again cheaply while pending. The server
+reads the picture with the conversation's vision model and treats what it says
+as someone else's words: every write it leads to asks for confirmation.
+`ProtocolTest` pins the size arithmetic against the server's one-megabyte body
+cap. The quota screen labels the `vision` role "קריאת תמונות".
+
+Needs the server from the `/app/image` release — **deploy the server first**:
+an older one answers 404 for the route.
+
 ## Smart or local (0.12)
 
 ＋ asks which conversation to open: **✨ שיחה חכמה** (Gemini's free tier on the
@@ -371,6 +404,8 @@ server or wire change.
 - **The signing key:** in the Keystore.
 - **Recordings:** live in `noBackupFilesDir` only while recording. They are
   deleted after reading, and any leftovers are removed at startup.
+- **Pictures (0.19):** shrunk and encoded in memory, sent, and forgotten; never
+  written to disk, never in the chat history.
 - **Contacts:** numbers and addresses never leave the phone. A name leaves only
   as the answer to a phone read the user asked for (PLAN §6.21), or in the
   missed-calls report the digest asks for.
@@ -392,6 +427,9 @@ recorder all come from the platform.
 
 - **The chat's rules** (`ChatLogicTest`): what `/` offers, conversation
   titles, where a row goes, and that only a real conversation id is sent.
+- **Pictures** (`ImageLogicTest`): the target size and sampling, the quality
+  ladder against the server's cap, the EXIF turn; `ProtocolTest` the body-size
+  arithmetic.
 - **Matching rules**, for calls (`ContactMatcherTest`), cards (`CardLogicTest`)
   routines (`RoutineLogicTest`: validation, the step hash, one exact target),
   the screen agent (`ScreenLogicTest`: elements and caps, the binding, the

@@ -52,6 +52,7 @@ const OUTSIDE_A_TURN: Record<string, string> = {
   'device/fcm.ts': 'push, after the turn or from a write’s execute (writes take no signal)',
   'nlu/groq.ts': 'the parser, which never runs after a deadline (`pipeline.ts`)',
   'voice/groq-whisper.ts': 'transcription, before the turn',
+  'vision/read-image.ts': 'reading an image (§6.32), before the turn, with its own 20 s / 30 s timeouts',
 };
 
 const FILES = sourceFiles(SRC)

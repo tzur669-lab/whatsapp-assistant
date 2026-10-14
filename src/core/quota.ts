@@ -102,7 +102,7 @@ export function meterGroqFetch(
 
 export type ModelSpec = {
   model: string;
-  role: 'primary' | 'fallback' | 'voice';
+  role: 'primary' | 'fallback' | 'voice' | 'vision';
   /** Whether Groq's daily token limit applies (not to Whisper, which is billed in audio). */
   dayTokens: boolean;
 };
@@ -122,6 +122,8 @@ export type QuotaReport = {
   }>;
   /** This server's own cap on recordings (§6.10), over the last hour. */
   voice: { used: number; limit: number };
+  /** This server's own cap on images (§6.32), over the last hour. Optional: an older app ignores it. */
+  images?: { used: number; limit: number };
   /** Counted here, per UTC day. */
   workerRequests: { limit: number; used: number; resetAt: number };
   /** This server's own limits; absent only where nothing set them. */
@@ -193,7 +195,7 @@ export class QuotaStore {
     );
   }
 
-  report(models: readonly ModelSpec[], voice: { used: number; limit: number }): QuotaReport {
+  report(models: readonly ModelSpec[], voice: { used: number; limit: number }, images?: { used: number; limit: number }): QuotaReport {
     const now = this.now();
     this.sql.exec('DELETE FROM groq_token_spend WHERE at <= ?', now - DAY_MS);
     this.sql.exec('DELETE FROM worker_requests WHERE day < ?', utcDay(now - DAY_MS));
@@ -216,6 +218,7 @@ export class QuotaStore {
         };
       }),
       voice,
+      ...(images ? { images } : {}),
       workerRequests: {
         limit: WORKER_REQUESTS_PER_DAY,
         used: Number(this.sql.exec('SELECT count FROM worker_requests WHERE day = ?', utcDay(now))[0]?.['count'] ?? 0),

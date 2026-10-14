@@ -24,6 +24,13 @@ const JSON_TYPE = 'application/json';
 /** 60 seconds of AAC at 64 kbit/s is about 480 KB; this leaves room and no more. */
 export const MAX_VOICE_BYTES = 1024 * 1024;
 
+/**
+ * An image and its request (PLAN §6.32): `MAX_IMAGE_B64_CHARS` (933,336) of
+ * base64, 2,000 characters of request at three bytes each, and the rest of
+ * the JSON, with room and no more.
+ */
+export const MAX_IMAGE_BODY_BYTES = 1024 * 1024;
+
 export const APP_ROUTES: readonly AppRoute[] = [
   // Pairing and the call routes serve the companion on WhatsApp too.
   { method: 'POST', pattern: /^\/app\/pair$/, maxBytes: 8_192, contentType: JSON_TYPE, channels: ['whatsapp', 'app'] },
@@ -45,6 +52,8 @@ export const APP_ROUTES: readonly AppRoute[] = [
     contentType: ['audio/mp4', 'audio/aac', 'audio/ogg', 'audio/webm'],
     channels: ['app'],
   },
+  // An image with the user's request (§6.32), JSON with the image in base64.
+  { method: 'POST', pattern: /^\/app\/image$/, maxBytes: MAX_IMAGE_BODY_BYTES, contentType: JSON_TYPE, channels: ['app'] },
   { method: 'GET', pattern: /^\/app\/outbox$/, maxBytes: 0, channels: ['app'] },
   // The quota screen (2026-10-01): numbers only.
   { method: 'GET', pattern: /^\/app\/quota$/, maxBytes: 0, channels: ['app'] },

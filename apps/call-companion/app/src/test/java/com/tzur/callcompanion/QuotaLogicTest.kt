@@ -45,5 +45,6 @@ class QuotaLogicTest {
         assertEquals("מודל ראשי", QuotaLogic.roleLabel("primary"))
         assertEquals("מודל גיבוי", QuotaLogic.roleLabel("fallback"))
         assertEquals("תמלול הקלטות", QuotaLogic.roleLabel("voice"))
+        assertEquals("קריאת תמונות", QuotaLogic.roleLabel("vision"))
     }
 }

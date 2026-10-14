@@ -226,7 +226,7 @@ const RATE_LIMIT_MAX_ITEMS = 20;
 const QUOTA_STATUS = /^[A-Z_]{1,40}$/;
 
 /** The body as JSON, or undefined when it is missing, too big, or not JSON. Never thrown, never kept. */
-async function readJsonCapped(response: Response): Promise<unknown> {
+export async function readJsonCapped(response: Response): Promise<unknown> {
   const body = response.body;
   if (!body) return undefined;
   const reader = body.getReader();

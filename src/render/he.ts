@@ -73,6 +73,30 @@ export const he = {
    */
   sharedHeader: 'הטקסט ששותף (נכתב על ידי מישהו אחר):',
 
+  /**
+   * Above what was read from an image the user sent (PLAN §6.32): like shared
+   * text, someone else's content, and what the user's request is about.
+   */
+  imageHeader: 'מה שנקרא מהתמונה (תוכן של מישהו אחר):',
+
+  /** The model found nothing in the image to read or describe. */
+  imageUnreadable: 'לא הצלחתי לקרוא את התמונה. כדאי לשלוח תמונה חדה יותר, או לכתוב את הבקשה.',
+
+  /** Every vision model of the conversation's family is resting for now. */
+  imageBusy: 'קריאת התמונות עמוסה כרגע. כדאי לנסות שוב בעוד דקה.',
+
+  /** Every vision model of the family is out for the day. */
+  imageQuota: 'נגמרה מכסת קריאת התמונות להיום. אפשר לנסות שוב מחר, או לכתוב את הבקשה.',
+
+  /** The read failed. Carries no error detail. */
+  imageFailed: 'לא הצלחתי לקרוא את התמונה. כדאי לנסות שוב בעוד רגע.',
+
+  /** More images in the last hour than the app channel allows. */
+  imageTooMany: 'נשלחו יותר מדי תמונות בשעה האחרונה. אפשר לכתוב את הבקשה בינתיים.',
+
+  /** No vision model of the conversation's family is configured on this server. */
+  imageNotConfigured: 'קריאת תמונות לא זמינה כרגע בשיחה הזאת.',
+
   /** Reply to image, document, location — anything that is not text, audio, or a button. */
   unsupportedType:
     'אפשר לשלוח הודעת טקסט או הקלטה קולית. סוגי קבצים אחרים לא נתמכים כרגע.',

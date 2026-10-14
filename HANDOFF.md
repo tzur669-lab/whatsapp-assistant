@@ -5,7 +5,7 @@ system is, where things live, and what breaks easily, then links out. It does
 **not** repeat the rules in `CLAUDE.md` (always loaded) or the spec in
 `PLAN.md` (read by section, never whole).
 
-_Last updated: 2026-10-14 · server at migration 0036 · agent prompt a10 + smart note s2 + screen step s2 · parser prompt v6 · app 0.18.2 (on the phone) · smart model gemini-3.5-flash-lite_
+_Last updated: 2026-10-14 · server at migration 0036 · agent prompt a10 + smart note s2 + screen step s2 · parser prompt v6 · app 0.19.0 built (0.18.2 on the phone) · smart model gemini-3.5-flash-lite · vision v1_
 
 ## 1. What this is
 
@@ -34,6 +34,12 @@ Contacts birthdays, phone actions and reads, public lookups, notes, lists, facts
   qwen then gpt-oss-120b (Groq), a smart one Gemini Flash-Lite then 3.5 Flash,
   never crossing. 10 tasks a day; each Groq model gives the screen at most 50K
   tokens a day. Code stops before every sensitive or uncertain tap.
+- **Images** (2026-10-14, PLAN §6.32): an image sent with a request is
+  shared text one step earlier. One read call of the conversation's family
+  (Groq's Llama 4 Scout in a regular one, Gemini Flash-Lite in a smart one,
+  never crossing) turns it into text, quoted under the request as someone
+  else's words: tainted, every write confirms, the local models run the turn.
+  The image is never stored or logged.
 
 ## 2. The one idea
 
@@ -77,6 +83,7 @@ Full map with every module: [ARCHITECTURE.md](ARCHITECTURE.md).
 | a migration | Add `migrations/00NN_*.sql` **and** register it in `src/platform/migrations.ts`. Backward-compatible for one version. |
 | the stored-PIN unlock (the app's `UnlockLogic.kt`, `UnlockStore.kt`) | Routines only, never a screen task. The PIN never leaves the phone; the claim comes before the unlock; one attempt until the PIN is saved again. `dispatchGesture` and `GLOBAL_ACTION_LOCK_SCREEN` live only in `press`/`relock` (`UnlockScanTest`). PLAN §6.27. |
 | the screen agent (`tools/screen*.ts`, `agent/screen-*.ts`, the app's `Screen*.kt`) | Read `docs/plans/screen-agent.md` first. The word lists live in code on both sides and must equal `test/fixtures/screen-policy.json` (a test on each side). Every status move is one conditional UPDATE; never retry an action — a `started` journal entry is `uncertain`. Screen text is never stored, logged or put in history, and goes only to the task's family: `SCREEN_MODELS` (Groq) for `mode: 'local'`, `SCREEN_SMART_MODELS` (Gemini) for `'smart'` — the mode rides in the confirmed input and the task row, never re-read from the turn. A Groq model's screen share is `SCREEN_GROQ_DAY_TOKENS`. `screen.task` is offered only when named: never add it to the full catalog. A step prompt change is `pnpm eval:screen`. |
+| images (`vision/read-image.ts`, `handleImage`, `/app/image`) | Read `docs/plans/image-input.md`. The read text goes only through `handleImage`'s synthetic text event (`forwarded: true`): never widen `respondToText` to take the image, never hand `data` past it. `VISION_MODELS` is Groq only, `VISION_SMART_MODELS` Gemini only, never crossing, and never Gemini Flash (the screen's 20 a day). `MAX_IMAGE_BYTES` equals `Protocol.MAX_IMAGE_BYTES` in the app. The base64 check is a negated class on purpose (CPU). A prompt change bumps `VISION_PROMPT_VERSION`. |
 | `src/channels/app/parse.ts` or the wire protocol | The app has a matching `Protocol.kt` with test vectors. **Deploy the server before installing a new APK**, or the old server rejects the new app. |
 | a Tier 0–1 write's `execute` that calls Google (or the turn deadline) | The enumeration in `src/agent/limits.ts`: more sequential `GoogleApi.call`s than `MAX_WRITE_CALLS` means raising it, or the lock can expire under a running write. `TURN_DEADLINE_MS` is provisional (M6). |
 | outbound `fetch` | Call `fetch` through a closure, never `this.fetchImpl(...)` — Workers throws "Illegal invocation" (tests use `test/integration/workers-fetch.ts` to catch it). A new call site must be placed in `test/security/turn-signal-fetch.test.ts`; one a tool reaches takes the turn signal (`AbortSignal.any`), and a new network client on `ToolContext` is bound in `tools/turn-signal.ts`. |
@@ -155,6 +162,12 @@ Network on the hotspot: `NODE_OPTIONS=--dns-result-order=ipv4first` for wrangler
   first**). K4: `scripts/learn-to-evals.ts`, the `learn-review` skill,
   `docs/learn-log.md`. Owed: the phone checks (PLAN §13) and the export's CPU
   in `wrangler dev`.
+- **Images** (2026-10-14, PLAN §6.32, plan `docs/plans/image-input.md`):
+  built, server and app 0.19.0 (📎 and a share target for images; APK in
+  Downloads; **server first**). Owed (PLAN §13): the human confirms the Groq
+  vision model id and limits in the console, the phone check, the CPU of a
+  full image in `wrangler dev`. "Make it a routine" waits for the plan where
+  the bot builds a routine.
 - **Next work:** [ROADMAP.md](ROADMAP.md) (Hebrew) — block H (2026-10-07):
   a smarter bot. Parts 15 (notes), 16 ("לא הבנת" capture), 17 (tool
   unions, calibrated token estimate, history fitter, named lists) and 18
@@ -186,6 +199,7 @@ Network on the hotspot: `NODE_OPTIONS=--dns-result-order=ipv4first` for wrangler
 | `docs/plans/block-h.md` | Building a block H part: the reviewed plan, by part. |
 | `docs/plans/block-k.md` | The learning journal (PLAN §6.31): the reviewed plan, K1–K4, and the K1 and K2–K4 build notes. |
 | `.claude/skills/learn-review/SKILL.md` | The user hands over a learning export (`bot-learn-*.json`). |
+| `docs/plans/image-input.md` | Images (PLAN §6.32): the reviewed plan, decisions D1–D3. |
 | `docs/plans/screen-agent.md` | The screen agent (PLAN §6.28): the build spec (wire protocol, elements, binding, risk policy, journal) and the reviewed plan. |
 | `ops/runbook.md` | Routes, crons, chat commands, deploy, diagnosing. Other `ops/*.md`: secret rotation, token revoke, restore. |
 | `apps/call-companion/README.md` | Anything in the Android app or the app ↔ server protocol. |
@@ -194,6 +208,13 @@ Network on the hotspot: `NODE_OPTIONS=--dns-result-order=ipv4first` for wrangler
 | [SETUP.md](SETUP.md) | Setting up a new copy from zero: accounts, Groq key, models, secrets, deploy, app, AI agent. |
 
 ## 8. Session log (docs)
+
+- 2026-10-14: Images (PLAN §6.32): new `src/vision/read-image.ts`,
+  `InboundImage`, route `POST /app/image`, `handleImage` in
+  `core/pipeline.ts`, `composeImage`, `VISION_ONLY_MODELS` /
+  `VISION_MODELS` / `VISION_SMART_MODELS`, quota role `vision` and `images`;
+  CLAUDE.md invariant 2 amended. No tables or migrations. App 0.19.0
+  (`ImageLogic.kt`, `ImagePrep.kt`, 📎, image share target).
 
 - 2026-10-14: Screen agent smarter, from a failed Israel Rail run (the
   station picker hides its search box; qwen typed into a button, `model_error`):

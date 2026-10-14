@@ -31,6 +31,14 @@ object Protocol {
     const val MAX_TEXT_CHARS = 2_000
     /** The server's cap on text shared from another app (`parse.ts`, 2026-10-06). */
     const val MAX_SHARED_CHARS = 1_200
+    /**
+     * An image's cap, in bytes after decoding (0.19). Equal to the server's
+     * `MAX_IMAGE_BYTES` (`parse.ts`): bytes, not KiB. As base64 inside the
+     * JSON it stays under the server's one-megabyte body cap (`ProtocolTest`).
+     */
+    const val MAX_IMAGE_BYTES = 700_000
+    /** The one route for a picture and the request about it, signed like `/app/message` (0.19). */
+    const val IMAGE_PATH = "/app/image"
 
     /**
      * A conversation's mode (smart conversations, 2026-10-08), fixed for its

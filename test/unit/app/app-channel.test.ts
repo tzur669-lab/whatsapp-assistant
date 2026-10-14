@@ -467,6 +467,70 @@ describe('the app channel', () => {
     });
   });
 
+  describe('an image (PLAN §6.32)', () => {
+    const JPEG = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0, 0x10, 0x4a, 0x46, 0x49, 0x46, 0, 1]).toString('base64');
+    const PNG = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0]).toString('base64');
+    const GROQ_CHAT = 'https://api.groq.com/openai/v1/chat/completions';
+    const GEMINI_CHAT = 'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions';
+    const sendImage = async (phone: FakePhone, fields: Record<string, unknown> = {}) =>
+      send(await phone.toDo('POST', '/app/image', { id: messageId(), text: 'מה כתוב פה?', image: JPEG, mimeType: 'image/jpeg', ...fields }));
+
+    it('reads it with Groq in a regular conversation, and answers in code when the read fails', async () => {
+      build({ GROQ_API_KEY: 'test-key-not-real' });
+      const phone = await pair();
+      const answer = await sendImage(phone);
+      expect(answer.status).toBe(200);
+      // The fake answers every chat call 599: the read failed, said in code.
+      expect((answer.body as unknown as Reply).row?.text).toBe(he.imageFailed);
+      expect(google.requests).toContain(GROQ_CHAT);
+      expect(google.requests).not.toContain(GEMINI_CHAT);
+      // The image is kept nowhere: not in the inbound row, the outbox or the audit.
+      for (const table of ['inbound_messages', 'app_outbox', 'audit_log']) {
+        expect(JSON.stringify(fake.driver.exec(`SELECT * FROM ${table}`))).not.toContain(JPEG);
+      }
+    });
+
+    it('never falls to Groq in a smart conversation without the Gemini key', async () => {
+      build({ GROQ_API_KEY: 'test-key-not-real' });
+      const phone = await pair();
+      const conversationId = '33333333-3333-4333-8333-333333333333';
+      const answer = await sendImage(phone, { conversationId, mode: 'smart' });
+      expect((answer.body as unknown as Reply).row?.text).toBe(he.imageNotConfigured);
+      expect(google.requests).not.toContain(GROQ_CHAT);
+    });
+
+    it('says images are not available with no key', async () => {
+      const phone = await pair();
+      expect(((await sendImage(phone)).body as unknown as Reply).row?.text).toBe(he.imageNotConfigured);
+    });
+
+    it('answers the signed, paired device only', async () => {
+      const phone = await pair();
+      const body = { id: messageId(), text: 'מה כתוב?', image: JPEG, mimeType: 'image/jpeg' };
+      expect((await send(await phone.toDo('POST', '/app/image', body, { unsigned: true }))).status).toBe(401);
+      const stranger = new FakePhone();
+      stranger.deviceId = 'd'.repeat(32);
+      expect((await send(await stranger.toDo('POST', '/app/image', body))).status).toBe(401);
+    });
+
+    it('refuses a type its bytes do not match, and an off-shape body', async () => {
+      const phone = await pair();
+      expect((await sendImage(phone, { mimeType: 'image/jpeg', image: PNG })).status).toBe(415);
+      expect((await sendImage(phone, { mimeType: 'image/gif' })).status).toBe(400);
+      expect((await sendImage(phone, { text: '/forget' })).status).toBe(400);
+    });
+
+    it('stops paying for reads after an hour’s worth of images', async () => {
+      build({ GROQ_API_KEY: 'test-key-not-real' });
+      const phone = await pair();
+      for (let i = 0; i < 20; i++) {
+        repo.recordInbound({ wamid: `app:in:${messageId()}`, principal, receivedAt: NOW - 1_000, sentAt: NOW, kind: 'image' });
+      }
+      expect(((await sendImage(phone)).body as unknown as Reply).row?.text).toBe(he.imageTooMany);
+      expect(google.requests).not.toContain(GROQ_CHAT);
+    });
+  });
+
   describe('conversations (2026-10-01)', () => {
     const A = '11111111-1111-4111-8111-111111111111';
     const B = '22222222-2222-4222-8222-222222222222';

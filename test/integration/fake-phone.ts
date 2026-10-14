@@ -127,6 +127,8 @@ export type FakeGoogle = {
   failPushes(status: number): void;
   /** A canned Whisper transcript, for `/audio/transcriptions`. */
   transcript: string | null;
+  /** A canned vision answer, for a chat call that carries an image (§6.32). */
+  visionText: string | null;
   requests: string[];
 };
 
@@ -138,6 +140,7 @@ export function createFakeGoogle(): FakeGoogle {
       pushStatus = status;
     },
     transcript: null,
+    visionText: null,
     requests: [],
   };
   let pushStatus = 200;
@@ -161,6 +164,12 @@ export function createFakeGoogle(): FakeGoogle {
           duration: 1.5,
           segments: [{ start: 0, end: 1.5, avg_logprob: -0.1, no_speech_prob: 0.01, compression_ratio: 1.1 }],
         }),
+        { status: 200, headers: { 'content-type': 'application/json' } },
+      );
+    }
+    if (url.endsWith('/chat/completions') && state.visionText !== null && String(init?.body ?? '').includes('"image_url"')) {
+      return new Response(
+        JSON.stringify({ choices: [{ message: { role: 'assistant', content: state.visionText } }], usage: { prompt_tokens: 900, completion_tokens: 40 } }),
         { status: 200, headers: { 'content-type': 'application/json' } },
       );
     }

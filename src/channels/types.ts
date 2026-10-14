@@ -67,6 +67,34 @@ export type InboundAudio = {
   mode?: ConversationMode;
 };
 
+/** The image types the app may send (PLAN §6.32): what its encoder writes, and two alike. */
+export type ImageMimeType = 'image/jpeg' | 'image/png' | 'image/webp';
+
+/**
+ * An image sent from the app with the user's request (PLAN §6.32). Someone
+ * else's content: the pipeline reads it with the conversation's vision model
+ * and quotes what was read as shared text, so the turn is tainted. `data` is
+ * base64, in memory for this request only — never stored, never logged.
+ */
+export type InboundImage = {
+  kind: 'image';
+  wamid: string;
+  from: string;
+  sentAtMs: number;
+  /** The user's own words: what to do with the image. */
+  text: string;
+  mimeType: ImageMimeType;
+  data: string;
+  forwarded: boolean;
+  conversationId?: string;
+  location?: DeviceLocation;
+  /**
+   * The conversation's mode. From the app, the one this message declares (absent:
+   * local); once `recordInbound` has run, the one recorded for the conversation.
+   */
+  mode?: ConversationMode;
+};
+
 export type InboundButton = {
   kind: 'button';
   wamid: string;
@@ -106,6 +134,7 @@ export type InboundStatus = {
 export type InboundEvent =
   | InboundText
   | InboundAudio
+  | InboundImage
   | InboundButton
   | InboundUnsupported
   | InboundStatus;

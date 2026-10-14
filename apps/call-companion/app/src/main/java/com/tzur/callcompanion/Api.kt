@@ -25,7 +25,7 @@ import java.util.Base64
 object Api {
     /** A typed message gets a minute: two model calls, a calendar call and a token refresh, at worst. */
     const val TEXT_TIMEOUT_MS = 60_000
-    /** A recording adds the upload and Whisper. */
+    /** A recording adds the upload and Whisper; a picture, the upload and a vision model. */
     const val VOICE_TIMEOUT_MS = 90_000
     /** Inside a push, the whole wake-up has about ten seconds. */
     const val PUSH_TIMEOUT_MS = 8_000
@@ -160,6 +160,39 @@ object Api {
             location?.let { LocationLogic.pathSegment(it) },
         )
         return answerOf(signed(context, "POST", path, AUDIO_TYPE, audio, VOICE_TIMEOUT_MS))
+    }
+
+    /**
+     * A picture and what to do with it (0.19). The body is JSON with the image
+     * as base64 (a megabyte at most, the server's cap), so the conversation and
+     * the place travel in it like a typed message. The picture is sent from
+     * memory and kept nowhere.
+     */
+    fun sendImage(
+        context: Context,
+        messageId: String,
+        text: String,
+        image: ByteArray,
+        conversation: String?,
+        location: LocationLogic.Coarse? = null,
+        mode: String? = null,
+    ): Pair<Result, Answer?> {
+        require(Protocol.MESSAGE_ID.matches(messageId))
+        // java.util.Base64 writes no line breaks.
+        val body = JSONObject()
+            .put("id", messageId)
+            .put("text", text)
+            .put("image", Base64.getEncoder().encodeToString(image))
+            .put("mimeType", "image/jpeg")
+        val wire = ChatLogic.wireConversation(conversation)
+        wire?.let { body.put("conversationId", it) }
+        Protocol.wireMode(wire, mode, false)?.let { body.put("mode", it) }
+        location?.let {
+            val place = JSONObject().put("latitude", it.latitude).put("longitude", it.longitude)
+            it.name?.let { name -> place.put("name", name) }
+            body.put("location", place)
+        }
+        return answerOf(signed(context, "POST", Protocol.IMAGE_PATH, JSON_TYPE, utf8(body), VOICE_TIMEOUT_MS))
     }
 
     /** The quota screen's numbers (0.6). Null when the server could not be asked or answered off-shape. */

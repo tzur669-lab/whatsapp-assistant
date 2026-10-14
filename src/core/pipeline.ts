@@ -35,12 +35,14 @@ import type { GmailClient } from '../google/gmail.js';
 import type { TasksClient } from '../google/tasks.js';
 import type { GrantName } from '../google/grants.js';
 import { DEFAULT_PLACE, findPlace, HOME_CITY_KEY } from '../lookup/place.js';
-import type { DeviceLocation, InboundEvent, OutboundButton } from '../channels/types.js';
+import type { ConversationMode, DeviceLocation, InboundEvent, OutboundButton } from '../channels/types.js';
 import { Repository } from './repo.js';
 import { Stopwatch } from './timing.js';
 import type { Stage } from './timing.js';
 import type { Logger } from '../security/redact.js';
 import type { VoiceTranscriber } from '../voice/transcribe.js';
+import type { ImageInput, ImageRead } from '../vision/read-image.js';
+import { composeImage } from '../channels/app/shared.js';
 import type { NluProvider } from '../nlu/provider.js';
 import type { ReminderStore } from '../tools/reminder-store.js';
 import type { PendingActions } from '../confirm/pending.js';
@@ -221,6 +223,8 @@ export type PipelineDeps = {
   principal: string;
   /** Absent until a transcription provider is configured (§6.10). */
   transcribe?: VoiceTranscriber;
+  /** Reads an image with the conversation's family (§6.32). Absent: images are not taken. */
+  readImage?: (input: ImageInput & { mode: ConversationMode }) => Promise<ImageRead>;
   /** Absent only in the Phase 1 tests, which predate the tool layer. */
   services?: Services;
   /** "לא הבנת" capture (§6.23). Never handed to the agent or a model. */
@@ -318,8 +322,8 @@ async function route(event: InboundEvent, deps: PipelineDeps): Promise<PipelineO
   }
 
   // The conversation's mode is recorded with the dedupe insert, in its
-  // transaction, before the first await (smart conversations). A text or voice
-  // message declares one (absent: local); a button never does.
+  // transaction, before the first await (smart conversations). A text, voice
+  // or image message declares one (absent: local); a button never does.
   const recorded = repo.recordInbound({
     wamid: event.wamid,
     principal,
@@ -327,7 +331,7 @@ async function route(event: InboundEvent, deps: PipelineDeps): Promise<PipelineO
     sentAt: event.sentAtMs,
     kind: event.kind,
     ...('conversationId' in event && event.conversationId !== undefined ? { conversation: event.conversationId } : {}),
-    ...(event.kind === 'text' || event.kind === 'audio' ? { mode: event.mode ?? 'local' } : {}),
+    ...(event.kind === 'text' || event.kind === 'audio' || event.kind === 'image' ? { mode: event.mode ?? 'local' } : {}),
   });
 
   if (recorded.status === 'duplicate') {
@@ -359,6 +363,10 @@ async function route(event: InboundEvent, deps: PipelineDeps): Promise<PipelineO
 
   if (event.kind === 'audio') {
     return handleAudio(event, deps, now, stale);
+  }
+
+  if (event.kind === 'image') {
+    return handleImage(event, deps, now, stale);
   }
 
   return respondToText(event.text, { kind: 'text' }, event, deps, now, stale);
@@ -510,6 +518,75 @@ async function handleAudio(
   // The echo goes on every answer, including the ones that worked. It is the
   // only place the transcript is ever shown, and it goes only to its author.
   return { ...reply, text: `${he.heard(outcome.text)}\n\n${reply.text}`, withoutEcho: reply.text };
+}
+
+// -- image --------------------------------------------------------------------
+
+/**
+ * An image is shared text, one step earlier (PLAN §6.32). The conversation's
+ * family reads it — Groq in a regular conversation, Gemini in a smart one,
+ * never crossing — and what it read is quoted under the user's request, as
+ * text shared from another app is: forwarded, so tainted, so every write it
+ * leads to confirms, and the turn runs on the local models. The image goes no
+ * further than this function.
+ */
+async function handleImage(
+  event: Extract<InboundEvent, { kind: 'image' }>,
+  deps: PipelineDeps,
+  now: number,
+  stale: boolean,
+): Promise<PipelineOutcome> {
+  const { repo, log } = deps;
+
+  if (!deps.readImage) {
+    log.info('image_not_configured', { wamid: event.wamid });
+    repo.markInboundOutcome(event.wamid, { decision: 'UNSUPPORTED' });
+    return { action: 'reply', text: he.imageNotConfigured };
+  }
+
+  const readImage = deps.readImage;
+  const read = await timed(deps, 'image', () =>
+    readImage({ mode: event.mode ?? 'local', mimeType: event.mimeType, data: event.data }),
+  );
+
+  if (read.status !== 'ok') {
+    // Nothing usable came back. Never guess at what the image might say (invariant 12).
+    log.info('image_rejected', { wamid: event.wamid, status: read.status });
+    repo.markInboundOutcome(event.wamid, {
+      decision: 'CLARIFY',
+      errorCode: `E_IMAGE_${read.status.toUpperCase()}`,
+    });
+    return { action: 'reply', text: imageReply(read.status) };
+  }
+
+  const shared: Extract<InboundEvent, { kind: 'text' }> = {
+    kind: 'text',
+    wamid: event.wamid,
+    from: event.from,
+    sentAtMs: event.sentAtMs,
+    text: composeImage(event.text, read.text),
+    // Someone else's content: tainted, and never the smart model's turn (`smartWanted`).
+    forwarded: true,
+    ...(event.conversationId !== undefined ? { conversationId: event.conversationId } : {}),
+    ...(event.location !== undefined ? { location: event.location } : {}),
+    ...(event.mode !== undefined ? { mode: event.mode } : {}),
+  };
+  return respondToText(shared.text, { kind: 'text' }, shared, deps, now, stale);
+}
+
+function imageReply(status: Exclude<ImageRead['status'], 'ok'>): string {
+  switch (status) {
+    case 'unreadable':
+      return he.imageUnreadable;
+    case 'busy':
+      return he.imageBusy;
+    case 'quota':
+      return he.imageQuota;
+    case 'not_configured':
+      return he.imageNotConfigured;
+    case 'failed':
+      return he.imageFailed;
+  }
 }
 
 // -- text ---------------------------------------------------------------------

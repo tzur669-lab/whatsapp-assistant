@@ -10,7 +10,7 @@
  */
 import { z } from 'zod';
 import { phoneReadResultSchema } from '../../tools/phone-reads.js';
-import type { ConversationMode } from '../types.js';
+import type { ConversationMode, ImageMimeType } from '../types.js';
 import { MAX_APP_LABEL, MAX_ROUTINE_NAME, MAX_ROUTINES } from '../../tools/routine-store.js';
 import { RUN_REASONS } from '../../render/routines.js';
 import { MAX_SCREEN_APPS, MAX_SCREEN_LABEL } from '../../tools/screen-store.js';
@@ -95,6 +95,66 @@ const messageSchema = z.union([
 ]);
 
 export type AppMessage = z.infer<typeof messageSchema>;
+
+/**
+ * An image from the app (PLAN §6.32, 2026-10-14), with the user's request.
+ * One byte cap, the same number in the app (`Protocol.MAX_IMAGE_BYTES`): the
+ * app re-encodes until the image fits it, so a full one is never refused. The
+ * image is base64, checked by a negated class, which costs about 1 ms on a
+ * full image where the anchored alphabet took 9 (measured 2026-10-14; Workers
+ * Free has 10 ms of CPU a request).
+ */
+export const MAX_IMAGE_BYTES = 700_000;
+export const MAX_IMAGE_B64_CHARS = 4 * Math.ceil(MAX_IMAGE_BYTES / 3);
+export const IMAGE_MIME_TYPES = ['image/jpeg', 'image/png', 'image/webp'] as const satisfies readonly ImageMimeType[];
+
+const NOT_BASE64 = /[^A-Za-z0-9+/=]/;
+
+/** Standard base64: its alphabet, a whole number of quads, `=` only as the last one or two. */
+export function isBase64(value: string): boolean {
+  if (value.length === 0 || value.length % 4 !== 0 || NOT_BASE64.test(value)) return false;
+  const pad = value.indexOf('=');
+  return pad === -1 || (pad >= value.length - 2 && /^=+$/.test(value.slice(pad)));
+}
+
+const imageSchema = z
+  .object({
+    id: messageId,
+    text: z.string().min(1).max(MAX_TEXT_CHARS),
+    image: z.string().max(MAX_IMAGE_B64_CHARS).refine(isBase64),
+    mimeType: z.enum(IMAGE_MIME_TYPES),
+    conversationId,
+    location: locationSchema.optional(),
+    mode: modeSchema.optional(),
+  })
+  .strict()
+  // A command is the user's alone: none can carry someone else's image.
+  .refine((message) => !message.text.trimStart().startsWith('/'));
+
+export type AppImage = z.infer<typeof imageSchema>;
+
+export function parseImage(body: Uint8Array): AppImage | null {
+  return parseWith(imageSchema, body);
+}
+
+/** The first bytes agree with the declared type. Only the first 16 characters are decoded. */
+export function imageMatchesType(mimeType: ImageMimeType, data: string): boolean {
+  let head: string;
+  try {
+    head = atob(data.slice(0, 16));
+  } catch {
+    return false;
+  }
+  const at = (index: number) => head.charCodeAt(index);
+  switch (mimeType) {
+    case 'image/jpeg':
+      return at(0) === 0xff && at(1) === 0xd8 && at(2) === 0xff;
+    case 'image/png':
+      return at(0) === 0x89 && head.slice(1, 4) === 'PNG';
+    case 'image/webp':
+      return head.slice(0, 4) === 'RIFF' && head.slice(8, 12) === 'WEBP';
+  }
+}
 
 const ackSchema = z
   .object({ seqs: z.array(z.number().int().positive()).min(1).max(MAX_ACK_SEQS) })

@@ -299,6 +299,19 @@ class ProtocolTest {
         )
     }
 
+    @Test fun `an image at the cap, as base64 in the body, stays under the server's body cap`() {
+        // Equal to MAX_IMAGE_BYTES in bot/src/channels/app/parse.ts: bytes, not KiB.
+        assertEquals(700_000, Protocol.MAX_IMAGE_BYTES)
+        assertEquals("/app/image", Protocol.IMAGE_PATH)
+        val base64 = 4 * ((Protocol.MAX_IMAGE_BYTES + 2) / 3)
+        assertEquals(933_336, base64)
+        // The text (at most 2,000 characters, three bytes each) and the other fields.
+        val envelope = Protocol.MAX_TEXT_CHARS * 3 + 1_024
+        assertTrue(base64 + envelope < 1_048_576)
+        // org.json writes every "/" as "\/": about one base64 character in 64, so allow one in 32.
+        assertTrue(base64 + base64 / 32 + envelope < 1_048_576)
+    }
+
     @Test fun `only server-shaped button ids pass`() {
         assertTrue(Protocol.BUTTON_ID.matches("snooze:0a1b2c:9f8e7d:m10"))
         assertFalse(Protocol.BUTTON_ID.matches("Snooze"))

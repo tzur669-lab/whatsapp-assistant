@@ -112,6 +112,13 @@ describe('what never reaches the Durable Object', () => {
     expect((await postJson('/app/device-result', '{}')).status).toBe(200);
   });
 
+  it('an image body over a megabyte, and one on the WhatsApp channel (§6.32)', async () => {
+    expect((await postJson('/app/image', 'x'.repeat(1024 * 1024 + 1))).status).toBe(413);
+    expect((await postJson('/app/image', '{}', 'whatsapp')).status).toBe(404);
+    expect(reached).toHaveLength(0);
+    expect((await postJson('/app/image', '{}')).status).toBe(200);
+  });
+
   it('a recording over a megabyte', async () => {
     const response = await request(`/app/voice/3f2b8c1e-4d5a-4b6c-8d7e-9f0a1b2c3d4e`, {
       method: 'POST',

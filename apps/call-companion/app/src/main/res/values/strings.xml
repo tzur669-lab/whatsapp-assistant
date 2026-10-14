@@ -17,6 +17,8 @@
     <string name="chat_mic_permission">בלי הרשאה למיקרופון אי אפשר להקליט. אפשר לתת אותה במסך ההגדרות.</string>
     <string name="chat_mic_ready">אפשר להקליט עכשיו: להחזיק את הכפתור ולדבר.</string>
     <string name="chat_voice_label">🎤 הודעה קולית · %1$s</string>
+    <string name="chat_attach">📎</string>
+    <string name="chat_attach_description">צירוף תמונה</string>
     <string name="chat_meta_sending">%1$s · בשליחה…</string>
     <string name="chat_meta_failed">%1$s · לא נשלחה</string>
     <string name="chat_meta_late">%1$s · הגיעה באיחור</string>
@@ -170,6 +172,12 @@
     <string name="share_cancel_description">הקשה מבטלת את השיתוף</string>
     <string name="share_empty">לא התקבל טקסט לשיתוף.</string>
     <string name="share_no_command">אי אפשר לשלוח פקודה עם טקסט ששותף. יש לכתוב בקשה רגילה.</string>
+    <string name="image_banner">📷 תמונה מצורפת  ✕</string>
+    <string name="image_cancel_description">הקשה מבטלת את התמונה</string>
+    <string name="image_hint">מה לעשות עם התמונה? למשל: תכניס ליומן</string>
+    <string name="image_failed">לא ניתן לפתוח את התמונה. אפשר לנסות תמונה אחרת.</string>
+    <string name="image_too_large">התמונה גדולה מדי גם אחרי הקטנה. אפשר לשלוח צילום מסך או תמונה קטנה יותר.</string>
+    <string name="image_no_command">אי אפשר לשלוח פקודה עם תמונה. יש לכתוב בקשה רגילה.</string>
     <string name="chat_tap_to_talk">הקשה על 🎤 מתחילה הקלטה, והקשה נוספת שולחת אותה.</string>
     <string name="chat_recording_tap">ההקלטה פועלת. הקשה נוספת על 🎤 שולחת אותה.</string>
     <string name="assistant_default">🤖 עוזר ברירת המחדל</string>

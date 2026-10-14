@@ -38,7 +38,8 @@ Current as of 2026-10-14 (migration 0035).
    The DO verifies the ECDSA signature, then in one synchronous transaction
    checks the device and spends the nonce, then strict Zod, then dedupe
    (`recordInbound`). Order is fixed (CLAUDE.md inv. 9). WhatsApp path: HMAC
-   first instead.
+   first instead. An image (`POST /app/image`, §6.32) is read here by
+   `vision/read-image.ts` and continues as shared text: forwarded, tainted.
 2. **Deterministic first** (`core/router.ts`, `confirm/`) — slash commands,
    button replies, "כן" to a pending confirmation, an answer to an open
    question. No LLM. Confirmations execute the *stored* input (inv. 7).
@@ -145,6 +146,7 @@ Special shapes:
 | `lookup/` | Public keyless data for `info.lookup` + calculator grammar; `quotes.ts`: stock quotes (Finnhub US with `QUOTES_API_KEY` in a header, Yahoo TASE), units normalized once | §6.4, §6.24 |
 | `device/` | Paired-phone state, FCM v1 (no SDK), call dispatch | §6.17 |
 | `voice/` | Whisper transcription + confidence gate | §6.10 |
+| `vision/` | `read-image.ts`: an image read by one call of the conversation's family (Groq `VISION_MODELS` / Gemini `VISION_SMART_MODELS`, never crossing), fixed prompt, no tools; the text it read is quoted as shared text by `handleImage` in `core/pipeline.ts` | §6.32 |
 | `security/` | AES-GCM crypto, HMAC, redacting logger, `scrubForModel`/defang, allowlist | §7 |
 | `render/` | Every user-facing string (Hebrew/English templates, time format, bidi); `consent.ts`: the consent card, its buttons and `/consents`; `routines.ts`: routine confirmations, notices and results (`RUN_REASONS`); `screen.ts`: the screen agent's card, approval card, busy reply and end messages | §6.3, §6.19, §6.27, §6.28 |
 

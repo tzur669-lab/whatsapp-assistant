@@ -80,6 +80,18 @@ object Turns {
         }
     }
 
+    /** A picture, already prepared in memory, with what the user asked of it (0.19). It is stored nowhere on the phone. */
+    fun sendImage(context: Context, text: String, image: ByteArray, conversation: String, mode: String? = null) {
+        val app = context.applicationContext
+        val id = Protocol.newMessageId()
+        val sentMode = record(app, id, "image", ChatLogic.imageDisplay(text), conversation, mode)
+        // Up to a megabyte, like a recording: asked about again only when nothing else answers.
+        submit(app, id, null) {
+            val here = PhoneLocation.now(app)
+            run(app, id, cheapResend = false) { Api.sendImage(app, id, text, image, conversation, here, sentMode) }
+        }
+    }
+
     /** A notice about message [id], in the conversation that message is in. */
     private fun notice(app: Context, id: String, text: Int) {
         val store = ChatStore.get(app)

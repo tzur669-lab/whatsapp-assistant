@@ -18,6 +18,7 @@ it is the way it is; this file is only what to do.
 | `POST /app/pair` | The phone pairs: its public key and a MAC proving it knows the code. The code itself is never sent. |
 | `POST /app/message` | A text message or a button tap, signed. A text may carry `mode` (`smart` / `local`; absent is local). `CHANNEL=app` only. |
 | `POST /app/voice/:id[/:conversation[/:mode]][/@lat,lon]` | A recording (AAC in MP4, ≤ 1 MB), signed. The mode only after a conversation. `CHANNEL=app` only. |
+| `POST /app/image` | An image with the user's request (JSON, base64 JPEG/PNG/WebP ≤ 700,000 bytes, body ≤ 1 MB), signed. Read by the conversation's vision model (Groq / Gemini, §6.32), then shared text. 20 an hour. `CHANNEL=app` only. |
 | `GET /app/outbox` | Every message the phone has not acked, 50 at a time, signed, plus `smart`: whether a smart conversation can run (agent on, `GEMINI_API_KEY` and `GROQ_API_KEY` set). `CHANNEL=app` only. |
 | `POST /app/outbox/ack` | The seqs the phone has stored, signed. `CHANNEL=app` only. |
 | `POST /app/routines` | The phone's routine list (id, name, app label, step hash; never steps), signed; replaces the server's copy and closes runs of a changed routine (PLAN §6.27). `CHANNEL=app` only. |

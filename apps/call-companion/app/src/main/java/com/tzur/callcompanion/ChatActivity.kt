@@ -14,7 +14,10 @@ import android.graphics.Color
 import android.graphics.Typeface
 import android.graphics.drawable.ColorDrawable
 import android.graphics.drawable.GradientDrawable
+import android.net.Uri
+import android.os.Build
 import android.os.Bundle
+import android.provider.MediaStore
 import android.provider.Settings
 import android.text.Editable
 import android.text.InputFilter
@@ -64,6 +67,7 @@ class ChatActivity : Activity(), ChatEvents.Listener {
     private lateinit var input: EditText
     private lateinit var sendButton: Button
     private lateinit var micButton: Button
+    private lateinit var attachButton: Button
     private val adapter = MessagesAdapter()
     private var messages: List<ChatStore.Message> = emptyList()
 
@@ -85,6 +89,8 @@ class ChatActivity : Activity(), ChatEvents.Listener {
     /** Text shared from another app (0.11), waiting for the user to say what to do with it. */
     private var pendingShared: String? = null
     private lateinit var shareBanner: TextView
+    /** A picture chosen or shared (0.19), already shrunk and encoded; it waits like [pendingShared], and the image wins over it. */
+    private var pendingImage: ByteArray? = null
     /**
      * 🎤 works by taps rather than by holding (0.11): armed when the chat is
      * opened as the assistant or from the widget. A tap starts the recording,
@@ -158,6 +164,19 @@ class ChatActivity : Activity(), ChatEvents.Listener {
     private fun openFrom(intent: Intent?) {
         intent ?: return
         when {
+            intent.action == Intent.ACTION_SEND && intent.type?.startsWith("image/") == true -> {
+                // The grant on the picture holds only while this intent is being handled: read it now (0.19).
+                val uri = streamOf(intent)
+                if (uri == null) {
+                    Toast.makeText(this, R.string.image_failed, Toast.LENGTH_LONG).show()
+                } else {
+                    // Its own conversation, like shared text; any text that came with it is a start for the request.
+                    startNew()
+                    pendingShared = null
+                    prepareImage(uri, intent.getStringExtra(Intent.EXTRA_TEXT))
+                    focusInput()
+                }
+            }
             intent.action == Intent.ACTION_SEND -> {
                 val shared = ChatLogic.sharedOf(
                     intent.getStringExtra(Intent.EXTRA_TEXT),
@@ -168,6 +187,7 @@ class ChatActivity : Activity(), ChatEvents.Listener {
                 } else {
                     // Its own conversation: someone else's words do not join an ongoing one.
                     startNew()
+                    pendingImage = null
                     pendingShared = shared
                     showShare()
                     focusInput()
@@ -212,15 +232,88 @@ class ChatActivity : Activity(), ChatEvents.Listener {
 
     private fun showShare() {
         val shared = pendingShared
-        shareBanner.visibility = if (shared == null) View.GONE else View.VISIBLE
-        input.hint = getString(if (shared == null) R.string.chat_hint else R.string.share_hint)
-        if (shared != null) shareBanner.text = getString(R.string.share_banner, Ui.isolate(WidgetLogic.clip(shared)))
+        val image = pendingImage
+        shareBanner.visibility = if (shared == null && image == null) View.GONE else View.VISIBLE
+        input.hint = getString(
+            when {
+                image != null -> R.string.image_hint
+                shared != null -> R.string.share_hint
+                else -> R.string.chat_hint
+            },
+        )
+        if (image != null) {
+            shareBanner.text = getString(R.string.image_banner)
+            shareBanner.contentDescription = getString(R.string.image_cancel_description)
+        } else if (shared != null) {
+            shareBanner.text = getString(R.string.share_banner, Ui.isolate(WidgetLogic.clip(shared)))
+            shareBanner.contentDescription = getString(R.string.share_cancel_description)
+        }
     }
 
     private fun cancelShare() {
         pendingShared = null
+        pendingImage = null
         showShare()
         refresh()
+    }
+
+    /** The picture a share carries; the typed overload exists from Android 13. */
+    private fun streamOf(intent: Intent): Uri? =
+        if (Build.VERSION.SDK_INT >= 33) {
+            intent.getParcelableExtra(Intent.EXTRA_STREAM, Uri::class.java)
+        } else {
+            @Suppress("DEPRECATION")
+            intent.getParcelableExtra(Intent.EXTRA_STREAM)
+        }
+
+    /** 📎: the system's own picker, so the app asks for no storage permission. */
+    private fun pickImage() {
+        if (Turns.busy || current == ChatLogic.REMINDERS) return
+        val intent = if (Build.VERSION.SDK_INT >= 33) {
+            Intent(MediaStore.ACTION_PICK_IMAGES)
+        } else {
+            Intent(Intent.ACTION_GET_CONTENT).setType("image/*").addCategory(Intent.CATEGORY_OPENABLE)
+        }
+        try {
+            startActivityForResult(intent, REQUEST_IMAGE)
+        } catch (_: ActivityNotFoundException) {
+            Toast.makeText(this, R.string.image_failed, Toast.LENGTH_LONG).show()
+        }
+    }
+
+    @Deprecated("Deprecated in Java")
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        @Suppress("DEPRECATION")
+        super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode != REQUEST_IMAGE || resultCode != RESULT_OK) return
+        data?.data?.let { prepareImage(it, null) }
+    }
+
+    /** Shrinks and encodes off the main thread; the picture itself is kept nowhere, only the result in memory. */
+    private fun prepareImage(uri: Uri, prefill: String?) {
+        val app = applicationContext
+        Thread {
+            val outcome = ImagePrep.prepare(app, uri)
+            runOnUiThread {
+                if (isFinishing) return@runOnUiThread
+                when (outcome) {
+                    is ImagePrep.Outcome.Ready -> {
+                        // The image wins: shared text does not travel with it.
+                        pendingShared = null
+                        pendingImage = outcome.jpeg
+                        prefill?.trim()?.takeIf { it.isNotEmpty() }?.let {
+                            input.setText(it)
+                            input.setSelection(input.text.length)
+                        }
+                        showShare()
+                        refresh()
+                        focusInput()
+                    }
+                    ImagePrep.Outcome.TooLarge -> Toast.makeText(this, R.string.image_too_large, Toast.LENGTH_LONG).show()
+                    ImagePrep.Outcome.Failed -> Toast.makeText(this, R.string.image_failed, Toast.LENGTH_LONG).show()
+                }
+            }
+        }.start()
     }
 
     private fun prefs() = getSharedPreferences(PREFS, Context.MODE_PRIVATE)
@@ -374,7 +467,7 @@ class ChatActivity : Activity(), ChatEvents.Listener {
         }
         root.addView(shareBanner)
 
-        // In RTL the first child sits on the right: the field, then send, then the microphone.
+        // In RTL the first child sits on the right: the field, then send, the microphone, then the attach button.
         inputRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.BOTTOM
@@ -405,6 +498,12 @@ class ChatActivity : Activity(), ChatEvents.Listener {
             setOnTouchListener { view, event -> onMicTouch(view, event) }
         }
         inputRow.addView(micButton)
+        attachButton = Button(this).apply {
+            text = getString(R.string.chat_attach)
+            contentDescription = getString(R.string.chat_attach_description)
+            setOnClickListener { pickImage() }
+        }
+        inputRow.addView(attachButton)
         root.addView(inputRow)
 
         slashPopup = ListPopupWindow(this).apply {
@@ -831,6 +930,20 @@ class ChatActivity : Activity(), ChatEvents.Listener {
     private fun sendTyped() {
         val text = input.text.toString().trim()
         if (text.isEmpty() || Turns.busy || current == ChatLogic.REMINDERS) return
+        val image = pendingImage
+        if (image != null) {
+            // A picture goes with a plain request: the server refuses a command with one.
+            if (!ChatLogic.canSendWithShared(text)) {
+                Toast.makeText(this, R.string.image_no_command, Toast.LENGTH_LONG).show()
+                return
+            }
+            Turns.sendImage(this, text, image, current, currentMode())
+            input.text.clear()
+            pendingImage = null
+            showShare()
+            refresh()
+            return
+        }
         val shared = pendingShared
         if (shared != null && !ChatLogic.canSendWithShared(text)) {
             Toast.makeText(this, R.string.share_no_command, Toast.LENGTH_LONG).show()
@@ -945,8 +1058,9 @@ class ChatActivity : Activity(), ChatEvents.Listener {
 
         val busy = Turns.busy
         sendButton.isEnabled = !busy
-        // Shared text goes with a typed request only: a recording carries no second field.
-        micButton.isEnabled = (!busy && pendingShared == null) || recorder.isRecording
+        // Shared text and a picture go with a typed request only: a recording carries no second field.
+        micButton.isEnabled = (!busy && pendingShared == null && pendingImage == null) || recorder.isRecording
+        attachButton.isEnabled = !busy && !recorder.isRecording && !reminders
         val armed = tapMode && !reminders && !busy
         status.visibility = if (busy || recorder.isRecording || armed) View.VISIBLE else View.GONE
         status.text = getString(
@@ -1135,6 +1249,7 @@ class ChatActivity : Activity(), ChatEvents.Listener {
 
         private const val REQUEST_MIC = 10
         private const val REQUEST_LOCATION = 11
+        private const val REQUEST_IMAGE = 12
         /** Arrived more than ten minutes after it was written: say so, next to the original time. */
         private const val LATE_MS = 10 * 60 * 1000L
 

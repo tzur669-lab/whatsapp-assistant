@@ -50,6 +50,7 @@ class ChatLogicTest {
         assertTrue(title.endsWith("…"))
         assertEquals("הודעה קולית", ChatLogic.titleFor("voice", "‎0:05"))
         assertEquals("שיחה", ChatLogic.titleFor("text", "   "))
+        assertEquals("תמונה", ChatLogic.titleFor("image", "📷 תמונה\nתכניס ליומן"))
     }
 
     @Test fun `a row goes to the conversation of what it answers, else to reminders`() {
@@ -82,7 +83,14 @@ class ChatLogicTest {
     @Test fun `a command cannot carry shared text`() {
         assertTrue(ChatLogic.canSendWithShared("תזכיר לי"))
         assertTrue(!ChatLogic.canSendWithShared(" /pause"))
+    }
+
+    @Test fun `shared text is shown under the request, quoted`() {
         assertEquals("מה זה?\n\n«טקסט»", ChatLogic.sharedDisplay("מה זה?", "טקסט"))
+    }
+
+    @Test fun `a picture is shown with the request under it`() {
+        assertEquals("📷 תמונה\nתכניס ליומן", ChatLogic.imageDisplay("תכניס ליומן"))
     }
 
     @Test fun `a conversation's stored mode wins, then the one chosen before its first message, then local`() {

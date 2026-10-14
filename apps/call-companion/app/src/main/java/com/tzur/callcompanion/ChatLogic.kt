@@ -85,6 +85,7 @@ object ChatLogic {
     /** A conversation is named after its first message, like an LLM client's. */
     fun titleFor(kind: String, text: String): String {
         if (kind == "voice") return "הודעה קולית"
+        if (kind == "image") return "תמונה"
         val line = text.trim().lineSequence().firstOrNull()?.trim().orEmpty()
         if (line.isEmpty()) return "שיחה"
         return if (line.length <= MAX_TITLE) line else line.take(MAX_TITLE - 1).trimEnd() + "…"
@@ -124,6 +125,9 @@ object ChatLogic {
     /** What the chat shows for a message sent with shared text: the request, then the text quoted. */
     fun sharedDisplay(text: String, shared: String): String = "$text\n\n«$shared»"
 
+    /** What the chat shows for a picture sent with a request (0.19): the picture itself is not kept. */
+    fun imageDisplay(text: String): String = "📷 תמונה\n$text"
+
     /**
      * The mode a message in [conversation] goes with (0.12): the one stored
      * when the conversation was created, else the one chosen for it before its
@@ -155,6 +159,6 @@ object ChatLogic {
      */
     fun retriesAfterRefusal(status: Int): Boolean = status >= 500
 
-    /** A request sent with shared text may not be a command: the server refuses one. */
+    /** A request sent with shared text or a picture may not be a command: the server refuses one. */
     fun canSendWithShared(text: String): Boolean = !text.trimStart().startsWith("/")
 }

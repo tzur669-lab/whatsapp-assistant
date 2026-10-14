@@ -69,6 +69,7 @@ object QuotaLogic {
         "primary" -> "מודל ראשי"
         "fallback" -> "מודל גיבוי"
         "voice" -> "תמלול הקלטות"
+        "vision" -> "קריאת תמונות"
         else -> role
     }
 

@@ -106,6 +106,8 @@ import {
   parseClaim,
   parseMessage,
   parseVoiceLocation,
+  parseImage,
+  imageMatchesType,
   parsePair,
   parsePushToken,
   parseReport,
@@ -120,7 +122,16 @@ import { callText } from '../render/calls.js';
 import { agentEnabled } from '../core/env.js';
 import { createGeminiAgentProvider, createGroqAgentProvider } from '../agent/provider.js';
 import { TokenBudget } from '../agent/budget.js';
-import { MODELS, modelEntry, SCREEN_MODELS, SCREEN_SMART_MODELS, SMART_MODELS } from '../agent/models.js';
+import {
+  MODELS,
+  modelEntry,
+  SCREEN_MODELS,
+  SCREEN_SMART_MODELS,
+  SMART_MODELS,
+  VISION_MODELS,
+  VISION_SMART_MODELS,
+} from '../agent/models.js';
+import { createImageReader, createVisionClient } from '../vision/read-image.js';
 import type { ModelEntry } from '../agent/models.js';
 import { TURN_TOKEN_CAP } from '../agent/loop.js';
 import { ConversationHistory } from '../agent/history.js';
@@ -166,6 +177,9 @@ const UNKNOWN_AFTER_MS = 2 * 60 * 1000;
 
 /** Recordings per hour the app may send, checked before Whisper is paid for. */
 const VOICE_PER_HOUR = 60;
+
+/** Images per hour the app may send, checked before a vision model is paid for (§6.32). */
+const IMAGES_PER_HOUR = 20;
 
 /** What the app records — AAC in an MP4 container — and the few types alike. */
 const AUDIO_TYPES: ReadonlySet<string> = new Set(['audio/mp4', 'audio/aac', 'audio/ogg', 'audio/webm']);
@@ -1476,6 +1490,7 @@ export class AssistantDO implements DurableObject {
     const app = this.channel() === 'app';
 
     if (app && method === 'POST' && path === '/app/message') return this.appMessage(body, signed, device, principal);
+    if (app && method === 'POST' && path === '/app/image') return this.appImage(body, signed, device, principal);
 
     // id, then optionally the conversation and after it its mode, then optionally the location.
     const voice = /^\/app\/voice\/([0-9a-f-]{36})(?:\/([0-9a-f-]{36})(?:\/(smart|local))?)?(?:\/(@[^/]+))?$/.exec(path);
@@ -1529,15 +1544,19 @@ export class AssistantDO implements DurableObject {
       // Gemini on its own line once its key is set; Groq's daily token limit is not its.
       ...this.smartModels().map((entry): ModelSpec => ({ model: entry.id, role: 'fallback', dayTokens: false })),
       { model: WHISPER_MODEL, role: 'voice', dayTokens: false },
+      // The image readers (§6.32): Groq's counts its day, Gemini's is limited by requests.
+      ...(this.env.GROQ_API_KEY ? VISION_MODELS : []).map((id): ModelSpec => ({ model: id, role: 'vision', dayTokens: true })),
+      ...(this.env.GEMINI_API_KEY ? VISION_SMART_MODELS : []).map((id): ModelSpec => ({ model: id, role: 'vision', dayTokens: false })),
     ];
     const voice = { used: this.repo.inboundCountSince('audio', Date.now() - HOUR_MS), limit: VOICE_PER_HOUR };
+    const images = { used: this.repo.inboundCountSince('image', Date.now() - HOUR_MS), limit: IMAGES_PER_HOUR };
     const server: ServerLimits = {
       minute: this.tokenBudget.snapshot([...MODELS, ...this.smartModels()].map((entry) => entry.id)),
       turnTokenCap: TURN_TOKEN_CAP,
       lastFailure: this.repo.lastError(),
       fallbacksToday: this.repo.counters(Repository.dayKey(Date.now())).fallbacks,
     };
-    return { ...this.quota.report(models, voice), server };
+    return { ...this.quota.report(models, voice, images), server };
   }
 
   /** Pairing: the phone proves it knows a live code without sending it (§6.18). */
@@ -1591,6 +1610,45 @@ export class AssistantDO implements DurableObject {
             mode: message.mode ?? 'local',
           }
         : { kind: 'button', ...base, buttonId: message.buttonId };
+    return this.runAppTurn(event, message.id, device.id, principal);
+  }
+
+  /**
+   * An image with the user's request (PLAN §6.32). The declared type must
+   * match the first bytes; an hour's images are capped before a vision model
+   * is paid for, and a retry of one already recorded is not new. The image is
+   * in memory for this request only.
+   */
+  private appImage(
+    body: Uint8Array,
+    signed: SignedHeaders,
+    device: SigningDevice,
+    principal: string,
+  ): Response | Promise<Response> {
+    const message = parseImage(body);
+    if (!message) return appError(400, 'bad_request');
+    if (!imageMatchesType(message.mimeType, message.image)) return appError(415, 'unsupported_type');
+
+    const wamid = `${APP_INBOUND_PREFIX}${message.id}`;
+    if (!this.repo.getInbound(wamid) && this.repo.inboundCountSince('image', Date.now() - HOUR_MS) >= IMAGES_PER_HOUR) {
+      this.log.warn('image_rate_limited', {});
+      return json({ status: 'reply', row: this.acceptReply(message.id, principal, he.imageTooMany, he.imageTooMany, []) });
+    }
+
+    const event: InboundEvent = {
+      kind: 'image',
+      wamid,
+      from: this.selfWaId(),
+      sentAtMs: signed.timestamp,
+      text: message.text,
+      mimeType: message.mimeType,
+      data: message.image,
+      // Someone else's content (the user's decision, 2026-10-14): the turn is tainted.
+      forwarded: true,
+      ...(message.conversationId ? { conversationId: message.conversationId } : {}),
+      ...(message.location ? { location: message.location } : {}),
+      mode: message.mode ?? 'local',
+    };
     return this.runAppTurn(event, message.id, device.id, principal);
   }
 
@@ -1661,6 +1719,7 @@ export class AssistantDO implements DurableObject {
         exchanges: this.exchanges,
         learn: this.learn,
         ...(this.env.GROQ_API_KEY ? { transcribe: this.voiceTranscriber() } : {}),
+        readImage: (input) => this.imageReader().read(input),
       });
     } catch (error) {
       // The message is recorded, so a retry will not run it again — and a tool
@@ -2556,6 +2615,32 @@ export class AssistantDO implements DurableObject {
       }),
       log: this.log,
       fetchImpl: this.fetchImpl,
+    });
+  }
+
+  /**
+   * The image reader (§6.32, the user's decision 2026-10-14): a regular
+   * conversation's image goes to Groq's vision models only, a smart one's to
+   * Gemini's only. Without a family's key its list is empty and the image is
+   * answered "not available"; it never falls to the other family. Built per
+   * request, like the transcriber: it closes over secrets.
+   */
+  private imageReader() {
+    return createImageReader({
+      local: this.env.GROQ_API_KEY
+        ? VISION_MODELS.map((id) =>
+            createVisionClient({ model: id, provider: 'groq', apiKey: this.env.GROQ_API_KEY, fetchImpl: this.groqFetch }),
+          )
+        : [],
+      smart: this.env.GEMINI_API_KEY
+        ? VISION_SMART_MODELS.map((id) =>
+            // Not through `groqFetch`: Groq's rate-limit headers are not Gemini's.
+            createVisionClient({ model: id, provider: 'gemini', apiKey: this.env.GEMINI_API_KEY ?? '', fetchImpl: this.fetchImpl }),
+          )
+        : [],
+      budget: this.tokenBudget,
+      log: this.log,
+      now: () => Date.now(),
     });
   }
 

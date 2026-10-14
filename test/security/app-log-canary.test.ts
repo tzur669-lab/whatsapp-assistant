@@ -13,6 +13,8 @@ import type { AppEnv } from '../../src/core/env.js';
 
 const CANARY = 'CANARY-5d1e77b0-do-not-log';
 const SPOKEN = 'עזרה CANARY-VOICE-2b9c';
+const READ_FROM_IMAGE = 'CANARY-IMAGE-READ-7f3a';
+const IMAGE = Buffer.concat([Buffer.from([0xff, 0xd8, 0xff, 0xe0]), Buffer.from('CANARY-IMAGE-BYTES-41c2')]).toString('base64');
 const BOOTSTRAP = 'ABCD-EFGH-JKMN-PQRS-TVWX';
 const GEMINI_KEY = 'CANARY-GEMINI-KEY-not-real';
 const NOW = Date.parse('2026-09-29T09:00:00Z');
@@ -44,6 +46,7 @@ describe('log canary, app channel', () => {
   it('logs no content, no pairing secret, no key, no push address and no signature', async () => {
     const google = createFakeGoogle();
     google.transcript = SPOKEN;
+    google.visionText = READ_FROM_IMAGE;
     const env: AppEnv = {
       ENVIRONMENT: 'test',
       WA_APP_SECRET: '',
@@ -83,6 +86,13 @@ describe('log canary, app channel', () => {
     const answer = (await (await assistant.fetch(voice)).json()) as { row: { text: string } };
     expect(answer.row.text).toContain('CANARY-VOICE-2b9c'); // the echo is in the response…
 
+    // An image (§6.32): read, quoted to the turn, and in no log; the image itself is kept nowhere.
+    const image = await assistant.fetch(
+      await phone.toDo('POST', '/app/image', { id: messageId(), text: CANARY, image: IMAGE, mimeType: 'image/jpeg' }),
+    );
+    expect(image.status).toBe(200);
+    expect(google.requests.filter((url) => url.endsWith('/chat/completions')).length).toBeGreaterThan(0);
+
     // A message refused for its conversation's mode logs no more than any other.
     const conversationId = '11111111-1111-4111-8111-111111111111';
     await assistant.fetch(await phone.toDo('POST', '/app/message', { id: messageId(), kind: 'text', text: CANARY, conversationId, mode: 'smart' }));
@@ -93,7 +103,7 @@ describe('log canary, app channel', () => {
 
     const all = written.join('\n');
     expect(all.length).toBeGreaterThan(0);
-    for (const secret of [CANARY, 'CANARY-VOICE-2b9c', GEMINI_KEY, BOOTSTRAP.replace(/-/g, ''), BOOTSTRAP, mac, phone.publicKey, FAKE_PUSH_TOKEN, signature, nonce]) {
+    for (const secret of [CANARY, 'CANARY-VOICE-2b9c', READ_FROM_IMAGE, IMAGE, IMAGE.slice(0, 24), GEMINI_KEY, BOOTSTRAP.replace(/-/g, ''), BOOTSTRAP, mac, phone.publicKey, FAKE_PUSH_TOKEN, signature, nonce]) {
       expect(all).not.toContain(secret);
     }
 
@@ -103,6 +113,7 @@ describe('log canary, app channel', () => {
       .map((row) => String(row['name']));
     const dump = tables.map((table) => JSON.stringify(fake.driver.exec(`SELECT * FROM ${table}`))).join('\n');
     expect(dump).not.toContain('CANARY-VOICE-2b9c');
+    expect(dump).not.toContain(IMAGE.slice(0, 24));
     expect(dump).not.toContain(BOOTSTRAP.replace(/-/g, ''));
     expect(dump).not.toContain(FAKE_PUSH_TOKEN);
   });
