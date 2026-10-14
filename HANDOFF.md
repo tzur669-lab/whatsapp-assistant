@@ -5,7 +5,7 @@ system is, where things live, and what breaks easily, then links out. It does
 **not** repeat the rules in `CLAUDE.md` (always loaded) or the spec in
 `PLAN.md` (read by section, never whole).
 
-_Last updated: 2026-10-14 · server at migration 0036 · agent prompt a10 + smart note s2 + screen step s1 · parser prompt v6 · app 0.18.0 (built; phone has 0.17.3) · smart model gemini-3.5-flash-lite_
+_Last updated: 2026-10-14 · server at migration 0036 · agent prompt a10 + smart note s2 + screen step s1 · parser prompt v6 · app 0.18.1 (on the phone) · smart model gemini-3.5-flash-lite_
 
 ## 1. What this is
 
@@ -194,6 +194,12 @@ Network on the hotspot: `NODE_OPTIONS=--dns-result-order=ipv4first` for wrangler
 | [SETUP.md](SETUP.md) | Setting up a new copy from zero: accounts, Groq key, models, secrets, deploy, app, AI agent. |
 
 ## 8. Session log (docs)
+
+- 2026-10-14: App 0.18.1: the location menu names the town ("פועל (רבבה)"),
+  checked on the phone. ColorOS's geocoder gave only a road number, so the
+  name was dropped and some messages went without a fix (Jerusalem):
+  `LocationLogic.townOf`/`ring`, fused provider, the app's last fix reused
+  while fresh. No server change, no deploy.
 
 - 2026-10-14: Block K, K2–K4: new `core/learn-review.ts`, `core/habits.ts`,
   `core/learn-export.ts`, migration 0036 (`learn_proposals`), `/leave`,

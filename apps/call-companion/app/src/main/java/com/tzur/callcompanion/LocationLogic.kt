@@ -42,6 +42,43 @@ object LocationLogic {
         return if (NAME.matches(name)) name else null
     }
 
+    /** One geocoder answer, as far as the town goes. */
+    class Answer(
+        val locality: String?,
+        val feature: String?,
+        val addressLine: String?,
+        val subAdminArea: String?,
+        val adminArea: String?,
+    )
+
+    /** How far around the fix to look when the fix itself names no town: about 500 m. */
+    const val RING_DEGREES = 0.005
+
+    /** Four points around the fix, north, south, east and west. */
+    fun ring(latitude: Double, longitude: Double): List<Pair<Double, Double>> = listOf(
+        latitude + RING_DEGREES to longitude,
+        latitude - RING_DEGREES to longitude,
+        latitude to longitude + RING_DEGREES,
+        latitude to longitude - RING_DEGREES,
+    )
+
+    /**
+     * The town for a fix, or null. Some geocoders (ColorOS's) answer with only
+     * the nearest thing, often a road with a number and no town; then the town
+     * most named around it wins. A feature that is the whole address line is a
+     * place's name, which is used only at the fix itself, before the district.
+     */
+    fun townOf(center: List<Answer>, around: List<List<Answer>>): String? {
+        center.firstNotNullOfOrNull { placeName(it.locality) }?.let { return it }
+        val named = around.mapNotNull { answers -> answers.firstNotNullOfOrNull { placeName(it.locality) } }
+        // A tie goes to the first named: north, south, east, west.
+        named.groupingBy { it }.eachCount().maxByOrNull { it.value }?.let { return it.key }
+        return center.firstNotNullOfOrNull { answer ->
+            val bare = answer.feature?.takeIf { it.trim() == answer.addressLine?.trim() }
+            listOf(bare, answer.subAdminArea, answer.adminArea).firstNotNullOfOrNull { placeName(it) }
+        }
+    }
+
     /**
      * A voice note's path segment, which the server matches exactly: `@32.09,34.78`,
      * then, when named, `,` and the name's UTF-8 as lowercase hex.

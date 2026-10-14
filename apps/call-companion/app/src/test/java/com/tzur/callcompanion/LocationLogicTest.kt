@@ -32,6 +32,45 @@ class LocationLogicTest {
         assertEquals("@0.00,-180.00", LocationLogic.pathSegment(LocationLogic.coarse(-0.001, -179.999)!!))
     }
 
+    private fun answer(locality: String?, feature: String?, line: String?, admin: String? = null) =
+        LocationLogic.Answer(locality, feature, line, null, admin)
+
+    @Test
+    fun takesTheTownAtTheFix() {
+        val center = listOf(answer("אריאל", "12", "הרצל 12, אריאל", "יהודה ושומרון"))
+        assertEquals("אריאל", LocationLogic.townOf(center, emptyList()))
+    }
+
+    @Test
+    fun aRoadAtTheFixAsksAroundIt() {
+        // ColorOS on the phone, between two towns: the fix is a road number.
+        val center = listOf(answer(null, "5066", "5066"))
+        val around = listOf(
+            listOf(answer(null, "5066", "5066")),
+            listOf(answer("רבבה", "330", "נחל קנה 330, רבבה")),
+            listOf(answer("קרית נטפים", "55", "55, קרית נטפים")),
+            listOf(answer("רבבה", "דרך ללא שם", "דרך ללא שם, רבבה")),
+        )
+        assertEquals("רבבה", LocationLogic.townOf(center, around))
+        assertEquals("קרית נטפים", LocationLogic.townOf(center, around.take(3).reversed()))
+    }
+
+    @Test
+    fun aPlaceNameIsTheLastResortBeforeTheDistrict() {
+        assertEquals("Deir Istya", LocationLogic.townOf(listOf(answer(null, "Deir Istya", "Deir Istya")), emptyList()))
+        // A feature that is only part of the address is a street.
+        assertEquals("מחוז המרכז", LocationLogic.townOf(listOf(answer(null, "הרצל", "הרצל, רחובות", "מחוז המרכז")), emptyList()))
+        assertNull(LocationLogic.townOf(listOf(answer(null, "5066", "5066")), listOf(emptyList(), emptyList())))
+        assertNull(LocationLogic.townOf(emptyList(), emptyList()))
+    }
+
+    @Test
+    fun theRingIsFourPointsAroundTheFix() {
+        val ring = LocationLogic.ring(32.0, 35.0)
+        assertEquals(4, ring.size)
+        assertTrue(ring.all { (lat, lon) -> Math.abs(lat - 32.0) + Math.abs(lon - 35.0) in 0.004..0.006 })
+    }
+
     @Test
     fun namesTheTownOnlyAsTheServerTakesIt() {
         assertEquals("תל אביב-יפו", LocationLogic.placeName("  תל   אביב-יפו "))

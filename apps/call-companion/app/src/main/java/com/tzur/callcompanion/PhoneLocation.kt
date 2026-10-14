@@ -59,9 +59,15 @@ object PhoneLocation {
         if (!isOn(context) || !granted(context)) return null
         val manager = context.getSystemService(LocationManager::class.java) ?: return null
         return try {
-            val fix = (current(manager) ?: lastKnown(manager))?.let { LocationLogic.coarse(it.latitude, it.longitude) }
-                ?: return null
-            LocationLogic.named(fix, town(context, fix)).also { lastName = it.name }
+            val raw = current(manager) ?: lastKnown(manager)
+            if (raw == null) return recent()
+            val fix = LocationLogic.coarse(raw.latitude, raw.longitude) ?: return null
+            // Named at the fix itself: the rounded point can be the next village.
+            LocationLogic.named(fix, town(context, raw.latitude, raw.longitude)).also {
+                lastName = it.name
+                last = it
+                lastAtMs = raw.time
+            }
         } catch (_: SecurityException) {
             null // revoked between the check and the read
         } catch (_: IllegalArgumentException) {
@@ -69,48 +75,89 @@ object PhoneLocation {
         }
     }
 
-    /** The town at [fix], or null — never a wait longer than [GEOCODE_TIMEOUT_MS]. */
-    private fun town(context: Context, fix: LocationLogic.Coarse): String? {
+    /** This app's own last fix, while still fresh: a slow provider does not cost the message its place. */
+    @Volatile
+    private var last: LocationLogic.Coarse? = null
+
+    @Volatile
+    private var lastAtMs = 0L
+
+    private fun recent(): LocationLogic.Coarse? =
+        last?.takeIf { LocationLogic.isFresh(lastAtMs, System.currentTimeMillis()) }
+
+    /**
+     * The town at this point, or null. The point first; when it names no town,
+     * four points around it, asked together. Never a wait much longer than
+     * twice [GEOCODE_TIMEOUT_MS].
+     */
+    private fun town(context: Context, latitude: Double, longitude: Double): String? {
         if (!Geocoder.isPresent()) return null
         val geocoder = Geocoder(context, Locale.forLanguageTag("he"))
-        val address: Address? = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            val latch = CountDownLatch(1)
-            var found: Address? = null
-            geocoder.getFromLocation(fix.latitude, fix.longitude, 1, object : Geocoder.GeocodeListener {
-                override fun onGeocode(addresses: MutableList<Address>) {
-                    found = addresses.firstOrNull()
-                    latch.countDown()
-                }
-
-                override fun onError(errorMessage: String?) {
-                    latch.countDown()
-                }
-            })
-            latch.await(GEOCODE_TIMEOUT_MS, TimeUnit.MILLISECONDS)
-            found
+        val center = geocode(geocoder, listOf(latitude to longitude)).first()
+        val around = if (center.any { LocationLogic.placeName(it.locality) != null }) {
+            emptyList()
         } else {
-            try {
-                @Suppress("DEPRECATION")
-                geocoder.getFromLocation(fix.latitude, fix.longitude, 1)?.firstOrNull()
-            } catch (_: IOException) {
-                null // no network, or no geocoder service behind it
-            }
+            geocode(geocoder, LocationLogic.ring(latitude, longitude))
         }
         // The town, not the street: a street would be finer than the kilometre sent.
-        return address?.let { it.locality ?: it.subAdminArea ?: it.adminArea }
+        return LocationLogic.townOf(center, around)
     }
 
+    /** The answers at each point, in order; an empty list where none came in time. */
+    private fun geocode(geocoder: Geocoder, points: List<Pair<Double, Double>>): List<List<LocationLogic.Answer>> {
+        val results = arrayOfNulls<List<Address>>(points.size)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            val latch = CountDownLatch(points.size)
+            points.forEachIndexed { index, (lat, lon) ->
+                geocoder.getFromLocation(lat, lon, GEOCODE_RESULTS, object : Geocoder.GeocodeListener {
+                    override fun onGeocode(addresses: MutableList<Address>) {
+                        synchronized(results) { results[index] = addresses.toList() }
+                        latch.countDown()
+                    }
+
+                    override fun onError(errorMessage: String?) {
+                        latch.countDown()
+                    }
+                })
+            }
+            latch.await(GEOCODE_TIMEOUT_MS, TimeUnit.MILLISECONDS)
+        } else {
+            val deadline = System.currentTimeMillis() + GEOCODE_TIMEOUT_MS
+            points.forEachIndexed { index, (lat, lon) ->
+                if (System.currentTimeMillis() > deadline) return@forEachIndexed
+                results[index] = try {
+                    @Suppress("DEPRECATION")
+                    geocoder.getFromLocation(lat, lon, GEOCODE_RESULTS).orEmpty()
+                } catch (_: IOException) {
+                    emptyList() // no network, or no geocoder service behind it
+                }
+            }
+        }
+        return synchronized(results) {
+            results.map { addresses ->
+                addresses.orEmpty().map {
+                    LocationLogic.Answer(it.locality, it.featureName, it.getAddressLine(0), it.subAdminArea, it.adminArea)
+                }
+            }
+        }
+    }
+
+    private const val GEOCODE_RESULTS = 5
     private const val GEOCODE_TIMEOUT_MS = 2_000L
 
     // Both below run only from [now], after its permission check.
     @SuppressLint("MissingPermission")
     private fun current(manager: LocationManager): Location? {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) return null
-        if (!manager.isProviderEnabled(LocationManager.NETWORK_PROVIDER)) return null
+        // The fused provider answers when the network one is idle-throttled (ColorOS).
+        val provider = listOfNotNull(
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) LocationManager.FUSED_PROVIDER else null,
+            LocationManager.NETWORK_PROVIDER,
+        ).firstOrNull { runCatching { manager.isProviderEnabled(it) }.getOrDefault(false) } ?: return null
         val latch = CountDownLatch(1)
         val cancel = CancellationSignal()
         var fix: Location? = null
-        manager.getCurrentLocation(LocationManager.NETWORK_PROVIDER, cancel, executor) { location ->
+        manager.getCurrentLocation(provider, cancel, executor) { location ->
             fix = location
             latch.countDown()
         }
@@ -121,7 +168,8 @@ object PhoneLocation {
     @SuppressLint("MissingPermission")
     private fun lastKnown(manager: LocationManager): Location? {
         val now = System.currentTimeMillis()
-        return listOf(LocationManager.NETWORK_PROVIDER, LocationManager.PASSIVE_PROVIDER, LocationManager.GPS_PROVIDER)
+        val fused = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) listOf(LocationManager.FUSED_PROVIDER) else emptyList()
+        return (fused + listOf(LocationManager.NETWORK_PROVIDER, LocationManager.PASSIVE_PROVIDER, LocationManager.GPS_PROVIDER))
             .mapNotNull { provider -> runCatching { manager.getLastKnownLocation(provider) }.getOrNull() }
             .filter { LocationLogic.isFresh(it.time, now) }
             .maxByOrNull { it.time }

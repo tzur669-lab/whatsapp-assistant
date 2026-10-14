@@ -303,6 +303,14 @@ the watch; the phone matches it.
 **Learning export (0.18, block K3).** ☰ → ייצוא למידה asks first, then fetches
 `GET /app/learn/export` (signed, empty body, up to 256 KB) and saves
 `bot-learn-YYYY-MM-DD.json` to Downloads (`LearnExportLogic.kt`, `DownloadsSave.kt`). Server first, then the APK.
+
+**The town of the location (0.18.1).** The menu shows "פועל (town)" once a fix
+is named, nothing after "כבוי". The fix comes from the fused provider (the
+network one is idle-throttled on ColorOS), else a fresh last-known one, else
+the app's own last fix while under 15 minutes old. The town is named at the
+fix itself, not at the rounded point sent; ColorOS's geocoder often answers
+with only a road number there, so four points ~500 m around it are asked
+together and the town most named wins (`LocationLogic.townOf`, tested).
 - `WatchMatcher.kt` is the server's `core/watch-match.ts` in Kotlin, both
   checked against `test/fixtures/watch-normalize.json`.
 - A match posts `POST /app/watch/fired {watchId, matchedAt}`: no text. It is
