@@ -8,7 +8,8 @@
   Unlocking with the stored PIN (0.17): flagRetrieveInteractiveWindows lets the
   service read the lock screen's keypad; canPerformGestures is on only to
   swipe the keypad up (0.17.1: ColorOS ignores the system's dismiss request)
-  and to tap a key Android refuses to click. Those and the relock are the only
+  and to tap its keys (0.17.3: ColorOS accepts ACTION_CLICK on them and enters
+  nothing). Those and the relock are the only
   gestures and the only extra global action (RoutineAccessibilityService
   press / swipeUp / relock, pinned by UnlockScanTest).
 -->

@@ -56,8 +56,8 @@ import java.util.concurrent.atomic.AtomicInteger
  * **Unlocking with the stored PIN** (0.17, `docs/plans/routine-auto-unlock.md`),
  * only through [unlockAndRun], only for a claimed routine the user opted in:
  * every digit is matched to exactly one key of the lock screen's keypad by
- * what the key says, before anything is pressed; a key is `ACTION_CLICK`, or,
- * only if Android refuses that, a tap at the key's centre. To raise the
+ * what the key says, before anything is pressed; once the keys have stopped
+ * moving, each is a tap at its centre (ColorOS ignores `ACTION_CLICK` there). To raise the
  * keypad it swipes up the lock screen (at most twice; ColorOS ignores the
  * system's dismiss request). Those two are the app's only gestures. Afterwards `GLOBAL_ACTION_LOCK_SCREEN` locks
  * the phone again — the one other global action — when that job typed the
@@ -229,8 +229,11 @@ class RoutineAccessibilityService : AccessibilityService() {
             }
             SystemClock.sleep(POLL_MS)
         }
+        // Taps go by position: only once the keypad has stopped sliding in.
+        val keysToPress = plan!!.distinct().map { nodes[it] }
+        if (!settled(keysToPress)) return UNLOCK_NO_KEYPAD
         if (!UnlockStore.beginAttempt(this)) return UNLOCK_NO_KEYPAD
-        for (index in plan!!) {
+        for (index in plan) {
             press(nodes[index])
             SystemClock.sleep(KEY_GAP_MS)
         }
@@ -274,24 +277,64 @@ class RoutineAccessibilityService : AccessibilityService() {
         return infos to keys
     }
 
-    /** One key: a click, or, only if Android refuses it, a tap at its centre. */
+    /**
+     * One key: a tap at its centre, where it is now. Not `ACTION_CLICK`: on
+     * ColorOS 14 the keypad accepted the click and entered nothing (0.17.2 on
+     * the phone: no touch, still locked); a tap arrives as a touch, like the swipe.
+     */
     private fun press(node: AccessibilityNodeInfo) {
-        if (node.performAction(AccessibilityNodeInfo.ACTION_CLICK)) return
+        node.refresh()
         val bounds = Rect().also { node.getBoundsInScreen(it) }
         if (bounds.isEmpty) return
         gesture(Path().apply { moveTo(bounds.exactCenterX(), bounds.exactCenterY()) }, TAP_MS)
     }
 
-    /** Up the middle of the lock screen, to raise its keypad. Only while locked. */
+    /** Whether every one of [keys] is on screen and has stayed in place for [SETTLE_MS]. */
+    private fun settled(keys: List<AccessibilityNodeInfo>): Boolean {
+        val until = SystemClock.uptimeMillis() + SETTLE_MAX_MS
+        var before = boundsOf(keys)
+        while (SystemClock.uptimeMillis() < until) {
+            SystemClock.sleep(SETTLE_MS)
+            if (!locked()) return false
+            val now = boundsOf(keys)
+            if (now != null && now == before) return true
+            before = now
+        }
+        return false
+    }
+
+    private fun boundsOf(keys: List<AccessibilityNodeInfo>): List<Rect>? = keys.map { key ->
+        if (!key.refresh() || !key.isVisibleToUser) return null
+        Rect().also { key.getBoundsInScreen(it) }.takeUnless { it.isEmpty } ?: return null
+    }
+
+    /**
+     * Up the middle of the lock screen, to raise its keypad. Only while
+     * locked. Over the whole screen (bars included): on the phone (0.17.2)
+     * 1766 → 662 px only showed the "swipe up" hint, 1900 → 400 opened it.
+     */
     private fun swipeUp() {
         if (!locked()) return
-        val metrics = resources.displayMetrics
-        val x = metrics.widthPixels / 2f
+        val (width, height) = screenSize()
+        val x = width / 2f
         val path = Path().apply {
-            moveTo(x, metrics.heightPixels * SWIPE_FROM)
-            lineTo(x, metrics.heightPixels * SWIPE_TO)
+            moveTo(x, height * SWIPE_FROM)
+            lineTo(x, height * SWIPE_TO)
         }
         gesture(path, SWIPE_MS)
+    }
+
+    /** The whole screen in pixels, status and navigation bars included. */
+    private fun screenSize(): Pair<Int, Int> {
+        val windows = getSystemService(Context.WINDOW_SERVICE) as android.view.WindowManager
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            val bounds = windows.maximumWindowMetrics.bounds
+            return bounds.width() to bounds.height()
+        }
+        val metrics = android.util.DisplayMetrics()
+        @Suppress("DEPRECATION")
+        windows.defaultDisplay.getRealMetrics(metrics)
+        return metrics.widthPixels to metrics.heightPixels
     }
 
     /** The one place the app performs a gesture: [press] and [swipeUp] only (`UnlockScanTest`). */
@@ -708,11 +751,15 @@ class RoutineAccessibilityService : AccessibilityService() {
         private const val KEYPAD_WAIT_MS = 10_000L
         /** After the last key, how long the phone may take to open. */
         private const val OPEN_WAIT_MS = 5_000L
-        private const val KEY_GAP_MS = 150L
+        private const val KEY_GAP_MS = 200L
+        /** The keypad slides in: its keys must stay put this long before a tap. */
+        private const val SETTLE_MS = 400L
+        private const val SETTLE_MAX_MS = 3_000L
         private const val TAP_MS = 50L
-        private const val SWIPE_MS = 300L
-        private const val SWIPE_FROM = 0.80f
-        private const val SWIPE_TO = 0.30f
+        private const val SWIPE_MS = 250L
+        /** 2020 → 356 px on a 2376 px screen; measured on the phone, short swipes only show a hint. */
+        private const val SWIPE_FROM = 0.85f
+        private const val SWIPE_TO = 0.15f
         /** A swipe once the screen is on, and one more if the keypad did not come up. */
         private val SWIPE_AFTER_MS = longArrayOf(1_200L, 4_500L)
         private val MAX_SWIPES = SWIPE_AFTER_MS.size

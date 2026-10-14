@@ -5,7 +5,7 @@ system is, where things live, and what breaks easily, then links out. It does
 **not** repeat the rules in `CLAUDE.md` (always loaded) or the spec in
 `PLAN.md` (read by section, never whole).
 
-_Last updated: 2026-10-13 · server at migration 0034 · agent prompt a10 + smart note s2 + screen step s1 · parser prompt v6 · app 0.17.1 · smart model gemini-3.5-flash-lite_
+_Last updated: 2026-10-13 · server at migration 0034 · agent prompt a10 + smart note s2 + screen step s1 · parser prompt v6 · app 0.17.3 · smart model gemini-3.5-flash-lite_
 
 ## 1. What this is
 
@@ -102,7 +102,7 @@ Network on the hotspot: `NODE_OPTIONS=--dns-result-order=ipv4first` for wrangler
   (2026-10-11), 0.13.1 is on the phone. App 0.17.0 (2026-10-13, plan
   `docs/plans/routine-auto-unlock.md`): an opted-in routine unlocks a
   PIN-locked phone with a PIN stored on the phone only, then locks it
-  again; 0.17.1 (keypad swipe for ColorOS) is installed, the phone check owed (PLAN §13). Next, a separate
+  again; 0.17.3 is installed and passed the full run on the phone (2026-10-13). Next, a separate
   plan: the bot builds a routine on request and explains it (the user's
   wish, 2026-10-11 — it changes "never written by a model", PLAN §6.27): the
   dry run passed on the real attendance app (exit, 2026-10-11). Server
@@ -182,6 +182,11 @@ Network on the hotspot: `NODE_OPTIONS=--dns-result-order=ipv4first` for wrangler
 | [SETUP.md](SETUP.md) | Setting up a new copy from zero: accounts, Groq key, models, secrets, deploy, app, AI agent. |
 
 ## 8. Session log (docs)
+
+- 2026-10-13: Apps 0.17.2–0.17.3, from phone runs: the swipe spans the full
+  height (85% → 15%), and keys are taps once the keypad has settled
+  (ColorOS ignores `ACTION_CLICK` there; `settled`, `screenSize`). The full
+  run passed: unlock, FID results, relock. Installed on the phone.
 
 - 2026-10-13: App 0.17.1, from the first phone run (ColorOS 14): the PIN
   pad never came up — the run screen covered the lock screen and ColorOS

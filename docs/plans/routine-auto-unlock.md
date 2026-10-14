@@ -136,3 +136,16 @@ ten clickable views with the digit as their description only, no ids, no
 Enter. Fix: the pin-mode screen turns the screen on and steps back behind the
 lock screen; the service swipes up (at most twice) until the keypad is there;
 a clickable match wins over a plain label.
+
+## 0.17.2 and 0.17.3 — the full run passes
+
+- 0.17.2: the swipe was too short (80% → 30% of a height without the bars;
+  1766 → 662 px only showed ColorOS's "swipe up" hint). Now 85% → 15% of the
+  full screen height, 250 ms; checked with `adb input swipe` first.
+- 0.17.3: ColorOS accepted `ACTION_CLICK` on its keys and entered nothing;
+  the feature turned itself off after the one try, with no wrong attempt
+  counted. Keys are now taps at their centre, once all of the PIN's keys
+  have kept their bounds for 400 ms.
+- Result on the phone (2026-10-13 14:45–14:46): screen on, keypad up, the
+  PIN tapped by the app alone, unlocked, FID searched to its results, the
+  phone locked again.
