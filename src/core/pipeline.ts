@@ -75,7 +75,7 @@ import { missText } from '../render/misses.js';
 import { examplesFor } from '../render/fallback.js';
 import { factText, personalQuestion } from '../render/personal.js';
 import type { Exchange, ExchangeLog } from './exchanges.js';
-import { matchGroups } from '../agent/tool-groups.js';
+import { matchGroups, namesRememberAboutMe } from '../agent/tool-groups.js';
 import type { GroupName } from '../agent/tool-groups.js';
 import { statusText } from '../render/status.js';
 import { eventText } from '../render/events.js';
@@ -828,7 +828,8 @@ function writeLearnSignals(deps: PipelineDeps, sink: LearnSink): void {
         if (typeof input?.minutes === 'number' && typeof input.stated === 'boolean') {
           learn.addLeave(deps.principal, input.minutes, input.stated);
         }
-      } else {
+      } else if (!(signal.kind === 'confirm_no' && signal.tool === 'memory.remember')) {
+        // A fact offered and declined is not an action the user asked for and refused.
         learn.addTap(deps.principal, signal.kind, signal.tool, (now - signal.createdAt) / 1000);
       }
     }
@@ -1895,6 +1896,8 @@ function turnOf(
       principal: deps.principal,
       nowMs: now,
       lang,
+      // Code reads the words for "remember about me" (§6.26); no words, no request.
+      ...(text !== undefined ? { explicitFact: namesRememberAboutMe(text) } : {}),
       repo: deps.repo,
       reminders: services.reminders,
       log: deps.log,

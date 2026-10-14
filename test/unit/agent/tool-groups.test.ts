@@ -8,6 +8,7 @@ import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { parse as parseYaml } from 'yaml';
 import { GROUPS, groupOf, matchGroups, selectionLabel, selectTools } from '../../../src/agent/tool-groups.js';
+import { namesRememberAboutMe } from '../../../src/agent/tool-groups.js';
 import type { GroupName } from '../../../src/agent/tool-groups.js';
 import { agentToolNames } from '../../../src/agent/tools.js';
 import { TOOL_NAMES } from '../../../src/tools/registry.js';
@@ -113,5 +114,28 @@ describe('the eval corpus', () => {
       return groups.length > 0 && (owner === null || !groups.includes(owner));
     });
     expect(wrong.map((c) => `${c.id}: ${matchGroups(c.input).join(',')}`)).toEqual([]);
+  });
+});
+
+describe('namesRememberAboutMe (implicit facts, 2026-10-14)', () => {
+  it('hears the explicit "about me" signal', () => {
+    for (const text of [
+      'תזכור עליי שאני גר ברחובות',
+      'תזכור עלי שאני צמחוני',
+      'תזכרי עליי שיש לי כלב',
+      'זכור עליי שאני סטודנט',
+      'על עצמי: אני עובד בהייטק',
+      'תזכור לתמיד שאני אלרגי לבוטנים',
+      'Remember about me that I like tea',
+      'remember this about me: I study at night',
+    ]) {
+      expect(namesRememberAboutMe(text), text).toBe(true);
+    }
+  });
+
+  it('a fact said in passing, or plain "remember that", is not the signal', () => {
+    for (const text of ['אני לומד באריאל', 'תזכור שהחניה בקומה מינוס שתיים', 'remember to call mom', 'מה אתה יודע עליי']) {
+      expect(namesRememberAboutMe(text), text).toBe(false);
+    }
   });
 });

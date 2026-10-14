@@ -898,12 +898,13 @@ export const REGISTRY: Readonly<Record<ToolName, ToolSpec>> = {
     private: true,
   },
   // Facts about the user (block H part 18). NOT private: the model sees them on
-  // every turn, by the user's decision. Saved only on an explicit signal.
+  // every turn, by the user's decision. Saved at once on an explicit signal;
+  // a fact said in passing is offered and waits for a confirmation (2026-10-14).
   'memory.remember': {
     name: 'memory.remember',
     dataSource: 'private',
     llmDescription:
-      'Keep a lasting fact about the user, only when they say to remember it about them ("תזכור עליי", "על עצמי", "תזכור לתמיד", "remember about me"): where they live, preferences, family. Plain "remember that…" is notes.save. text: the fact, in their words.',
+      'Keep a lasting fact about the user (where they live, study or work, family, preferences): when they say to remember it about them ("תזכור עליי", "על עצמי"), or when they state one in passing and ask for nothing else; code asks them. Plain "remember that…" is notes.save. text: the fact, in their words.',
     draftSchema: memoryRememberSlots,
     tier: 1,
     scopes: [],

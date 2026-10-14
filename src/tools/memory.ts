@@ -3,7 +3,9 @@
  * user, which the model sees on every agent turn.
  *
  * Not private — that is the point of a fact. So what may become one is narrow:
- * only on an explicit "about me" signal (the tool's description), never from
+ * the user's own words, kept at once on an explicit "about me" signal
+ * (`namesRememberAboutMe`) and otherwise only after a confirmation (a fact
+ * said in passing, offered by the model, 2026-10-14); never from
  * someone else's words (a tainted turn is refused), and never with an email, a
  * link, a phone number, a code or a long number in it.
  */
@@ -58,11 +60,15 @@ export const memoryRemember: ToolDefinition = {
     if (ctx.tainted) return ask('fact_tainted');
     // The model sees every fact, verbatim: what it must never see stays out.
     if (containsPrivateData(text)) return ask('fact_private');
+    // Said in passing, not asked for (2026-10-14): the model offers it, and
+    // code puts it behind a confirmation. Only the words decide, never the model.
+    if (ctx.explicitFact !== true) return { kind: 'ready', input: { text } satisfies RememberInput, unrequested: true };
     return { kind: 'ready', input: { text } satisfies RememberInput };
   },
 
+  /** The confirmation card's question, on every path that confirms. */
   preview(rawInput, lang): string {
-    return factText.remembered(parseInput<RememberInput>(rememberInputSchema, rawInput, 'memory.remember').text, lang);
+    return factText.offer(parseInput<RememberInput>(rememberInputSchema, rawInput, 'memory.remember').text, lang);
   },
 
   async execute(rawInput, ctx): Promise<ExecuteResult> {

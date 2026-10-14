@@ -318,3 +318,18 @@ describe('a backup model (2026-10-06)', () => {
     expect(decide('calls.place', ctx({ backupModel: true }))).toMatchObject({ decision: 'CONFIRM', confirmOnDevice: true });
   });
 });
+
+describe('a write the user did not ask for (2026-10-14, implicit facts)', () => {
+  it('puts a Tier 1 write behind a confirmation', () => {
+    const res = decide('memory.remember', ctx({ unrequested: true }));
+    expect(res).toMatchObject({ decision: 'CONFIRM', reason: 'unrequested' });
+  });
+
+  it('leaves a read alone', () => {
+    expect(decide('reminders.list', ctx({ unrequested: true }))).toMatchObject({ decision: 'ALLOW' });
+  });
+
+  it('allows the same write when it was asked for', () => {
+    expect(decide('memory.remember', ctx({ unrequested: false }))).toMatchObject({ decision: 'ALLOW' });
+  });
+});

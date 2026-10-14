@@ -427,6 +427,23 @@
     intent: memory.forget
     missing: []
 
+# A fact said in passing (2026-10-14): offered, and code asks before keeping it.
+# A self-mention with a request is the request.
+
+- id: mem-006
+  now: "2026-10-14T10:00:00+03:00"
+  input: "אני לומד הנדסת תעשייה וניהול באריאל"
+  expect:
+    intent: memory.remember
+    missing: []
+
+- id: mem-007
+  now: "2026-10-14T10:00:00+03:00"
+  input: "אני עובד מחר בשמונה, תזכיר לי לקום בשבע"
+  expect:
+    intent: reminders.create
+    missing: []
+
 # Gmail (2026-10-01, prompt a4).
 
 - id: ml-search-001

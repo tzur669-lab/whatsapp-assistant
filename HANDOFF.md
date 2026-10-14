@@ -158,8 +158,9 @@ Network on the hotspot: `NODE_OPTIONS=--dns-result-order=ipv4first` for wrangler
   (facts the model sees, PLAN §6.26) and 19 (the stock portfolio, PLAN
   §6.24: Finnhub for US with `QUOTES_API_KEY`, set on staging; Yahoo for
   TASE) are done. Block H is built and on staging (2026-10-11). Open: the
-  full catalog has ~100 tokens of headroom left (PLAN §13 — decide before
-  adding tools), and evals on prompt a10 are owed (PLAN §13). The full reviewed plan: `docs/plans/block-h.md` (read
+  full catalog goes brief (block J2b), pinned at ≤ 5,750 tokens in
+  `test/unit/agent/fit.test.ts` (5,710 measured 2026-10-13) — measure before
+  adding tools (PLAN §13), and evals on prompt a10 are owed (PLAN §13). The full reviewed plan: `docs/plans/block-h.md` (read
   the part you build). Block G waits behind it.
 - Block F is done (share to the bot, default assistant,
   widget, "time to leave"); it needs a deploy and the 0.11.0 APK — **server
@@ -189,6 +190,12 @@ Network on the hotspot: `NODE_OPTIONS=--dns-result-order=ipv4first` for wrangler
 | [SETUP.md](SETUP.md) | Setting up a new copy from zero: accounts, Groq key, models, secrets, deploy, app, AI agent. |
 
 ## 8. Session log (docs)
+
+- 2026-10-14: Facts said in passing are offered on a card (§6.26):
+  `namesRememberAboutMe` (`agent/tool-groups.ts`), `ToolContext.explicitFact`,
+  `ResolveOutcome.unrequested`, policy reason `unrequested`, `factText.offer`;
+  caps 40 / 1,600; the fitter drops facts oldest first under the one-call
+  budget (`promptCeiling` in `agent/loop.ts`). No new modules or tables.
 
 - 2026-10-14: Block K, K1: the learning journal — new `core/learn-store.ts`,
   `render/learn.ts`, migration 0035 (`learn_events`, `learn_weeks`), `/learn`;

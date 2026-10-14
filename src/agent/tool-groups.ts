@@ -154,6 +154,24 @@ const PATTERNS: Readonly<Record<GroupName, readonly RegExp[]>> = {
 
 const GROUP_NAMES = Object.keys(GROUPS) as GroupName[];
 
+/**
+ * The user asked to keep a fact about themselves (§6.26): "תזכור עליי",
+ * "על עצמי", "תזכור לתמיד", "remember about me". The one list code acts on —
+ * without it, `memory.remember` is an offer behind a confirmation (2026-10-14).
+ * The tool's description, the help and the hint only describe it.
+ */
+const REMEMBER_ABOUT_ME: readonly RegExp[] = [
+  /(?:תזכור|תזכרי|זכור|זכרי)\s+עלי(?:י)?(?![א-ת])/,
+  /(?<![א-ת])על עצמי(?![א-ת])/,
+  /(?:תזכור|תזכרי|זכור|זכרי)\s+לתמיד/,
+  /\bremember\s+(?:this\s+|that\s+)?about\s+me\b/i,
+];
+
+export function namesRememberAboutMe(text: string): boolean {
+  const normalized = normalizeHebrew(text);
+  return REMEMBER_ABOUT_ME.some((pattern) => pattern.test(normalized));
+}
+
 /** The groups the message's words point at, in a fixed order. */
 export function matchGroups(text: string): GroupName[] {
   const normalized = normalizeHebrew(text);

@@ -146,6 +146,11 @@ export type ResolveOutcome = (
       input: unknown;
       /** R8: far-future writes execute only after a confirmation. */
       needsConfirm?: boolean;
+      /**
+       * Code found no request for this write in the user's words: the model
+       * offered it, and it waits for a confirmation (§6.26, 2026-10-14).
+       */
+      unrequested?: true;
     }
   | { kind: 'clarify'; clarify: Clarify }
 ) & {
@@ -161,6 +166,12 @@ export type ToolContext = {
   principal: string;
   nowMs: number;
   lang: Lang;
+  /**
+   * The message's own words asked to keep a fact about the user
+   * (`namesRememberAboutMe`, §6.26). Set by code from the words, never by a
+   * model; absent on paths without the words — an answer, a button, a resume.
+   */
+  explicitFact?: boolean;
   repo: Repository;
   reminders: ReminderStore;
   log: Logger;

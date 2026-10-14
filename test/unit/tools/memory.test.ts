@@ -106,6 +106,31 @@ describe('facts', () => {
       expect(memoryRemember.resolve({ text: 'הקוד של השער 4321' }, ctx)).toMatchObject({ clarify: { what: 'fact_private' } });
     });
 
+    it('kept at once only when the words asked for it; otherwise an offer (2026-10-14)', () => {
+      expect(memoryRemember.resolve({ text: 'אני גר ברחובות' }, { ...ctx, explicitFact: true })).toEqual({
+        kind: 'ready',
+        input: { text: 'אני גר ברחובות' },
+      });
+      for (const unasked of [{ ...ctx, explicitFact: false }, ctx]) {
+        expect(memoryRemember.resolve({ text: 'אני גר ברחובות' }, unasked)).toEqual({
+          kind: 'ready',
+          input: { text: 'אני גר ברחובות' },
+          unrequested: true,
+        });
+      }
+    });
+
+    it('an offer still refuses taint and private data first', () => {
+      expect(memoryRemember.resolve({ text: 'אני גר ברחובות' }, { ...ctx, tainted: true })).toMatchObject({ clarify: { what: 'fact_tainted' } });
+      expect(memoryRemember.resolve({ text: 'הקוד שלי 4321' }, ctx)).toMatchObject({ clarify: { what: 'fact_private' } });
+    });
+
+    it('the card asks, it does not say it was kept', () => {
+      const preview = plain(memoryRemember.preview({ text: 'אני לומד באריאל' }, 'he'));
+      expect(preview).toContain('לשמור כעובדה עליך');
+      expect(preview).not.toContain('נשמר');
+    });
+
     it('asks what to keep when nothing was said', () => {
       expect(memoryRemember.resolve({}, ctx)).toMatchObject({ clarify: { what: 'fact_text' } });
     });
@@ -203,6 +228,53 @@ describe('facts in an agent turn', () => {
     expect(plain(shown.text)).toContain('יש גם 1 פתקים');
     await handleInbound(say('/forget memory'), deps([]));
     expect(await facts.all(PRINCIPAL)).toEqual([]);
+  });
+
+  it('a fact said in passing is offered on a card, and kept only on yes, with no Undo (2026-10-14)', async () => {
+    const pending = new PendingActions(driver, () => NOW);
+    const withPending = (steps: FakeStep[]): PipelineDeps => {
+      const d = deps(steps);
+      return { ...d, services: { ...d.services!, pending } };
+    };
+    const out = await handleInbound(
+      say('אני לומד הנדסת תעשייה וניהול באריאל'),
+      withPending([{ tool: 'memory.remember', args: { text: 'לומד הנדסת תעשייה וניהול באריאל' } }]),
+    );
+    if (out.action !== 'reply') throw new Error('expected a reply');
+    expect(plain(out.text)).toContain('לשמור כעובדה עליך');
+    expect(await facts.all(PRINCIPAL)).toEqual([]);
+    const yes = out.buttons?.find((b) => b.id.startsWith('pa:') && b.id.endsWith(':ok'));
+    expect(yes).toBeDefined();
+
+    const tapped = await handleInbound(
+      { kind: 'button', wamid: 'wamid.facts.tap', from: '972500000000', sentAtMs: NOW - 500, buttonId: yes!.id, forwarded: false },
+      withPending([]),
+    );
+    if (tapped.action !== 'reply') throw new Error('expected a reply');
+    expect(plain(tapped.text)).toContain('נשמר כעובדה עליך');
+    expect(tapped.buttons ?? []).toEqual([]);
+    expect((await facts.all(PRINCIPAL)).map((f) => f.text)).toEqual(['לומד הנדסת תעשייה וניהול באריאל']);
+  });
+
+  it('"no" on the card keeps nothing', async () => {
+    const pending = new PendingActions(driver, () => NOW);
+    const d = deps([{ tool: 'memory.remember', args: { text: 'עובד בהייטק' } }]);
+    const out = await handleInbound(say('אני עובד בהייטק'), { ...d, services: { ...d.services!, pending } });
+    if (out.action !== 'reply') throw new Error('expected a reply');
+    const no = out.buttons!.find((b) => b.id.endsWith(':no'))!;
+    const e = deps([]);
+    await handleInbound(
+      { kind: 'button', wamid: 'wamid.facts.no', from: '972500000000', sentAtMs: NOW - 500, buttonId: no.id, forwarded: false },
+      { ...e, services: { ...e.services!, pending } },
+    );
+    expect(await facts.all(PRINCIPAL)).toEqual([]);
+  });
+
+  it('"תזכור עליי" keeps it at once, with Undo', async () => {
+    const out = await handleInbound(say('תזכור עליי שאני צמחוני'), deps([{ tool: 'memory.remember', args: { text: 'אני צמחוני' } }]));
+    if (out.action !== 'reply') throw new Error('expected a reply');
+    expect(out.buttons?.some((b) => b.id.startsWith('undo:'))).toBe(true);
+    expect(await facts.all(PRINCIPAL)).toHaveLength(1);
   });
 
   it('/forget alone keeps the facts', async () => {

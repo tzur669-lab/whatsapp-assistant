@@ -221,6 +221,13 @@ export const factText = {
       : `Saved as a fact about you:\n${isolate(text)}\nI will keep it in mind.`;
   },
 
+  /** A fact offered, not yet kept: the confirmation card's summary (2026-10-14). */
+  offer(text: string, lang: Lang): string {
+    return lang === 'he'
+      ? `לשמור כעובדה עליך:\n${isolate(text)}\nכך אזכור את זה בכל שיחה.`
+      : `Keep as a fact about you:\n${isolate(text)}\nso I keep it in mind.`;
+  },
+
   forgetPreview(text: string, lang: Lang): string {
     return lang === 'he' ? `מחיקת העובדה:\n${isolate(text)}` : `Forget the fact:\n${isolate(text)}`;
   },

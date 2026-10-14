@@ -434,6 +434,13 @@ export async function runAgentTurn(input: AgentTurnInput, deps: AgentDeps): Prom
     turnCap: number,
     charsPerToken: number,
     brief = false,
+    /**
+     * The largest first call a model's minute bucket takes with its completion
+     * reserve (2026-10-14). Below `turnCap − COMPLETION_RESERVE` on Groq
+     * (8,000 − 500 margin − 1,024 = 6,476): a prompt between the two passed the
+     * fitter and then failed `budget_exhausted` with no model asked.
+     */
+    promptCeiling = Number.POSITIVE_INFINITY,
   ): Plan => {
     const tools = wireTools(selection.tools, brief ? { brief: true } : {});
     const toolChars = JSON.stringify(tools).length;
@@ -441,9 +448,15 @@ export async function runAgentTurn(input: AgentTurnInput, deps: AgentDeps): Prom
     const estimate = (messages: readonly AgentMessage[]) => estimateTokens(messages, toolChars, charsPerToken);
     const limit = turnCap - COMPLETION_RESERVE - FIT_HEADROOM;
     const fitted = fitHistory(input.history, (history) => estimate(build(system, history, allFacts)), limit);
-    const facts = estimate(build(system, fitted.history, allFacts)) > turnCap - COMPLETION_RESERVE ? [] : allFacts;
+    // Then the facts, one at a time, oldest first: a newer fact may correct
+    // an older one (2026-10-14; before, all of them went at once).
+    let facts = allFacts;
+    const factsLine = Math.min(turnCap - COMPLETION_RESERVE, promptCeiling);
+    while (facts.length > 0 && estimate(build(system, fitted.history, facts)) > factsLine) {
+      facts = facts.slice(1);
+    }
     if (fitted.dropped > 0 || facts.length < allFacts.length) {
-      deps.log.info('agent_fit', { dropped: fitted.dropped, factsDropped: facts.length < allFacts.length });
+      deps.log.info('agent_fit', { dropped: fitted.dropped, factsDropped: allFacts.length - facts.length });
     }
     const messages = build(system, fitted.history, facts);
     return { selection, tools, toolChars, messages, prompt: estimate(messages) };
@@ -470,6 +483,11 @@ export async function runAgentTurn(input: AgentTurnInput, deps: AgentDeps): Prom
       ),
       CHARS_PER_TOKEN,
       !deps.legacyCatalog && selection.groups.length === 0,
+      Math.min(
+        ...providers
+          .filter((candidate) => !isSmart(candidate))
+          .map((candidate) => budget.limitFor(candidate.model) - (candidate.maxCompletionTokens ?? DEFAULT_MAX_COMPLETION_TOKENS)),
+      ),
     );
     return localPlan;
   };

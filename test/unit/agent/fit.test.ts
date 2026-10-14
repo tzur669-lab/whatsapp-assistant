@@ -27,6 +27,7 @@ import { parseKeyring } from '../../../src/security/crypto.js';
 import { TokenBudget } from '../../../src/agent/budget.js';
 import { ConversationHistory } from '../../../src/agent/history.js';
 import { AgentLock } from '../../../src/agent/lock.js';
+import { FactStore, MAX_FACTS } from '../../../src/tools/fact-store.js';
 import { stripIsolates } from '../../../src/render/bidi.js';
 import type { InboundEvent } from '../../../src/channels/types.js';
 import { TestSqlDriver } from '../../integration/sqlite-driver.js';
@@ -132,6 +133,76 @@ describe('a turn with long history and every tool', () => {
     const kept = (await history.recent(PRINCIPAL)).length;
     expect(seen).toContain('הודעה 6');
     expect(kept).toBeGreaterThan(1);
+  });
+});
+
+describe('facts on a full turn (2026-10-14: 40 facts, 1,600 characters)', () => {
+  const NOW = Date.parse('2026-10-14T09:00:00Z');
+  const PRINCIPAL = 'p_fit_facts';
+  const KEY = btoa(String.fromCharCode(...new Uint8Array(32).fill(5)));
+  const keyring = () => parseKeyring({ TOKEN_ENC_KEY_V1: KEY });
+  let driver: TestSqlDriver;
+  let repo: Repository;
+  let history: ConversationHistory;
+  let facts: FactStore;
+
+  beforeEach(() => {
+    driver = new TestSqlDriver();
+    repo = new Repository(driver);
+    repo.migrate(MIGRATIONS);
+    history = new ConversationHistory(driver, () => NOW, keyring);
+    facts = new FactStore(driver, () => NOW, keyring);
+  });
+  afterEach(() => driver.close());
+
+  // A last exchange that leaves no room for every fact, and room for the call.
+  const TIGHT = 850;
+  const turn = async (lastSide: number) => {
+    // Forty facts of forty characters: the memory full, in the order told.
+    for (let i = 0; i < MAX_FACTS; i++) {
+      const fact = `עובדה ${String(i).padStart(2, '0')} ${'ד'.repeat(30)}`;
+      expect((await facts.add(PRINCIPAL, fact)).kind).toBe('added');
+    }
+    await history.append(PRINCIPAL, { user: `אחרונה ${'ב'.repeat(lastSide)}`, reply: `תשובה ${'ג'.repeat(lastSide)}`, tainted: false });
+    const agent = createFakeAgent([{ text: 'הכול טוב' }]);
+    const services: Services = {
+      reminders: new ReminderStore(driver, () => NOW),
+      pending: new PendingActions(driver, () => NOW),
+      questions: new OpenQuestions(driver, () => NOW),
+      deferred: new UndoActions(driver, () => NOW),
+      nlu: [createFakeNlu([draft('unsupported')])],
+      facts,
+      gmail: {} as never,
+      tasks: {} as never,
+      drive: {} as never,
+      agent: { providers: [agent], budget: new TokenBudget(() => NOW), history, lock: new AgentLock(driver, () => NOW) },
+    };
+    const log = createFakeLogger();
+    const deps: PipelineDeps = {
+      repo,
+      log,
+      now: () => NOW,
+      principal: PRINCIPAL,
+      services,
+      channel: 'app',
+      deviceCaps: ['cards', 'file', 'device_query'],
+    };
+    const event = { kind: 'text', wamid: `wamid.fitf.${lastSide}`, from: '972500000000', sentAtMs: NOW - 1_000, text: 'מה נשמע', forwarded: false } as InboundEvent;
+    const out = await handleInbound(event, deps);
+    if (out.action !== 'reply') throw new Error('expected a reply');
+    return seenByModel(agent);
+  };
+
+  it('a full memory fits a message that names no group', async () => {
+    const seen = await turn(100);
+    expect(seen).toContain('עובדה 00');
+    expect(seen).toContain('עובדה 39');
+  });
+
+  it('when the turn is tight, the oldest facts go first and the newest stay', async () => {
+    const seen = await turn(TIGHT);
+    expect(seen).toContain('עובדה 39');
+    expect(seen).not.toContain('עובדה 00');
   });
 });
 

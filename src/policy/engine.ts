@@ -24,6 +24,8 @@ export type PolicyReason =
   | 'voice_uncertain'
   | 'tainted'
   | 'backup_model'
+  /** Code found no request in the words: the model offered it (implicit facts, 2026-10-14). */
+  | 'unrequested'
   | 'tier_requires_confirmation'
   | 'card_confirmation'
   | 'allowed';
@@ -40,6 +42,11 @@ export type PolicyContext = {
   limits: Readonly<Record<string, RateLimit>>;
   /** R8: the resolved time is beyond the confirmation horizon. */
   horizonExceeded: boolean;
+  /**
+   * Code found no request for this write in the user's words: the model
+   * offered it (a fact mentioned in passing, §6.26, 2026-10-14).
+   */
+  unrequested?: boolean;
   /**
    * How the request reached us. A voice note is a transcript of what the user
    * said, not the characters they typed, and they never saw it before it was
@@ -133,6 +140,7 @@ export function decide(tool: ToolName, ctx: PolicyContext, extras: PolicyExtras 
   }
   if (isWrite && ctx.tainted) reasons.push('tainted');
   if (isWrite && ctx.backupModel) reasons.push('backup_model');
+  if (isWrite && ctx.unrequested) reasons.push('unrequested');
   if (tier >= 2) reasons.push('tier_requires_confirmation');
 
   // A card is always a confirmation: the claim that consumes it is the tap, or,

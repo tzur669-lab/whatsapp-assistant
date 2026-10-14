@@ -301,6 +301,7 @@ async function decideAndAct(
     usage: ctx.repo.toolUsage(ctx.principal, intent, ctx.nowMs),
     limits: DEFAULT_LIMITS,
     horizonExceeded: resolved.needsConfirm === true,
+    unrequested: resolved.unrequested === true,
     source: turn.source,
     ...(turn.voiceConfidence ? { voiceConfidence: turn.voiceConfidence } : {}),
     ...(turn.tainted ? { tainted: true } : {}),

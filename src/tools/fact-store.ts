@@ -5,7 +5,7 @@
  * Unlike notes, the model sees these — every agent turn carries them as
  * "About the user". The user's decision, and an amendment to invariant 2. So a
  * fact is checked before it is kept (`containsPrivateData`), and the whole set
- * stays small: 25 facts, 800 characters.
+ * stays small: 40 facts, 1,600 characters (doubled 2026-10-14).
  *
  * AES-GCM per row (`security/crypto.ts`). Encryption is awaited first; the cap
  * check and the insert are then one synchronous step.
@@ -14,9 +14,9 @@ import type { SqlDriver } from '../core/sql.js';
 import type { Keyring } from '../security/crypto.js';
 import { decryptToken, encryptToken } from '../security/crypto.js';
 
-export const MAX_FACTS = 25;
+export const MAX_FACTS = 40;
 export const MAX_FACT_CHARS = 200;
-export const MAX_FACTS_TOTAL_CHARS = 800;
+export const MAX_FACTS_TOTAL_CHARS = 1_600;
 
 export type Fact = { id: string; text: string; createdAt: number };
 

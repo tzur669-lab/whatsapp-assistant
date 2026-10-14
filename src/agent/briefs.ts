@@ -41,7 +41,7 @@ export const BRIEFS: Readonly<Partial<Record<ToolName, string>>> = {
   'phone.calls': 'Recent phone calls (names only): who called, missed, with one person.',
   'lists.add': 'Add items to a named list (shopping, ideas). Shares: portfolio.update.',
   'lists.show': 'Show one named list, or all. Always call it, never answer yourself.',
-  'memory.remember': 'A lasting fact, only for "תזכור עליי"/"about me". Else notes.save.',
+  'memory.remember': 'Fact about the user, asked or said in passing. "תזכור ש…" is notes.save.',
   'portfolio.update': 'A stock the user holds: op set/add/reduce; symbol: ticker (אפל→AAPL).',
   'portfolio.show': "The user's stock portfolio: prices, value, gain. Always call it.",
 };

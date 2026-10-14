@@ -440,6 +440,16 @@ describe('/learn through the pipeline', () => {
     expect(row).toEqual({ kind: 'confirm_no', ciphertext: null, meta: JSON.stringify({ tool: 'reminders.cancel', seconds: 8 }) });
   });
 
+  it('"no" on an offered fact is not a refusal (2026-10-14)', async () => {
+    startLearning(learn);
+    const action = pending.create({ tool: 'memory.remember', input: { text: 'לומד באריאל' }, summary: 's', tier: 1, principal: PRINCIPAL });
+    await handleInbound(
+      { kind: 'button', wamid: 'wamid.learn.fact', from: '972500000000', sentAtMs: now - 500, buttonId: buttonId('pa', action.id, action.nonce, 'no'), forwarded: false },
+      deps(),
+    );
+    expect(kinds()).toEqual([]);
+  });
+
   it('commands do not count as messages', async () => {
     startLearning(learn);
     await send('/learn');
