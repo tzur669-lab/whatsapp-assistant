@@ -475,27 +475,28 @@ describe('the app channel', () => {
     const sendImage = async (phone: FakePhone, fields: Record<string, unknown> = {}) =>
       send(await phone.toDo('POST', '/app/image', { id: messageId(), text: 'מה כתוב פה?', image: JPEG, mimeType: 'image/jpeg', ...fields }));
 
-    it('reads it with Groq in a regular conversation, and answers in code when the read fails', async () => {
-      build({ GROQ_API_KEY: 'test-key-not-real' });
+    it('reads it with Gemini in a regular conversation, and answers in code when the read fails', async () => {
+      build({ GROQ_API_KEY: 'test-key-not-real', GEMINI_API_KEY: 'test-gemini-not-real' });
       const phone = await pair();
       const answer = await sendImage(phone);
       expect(answer.status).toBe(200);
       // The fake answers every chat call 599: the read failed, said in code.
       expect((answer.body as unknown as Reply).row?.text).toBe(he.imageFailed);
-      expect(google.requests).toContain(GROQ_CHAT);
-      expect(google.requests).not.toContain(GEMINI_CHAT);
+      expect(google.requests).toContain(GEMINI_CHAT);
+      expect(google.requests).not.toContain(GROQ_CHAT);
       // The image is kept nowhere: not in the inbound row, the outbox or the audit.
       for (const table of ['inbound_messages', 'app_outbox', 'audit_log']) {
         expect(JSON.stringify(fake.driver.exec(`SELECT * FROM ${table}`))).not.toContain(JPEG);
       }
     });
 
-    it('never falls to Groq in a smart conversation without the Gemini key', async () => {
+    it('never falls to Groq without the Gemini key, in either kind of conversation', async () => {
       build({ GROQ_API_KEY: 'test-key-not-real' });
       const phone = await pair();
       const conversationId = '33333333-3333-4333-8333-333333333333';
       const answer = await sendImage(phone, { conversationId, mode: 'smart' });
       expect((answer.body as unknown as Reply).row?.text).toBe(he.imageNotConfigured);
+      expect(((await sendImage(phone)).body as unknown as Reply).row?.text).toBe(he.imageNotConfigured);
       expect(google.requests).not.toContain(GROQ_CHAT);
     });
 
@@ -521,13 +522,13 @@ describe('the app channel', () => {
     });
 
     it('stops paying for reads after an hour’s worth of images', async () => {
-      build({ GROQ_API_KEY: 'test-key-not-real' });
+      build({ GROQ_API_KEY: 'test-key-not-real', GEMINI_API_KEY: 'test-gemini-not-real' });
       const phone = await pair();
       for (let i = 0; i < 20; i++) {
         repo.recordInbound({ wamid: `app:in:${messageId()}`, principal, receivedAt: NOW - 1_000, sentAt: NOW, kind: 'image' });
       }
       expect(((await sendImage(phone)).body as unknown as Reply).row?.text).toBe(he.imageTooMany);
-      expect(google.requests).not.toContain(GROQ_CHAT);
+      expect(google.requests).not.toContain(GEMINI_CHAT);
     });
   });
 

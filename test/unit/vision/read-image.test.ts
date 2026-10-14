@@ -5,7 +5,10 @@
  */
 import { describe, expect, it } from 'vitest';
 import { TokenBudget } from '../../../src/agent/budget.js';
-import { GEMINI_FLASH_LITE, LLAMA_4_SCOUT } from '../../../src/agent/models.js';
+import { GEMINI_FLASH_LITE } from '../../../src/agent/models.js';
+
+/** A Groq id for the client's own tests: the reader runs Gemini only today. */
+const LLAMA_4_SCOUT = 'meta-llama/llama-4-scout-17b-16e-instruct';
 import type { Logger } from '../../../src/security/redact.js';
 import {
   cleanReadText,
@@ -132,74 +135,64 @@ describe('cleanReadText', () => {
   });
 });
 
-function reader(local: VisionClient[], smart: VisionClient[], budget = new TokenBudget(() => NOW)) {
-  return { read: createImageReader({ local, smart, budget, log, now: () => NOW }).read, budget };
+function reader(clients: VisionClient[], budget = new TokenBudget(() => NOW)) {
+  return { read: createImageReader({ clients, budget, log, now: () => NOW }).read, budget };
 }
 
 describe('createImageReader', () => {
-  it('reads with the local family in a regular conversation', async () => {
-    const groq = client(LLAMA_4_SCOUT, 'groq', [answer('פגישה ביום ראשון 10:00')]);
-    const gemini = client(GEMINI_FLASH_LITE, 'gemini', [answer('never')]);
-    const { read } = reader([groq.client], [gemini.client]);
-    expect(await read({ mode: 'local', ...IMAGE })).toEqual({ status: 'ok', text: 'פגישה ביום ראשון 10:00' });
-    expect(gemini.calls).toHaveLength(0);
+  it('reads with the first model and returns the cleaned text', async () => {
+    const gemini = client(GEMINI_FLASH_LITE, 'gemini', [answer('  פגישה ביום ראשון 10:00 ')]);
+    expect(await reader([gemini.client]).read(IMAGE)).toEqual({ status: 'ok', text: 'פגישה ביום ראשון 10:00' });
+    expect(gemini.calls).toHaveLength(1);
   });
 
-  it('reads with the smart family in a smart conversation, and never falls to Groq', async () => {
-    const groq = client(LLAMA_4_SCOUT, 'groq', [answer('never')]);
-    const gemini = client(GEMINI_FLASH_LITE, 'gemini', [status(503)]);
-    const { read } = reader([groq.client], [gemini.client]);
-    const result = await read({ mode: 'smart', ...IMAGE });
-    expect(result.status).not.toBe('ok');
-    expect(groq.calls).toHaveLength(0);
+  it('is not_configured with no model (no Gemini key)', async () => {
+    expect(await reader([]).read(IMAGE)).toEqual({ status: 'not_configured' });
   });
 
-  it('is not_configured when the family has no model', async () => {
-    const groq = client(LLAMA_4_SCOUT, 'groq', [answer('never')]);
-    const { read } = reader([groq.client], []);
-    expect(await read({ mode: 'smart', ...IMAGE })).toEqual({ status: 'not_configured' });
-    expect(groq.calls).toHaveLength(0);
-  });
-
-  it('moves to the next model of the family on a 429 or a failure', async () => {
+  it('moves to the next model on a 429', async () => {
     const first = client(GEMINI_FLASH_LITE, 'gemini', [status(429, { 'retry-after': '30' })]);
     const second = client('gemini-other', 'gemini', [answer('טקסט')]);
-    const { read } = reader([], [first.client, second.client]);
-    expect(await read({ mode: 'smart', ...IMAGE })).toEqual({ status: 'ok', text: 'טקסט' });
+    expect(await reader([first.client, second.client]).read(IMAGE)).toEqual({ status: 'ok', text: 'טקסט' });
   });
 
-  it('answers busy when the only model is rate limited, and rests it', async () => {
+  it('rests a model that answered 503, as a smart turn does, and says failed', async () => {
+    const gemini = client(GEMINI_FLASH_LITE, 'gemini', [status(503)]);
+    const { read, budget } = reader([gemini.client]);
+    expect(await read(IMAGE)).toEqual({ status: 'failed' });
+    expect(budget.isExhausted(GEMINI_FLASH_LITE)).toBe(true);
+  });
+
+  it('answers busy when the only model is rate limited, and does not call it again while it rests', async () => {
     const groq = client(LLAMA_4_SCOUT, 'groq', [status(429, { 'retry-after': '30' })]);
-    const { read } = reader([groq.client], []);
-    expect(await read({ mode: 'local', ...IMAGE })).toEqual({ status: 'busy' });
-    // Rested: the next image does not call it at all.
-    expect(await read({ mode: 'local', ...IMAGE })).toEqual({ status: 'busy' });
+    const { read } = reader([groq.client]);
+    expect(await read(IMAGE)).toEqual({ status: 'busy' });
+    expect(await read(IMAGE)).toEqual({ status: 'busy' });
     expect(groq.calls).toHaveLength(1);
   });
 
   it('answers quota when the day is out', async () => {
     const groq = client(LLAMA_4_SCOUT, 'groq', [status(429, { 'retry-after': '7200' })]);
-    const { read } = reader([groq.client], []);
-    expect(await read({ mode: 'local', ...IMAGE })).toEqual({ status: 'quota' });
+    expect(await reader([groq.client]).read(IMAGE)).toEqual({ status: 'quota' });
   });
 
   it('answers failed on a provider error, and unreadable on the marker', async () => {
     const broken = client(LLAMA_4_SCOUT, 'groq', [status(500)]);
-    expect(await reader([broken.client], []).read({ mode: 'local', ...IMAGE })).toEqual({ status: 'failed' });
-    const blank = client(LLAMA_4_SCOUT, 'groq', [answer(NO_TEXT)]);
-    expect(await reader([blank.client], []).read({ mode: 'local', ...IMAGE })).toEqual({ status: 'unreadable' });
+    expect(await reader([broken.client]).read(IMAGE)).toEqual({ status: 'failed' });
+    const blank = client(GEMINI_FLASH_LITE, 'gemini', [answer(NO_TEXT)]);
+    expect(await reader([blank.client]).read(IMAGE)).toEqual({ status: 'unreadable' });
   });
 
   it('answers failed on a timeout', async () => {
     const timeout = Object.assign(new Error('timed out'), { name: 'TimeoutError' });
-    const slow = client(LLAMA_4_SCOUT, 'groq', [timeout]);
-    expect(await reader([slow.client], []).read({ mode: 'local', ...IMAGE })).toEqual({ status: 'failed' });
+    const slow = client(GEMINI_FLASH_LITE, 'gemini', [timeout]);
+    expect(await reader([slow.client]).read(IMAGE)).toEqual({ status: 'failed' });
   });
 
   it('reserves before the call and settles with the measured usage', async () => {
     const groq = client(LLAMA_4_SCOUT, 'groq', [answer('x', { prompt_tokens: 1_000, completion_tokens: 50 })]);
-    const { read, budget } = reader([groq.client], []);
-    await read({ mode: 'local', ...IMAGE });
+    const { read, budget } = reader([groq.client]);
+    await read(IMAGE);
     expect(budget.usedInWindow(LLAMA_4_SCOUT)).toBe(1_050);
     expect(budget.reservedFor(LLAMA_4_SCOUT)).toBe(0);
     expect(VISION_RESERVE_TOKENS).toBeGreaterThan(1_050);
@@ -207,9 +200,9 @@ describe('createImageReader', () => {
 
   it('logs codes and numbers only, never the text or the image', async () => {
     lines.length = 0;
-    const groq = client(LLAMA_4_SCOUT, 'groq', [status(500)]);
-    const next = client('groq-other', 'groq', [answer('סוד גדול')]);
-    await reader([groq.client, next.client], []).read({ mode: 'local', ...IMAGE });
+    const broken = client(GEMINI_FLASH_LITE, 'gemini', [status(500)]);
+    const next = client('gemini-other', 'gemini', [answer('סוד גדול')]);
+    await reader([broken.client, next.client]).read(IMAGE);
     const dump = JSON.stringify(lines);
     expect(dump).not.toContain('סוד');
     expect(dump).not.toContain(IMAGE.data);

@@ -3,7 +3,14 @@
 Status: plan, 2026-10-14, reviewed (plan-review, 2 rounds; the last gap — one byte constant — fixed as the reviewer specified). The user's
 decisions, 2026-10-14:
 
-- **D1 — who sees the image:** by the conversation's family, like the screen
+- **D1, revised 2026-10-14 (the user's decision): Gemini reads every image,
+  in every conversation.** The user's Groq key has no vision model. Only the
+  image goes to Gemini, never the request or the turn; the first answer says
+  once that Gemini may train on it (`he.imageNotice`, setting
+  `image_notice_at`). The code has one list, `VISION_MODELS` =
+  [Gemini 3.5 Flash-Lite]; without the Gemini key images are "not available".
+  The text below describes the first version of D1 where it differs.
+- **D1 (first version) — who sees the image:** by the conversation's family, like the screen
   agent (§6.28): a regular conversation → a Groq vision model only
   (`VISION_MODELS`); a smart conversation → Gemini Flash-Lite only
   (`VISION_SMART_MODELS`). Never crossing. This **amends CLAUDE.md invariant

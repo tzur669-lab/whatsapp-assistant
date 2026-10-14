@@ -205,8 +205,9 @@ written to disk, and the chat keeps only "📷 תמונה" and the request.
 `{ id, text, image (base64, no line breaks), mimeType: "image/jpeg",
 conversationId?, mode?, location? }`. Answers have the message route's shape.
 Like a voice note it is not asked about again cheaply while pending. The server
-reads the picture with the conversation's vision model and treats what it says
-as someone else's words: every write it leads to asks for confirmation.
+reads the picture with Gemini (in every conversation; only the picture goes
+there, and the first answer says so once) and treats what it says as someone
+else's words: every write it leads to asks for confirmation.
 `ProtocolTest` pins the size arithmetic against the server's one-megabyte body
 cap. The quota screen labels the `vision` role "קריאת תמונות".
 

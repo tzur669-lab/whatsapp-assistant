@@ -129,7 +129,6 @@ import {
   SCREEN_SMART_MODELS,
   SMART_MODELS,
   VISION_MODELS,
-  VISION_SMART_MODELS,
 } from '../agent/models.js';
 import { createImageReader, createVisionClient } from '../vision/read-image.js';
 import type { ModelEntry } from '../agent/models.js';
@@ -180,6 +179,8 @@ const VOICE_PER_HOUR = 60;
 
 /** Images per hour the app may send, checked before a vision model is paid for (§6.32). */
 const IMAGES_PER_HOUR = 20;
+/** Set once the user was told that images go to Gemini (§6.32). */
+const IMAGE_NOTICE_KEY = 'image_notice_at';
 
 /** What the app records — AAC in an MP4 container — and the few types alike. */
 const AUDIO_TYPES: ReadonlySet<string> = new Set(['audio/mp4', 'audio/aac', 'audio/ogg', 'audio/webm']);
@@ -1544,9 +1545,8 @@ export class AssistantDO implements DurableObject {
       // Gemini on its own line once its key is set; Groq's daily token limit is not its.
       ...this.smartModels().map((entry): ModelSpec => ({ model: entry.id, role: 'fallback', dayTokens: false })),
       { model: WHISPER_MODEL, role: 'voice', dayTokens: false },
-      // The image readers (§6.32): Groq's counts its day, Gemini's is limited by requests.
-      ...(this.env.GROQ_API_KEY ? VISION_MODELS : []).map((id): ModelSpec => ({ model: id, role: 'vision', dayTokens: true })),
-      ...(this.env.GEMINI_API_KEY ? VISION_SMART_MODELS : []).map((id): ModelSpec => ({ model: id, role: 'vision', dayTokens: false })),
+      // The image readers (§6.32): Gemini, limited by requests, not Groq's daily tokens.
+      ...(this.env.GEMINI_API_KEY ? VISION_MODELS : []).map((id): ModelSpec => ({ model: id, role: 'vision', dayTokens: false })),
     ];
     const voice = { used: this.repo.inboundCountSince('audio', Date.now() - HOUR_MS), limit: VOICE_PER_HOUR };
     const images = { used: this.repo.inboundCountSince('image', Date.now() - HOUR_MS), limit: IMAGES_PER_HOUR };
@@ -1720,6 +1720,10 @@ export class AssistantDO implements DurableObject {
         learn: this.learn,
         ...(this.env.GROQ_API_KEY ? { transcribe: this.voiceTranscriber() } : {}),
         readImage: (input) => this.imageReader().read(input),
+        imageNotice: {
+          seen: () => this.repo.getSetting(IMAGE_NOTICE_KEY) !== null,
+          mark: () => this.repo.setSetting(IMAGE_NOTICE_KEY, String(Date.now())),
+        },
       });
     } catch (error) {
       // The message is recorded, so a retry will not run it again — and a tool
@@ -2619,21 +2623,15 @@ export class AssistantDO implements DurableObject {
   }
 
   /**
-   * The image reader (§6.32, the user's decision 2026-10-14): a regular
-   * conversation's image goes to Groq's vision models only, a smart one's to
-   * Gemini's only. Without a family's key its list is empty and the image is
-   * answered "not available"; it never falls to the other family. Built per
-   * request, like the transcriber: it closes over secrets.
+   * The image reader (§6.32): Gemini, in every conversation (the user's
+   * decision, 2026-10-14: the Groq key has no vision model). Without the
+   * Gemini key the list is empty and an image is answered "not available".
+   * Built per request, like the transcriber: it closes over secrets.
    */
   private imageReader() {
     return createImageReader({
-      local: this.env.GROQ_API_KEY
+      clients: this.env.GEMINI_API_KEY
         ? VISION_MODELS.map((id) =>
-            createVisionClient({ model: id, provider: 'groq', apiKey: this.env.GROQ_API_KEY, fetchImpl: this.groqFetch }),
-          )
-        : [],
-      smart: this.env.GEMINI_API_KEY
-        ? VISION_SMART_MODELS.map((id) =>
             // Not through `groqFetch`: Groq's rate-limit headers are not Gemini's.
             createVisionClient({ model: id, provider: 'gemini', apiKey: this.env.GEMINI_API_KEY ?? '', fetchImpl: this.fetchImpl }),
           )

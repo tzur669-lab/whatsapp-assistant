@@ -35,7 +35,7 @@ import type { GmailClient } from '../google/gmail.js';
 import type { TasksClient } from '../google/tasks.js';
 import type { GrantName } from '../google/grants.js';
 import { DEFAULT_PLACE, findPlace, HOME_CITY_KEY } from '../lookup/place.js';
-import type { ConversationMode, DeviceLocation, InboundEvent, OutboundButton } from '../channels/types.js';
+import type { DeviceLocation, InboundEvent, OutboundButton } from '../channels/types.js';
 import { Repository } from './repo.js';
 import { Stopwatch } from './timing.js';
 import type { Stage } from './timing.js';
@@ -223,8 +223,10 @@ export type PipelineDeps = {
   principal: string;
   /** Absent until a transcription provider is configured (§6.10). */
   transcribe?: VoiceTranscriber;
-  /** Reads an image with the conversation's family (§6.32). Absent: images are not taken. */
-  readImage?: (input: ImageInput & { mode: ConversationMode }) => Promise<ImageRead>;
+  /** Reads an image (§6.32). Absent: images are not taken. */
+  readImage?: (input: ImageInput) => Promise<ImageRead>;
+  /** Whether the user was told, once, that images go to Gemini (§6.32). Absent: never told. */
+  imageNotice?: { seen(): boolean; mark(): void };
   /** Absent only in the Phase 1 tests, which predate the tool layer. */
   services?: Services;
   /** "לא הבנת" capture (§6.23). Never handed to the agent or a model. */
@@ -523,12 +525,12 @@ async function handleAudio(
 // -- image --------------------------------------------------------------------
 
 /**
- * An image is shared text, one step earlier (PLAN §6.32). The conversation's
- * family reads it — Groq in a regular conversation, Gemini in a smart one,
- * never crossing — and what it read is quoted under the user's request, as
- * text shared from another app is: forwarded, so tainted, so every write it
- * leads to confirms, and the turn runs on the local models. The image goes no
- * further than this function.
+ * An image is shared text, one step earlier (PLAN §6.32). Gemini reads it, in
+ * every conversation (the user's decision, 2026-10-14: the Groq key has no
+ * vision model), and what it read is quoted under the user's request, as text
+ * shared from another app is: forwarded, so tainted, so every write it leads
+ * to confirms, and the turn runs on the local models. The image goes no
+ * further than this function. The first answer says, once, where it went.
  */
 async function handleImage(
   event: Extract<InboundEvent, { kind: 'image' }>,
@@ -546,7 +548,7 @@ async function handleImage(
 
   const readImage = deps.readImage;
   const read = await timed(deps, 'image', () =>
-    readImage({ mode: event.mode ?? 'local', mimeType: event.mimeType, data: event.data }),
+    readImage({ mimeType: event.mimeType, data: event.data }),
   );
 
   if (read.status !== 'ok') {
@@ -571,7 +573,10 @@ async function handleImage(
     ...(event.location !== undefined ? { location: event.location } : {}),
     ...(event.mode !== undefined ? { mode: event.mode } : {}),
   };
-  return respondToText(shared.text, { kind: 'text' }, shared, deps, now, stale);
+  const reply = await respondToText(shared.text, { kind: 'text' }, shared, deps, now, stale);
+  if (reply.action !== 'reply' || !deps.imageNotice || deps.imageNotice.seen()) return reply;
+  deps.imageNotice.mark();
+  return { ...reply, text: `${he.imageNotice}\n\n${reply.text}` };
 }
 
 function imageReply(status: Exclude<ImageRead['status'], 'ok'>): string {

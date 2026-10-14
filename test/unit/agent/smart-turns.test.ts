@@ -135,6 +135,7 @@ describe('smart conversations', () => {
     parser?: unknown[];
     transcribe?: VoiceOutcome;
     readImage?: PipelineDeps['readImage'];
+    imageNotice?: PipelineDeps['imageNotice'];
   };
 
   const deps = (setup: Setup): PipelineDeps => {
@@ -167,6 +168,7 @@ describe('smart conversations', () => {
       deviceCaps: ALL_CAPS,
       ...(setup.transcribe ? { transcribe: async () => setup.transcribe! } : {}),
       ...(setup.readImage ? { readImage: setup.readImage } : {}),
+      ...(setup.imageNotice ? { imageNotice: setup.imageNotice } : {}),
     };
   };
 
@@ -454,21 +456,21 @@ describe('smart conversations', () => {
       mode,
     });
     const reader = (text: string | null) => {
-      const calls: Array<{ mode: string; data: string }> = [];
+      const calls: Array<{ data: string }> = [];
       const readImage: NonNullable<PipelineDeps['readImage']> = async (input) => {
-        calls.push({ mode: input.mode, data: input.data });
+        calls.push({ data: input.data });
         return text === null ? { status: 'unreadable' } : { status: 'ok', text };
       };
       return { readImage, calls };
     };
 
-    it("reads with the local family in a regular conversation, and quotes the read text as someone else's", async () => {
+    it("reads it in a regular conversation, and quotes the read text as someone else's to the local model", async () => {
       const r = reader(READ);
       const q = qwen([{ text: 'הבנתי' }]);
       const g = gemini([]);
       const out = await handleInbound(image('מה כתוב פה?', LOCAL, 'local'), deps({ qwen: q, gemini: g, readImage: r.readImage }));
       expect(out).toMatchObject({ action: 'reply', text: 'הבנתי' });
-      expect(r.calls).toEqual([{ mode: 'local', data: DATA }]);
+      expect(r.calls).toEqual([{ data: DATA }]);
       const seen = seenByModel(q);
       expect(seen).toContain('מה כתוב פה?');
       expect(seen).toContain(he.imageHeader);
@@ -477,13 +479,13 @@ describe('smart conversations', () => {
       expect(g.calls).toHaveLength(0);
     });
 
-    it('reads with the smart family in a smart conversation, then runs the turn on the local models', async () => {
+    it('in a smart conversation too, the turn runs on the local models', async () => {
       await handleInbound(smartText('שלום'), deps({ qwen: qwen([]), gemini: gemini([{ text: 'היי' }]) }));
       const r = reader(READ);
       const q = qwen([{ text: 'הבנתי' }]);
       const g = gemini([]);
       await handleInbound(image('מה כתוב פה?', SMART, 'smart'), deps({ qwen: q, gemini: g, readImage: r.readImage }));
-      expect(r.calls.map((call) => call.mode)).toEqual(['smart']);
+      expect(r.calls).toHaveLength(1);
       // The read text is shared text: never Gemini's turn, and a placeholder in the smart history.
       expect(g.calls).toHaveLength(0);
       expect(q.calls).toHaveLength(1);
@@ -519,6 +521,22 @@ describe('smart conversations', () => {
     it('says images are not available without a reader', async () => {
       const out = await handleInbound(image('מה כתוב?', LOCAL, 'local'), deps({ qwen: qwen([]) }));
       expect(out).toMatchObject({ action: 'reply', text: he.imageNotConfigured });
+    });
+
+    it('says once, above the first answer, that images go to Gemini', async () => {
+      let seen = false;
+      const imageNotice = { seen: () => seen, mark: () => void (seen = true) };
+      const first = await handleInbound(image('מה כתוב?', LOCAL, 'local'), deps({ qwen: qwen([{ text: 'א' }]), readImage: reader(READ).readImage, imageNotice }));
+      expect(first).toMatchObject({ action: 'reply', text: `${he.imageNotice}\n\nא` });
+      const second = await handleInbound(image('ועכשיו?', LOCAL, 'local'), deps({ qwen: qwen([{ text: 'ב' }]), readImage: reader(READ).readImage, imageNotice }));
+      expect(second).toMatchObject({ action: 'reply', text: 'ב' });
+    });
+
+    it('does not spend the notice on an image that could not be read', async () => {
+      let seen = false;
+      const imageNotice = { seen: () => seen, mark: () => void (seen = true) };
+      await handleInbound(image('מה כתוב?', LOCAL, 'local'), deps({ qwen: qwen([]), readImage: reader(null).readImage, imageNotice }));
+      expect(seen).toBe(false);
     });
 
     it('a retry of the same image is a duplicate: read once', async () => {

@@ -2,9 +2,9 @@
  * The image reader (PLAN §6.32, 2026-10-14): an image is shared text, one step
  * earlier.
  *
- * One call to a vision model of the conversation's family — Groq for a regular
- * conversation, Gemini for a smart one (the user's decision, 2026-10-14),
- * never crossing — with a fixed prompt and no tools. What it read comes back
+ * One call to a vision model — Gemini, in every conversation, since the
+ * user's Groq key has none (the user's decision, 2026-10-14) — with a fixed
+ * prompt and no tools. What it read comes back
  * as text, cleaned and capped at the shared-text limit, and the pipeline
  * quotes it as text someone else wrote: the turn is tainted, so every write it
  * leads to confirms. The model's words are never parsed into an action.
@@ -18,7 +18,7 @@
 import type { TokenBudget } from '../agent/budget.js';
 import { wasNeverSent } from '../agent/budget.js';
 import { classifyGeminiRateLimit, GEMINI_ENDPOINT, readJsonCapped } from '../agent/provider.js';
-import type { ConversationMode, ImageMimeType } from '../channels/types.js';
+import type { ImageMimeType } from '../channels/types.js';
 import type { NluError } from '../nlu/provider.js';
 import type { Logger } from '../security/redact.js';
 import { MAX_SHARED_CHARS } from '../channels/app/parse.js';
@@ -187,22 +187,18 @@ export type ImageRead =
   | { status: 'unreadable' | 'busy' | 'quota' | 'failed' | 'not_configured' };
 
 export type ImageReaderDeps = {
-  /** A regular conversation's models, in order: `VISION_MODELS`. */
-  local: readonly VisionClient[];
-  /** A smart conversation's: `VISION_SMART_MODELS`, empty without the Gemini key. */
-  smart: readonly VisionClient[];
+  /** The readers, in order: `VISION_MODELS`, empty without the Gemini key. */
+  clients: readonly VisionClient[];
   budget: TokenBudget;
   log: Logger;
   now: () => number;
 };
 
-export function createImageReader(deps: ImageReaderDeps): { read(input: ImageInput & { mode: ConversationMode }): Promise<ImageRead> } {
-  const { budget, log } = deps;
+export function createImageReader(deps: ImageReaderDeps): { read(input: ImageInput): Promise<ImageRead> } {
+  const { budget, log, clients } = deps;
 
   return {
     async read(input): Promise<ImageRead> {
-      // The family of the conversation, and only it (the user's decision, 2026-10-14).
-      const clients = input.mode === 'smart' ? deps.smart : deps.local;
       if (clients.length === 0) return { status: 'not_configured' };
 
       const whole = AbortSignal.timeout(VISION_READ_TIMEOUT_MS);

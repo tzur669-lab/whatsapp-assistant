@@ -79,13 +79,17 @@ export const he = {
    */
   imageHeader: 'מה שנקרא מהתמונה (תוכן של מישהו אחר):',
 
+  /** Once, above the first answer to an image: where the image went (§6.32, the user's decision). */
+  imageNotice:
+    'לידיעתך: את התמונות קורא Gemini של Google בגרסה החינמית, שעלולה להשתמש בהן לשיפור המודלים. הבקשה והפעולות עצמן נשארות במודל של השיחה.',
+
   /** The model found nothing in the image to read or describe. */
   imageUnreadable: 'לא הצלחתי לקרוא את התמונה. כדאי לשלוח תמונה חדה יותר, או לכתוב את הבקשה.',
 
-  /** Every vision model of the conversation's family is resting for now. */
+  /** Every vision model is resting for now. */
   imageBusy: 'קריאת התמונות עמוסה כרגע. כדאי לנסות שוב בעוד דקה.',
 
-  /** Every vision model of the family is out for the day. */
+  /** Every vision model is out for the day. */
   imageQuota: 'נגמרה מכסת קריאת התמונות להיום. אפשר לנסות שוב מחר, או לכתוב את הבקשה.',
 
   /** The read failed. Carries no error detail. */
@@ -94,8 +98,8 @@ export const he = {
   /** More images in the last hour than the app channel allows. */
   imageTooMany: 'נשלחו יותר מדי תמונות בשעה האחרונה. אפשר לכתוב את הבקשה בינתיים.',
 
-  /** No vision model of the conversation's family is configured on this server. */
-  imageNotConfigured: 'קריאת תמונות לא זמינה כרגע בשיחה הזאת.',
+  /** No vision model is configured on this server (no Gemini key). */
+  imageNotConfigured: 'קריאת תמונות לא זמינה כרגע.',
 
   /** Reply to image, document, location — anything that is not text, audio, or a button. */
   unsupportedType:

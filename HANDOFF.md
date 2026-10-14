@@ -35,11 +35,11 @@ Contacts birthdays, phone actions and reads, public lookups, notes, lists, facts
   never crossing. 10 tasks a day; each Groq model gives the screen at most 50K
   tokens a day. Code stops before every sensitive or uncertain tap.
 - **Images** (2026-10-14, PLAN §6.32): an image sent with a request is
-  shared text one step earlier. One read call of the conversation's family
-  (Groq's Llama 4 Scout in a regular one, Gemini Flash-Lite in a smart one,
-  never crossing) turns it into text, quoted under the request as someone
-  else's words: tainted, every write confirms, the local models run the turn.
-  The image is never stored or logged.
+  shared text one step earlier. One read call to Gemini Flash-Lite (in every
+  conversation: the Groq key has no vision model; needs `GEMINI_API_KEY`)
+  turns it into text, quoted under the request as someone else's words:
+  tainted, every write confirms, the local models run the turn. Only the
+  image reaches Gemini; the first answer says so once. Never stored or logged.
 
 ## 2. The one idea
 
@@ -83,7 +83,7 @@ Full map with every module: [ARCHITECTURE.md](ARCHITECTURE.md).
 | a migration | Add `migrations/00NN_*.sql` **and** register it in `src/platform/migrations.ts`. Backward-compatible for one version. |
 | the stored-PIN unlock (the app's `UnlockLogic.kt`, `UnlockStore.kt`) | Routines only, never a screen task. The PIN never leaves the phone; the claim comes before the unlock; one attempt until the PIN is saved again. `dispatchGesture` and `GLOBAL_ACTION_LOCK_SCREEN` live only in `press`/`relock` (`UnlockScanTest`). PLAN §6.27. |
 | the screen agent (`tools/screen*.ts`, `agent/screen-*.ts`, the app's `Screen*.kt`) | Read `docs/plans/screen-agent.md` first. The word lists live in code on both sides and must equal `test/fixtures/screen-policy.json` (a test on each side). Every status move is one conditional UPDATE; never retry an action — a `started` journal entry is `uncertain`. Screen text is never stored, logged or put in history, and goes only to the task's family: `SCREEN_MODELS` (Groq) for `mode: 'local'`, `SCREEN_SMART_MODELS` (Gemini) for `'smart'` — the mode rides in the confirmed input and the task row, never re-read from the turn. A Groq model's screen share is `SCREEN_GROQ_DAY_TOKENS`. `screen.task` is offered only when named: never add it to the full catalog. A step prompt change is `pnpm eval:screen`. |
-| images (`vision/read-image.ts`, `handleImage`, `/app/image`) | Read `docs/plans/image-input.md`. The read text goes only through `handleImage`'s synthetic text event (`forwarded: true`): never widen `respondToText` to take the image, never hand `data` past it. `VISION_MODELS` is Groq only, `VISION_SMART_MODELS` Gemini only, never crossing, and never Gemini Flash (the screen's 20 a day). `MAX_IMAGE_BYTES` equals `Protocol.MAX_IMAGE_BYTES` in the app. The base64 check is a negated class on purpose (CPU). A prompt change bumps `VISION_PROMPT_VERSION`. |
+| images (`vision/read-image.ts`, `handleImage`, `/app/image`) | Read `docs/plans/image-input.md`. The read text goes only through `handleImage`'s synthetic text event (`forwarded: true`): never widen `respondToText` to take the image, never hand `data` past it. `VISION_MODELS` is Gemini only (the user's choice: no Groq vision model on the key), never Gemini Flash (the screen's 20 a day); without the Gemini key images are "not available", never Groq. Only the image goes to it, never the request. `MAX_IMAGE_BYTES` equals `Protocol.MAX_IMAGE_BYTES` in the app. The base64 check is a negated class on purpose (CPU). A prompt change bumps `VISION_PROMPT_VERSION`. |
 | `src/channels/app/parse.ts` or the wire protocol | The app has a matching `Protocol.kt` with test vectors. **Deploy the server before installing a new APK**, or the old server rejects the new app. |
 | a Tier 0–1 write's `execute` that calls Google (or the turn deadline) | The enumeration in `src/agent/limits.ts`: more sequential `GoogleApi.call`s than `MAX_WRITE_CALLS` means raising it, or the lock can expire under a running write. `TURN_DEADLINE_MS` is provisional (M6). |
 | outbound `fetch` | Call `fetch` through a closure, never `this.fetchImpl(...)` — Workers throws "Illegal invocation" (tests use `test/integration/workers-fetch.ts` to catch it). A new call site must be placed in `test/security/turn-signal-fetch.test.ts`; one a tool reaches takes the turn signal (`AbortSignal.any`), and a new network client on `ToolContext` is bound in `tools/turn-signal.ts`. |
@@ -164,9 +164,9 @@ Network on the hotspot: `NODE_OPTIONS=--dns-result-order=ipv4first` for wrangler
   in `wrangler dev`.
 - **Images** (2026-10-14, PLAN §6.32, plan `docs/plans/image-input.md`):
   built, server and app 0.19.0 (📎 and a share target for images; staging
-  deployed f8ffb42b, so the APK in Downloads can be installed). Owed (PLAN §13): the human confirms the Groq
-  vision model id and limits in the console, the phone check, the CPU of a
-  full image in `wrangler dev`. "Make it a routine" waits for the plan where
+  deployed, so the APK in Downloads can be installed). Owed (PLAN §13): the
+  phone check (with `GEMINI_API_KEY` set on staging), the CPU of a full image
+  in `wrangler dev`. "Make it a routine" waits for the plan where
   the bot builds a routine.
 - **Next work:** [ROADMAP.md](ROADMAP.md) (Hebrew) — block H (2026-10-07):
   a smarter bot. Parts 15 (notes), 16 ("לא הבנת" capture), 17 (tool
@@ -211,8 +211,9 @@ Network on the hotspot: `NODE_OPTIONS=--dns-result-order=ipv4first` for wrangler
 
 - 2026-10-14: Images (PLAN §6.32): new `src/vision/read-image.ts`,
   `InboundImage`, route `POST /app/image`, `handleImage` in
-  `core/pipeline.ts`, `composeImage`, `VISION_ONLY_MODELS` /
-  `VISION_MODELS` / `VISION_SMART_MODELS`, quota role `vision` and `images`;
+  `core/pipeline.ts`, `composeImage`, `VISION_MODELS` (Gemini, every
+  conversation — revised the same day: no Groq vision model on the key),
+  `image_notice_at`, quota role `vision` and `images`;
   CLAUDE.md invariant 2 amended. No tables or migrations. App 0.19.0
   (`ImageLogic.kt`, `ImagePrep.kt`, 📎, image share target). Staging
   deployed (f8ffb42b; `/app/image` answers 401 unsigned); APK 0.19.0 in
