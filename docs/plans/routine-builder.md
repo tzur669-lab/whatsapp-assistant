@@ -3,15 +3,15 @@
 ## Session status
 | # | Part | Status | Commit | Next-session prompt |
 |---|------|--------|--------|---------------------|
-| 1 | Server: `tested` + `routine_untested`; `routine.draft`, routes, prompt (migration 0041) | [~] | | see "Opening prompts" → Session 1 |
-| 2 | Watch me: record taps → draft → review; tested flag in the app (app 0.22.0) | [ ] | | Session 2 |
-| 3 | Tell the bot, app: push, scan, build draft, review (app 0.23.0) | [ ] | | Session 3 |
+| 1 | Server: `tested` + `routine_untested`; `routine.draft`, routes, prompt (migration 0041) | [x] | 48b5d38 (staging d6619ae6) | done |
+| 2 | Watch me: record taps → draft → review; tested flag in the app (app 0.22.0) | [ ] | | see "Opening prompts" → Session 2 |
+| 3 | Tell the bot, app: push, scan, build draft, review (app 0.23.0) | [ ] | | see "Opening prompts" → Session 3 |
 
 ## Opening prompts
 
 - **Session 1 (Server):** Read docs/plans/routine-builder.md — only Context, "The rule change", the Sessions table and "Server (part 1)". Do part 1 only. Tests first for src/agent and src/tools. Then typecheck/lint/test, `eval:agent --filter rd- rt- scr-`, `run-screen-evals --draft`, update PLAN/HANDOFF/ARCHITECTURE/runbook, commit, push, deploy:staging, mark part 1 [x] with the hash, and stop with the prompt for part 2.
-- **Session 2 (Watch me, app 0.22.0):** Read docs/plans/routine-builder.md — only Context, "The rule change", the status table and "Watch me (part 2)". Part 1 is on staging (the sync schema accepts `tested`). Do part 2 only (app only, no server change). Tests first (`./gradlew testDebugUnitTest`), Hebrew strings through hebrew-content-writer + hebrew-i18n, build the APK to Downloads, update HANDOFF / apps/call-companion/README / PLAN §13 (phone check owed), commit, push, mark part 2 [x] with the hash, and stop with the prompt for part 3.
-- **Session 3 (Tell the bot, app 0.23.0):** Read docs/plans/routine-builder.md — only Context, "The rule change", the status table and "Bot app (part 3)". Parts 1–2 are done. Do part 3 only. Tests first, `Protocol.kt` vectors equal to the server's, Hebrew strings through the skills, build the APK to Downloads, update docs, commit, push, mark part 3 [x], and stop.
+- **Session 2 (Watch me, app 0.22.0):** Read docs/plans/routine-builder.md — only Context, "The rule change", the status table and "Watch me (part 2)". Part 1 is on staging (48b5d38, d6619ae6: the sync schema accepts `tested`; read "Part 1 build notes" too). Do part 2 only (app only, no server change). Tests first (`./gradlew testDebugUnitTest`), Hebrew strings through hebrew-content-writer + hebrew-i18n, build the APK to Downloads, update HANDOFF / apps/call-companion/README / PLAN §13 (phone check owed), commit, push, mark part 2 [x] with the hash, and stop with the prompt for part 3.
+- **Session 3 (Tell the bot, app 0.23.0):** Read docs/plans/routine-builder.md — only Context, "The rule change", the status table and "Bot app (part 3)". Parts 1–2 are done; the wire is in "Part 1 build notes" (they win over the Server section). Do part 3 only. Tests first, `Protocol.kt` vectors equal to the server's, Hebrew strings through the skills, build the APK to Downloads, update docs, commit, push, mark part 3 [x], and stop.
 
 ---
 

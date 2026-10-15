@@ -23,7 +23,8 @@ Newest first. Read only when you need the history of a change; HANDOFF.md is the
   (Flash-Lite 6/7, 0 invented texts anywhere; qwen owed). Docs: PLAN §6.27 (rule amended),
   §6.28, §7, §13, §14; CLAUDE.md inv. 2; ARCHITECTURE; HANDOFF; runbook;
   dated amendments in routine-from-screen-task.md, routines.md,
-  routines-typing.md, screen-agent.md.
+  routines-typing.md, screen-agent.md. Commit 48b5d38; staging deployed
+  d6619ae6-a766-4e9d-b04b-8895c095c108 (migration 0041).
 
 - 2026-10-15: Screen agent phase 3, part 2 (plan
   `docs/plans/routine-from-screen-task.md`), app 0.21.0 (versionCode 40), no

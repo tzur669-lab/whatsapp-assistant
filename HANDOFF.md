@@ -181,7 +181,7 @@ Network on the hotspot: `NODE_OPTIONS=--dns-result-order=ipv4first` for wrangler
   with the build words and the app's `routine_draft` cap), `routine_drafts`
   (migration 0041), `/app/routine/draft/claim|screen|result`, prompt `rd1` on
   `DRAFT_MODELS` / `DRAFT_SMART_MODELS`, and `tested` on the routine sync
-  (`routine.run` refuses an untested routine). Next: part 2 (watch me, app
+  (`routine.run` refuses an untested routine); staging d6619ae6. Next: part 2 (watch me, app
   0.22.0), then part 3 (tell the bot, app 0.23.0). Owed (PLAN §13):
   `eval:screen --draft` on qwen and Flash-Lite, the CPU of a screen post.
 - **Block L** (2026-10-15, plan `docs/plans/block-l.md`, reviewed in many
