@@ -148,6 +148,9 @@ import { htmlText } from './html-text.js';
 import { checkMailWatches, WatchStore } from '../tools/watch-store.js';
 import { FollowUpStore } from '../tools/followup-store.js';
 import { checkFollowUps } from '../core/followup-tick.js';
+import { SuggestionStore } from '../tools/suggestion-store.js';
+import { eventsToSuggest, localDay } from '../core/suggest-plan.js';
+import { SUGGEST_FALLBACK_HOUR, suggestText } from '../render/suggestions.js';
 import { ConversationConsents } from '../agent/consents.js';
 import { defangLinks } from '../security/scrub.js';
 import { DurableObjectSqlDriver } from './sql-repo.js';
@@ -215,6 +218,7 @@ export class AssistantDO implements DurableObject {
   private readonly screen: ScreenStore;
   private readonly watches: WatchStore;
   private readonly followUps: FollowUpStore;
+  private readonly suggestions: SuggestionStore;
   private readonly quotes: QuoteSources;
   private readonly missedCalls: MissedCallStore;
   private readonly expenses: ExpenseStore;
@@ -329,6 +333,7 @@ export class AssistantDO implements DurableObject {
     this.screen = new ScreenStore(this.sql, now, keyringOnce);
     this.watches = new WatchStore(this.sql, now);
     this.followUps = new FollowUpStore(this.sql, now);
+    this.suggestions = new SuggestionStore(this.sql, now);
     // The key only in a header, inside `lookup/quotes.ts`; never logged (§6.24).
     this.quotes = createQuoteSources(this.fetchImpl, this.env.QUOTES_API_KEY, now);
     this.agentLock = new AgentLock(this.sql, now);
@@ -390,6 +395,11 @@ export class AssistantDO implements DurableObject {
         this.log.warn('followup_tick_failed', { errorCode: error instanceof Error ? error.name : 'E_UNKNOWN' });
       }
       await this.maybeSendDigest();
+      try {
+        await this.maybeSendSuggestions();
+      } catch (error) {
+        this.log.warn('suggest_tick_failed', { errorCode: error instanceof Error ? error.name : 'E_UNKNOWN' });
+      }
       try {
         await this.maybeSendLearnNotice();
       } catch (error) {
@@ -760,6 +770,64 @@ export class AssistantDO implements DurableObject {
     if (queued > 0) await this.pushOutbox();
   }
 
+  /**
+   * Calendar suggestions (block L, L3): once a day, in the digest hour (or
+   * `SUGGEST_FALLBACK_HOUR` with no digest), outside a held rest period.
+   * Tomorrow's main-calendar events are read first; then one transaction marks
+   * the day, inserts the rows and queues their notices. A failed read marks
+   * nothing, so the next tick in the hour tries again. App only.
+   */
+  private async maybeSendSuggestions(): Promise<void> {
+    if (this.channel() !== 'app' || !this.repo.suggestionsEnabled()) return;
+    const now = Date.now();
+    if (localPartsOf(now, ZONE).hour !== (this.repo.digestHour() ?? SUGGEST_FALLBACK_HOUR)) return;
+    const today = Repository.dayKey(now);
+    if (this.repo.suggestionsRanOn() === today) return;
+    if (this.repo.restHoldEnabled() && restPeriodAt(now)) return;
+    const calendar = this.calendarClient();
+    if (!calendar) return;
+
+    const tomorrow = localDay(now, 1);
+    const listed = await calendar.listEvents({ startUtc: tomorrow.startUtc, endUtc: tomorrow.endUtc, limit: 50 });
+    if (!listed.ok) {
+      this.log.info('suggest_read_failed', { errorCode: listed.error.code });
+      return;
+    }
+    const principal = await this.selfPrincipal();
+    const picks = eventsToSuggest({
+      events: listed.value,
+      leaves: this.reminders.pendingLeaves(principal),
+      already: this.suggestions.suggestedOn(principal, tomorrow.key),
+      day: tomorrow,
+      nowMs: now,
+    });
+    const queued = this.suggestions.offer(
+      principal,
+      tomorrow.key,
+      picks.map((event) => event.id),
+      (eventId, id, nonce) => {
+        const event = picks.find((pick) => pick.id === eventId)!;
+        this.outbox.accept({
+          kind: 'notice',
+          text: suggestText.notice(event.title, event.startUtc, 'he'),
+          principal,
+          buttons: [
+            { id: buttonId('sg', id, nonce, 'ok'), title: suggestText.yesButton('he') },
+            { id: buttonId('sg', id, nonce, 'no'), title: suggestText.noButton('he') },
+          ],
+        });
+      },
+      () => {
+        // Again inside: a second tick that raced this one finds the day done.
+        if (this.repo.suggestionsRanOn() === today) return false;
+        this.repo.markSuggestionsRan(today);
+        return true;
+      },
+    );
+    this.log.info('suggestions_queued', { count: queued });
+    if (queued > 0) await this.pushOutbox();
+  }
+
   private async pushWatches(principal: string): Promise<void> {
     const device = this.devices.activeDevice(principal);
     const token = device ? await this.devices.pushTokenOf(device.id) : null;
@@ -1121,8 +1189,9 @@ export class AssistantDO implements DurableObject {
     const audited = this.repo.purgeAuditBefore(Date.now() - AUDIT_RETENTION_MS);
     const watched = this.watches.purge();
     const followed = this.followUps.purge();
-    if (settled + audited + watched + followed > 0) {
-      this.log.info('retention_purged', { reminders: settled, audit: audited, watches: watched, followups: followed });
+    const suggested = this.suggestions.purge();
+    if (settled + audited + watched + followed + suggested > 0) {
+      this.log.info('retention_purged', { reminders: settled, audit: audited, watches: watched, followups: followed, suggestions: suggested });
     }
     this.pending.expireStale();
     this.pending.purgeOld();
@@ -2546,6 +2615,7 @@ export class AssistantDO implements DurableObject {
       watches: this.watches,
       watchesChanged: async () => this.pushWatches(await this.selfPrincipal()),
       followUps: this.followUps,
+      suggestions: this.suggestions,
       quotes: this.quotes,
       expenses: this.expenses,
       pending: this.pending,

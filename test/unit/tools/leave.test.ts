@@ -14,7 +14,7 @@ import type { ToolContext } from '../../../src/tools/types.js';
 import { TestSqlDriver } from '../../integration/sqlite-driver.js';
 import { createFakeLogger } from '../../integration/fake-logger.js';
 
-const MIGRATIONS = ['0001_init.sql', '0002_confirm.sql', '0003_reminders.sql', '0017_recurring.sql', '0018_scheduled_reads.sql', '0021_reminder_place.sql'].map(
+const MIGRATIONS = ['0001_init.sql', '0002_confirm.sql', '0003_reminders.sql', '0017_recurring.sql', '0018_scheduled_reads.sql', '0021_reminder_place.sql', '0038_suggestions.sql'].map(
   (file, index) => ({ id: index + 1, sql: readFileSync(new URL(`../../../migrations/${file}`, import.meta.url), 'utf8') }),
 );
 

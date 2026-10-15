@@ -104,6 +104,8 @@ export class ReminderStore {
     action?: ScheduledTopic;
     /** Present for a "time to leave" reminder (ROADMAP #5). */
     place?: string;
+    /** The calendar event a "time to leave" reminder is for (block L, L3). */
+    eventId?: string;
   }): Reminder {
     const id = randomHex(12);
     const timestamp = this.now();
@@ -123,8 +125,8 @@ export class ReminderStore {
       }
       this.sql.exec(
         `INSERT INTO reminders
-           (id, principal, text, due_at_utc, local_wall_time, tz, status, attempts, series_id, action, place, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, 'scheduled', 0, ?, ?, ?, ?, ?)`,
+           (id, principal, text, due_at_utc, local_wall_time, tz, status, attempts, series_id, action, place, event_id, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, 'scheduled', 0, ?, ?, ?, ?, ?, ?)`,
         id,
         params.principal,
         params.text,
@@ -134,6 +136,7 @@ export class ReminderStore {
         seriesId,
         params.action ?? null,
         params.place ?? null,
+        params.eventId ?? null,
         timestamp,
         timestamp,
       );
@@ -159,6 +162,37 @@ export class ReminderStore {
   byId(id: string): Reminder | null {
     const row = this.sql.exec(`${SELECT_WITH_RULE} WHERE r.id = ?`, id)[0];
     return row ? toReminder(row) : null;
+  }
+
+  /**
+   * The "time to leave" reminders still to come (block L, L3): the event each
+   * was set for when known (`event_id`, written since migration 0038), else
+   * its place and time for a match in code.
+   */
+  pendingLeaves(principal: string): Array<{ eventId: string | null; place: string; dueAtUtc: number }> {
+    return this.sql
+      .exec(
+        `SELECT event_id, place, due_at_utc FROM reminders
+         WHERE principal = ? AND status = 'scheduled' AND place IS NOT NULL AND place != '' AND due_at_utc >= ?`,
+        principal,
+        this.now(),
+      )
+      .map((row) => ({
+        eventId: typeof row['event_id'] === 'string' && row['event_id'].length > 0 ? row['event_id'] : null,
+        place: String(row['place']),
+        dueAtUtc: Number(row['due_at_utc']),
+      }));
+  }
+
+  /** Whether a "time to leave" reminder for this event is still to come (block L, L3). */
+  hasPendingLeaveFor(principal: string, eventId: string): boolean {
+    return (
+      this.sql.exec(
+        "SELECT 1 FROM reminders WHERE principal = ? AND status = 'scheduled' AND event_id = ? LIMIT 1",
+        principal,
+        eventId,
+      ).length > 0
+    );
   }
 
   listUpcoming(principal: string, limit = 20, options: ListOptions = {}): Reminder[] {

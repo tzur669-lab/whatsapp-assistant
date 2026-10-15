@@ -228,6 +228,25 @@ export class PendingActions {
     );
   }
 
+  /**
+   * The stored input of a live action this principal owns, or null (block L,
+   * L3): a card re-issued after a lost reply carries exactly what was shown.
+   */
+  inputOf(id: string, principal: string): unknown {
+    const row = this.sql.exec(
+      `SELECT input_json FROM pending_actions WHERE id = ? AND principal = ? AND status = 'pending' AND expires_at > ?`,
+      id,
+      principal,
+      this.now(),
+    )[0];
+    if (!row) return null;
+    try {
+      return JSON.parse(String(row['input_json'])) as unknown;
+    } catch {
+      return null;
+    }
+  }
+
   /** The tier of a stored action, or 0 when there is no such row. */
   tierOf(id: string): number {
     const row = this.sql.exec('SELECT tier FROM pending_actions WHERE id = ?', id)[0];
@@ -315,11 +334,13 @@ export class PendingActions {
  * `lp`: a weekly-review proposal or question answer (block K, K2), handled
  * in the pipeline by the learning store. `fu`: a mail follow-up's notice
  * (block L, L2): `ok` prepares a reminder draft's confirmation, `no` closes it.
+ * `sg`: a calendar suggestion (block L, L3): `ok` issues a leave reminder's
+ * confirmation for the event as it is now, `no` dismisses it.
  */
-export type ButtonKind = 'pa' | 'undo' | 'snooze' | 'rt' | 'sa' | 'ss' | 'lp' | 'fu';
+export type ButtonKind = 'pa' | 'undo' | 'snooze' | 'rt' | 'sa' | 'ss' | 'lp' | 'fu' | 'sg';
 export type ButtonVerb = 'ok' | 'no' | 'done' | 'm10' | 'h1';
 
-const BUTTON_KINDS = new Set<string>(['pa', 'undo', 'snooze', 'rt', 'sa', 'ss', 'lp', 'fu']);
+const BUTTON_KINDS = new Set<string>(['pa', 'undo', 'snooze', 'rt', 'sa', 'ss', 'lp', 'fu', 'sg']);
 const BUTTON_VERBS = new Set<string>(['ok', 'no', 'done', 'm10', 'h1']);
 
 /** `pa:<id>:<nonce>:ok` — the format WhatsApp echoes back verbatim. */

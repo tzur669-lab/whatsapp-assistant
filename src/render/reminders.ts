@@ -128,6 +128,18 @@ ${isolate(view.text)}`;
     return `Leave reminder set for ${formatWhen(view.leave, 'en')}, ${view.minutes} minutes before the event starts (${hhmm(view.start)}).\n${isolate(view.text)}${nav}`;
   },
 
+  /** A second "time to leave" reminder for the same event (block L, L3). */
+  leaveExists(lang: Lang): string {
+    return lang === 'he' ? 'כבר קיימת תזכורת יציאה לאירוע הזה.' : 'There is already a leave reminder for that event.';
+  },
+
+  /** The leave time passed between the confirmation card and the tap (block L, L3). */
+  leaveTooLate(lang: Lang): string {
+    return lang === 'he'
+      ? 'כבר מאוחר מדי: הזמן לצאת לאירוע הזה עבר.'
+      : 'Too late: the time to leave for that event has already passed.';
+  },
+
   /** Appended when the time falls inside Shabbat or a chag and the hold is on (§6.13). */
   heldNote(lang: Lang): string {
     return lang === 'he'

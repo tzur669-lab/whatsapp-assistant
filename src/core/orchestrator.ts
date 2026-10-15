@@ -42,6 +42,8 @@ import { webRead } from '../tools/web-read.js';
 import { remindersWhen } from '../tools/watch.js';
 import { mailFollowUp, toLineOf } from '../tools/followup.js';
 import { followUpText } from '../render/followups.js';
+import { suggestText } from '../render/suggestions.js';
+import { leaveInputFor } from '../tools/reminders.js';
 import { calendarFreeTime } from '../tools/free-time.js';
 import { TASK_TOOLS } from '../tools/tasks.js';
 import { MAIL_TOOLS } from '../tools/mail.js';
@@ -615,8 +617,98 @@ export async function runButton(raw: string, turn: TurnContext): Promise<Reply> 
       return parsed.verb === 'ok' || parsed.verb === 'no'
         ? answerFollowUp(parsed.id, parsed.nonce, parsed.verb === 'ok', turn)
         : { text: statusText.confirmNotFound };
+    case 'sg':
+      return parsed.verb === 'ok' || parsed.verb === 'no'
+        ? answerSuggestion(parsed.id, parsed.nonce, parsed.verb === 'ok', turn)
+        : { text: statusText.confirmNotFound };
   }
 }
+
+/**
+ * A calendar suggestion's button (block L, L3). `no` dismisses it. `ok` holds
+ * a two-minute lease while it reads the event again (it may have moved, lost
+ * its place, started or been deleted since the notice), then issues the leave
+ * reminder's confirmation card for the event as it is now — in the same
+ * transaction that marks the suggestion used, and only while the lease is
+ * still this tap's. The title is someone else's words: the reply taints, and
+ * the write still waits for the ordinary confirm. A re-tap after a lost reply
+ * replaces a live card, never adds one.
+ */
+async function answerSuggestion(id: string, nonce: string, accept: boolean, turn: TurnContext): Promise<Reply> {
+  const ctx = turn.tool;
+  const store = ctx.suggestions;
+  const tool = IMPLEMENTED['reminders.leave'];
+  if (!store || !tool) return { text: suggestText.gone(ctx.lang) };
+  if (!accept) {
+    const dismissed = store.dismiss(ctx.principal, id, nonce);
+    audit(turn, 'reminders.leave', null, 'BUTTON', dismissed ? 'suggestion_dismissed' : 'gone', id);
+    return { text: dismissed ? suggestText.dismissed(ctx.lang) : suggestText.gone(ctx.lang) };
+  }
+
+  const card = (input: unknown) => {
+    const summary = tool.preview(input, ctx.lang);
+    const action = turn.pending.create({ tool: 'reminders.leave', input, summary, tier: 2, principal: ctx.principal });
+    return { pendingId: action.id, nonce: action.nonce, summary };
+  };
+  const cardReply = (issued: { pendingId: string; nonce: string; summary: string }): Reply => ({
+    text: statusText.confirmPrompt(issued.summary),
+    buttons: [
+      { id: buttonId('pa', issued.pendingId, issued.nonce, 'ok'), title: buttonLabels.confirm(ctx.lang) },
+      { id: buttonId('pa', issued.pendingId, issued.nonce, 'no'), title: buttonLabels.cancel(ctx.lang) },
+    ],
+    tainting: true,
+  });
+
+  const claim = store.claim(ctx.principal, id, nonce);
+  if (claim.kind === 'gone') {
+    audit(turn, 'reminders.leave', null, 'BUTTON', 'gone', id);
+    return { text: suggestText.gone(ctx.lang) };
+  }
+  if (claim.kind === 'used') {
+    // The first card's reply may have been lost: the same stored input, a new card.
+    const old = claim.pendingId ? turn.pending.inputOf(claim.pendingId, ctx.principal) : null;
+    const issued =
+      old !== null && claim.pendingId
+        ? store.reissue(id, claim.pendingId, (pid) => turn.pending.supersede(pid, ctx.principal), () => card(old))
+        : null;
+    audit(turn, 'reminders.leave', null, 'BUTTON', issued ? 'suggestion_reissued' : 'gone', id);
+    return issued ? cardReply(issued) : { text: suggestText.gone(ctx.lang) };
+  }
+
+  const { token, eventId } = claim;
+  try {
+    const event = ctx.calendar ? await ctx.calendar.getEvent(eventId) : null;
+    if (event === null || (!event.ok && event.error.code !== 'not_found')) {
+      audit(turn, 'reminders.leave', null, 'BUTTON', 'calendar_unavailable', id);
+      return { text: suggestText.unavailable(ctx.lang) };
+    }
+    if (!event.ok) {
+      store.close(id, token);
+      return { text: suggestText.cancelled(ctx.lang) };
+    }
+    if (event.value.startUtc <= ctx.nowMs) {
+      store.close(id, token);
+      return { text: suggestText.started(ctx.lang), tainting: true };
+    }
+    if (!event.value.location || event.value.location.trim().length === 0) {
+      store.close(id, token);
+      return { text: suggestText.noPlace(ctx.lang), tainting: true };
+    }
+    const input = leaveInputFor(event.value, ctx);
+    if (input === null) {
+      store.close(id, token);
+      return { text: reminderText.leaveTooLate(ctx.lang), tainting: true };
+    }
+    const issued = store.complete(id, token, () => card(input));
+    audit(turn, 'reminders.leave', null, 'BUTTON', issued ? 'suggestion_card' : 'gone', id);
+    return issued ? cardReply(issued) : { text: suggestText.gone(ctx.lang) };
+  } finally {
+    // Whatever happened above, a row still `checking` under this tap's token goes
+    // back to open: a no-op after close or complete, which already moved it.
+    store.release(id, token);
+  }
+}
+
 
 /**
  * A mail follow-up's notice button (block L, L2). `ok` issues the reminder

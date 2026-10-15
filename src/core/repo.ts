@@ -13,6 +13,8 @@ export const LEAVE_DEFAULT_MIN = 10;
 export const LEAVE_DEFAULT_MAX = 120;
 const DIGEST_SENT_KEY = 'digest_sent_on';
 const REST_HOLD_KEY = 'rest_hold';
+const SUGGEST_KEY = 'suggest';
+const SUGGEST_RAN_KEY = 'suggest_ran_on';
 /** A durable counter: never reset, unlike the pruned table's rowid (§6.23). */
 const INBOUND_SEQ_KEY = 'inbound_seq';
 
@@ -367,6 +369,28 @@ export class Repository {
       return;
     }
     this.setSetting(`digest_${section}`, 'on');
+  }
+
+  /** Proactive calendar suggestions (`/suggest`, block L, L3). Off unless stored. */
+  suggestionsEnabled(): boolean {
+    return this.getSetting(SUGGEST_KEY) === 'on';
+  }
+
+  setSuggestions(on: boolean): void {
+    if (!on) {
+      this.sql.exec('DELETE FROM settings WHERE key = ?', SUGGEST_KEY);
+      return;
+    }
+    this.setSetting(SUGGEST_KEY, 'on');
+  }
+
+  /** The local day the suggestion job last finished, so one calendar read a day. */
+  suggestionsRanOn(): string | null {
+    return this.getSetting(SUGGEST_RAN_KEY);
+  }
+
+  markSuggestionsRan(dayKey: string): void {
+    this.setSetting(SUGGEST_RAN_KEY, dayKey);
   }
 
   setRestHold(enabled: boolean): void {

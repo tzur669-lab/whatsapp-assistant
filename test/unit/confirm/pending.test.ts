@@ -293,6 +293,14 @@ describe('PendingActions.supersede (block L, L2: a card re-sent after a lost rep
     expect(pending.confirm(action.id, action.nonce, SENDER).ok).toBe(true);
   });
 
+  it('inputOf returns the stored input of a live action of this principal only', () => {
+    const action = create();
+    expect(pending.inputOf(action.id, SENDER)).toEqual(INPUT);
+    expect(pending.inputOf(action.id, OTHER)).toBeNull();
+    pending.confirm(action.id, action.nonce, SENDER);
+    expect(pending.inputOf(action.id, SENDER)).toBeNull();
+  });
+
   it('reports false for an action already executed or expired: nothing to re-send', () => {
     const done = create();
     pending.confirm(done.id, done.nonce, SENDER);

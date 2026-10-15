@@ -91,6 +91,15 @@ transaction: `answered` is silent; `notified` offers a reminder draft (`fu:`
 buttons, 48 h); `bounced`, `unsure` and "could not check" (Gmail not
 connected, once a day) are notices. `followup_thread_failed` in the log is a
 Gmail failure; three in a row make the follow-up `unsure`.
+`/suggest`, `/suggest on|off` (app only, block L, L3; off by default) turns
+proactive calendar suggestions on: once a day, in the digest hour (19:00 when
+there is no digest; not in a rest period when the hold is on), tomorrow's
+timed events on the main calendar that have a place and no leave reminder
+(linked by `reminders.event_id`, or an older one overlapping by place and
+time) get a notice with `sg:` buttons (48 h), at most 3. "Yes" reads the
+event again (2-minute lease per tap) and issues a `reminders.leave`
+confirmation card; a deleted, started or place-less event closes it.
+`suggest_ran_on` in `settings` is the day the job last finished.
 
 **Smart conversations (PLAN §6.19, 2026-10-08).** A conversation is `smart`
 (Gemini first, then qwen) or `local`, fixed by its first message

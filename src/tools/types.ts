@@ -48,6 +48,7 @@ import type { ScreenQuestion } from '../render/screen.js';
 import type { PageText } from '../lookup/web-page.js';
 import type { WatchStore } from './watch-store.js';
 import type { FollowUpStore } from './followup-store.js';
+import type { SuggestionStore } from './suggestion-store.js';
 
 /** One candidate when a description matched more than one thing. */
 export type TargetChoice = { id: string; label: string };
@@ -208,6 +209,8 @@ export type ToolContext = {
   watchesChanged?: () => Promise<void>;
   /** Mail follow-ups (`mail.follow_up`, block L, L2). */
   followUps?: FollowUpStore;
+  /** Calendar suggestions' rows (the `sg:` buttons, block L, L3). */
+  suggestions?: SuggestionStore;
   /** Google Tasks, once its grant is connected (2026-10-01). */
   tasks?: TasksClient;
   /** Gmail, once its grant is connected (2026-10-01). */

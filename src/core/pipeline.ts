@@ -97,8 +97,10 @@ import { namesWatch } from '../tools/watch.js';
 import { namesFollowUp } from '../tools/followup.js';
 import { watchText } from '../render/watches.js';
 import { followUpText } from '../render/followups.js';
+import { suggestText } from '../render/suggestions.js';
 import type { WatchStore } from '../tools/watch-store.js';
 import type { FollowUpStore } from '../tools/followup-store.js';
+import type { SuggestionStore } from '../tools/suggestion-store.js';
 import type { LastSelections } from '../agent/last-selection.js';
 import type { AgentResult, ConsentDecision } from '../agent/loop.js';
 import type { SuspendedTurns } from '../agent/turns.js';
@@ -210,6 +212,8 @@ export type Services = {
   watchesChanged?: () => Promise<void>;
   /** Mail follow-ups (block L, L2). */
   followUps?: FollowUpStore;
+  /** Calendar suggestions (block L, L3). */
+  suggestions?: SuggestionStore;
   /** Reaches the paired phone (§6.17). Absent until calls are configured. */
   calls?: CallDispatcher;
   /** Pairing and unpairing the phone (§6.17). Absent without a device pepper. */
@@ -630,6 +634,11 @@ async function respondToText(
     }
     if (command.kind === 'watches') return watchesCommand(deps);
     if (command.kind === 'followups') return followUpsCommand(deps);
+    if (command.kind === 'suggest') {
+      if (deps.channel !== 'app') return { action: 'reply', text: personalQuestion('watch_app_only', 'he') };
+      if (command.set !== null) repo.setSuggestions(command.set);
+      return { action: 'reply', text: suggestText.status(repo.suggestionsEnabled(), 'he') };
+    }
     if (command.kind === 'learn') return learnCommand(command.action, deps);
     if (command.kind === 'leave') return leaveCommand(command.set, deps);
     if (command.kind === 'consents') return consentsCommand(event, deps);
@@ -2081,6 +2090,7 @@ function turnOf(
       ...(services.watches ? { watches: services.watches } : {}),
       ...(services.watchesChanged ? { watchesChanged: services.watchesChanged } : {}),
       ...(services.followUps ? { followUps: services.followUps } : {}),
+      ...(services.suggestions ? { suggestions: services.suggestions } : {}),
       ...(event.location ? { location: event.location } : {}),
       ...(services.tasks ? { tasks: services.tasks } : {}),
       ...(services.gmail ? { gmail: services.gmail } : {}),

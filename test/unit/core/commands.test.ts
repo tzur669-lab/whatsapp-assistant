@@ -37,6 +37,7 @@ const INVOCATIONS: Record<Command['kind'], string> = {
   consents: '/consents',
   watches: '/watches',
   followups: '/followups',
+  suggest: '/suggest on',
   connect_google: '/connect google',
   pair: '/pair',
   digest: '/digest',
@@ -63,6 +64,8 @@ const HIDDEN: ReadonlySet<Command['kind']> = new Set([
   'watches',
   // Mail follow-ups too: their notices go through the outbox (block L, L2).
   'followups',
+  // Calendar suggestions too: their notices go through the outbox (block L, L3).
+  'suggest',
 ]);
 
 const helpText = stripIsolates(he.help);
@@ -101,6 +104,11 @@ describe('every command a user can see is documented', () => {
   it("lists /watches in the app's /help only (block J, J4)", () => {
     expect(stripIsolates(he.helpApp)).toContain('/watches');
     expect(helpText).not.toContain('/watches');
+  });
+
+  it("lists /suggest in the app's /help only (block L, L3)", () => {
+    expect(stripIsolates(he.helpApp)).toContain('/suggest');
+    expect(helpText).not.toContain('/suggest');
   });
 
   it("lists /followups in the app's /help only (block L, L2)", () => {

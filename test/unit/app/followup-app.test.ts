@@ -140,4 +140,12 @@ describe('mail follow-ups in the app', () => {
     expect((await tap(phone, cancel!)).row?.text).toContain('בוטל');
     expect(store.active(principalOf())).toEqual([]);
   });
+
+  it('/suggest: off by default, turned on and off (block L, L3)', async () => {
+    const phone = await pair();
+    expect((await say(phone, '/suggest')).row?.text).toContain('כבויות');
+    expect((await say(phone, '/suggest on')).row?.text).toContain('פעילות');
+    expect((await say(phone, '/suggest')).row?.text).toContain('פעילות');
+    expect((await say(phone, '/suggest off')).row?.text).toContain('כבויות');
+  });
 });

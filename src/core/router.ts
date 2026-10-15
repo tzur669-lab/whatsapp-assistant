@@ -35,6 +35,8 @@ export type Command =
   | { kind: 'watches' }
   /** `/followups`: the mail follow-ups still waiting, each cancellable (block L, L2). */
   | { kind: 'followups' }
+  /** `/suggest`, `/suggest on|off`: proactive calendar suggestions (block L, L3). Off by default. */
+  | { kind: 'suggest'; set: boolean | null }
   /** `/learn`, `/learn on|off|forget`: the learning journal (block K, K1, PLAN §6.31). Off by default. */
   | { kind: 'learn'; action: LearnAction }
   /**
@@ -81,6 +83,9 @@ const COMMANDS: ReadonlyArray<readonly [RegExp, Command]> = [
   [/^\/consents$/i, { kind: 'consents' }],
   [/^\/watches$/i, { kind: 'watches' }],
   [/^\/followups$/i, { kind: 'followups' }],
+  [/^\/suggest$/i, { kind: 'suggest', set: null }],
+  [/^\/suggest\s+on$/i, { kind: 'suggest', set: true }],
+  [/^\/suggest\s+off$/i, { kind: 'suggest', set: false }],
   [/^\/shabbat$/i, { kind: 'shabbat', set: null }],
   [/^\/shabbat\s+on$/i, { kind: 'shabbat', set: true }],
   [/^\/shabbat\s+off$/i, { kind: 'shabbat', set: false }],
@@ -232,6 +237,7 @@ export const COMMAND_KINDS = [
   'consents',
   'watches',
   'followups',
+  'suggest',
   'learn',
   'leave',
   'connect_google',

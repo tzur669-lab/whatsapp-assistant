@@ -127,6 +127,21 @@ export class CalendarClient {
   }
 
   /**
+   * One event of the main calendar, read again by its id (block L, L3: a
+   * suggestion's tap acts on the event as it is now). A cancelled event is
+   * `not_found`, the same as a deleted one.
+   */
+  async getEvent(id: string): Promise<CalendarResult<CalendarEvent>> {
+    const result = await this.call(`/calendars/${encodeURIComponent(PRIMARY_CALENDAR)}/events/${encodeURIComponent(id)}`, {
+      method: 'GET',
+    });
+    if (!result.ok) return result;
+    if ((result.value as { status?: unknown }).status === 'cancelled') return { ok: false, error: { code: 'not_found' } };
+    const event = toEvent(result.value);
+    return event ? { ok: true, value: event } : { ok: false, error: { code: 'invalid_response' } };
+  }
+
+  /**
    * Events from every calendar shown in Google Calendar, merged in time order
    * (2026-10-01): the main one, then each other visible calendar, named. Needs
    * `calendar.readonly`; until the grant has it, the main calendar alone. One

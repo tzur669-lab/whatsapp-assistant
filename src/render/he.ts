@@ -49,6 +49,10 @@ function helpText(channel: 'whatsapp' | 'app'): string {
     ...(channel === 'app'
       ? [`מעקב אחרי מייל ששלחת: "תזכיר לי אם לא ענו לי על המייל לדני עד יום חמישי ב־9". ${isolate('/followups')} מציג ומבטל.`]
       : []),
+    // Calendar suggestions exist only in the app (block L, L3).
+    ...(channel === 'app'
+      ? [`הצעות מהיומן: ${isolate('/suggest on')} מציע פעם ביום תזכורת יציאה לאירועים של מחר שיש להם מיקום.`]
+      : []),
     '',
     'אפשר גם להקליט הודעה קולית במקום לכתוב. מה שנשמע יוצג בתשובה.',
     '',

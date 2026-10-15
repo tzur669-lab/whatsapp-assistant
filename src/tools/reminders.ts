@@ -36,6 +36,7 @@ import {
   SCHEDULED_TOPICS,
 } from '../nlu/slot-schemas.js';
 import type { Reminder } from './reminder-store.js';
+import type { CalendarEvent } from '../google/calendar.js';
 import type {
   ExecuteResult,
   ResolveOutcome,
@@ -132,7 +133,7 @@ export const remindersCreate: ToolDefinition = {
  * Schedule one reminder and say so. `place` is set only by `reminders.leave`
  * (ROADMAP #5): the input schemas of the other tools have no such field.
  */
-async function scheduleOne(input: CreateInput, ctx: ToolContext, place?: string): Promise<ExecuteResult> {
+async function scheduleOne(input: CreateInput, ctx: ToolContext, place?: string, eventId?: string): Promise<ExecuteResult> {
   const reminder = ctx.reminders.schedule({
     principal: ctx.principal,
     text: input.text,
@@ -140,6 +141,7 @@ async function scheduleOne(input: CreateInput, ctx: ToolContext, place?: string)
     localWallTime: input.localWallTime,
     tz: input.tz,
     ...(place ? { place } : {}),
+    ...(eventId ? { eventId } : {}),
   });
 
   // Which channel it will arrive on is decided now, not when it comes due:
@@ -688,6 +690,8 @@ const leaveInputSchema = createInputSchema
     held: z.boolean(),
     /** The user said the travel time (block K, K1): only those teach a default. Absent on older rows. */
     stated: z.boolean().optional(),
+    /** The calendar event it is for (block L, L3): one leave reminder per event. Absent on older rows. */
+    eventId: z.string().min(1).max(1024).optional(),
   })
   .strict();
 
@@ -734,22 +738,8 @@ export const remindersLeave: ToolDefinition = {
     const target = candidates[0];
     if (!target) return { kind: 'clarify', clarify: { code: 'not_found' } };
 
-    // The user's own default (`/leave`, block K, K2), else half an hour. Never learned silently.
-    const minutes = slots.minutes ?? ctx.repo.leaveDefaultMinutes() ?? DEFAULT_TRAVEL_MINUTES;
-    const dueAtUtc = target.startUtc - minutes * 60_000;
-    if (dueAtUtc <= ctx.nowMs + 60_000) return { kind: 'clarify', clarify: { code: 'leave_too_late' }, tainting: true };
-
-    const input: LeaveInput = {
-      text: reminderText.leaveLabel(target.title, ctx.lang),
-      dueAtUtc,
-      localWallTime: wallTimeString(dueAtUtc, ZONE),
-      tz: ZONE,
-      ...(target.location ? { place: target.location.slice(0, MAX_DESTINATION_CHARS) } : {}),
-      eventStartUtc: target.startUtc,
-      minutes,
-      held: ctx.repo.restHoldEnabled() && restPeriodAt(dueAtUtc) !== null,
-      stated: slots.minutes !== undefined,
-    };
+    const input = leaveInputFor(target, ctx, slots.minutes);
+    if (input === null) return { kind: 'clarify', clarify: { code: 'leave_too_late' }, tainting: true };
     return { kind: 'ready', input, tainting: true };
   },
 
@@ -760,10 +750,17 @@ export const remindersLeave: ToolDefinition = {
 
   async execute(rawInput, ctx): Promise<ExecuteResult> {
     const input = parseInput<LeaveInput>(leaveInputSchema, rawInput, 'reminders.leave');
+    // A card can wait (a suggestion's tap, block L, L3): the leave time must
+    // still be ahead, and one leave reminder per event, whatever produced the card.
+    if (input.dueAtUtc <= ctx.nowMs + 60_000) return { text: reminderText.leaveTooLate(ctx.lang), tainting: true };
+    if (input.eventId && ctx.reminders.hasPendingLeaveFor(ctx.principal, input.eventId)) {
+      return { text: reminderText.leaveExists(ctx.lang), tainting: true };
+    }
     const result = await scheduleOne(
       { text: input.text, dueAtUtc: input.dueAtUtc, localWallTime: input.localWallTime, tz: input.tz },
       ctx,
       input.place,
+      input.eventId,
     );
     return { ...result, text: withHeldNote(leaveText(input, ctx.lang), input.held, ctx.lang), tainting: true };
   },
@@ -772,6 +769,34 @@ export const remindersLeave: ToolDefinition = {
     return undoCreate(compensating, ctx);
   },
 };
+
+/**
+ * A "time to leave" reminder's input for one event (also a calendar
+ * suggestion's tap, block L, L3): the travel time said, else the user's own
+ * default (`/leave`, block K, K2), else half an hour — never learned silently.
+ * Null when the time to leave is already past.
+ */
+export function leaveInputFor(
+  event: Pick<CalendarEvent, 'id' | 'title' | 'startUtc'> & { location?: string | undefined },
+  ctx: Pick<ToolContext, 'nowMs' | 'lang' | 'repo'>,
+  statedMinutes?: number,
+): LeaveInput | null {
+  const minutes = statedMinutes ?? ctx.repo.leaveDefaultMinutes() ?? DEFAULT_TRAVEL_MINUTES;
+  const dueAtUtc = event.startUtc - minutes * 60_000;
+  if (dueAtUtc <= ctx.nowMs + 60_000) return null;
+  return {
+    text: reminderText.leaveLabel(event.title, ctx.lang),
+    dueAtUtc,
+    localWallTime: wallTimeString(dueAtUtc, ZONE),
+    tz: ZONE,
+    ...(event.location ? { place: event.location.slice(0, MAX_DESTINATION_CHARS) } : {}),
+    eventStartUtc: event.startUtc,
+    minutes,
+    held: ctx.repo.restHoldEnabled() && restPeriodAt(dueAtUtc) !== null,
+    stated: statedMinutes !== undefined,
+    eventId: event.id,
+  };
+}
 
 function leaveText(input: LeaveInput, lang: Lang): string {
   return reminderText.createdLeave(
