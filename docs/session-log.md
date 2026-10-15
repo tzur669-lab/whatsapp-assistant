@@ -2,6 +2,19 @@
 
 Newest first. Read only when you need the history of a change; HANDOFF.md is the entry point.
 
+- 2026-10-15: Screen agent phase 3, part 1 (plan
+  `docs/plans/routine-from-screen-task.md`): the recorder, app only. New
+  `RoutineRecording.kt` (actions that ran → routine steps; selector order
+  text/hint → description → one child's text → view id, proved by
+  `pickTarget`; the field anchor by binding; spoil codes `no_selector`,
+  `typed_differs`, `password`, `not_field`, `scrolled`, `went_back`,
+  `not_accepted`, `too_long`, `no_action`, `replayed`) and `RoutineDrafts.kt`
+  (one draft in memory, 30 min, synchronized). `ScreenOps.fire` returns
+  `Fired(accepted, typedMatched)`; `ScreenRun` records after each journal
+  outcome, marks released actions, spoils on a journal replay, and offers the
+  draft on `end` `completed_unverified`. Tests `RoutineRecordingTest` (23),
+  `RoutineDraftsTest` (4). No version bump, no APK, no server change.
+
 - 2026-10-15: Block L, L6: documents — new `tools/docs.ts`, `render/docs.ts`,
   `DriveClient.createDoc`/`findByOp`/`sourceMime`/`hasScope`, the `drive.file`
   scope, `ExecuteResult.fileCard` and the orchestrator's `fileCardReply`,

@@ -134,7 +134,11 @@ Network on the hotspot: `NODE_OPTIONS=--dns-result-order=ipv4first` for wrangler
   block I): phases 1–2 built (server migration 0030, app 0.14.1 on the phone; 2026-10-13: migration 0031 and app 0.14.2 — models by conversation, 10 a day — staging deployed 5d807cd8, APK in Downloads; then migration 0032 and app 0.14.3 — Compose container labels, messages in the task's conversation — staging deployed e12ae6d6); staging
   deployed 2026-10-12 (9643484a). Owed, in order (PLAN §13): `pnpm eval:screen`
   and `eval:agent --filter scr-` on qwen with a human read, then the 0.14.0
-  APK and the phone checks. Phase 3 needs its own plan.
+  APK and the phone checks. Phase 3 (save a screen task as a routine, plan
+  `docs/plans/routine-from-screen-task.md`): **part 1 done** (2026-10-15, app
+  only, no version bump): `RoutineRecording`, `RoutineDrafts` (in memory, 30
+  min), capture in `ScreenRun`, `fire`'s type read-back. Next: part 2 (review
+  screen, dry-run gate, notifications, `explain`, APK).
 - **Block J** (2026-10-13, plan `docs/plans/block-j.md`, ROADMAP block J):
   seven free ideas from OpenClaw, J1–J7, one commit each, in order. J1 done
   (a repeated refused call makes the next call text-only, Gemini only). J2

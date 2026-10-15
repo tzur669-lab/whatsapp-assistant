@@ -30,6 +30,8 @@ internal class ScreenRun(private val app: Context, private val task: ScreenAgent
     /** Actions the phone already held: a second hold for the same one is an error, not a loop. */
     private val holds = HashSet<String>()
     private var finished = false
+    /** The actions that ran, as routine steps (phase 3): offered only on a clean finish. In memory only. */
+    private val recording = RoutineRecording(task.packageName, task.inputs)
 
     private sealed class Ex {
         class Got(val answer: Answer) : Ex()
@@ -112,7 +114,12 @@ internal class ScreenRun(private val app: Context, private val task: ScreenAgent
 
     /** True: go on with the next step. False: the task ended (already reported). */
     private fun handle(answer: Answer): Boolean = when (answer) {
-        is Answer.End, is Answer.Stopped -> {
+        is Answer.End -> {
+            quiet()
+            offerDraft(answer.outcome)
+            false
+        }
+        is Answer.Stopped -> {
             quiet()
             false
         }
@@ -168,7 +175,7 @@ internal class ScreenRun(private val app: Context, private val task: ScreenAgent
         ScreenLogic.grantProblem(
             answer.grant, task.taskId, step, actionId, answer.action, task.packageName, own.first, System.currentTimeMillis(),
         )?.let { return refuseAndEnd(actionId, it) }
-        return dispatch(actionId, answer.action, located.target)
+        return dispatch(actionId, answer.action, located.target, held = true)
     }
 
     /**
@@ -187,6 +194,8 @@ internal class ScreenRun(private val app: Context, private val task: ScreenAgent
             }
             Status.UNCERTAIN -> endFalse("uncertain", Report(actionId, Status.UNCERTAIN))
             else -> {
+                // Done earlier, not here: the recording no longer matches what ran.
+                recording.spoil("replayed")
                 report = Report(actionId, status)
                 step++
                 true
@@ -301,9 +310,10 @@ internal class ScreenRun(private val app: Context, private val task: ScreenAgent
      * journal started (commit); perform; journal outcome (commit) }`. A stop
      * takes the same lock, so it lands before or after a whole action.
      */
-    private fun dispatch(actionId: String, action: ScreenLogic.Action, target: Target?): Boolean {
+    private fun dispatch(actionId: String, action: ScreenLogic.Action, target: Target?, held: Boolean = false): Boolean {
         var refusal: String? = null
         var outcome: Status? = null
+        var typedMatched = true
         synchronized(task.gate) {
             if (task.stopped) {
                 refusal = "stopped"
@@ -315,11 +325,13 @@ internal class ScreenRun(private val app: Context, private val task: ScreenAgent
                     refusal = "error"
                 } else {
                     val input = if (action.kind == "type") task.inputs.getOrNull(action.input - 1) else null
-                    val accepted = try {
+                    val fired = try {
                         ops.fire(action, target, input)
                     } catch (_: Exception) {
                         null
                     }
+                    typedMatched = fired?.typedMatched ?: false
+                    val accepted = fired?.accepted
                     val event = when (accepted) {
                         true -> Event.DISPATCHED
                         false -> Event.NOT_ACCEPTED
@@ -334,6 +346,7 @@ internal class ScreenRun(private val app: Context, private val task: ScreenAgent
 
         val status = outcome ?: Status.UNCERTAIN
         if (status == Status.UNCERTAIN) return endFalse("uncertain", Report(actionId, Status.UNCERTAIN))
+        recording.record(action, target?.nodes, target?.index ?: -1, status, typedMatched, held)
         report = Report(actionId, status)
         if (status == Status.DISPATCHED) {
             when (action.kind) {
@@ -353,6 +366,18 @@ internal class ScreenRun(private val app: Context, private val task: ScreenAgent
     }
 
     // -- endings ---------------------------------------------------------------------------
+
+    /**
+     * The server ended the task: a clean finish with a clean recording keeps a
+     * draft in memory (part 2 posts the notifications). Never stored or sent.
+     */
+    private fun offerDraft(outcome: String) {
+        when (val result = recording.finish(outcome)) {
+            is RoutineRecording.Result.Draft ->
+                RoutineDrafts.shared.offer(task.packageName, task.label, result.steps, result.marked)
+            is RoutineRecording.Result.Spoiled, RoutineRecording.Result.None -> Unit
+        }
+    }
 
     private fun refuseAndEnd(actionId: String, code: String): Boolean {
         ScreenJournal.move(app, task.taskId, actionId, Event.REFUSE)

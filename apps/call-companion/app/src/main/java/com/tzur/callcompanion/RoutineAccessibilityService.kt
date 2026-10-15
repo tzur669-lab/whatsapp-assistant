@@ -638,6 +638,9 @@ class RoutineAccessibilityService : AccessibilityService() {
         val node: RoutineLogic.Node get() = nodes[index]
     }
 
+    /** What [ScreenOps.fire] did: accepted by Android, and for `type` whether the field reads back the input. */
+    class Fired(val accepted: Boolean, val typedMatched: Boolean)
+
     sealed class Found {
         class One(val target: Target) : Found()
         /** An end code: `screen_changed`, `target_ambiguous`, `left_app`, `locked`. */
@@ -706,14 +709,20 @@ class RoutineAccessibilityService : AccessibilityService() {
         }
 
         /**
-         * Performs the action once; true when Android accepted it. Only after
-         * [ready], inside the runner's dispatch gate. [input] is the approved
-         * text a `type` sets.
+         * Performs the action once; [Fired.accepted] when Android accepted it.
+         * Only after [ready], inside the runner's dispatch gate. [input] is the
+         * approved text a `type` sets.
          */
-        fun fire(action: ScreenLogic.Action, target: Target?, input: String?): Boolean {
+        fun fire(action: ScreenLogic.Action, target: Target?, input: String?): Fired {
+            // The task counts a `type` once Android accepted it; the read-back is
+            // reported only for the routine recorder (a routine fails on a mismatch).
+            var typedMatched = true
             val accepted = when (action.kind) {
                 "tap" -> target != null && click(target.info, packageName)
-                "type" -> target != null && input != null && type(target.info, input, packageName).first
+                "type" -> target != null && input != null && type(target.info, input, packageName).let {
+                    typedMatched = it.second == null
+                    it.first
+                }
                 "submit" -> target != null && submit(target.info, packageName).first
                 "scroll" -> target != null && target.info.performAction(
                     if (action.dir == "back") AccessibilityNodeInfo.ACTION_SCROLL_BACKWARD else AccessibilityNodeInfo.ACTION_SCROLL_FORWARD,
@@ -723,7 +732,7 @@ class RoutineAccessibilityService : AccessibilityService() {
                 else -> false
             }
             lastChangeAt = SystemClock.uptimeMillis()
-            return accepted
+            return Fired(accepted, typedMatched)
         }
 
         /** After back: whether the task's app is still the window in front (else the task ends, `left_app`). */
