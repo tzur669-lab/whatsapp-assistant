@@ -183,8 +183,7 @@ Network on the hotspot: `NODE_OPTIONS=--dns-result-order=ipv4first` for wrangler
   The plan's two shared rules (scheduled notices: read, then row + outbox in
   one transaction; taps: row + card in one transaction) bind L2–L4. App
   0.20.0 (the four commands and the Markdown file card) — **server first**.
-  Owed: the staging deploy of L2–L6 (wrangler's Cloudflare login expired:
-  the user runs `wrangler login`), then the APK; `eval:agent --filter fu-`,
+  Staging deployed (06b52872, L2–L6). Owed: the APK 0.20.0 install (server first, done); `eval:agent --filter fu-`,
   `mp-`, `ma-` and `doc-`; `/connect gmail` and `/connect drive` for the new
   scopes; the staging check that a created Doc holds its body.
 - **Next work:** [ROADMAP.md](ROADMAP.md) (Hebrew) — block H (2026-10-07):
@@ -233,7 +232,7 @@ Network on the hotspot: `NODE_OPTIONS=--dns-result-order=ipv4first` for wrangler
   scope, `ExecuteResult.fileCard` and the orchestrator's `fileCardReply`,
   `ToolContext.fileCards`, the `document` offer flag, `RIDE_ALONG` in
   `agent/tool-groups.ts`; app 0.20.0 (`CardLogic.FileCard.mime`, Markdown).
-  No migration. Not deployed (wrangler login).
+  No migration. Staging deployed (06b52872).
 
 - 2026-10-15: Block L, L5: mail cleanup — new `tools/archive.ts`,
   `tools/archive-store.ts`, `core/mail-archive.ts`, `render/archive.ts`,
