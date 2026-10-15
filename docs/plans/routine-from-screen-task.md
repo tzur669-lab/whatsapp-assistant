@@ -166,7 +166,7 @@ check (M4, PLAN §13) is still owed. Part 2's phone check runs after M4 passes.
 
 | Part | What | Status |
 |---|---|---|
-| 1 | `RoutineRecording` (pure) + tests; `fire`'s read-back; capture in `ScreenRun`; `RoutineDrafts` (in memory) + tests; HANDOFF §6 line | [ ] |
+| 1 | `RoutineRecording` (pure) + tests; `fire`'s read-back; capture in `ScreenRun`; `RoutineDrafts` (in memory) + tests; HANDOFF §6 line | [x] dee4a93 |
 | 2 | Review mode, dry-run hash gate, notifications, list entry, `explain` + strings + tests; version bump + APK; docs | [ ] |
 
 ### Part 1 — the recorder (app only)
