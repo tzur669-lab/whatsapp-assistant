@@ -36,7 +36,9 @@ object ImagePrep {
     private fun encode(context: Context, uri: Uri): Outcome {
         val resolver = context.contentResolver
         val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-        resolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, bounds) } ?: return Outcome.Failed
+        // A bounds-only decode always returns null: only the stream itself says the picture could not be opened.
+        val stream = resolver.openInputStream(uri) ?: return Outcome.Failed
+        stream.use { BitmapFactory.decodeStream(it, null, bounds) }
         if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return Outcome.Failed
 
         val options = BitmapFactory.Options().apply {
