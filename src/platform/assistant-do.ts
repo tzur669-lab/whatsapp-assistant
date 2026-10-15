@@ -149,6 +149,13 @@ import { checkMailWatches, WatchStore } from '../tools/watch-store.js';
 import { FollowUpStore } from '../tools/followup-store.js';
 import { checkFollowUps } from '../core/followup-tick.js';
 import { SuggestionStore } from '../tools/suggestion-store.js';
+import { buildMonthlyPack, monthSpan } from '../tools/monthly-pack.js';
+import { cardReply } from '../render/phone.js';
+
+/** The monthly file goes on the 1st from this local hour (block L, L4). */
+const MONTHLY_HOUR = 9;
+/** Its card waits as long as any card may (`MAX_EXPIRY_MS`); after that the file is asked for again. */
+const MONTHLY_CARD_MS = MAX_EXPIRY_MS;
 import { eventsToSuggest, localDay } from '../core/suggest-plan.js';
 import { SUGGEST_FALLBACK_HOUR, suggestText } from '../render/suggestions.js';
 import { ConversationConsents } from '../agent/consents.js';
@@ -399,6 +406,11 @@ export class AssistantDO implements DurableObject {
         await this.maybeSendSuggestions();
       } catch (error) {
         this.log.warn('suggest_tick_failed', { errorCode: error instanceof Error ? error.name : 'E_UNKNOWN' });
+      }
+      try {
+        await this.maybeSendMonthlyPack();
+      } catch (error) {
+        this.log.warn('monthly_tick_failed', { errorCode: error instanceof Error ? error.name : 'E_UNKNOWN' });
       }
       try {
         await this.maybeSendLearnNotice();
@@ -826,6 +838,59 @@ export class AssistantDO implements DurableObject {
     );
     this.log.info('suggestions_queued', { count: queued });
     if (queued > 0) await this.pushOutbox();
+  }
+
+  /**
+   * The monthly bookkeeping file (block L, L4): on the 1st from 09:00 local,
+   * last month. Built first (expenses, then bills when Gmail answers); then
+   * one transaction inserts the month's row, the card's pending action and the
+   * notice — the row never exists without a queued card, and a second tick
+   * finds the row and sends nothing. App only.
+   */
+  private async maybeSendMonthlyPack(): Promise<void> {
+    if (this.channel() !== 'app' || !this.repo.monthlyEnabled()) return;
+    const now = Date.now();
+    const local = localPartsOf(now, ZONE);
+    if (local.day !== 1 || local.hour < MONTHLY_HOUR) return;
+    const principal = await this.selfPrincipal();
+    const span = monthSpan(now);
+    if (this.sql.exec('SELECT 1 FROM monthly_exports WHERE principal = ? AND month = ?', principal, span.key).length > 0) return;
+
+    const gmailApi = this.googleApi('gmail');
+    const built = await buildMonthlyPack({
+      principal,
+      expenses: this.expenses,
+      gmail: gmailApi ? new GmailClient(gmailApi) : null,
+      span,
+      lang: 'he',
+    });
+    const queued = this.sql.transaction(() => {
+      const inserted = this.sql.exec(
+        'INSERT INTO monthly_exports (principal, month, sent_at) VALUES (?, ?, ?) ON CONFLICT (principal, month) DO NOTHING RETURNING month',
+        principal,
+        span.key,
+        now,
+      ).length;
+      if (inserted !== 1) return false;
+      const action = this.pending.create({
+        tool: 'expenses.monthly_pack',
+        input: built.input,
+        summary: built.input.preview,
+        tier: 1,
+        principal,
+        channel: 'card',
+        expiryMs: MONTHLY_CARD_MS,
+      });
+      this.outbox.accept({
+        kind: 'notice',
+        text: cardReply(built.input.preview, false, 'file', 'he'),
+        principal,
+        card: { actionId: action.id, nonce: action.nonce, type: 'file', preview: built.input.preview, autoRun: false },
+      });
+      return true;
+    });
+    this.log.info('monthly_pack', { queued, expenses: built.expenses, bills: built.coverage.kind });
+    if (queued) await this.pushOutbox();
   }
 
   private async pushWatches(principal: string): Promise<void> {

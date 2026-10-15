@@ -53,6 +53,10 @@ function helpText(channel: 'whatsapp' | 'app'): string {
     ...(channel === 'app'
       ? [`הצעות מהיומן: ${isolate('/suggest on')} מציע פעם ביום תזכורת יציאה לאירועים של מחר שיש להם מיקום.`]
       : []),
+    // The monthly bookkeeping file is a card the app saves (block L, L4).
+    ...(channel === 'app'
+      ? [`קובץ חודשי להנהלת חשבונות: "תכין לי את הקובץ החודשי לרואה החשבון", או ${isolate('/monthly on')} לקובץ ב־1 לכל חודש.`]
+      : []),
     '',
     'אפשר גם להקליט הודעה קולית במקום לכתוב. מה שנשמע יוצג בתשובה.',
     '',

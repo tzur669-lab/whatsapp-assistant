@@ -95,9 +95,11 @@ import { singleHttpsUrl } from '../lookup/web-page.js';
 import type { PageText } from '../lookup/web-page.js';
 import { namesWatch } from '../tools/watch.js';
 import { namesFollowUp } from '../tools/followup.js';
+import { namesMonthlyPack } from '../tools/monthly-pack.js';
 import { watchText } from '../render/watches.js';
 import { followUpText } from '../render/followups.js';
 import { suggestText } from '../render/suggestions.js';
+import { monthlyText } from '../render/monthly.js';
 import type { WatchStore } from '../tools/watch-store.js';
 import type { FollowUpStore } from '../tools/followup-store.js';
 import type { SuggestionStore } from '../tools/suggestion-store.js';
@@ -634,6 +636,11 @@ async function respondToText(
     }
     if (command.kind === 'watches') return watchesCommand(deps);
     if (command.kind === 'followups') return followUpsCommand(deps);
+    if (command.kind === 'monthly') {
+      if (deps.channel !== 'app') return { action: 'reply', text: personalQuestion('watch_app_only', 'he') };
+      if (command.set !== null) repo.setMonthly(command.set);
+      return { action: 'reply', text: monthlyText.status(repo.monthlyEnabled(), 'he') };
+    }
     if (command.kind === 'suggest') {
       if (deps.channel !== 'app') return { action: 'reply', text: personalQuestion('watch_app_only', 'he') };
       if (command.set !== null) repo.setSuggestions(command.set);
@@ -1190,6 +1197,8 @@ async function respondWithAgent(
           ...(deps.channel === 'app' && deps.services?.watches && namesWatch(text) ? { watch: true } : {}),
           // Only in the app, and only when the words say "if they don't reply" (block L, L2).
           ...(deps.channel === 'app' && deps.services?.followUps && namesFollowUp(text) ? { followUp: true } : {}),
+          // Only when the words ask for the monthly bookkeeping file (block L, L4).
+          ...(namesMonthlyPack(text) ? { monthly: true } : {}),
           // Only when the words name a synced routine (§6.27, decision D4).
           ...(deps.channel === 'app' && namesRoutine(text, deps.services?.routines, principal) ? { routines: true } : {}),
           // Only when the words name the screen agent or an app on its list (§6.28).

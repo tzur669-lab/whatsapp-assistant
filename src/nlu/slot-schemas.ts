@@ -588,6 +588,9 @@ export const expensesSummarySlots = z
 /** "תייצא לי את ההוצאות לאקסל". Absent period: everything. */
 export const expensesExportSlots = z.object({ period: z.enum(EXPENSE_PERIODS).optional() }).strict();
 
+/** The monthly bookkeeping file (block L, L4): a month 1–12, the latest that ended; absent is last month. */
+export const expensesMonthlyPackSlots = z.object({ month: z.number().int().min(1).max(12).optional() }).strict();
+
 export const infoLookupSlots = z
   .object({
     topic: z.enum(LOOKUP_TOPICS),

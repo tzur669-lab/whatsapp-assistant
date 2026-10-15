@@ -100,6 +100,16 @@ time) get a notice with `sg:` buttons (48 h), at most 3. "Yes" reads the
 event again (2-minute lease per tap) and issues a `reminders.leave`
 confirmation card; a deleted, started or place-less event closes it.
 `suggest_ran_on` in `settings` is the day the job last finished.
+`/monthly`, `/monthly on|off` (app only, block L, L4; off by default): on the
+1st from 09:00 local, last month's expenses and the bills found in Gmail as
+one CSV card (`monthly-YYYY-MM.csv`). The file is built first; then one
+transaction inserts `monthly_exports (principal, month)`, the card's pending
+action and the notice, so a failed build never marks the month and a second
+tick is a no-op. Gmail unreachable: the file goes without bills and says so in
+its first lines. On request: `expenses.monthly_pack` ("הקובץ החודשי לרואה
+החשבון"), never in a smart conversation. The CSV lives in
+`pending_actions.input_json` until the card expires (2 h, the cap for any
+card) plus an hour; after that the file is asked for again.
 
 **Smart conversations (PLAN §6.19, 2026-10-08).** A conversation is `smart`
 (Gemini first, then qwen) or `local`, fixed by its first message

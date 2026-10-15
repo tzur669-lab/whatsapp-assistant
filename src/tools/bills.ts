@@ -23,12 +23,12 @@ import type { BillFacts } from './bill-extract.js';
 import { parseInput } from './types.js';
 import type { ExecuteResult, ResolveOutcome, ToolDefinition } from './types.js';
 import { newestPerThread } from './mail.js';
-import type { GmailClient } from '../google/gmail.js';
+import type { GmailClient, MailSummary } from '../google/gmail.js';
 import type { GoogleResult } from '../google/api.js';
 
 const DEFAULT_DAYS = 45;
 /** Each one is a body read: a request of its own, against the Worker's subrequest cap. */
-const MAX_BILLS = 8;
+export const MAX_BILLS = 8;
 const MAX_SUBJECT_CHARS = 60;
 
 /** Words a bill says about itself. Fixed by code; nothing from the model goes in. */
@@ -49,6 +49,14 @@ export function buildBillsQuery(days: number): string {
   return `newer_than:${days}d {${BILL_WORDS.join(' ')}} -category:promotions -category:social`;
 }
 
+/**
+ * The same words, between two instants (block L, L4: one month). Gmail's
+ * `after:`/`before:` take epoch **seconds**; whole seconds, computed in code.
+ */
+export function buildBillsQueryBetween(startUtc: number, endUtc: number): string {
+  return `after:${Math.floor(startUtc / 1000)} before:${Math.floor(endUtc / 1000)} {${BILL_WORDS.join(' ')}} -category:promotions -category:social`;
+}
+
 const inputSchema = z.object({ query: z.string().min(1).max(400) }).strict();
 type BillsInput = z.infer<typeof inputSchema>;
 
@@ -62,8 +70,30 @@ export type Bill = { from: string; subject: string; at: number; facts: BillFacts
 export async function readBills(gmail: GmailClient, query: string): Promise<GoogleResult<Bill[]>> {
   const found = await gmail.search(query, MAX_BILLS);
   if (!found.ok) return found;
+  return { ok: true, value: await billsOf(gmail, found.value) };
+}
+
+/**
+ * `readBills`, also saying what the scan could not cover (block L, L4): mails
+ * listed but unreadable, and whether the cap of `MAX_BILLS` was reached.
+ */
+export async function readBillsCounted(
+  gmail: GmailClient,
+  query: string,
+): Promise<GoogleResult<{ bills: Bill[]; skipped: number; capped: boolean }>> {
+  const found = await gmail.searchCounted(query, MAX_BILLS);
+  if (!found.ok) return found;
+  const bills = await billsOf(gmail, found.value.mails);
+  return {
+    ok: true,
+    value: { bills, skipped: found.value.skipped, capped: found.value.more || found.value.mails.length + found.value.skipped >= MAX_BILLS },
+  };
+}
+
+/** Each mail's body read for its amount and due date, one bill per thread. */
+async function billsOf(gmail: GmailClient, found: readonly MailSummary[]): Promise<Bill[]> {
   // One bill per conversation: a reminder in the same thread is the same bill.
-  const mails = newestPerThread(found.value);
+  const mails = newestPerThread(found);
   const bills: Bill[] = [];
   for (const mail of mails) {
     const read = await gmail.body(mail.id);
@@ -77,7 +107,7 @@ export async function readBills(gmail: GmailClient, query: string): Promise<Goog
       facts: billFacts(text, localPartsOf(mail.at, ZONE)),
     });
   }
-  return { ok: true, value: bills };
+  return bills;
 }
 
 /** Bills whose parsed due day is from today to `days` ahead, soonest first (the digest, block J, J5). */

@@ -5,7 +5,7 @@ system is, where things live, and what breaks easily, then links out. It does
 **not** repeat the rules in `CLAUDE.md` (always loaded) or the spec in
 `PLAN.md` (read by section, never whole).
 
-_Last updated: 2026-10-15 · server at migration 0038 · agent prompt a10 + smart note s2 + screen step s2 · parser prompt v6 · app 0.20.0 in progress (0.19.0 built, 0.18.2 on the phone) · smart model gemini-3.5-flash-lite · vision v1_
+_Last updated: 2026-10-15 · server at migration 0039 · agent prompt a10 + smart note s2 + screen step s2 · parser prompt v6 · app 0.20.0 in progress (0.19.0 built, 0.18.2 on the phone) · smart model gemini-3.5-flash-lite · vision v1_
 
 ## 1. What this is
 
@@ -173,13 +173,14 @@ Network on the hotspot: `NODE_OPTIONS=--dns-result-order=ipv4first` for wrangler
   the Instinct comparison, L2–L6 in order, one commit each. **L2 done**: mail
   follow-ups (`mail.follow_up`, PLAN §6.33, migration 0037, `/followups`,
   `fu:` buttons). **L3 done**: calendar suggestions (PLAN §6.34, migration
-  0038, `/suggest on|off`, `sg:` buttons, `reminders.event_id`). Next: L4 (monthly
-  file, `/monthly`), L5 (archive + `/unarchive`, new scope `gmail.modify`:
+  0038, `/suggest on|off`, `sg:` buttons, `reminders.event_id`). **L4 done**:
+  the monthly file (PLAN §6.35, migration 0039, `expenses.monthly_pack`,
+  `/monthly on|off`). Next: L5 (archive + `/unarchive`, new scope `gmail.modify`:
   the user reconnects Gmail), L6 (`docs.create`, new scope `drive.file`).
   The plan's two shared rules (scheduled notices: read, then row + outbox in
   one transaction; taps: row + card in one transaction) bind L2–L4. App
   0.20.0 (command list, later the Markdown file card) is built once at the
-  end of the block. Owed: `eval:agent --filter fu-`.
+  end of the block. Owed: `eval:agent --filter fu-` and `--filter mp-`; the staging deploys (L2–L4).
 - **Next work:** [ROADMAP.md](ROADMAP.md) (Hebrew) — block H (2026-10-07):
   a smarter bot. Parts 15 (notes), 16 ("לא הבנת" capture), 17 (tool
   unions, calibrated token estimate, history fitter, named lists) and 18
@@ -220,6 +221,13 @@ Network on the hotspot: `NODE_OPTIONS=--dns-result-order=ipv4first` for wrangler
 | [SETUP.md](SETUP.md) | Setting up a new copy from zero: accounts, Groq key, models, secrets, deploy, app, AI agent. |
 
 ## 8. Session log (docs)
+
+- 2026-10-15: Block L, L4: the monthly bookkeeping file — new
+  `tools/monthly-pack.ts`, `render/monthly.ts`, migration 0039
+  (`monthly_exports`), `/monthly`, `GmailClient.searchCounted`,
+  `readBillsCounted`/`buildBillsQueryBetween` (bills.ts), the `monthly` offer
+  flag (named-only, excluded from smart conversations), records-group words
+  for bookkeeping. Not deployed (wrangler login).
 
 - 2026-10-15: Block L, L3: calendar suggestions — new `core/suggest-plan.ts`,
   `tools/suggestion-store.ts`, `render/suggestions.ts`, migration 0038

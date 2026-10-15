@@ -180,6 +180,8 @@ export type AgentTurnInput = {
   watch?: boolean;
   /** The app channel, and the words say "if they don't reply": `mail.follow_up` is offered (block L, L2). */
   followUp?: boolean;
+  /** The words ask for the monthly bookkeeping file: `expenses.monthly_pack` is offered (block L, L4). */
+  monthly?: boolean;
   /**
    * The consent sources of the history entries replayed in full (2026-10-12,
    * `replayByConsent`). A smart turn that pauses keeps them, so a resume can
@@ -392,6 +394,7 @@ export async function runAgentTurn(input: AgentTurnInput, deps: AgentDeps): Prom
     ...(input.webRead ? { webRead: true } : {}),
     ...(input.watch ? { watch: true } : {}),
     ...(input.followUp ? { followUp: true } : {}),
+    ...(input.monthly ? { monthly: true } : {}),
   });
   // A smart conversation's turn is offered the same tools whichever model takes
   // it: consent belongs to the conversation (2026-10-08). Those that never ask

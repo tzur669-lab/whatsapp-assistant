@@ -48,6 +48,7 @@ export const GROUPS: Readonly<Record<GroupName, readonly ToolName[]>> = {
     'expenses.add',
     'expenses.summary',
     'expenses.export',
+    'expenses.monthly_pack',
     'lists.add',
     'lists.show',
     'lists.remove',
@@ -115,6 +116,8 @@ const PATTERNS: Readonly<Record<GroupName, readonly RegExp[]>> = {
   ],
   records: [
     /פתק/, word('הערה|הערות'), /רשום/, /רשמ/, /סיסמ/,
+    // The monthly bookkeeping file (block L, L4): "קובץ" alone is Drive's word.
+    /הנהלת חשבונות/, /רואה ה?חשבון/, /\b(?:bookkeeping|accountant)\b/i,
     // "Remember that …" is a note, though it shares a stem with reminders.
     /תזכור(?!ו?ת)/, /לזכור/,
     // "Remind me what / where / when …" asks for something written down.
@@ -242,7 +245,13 @@ export function selectTools(
   // Offered only when named or linked, these ride along in any selection.
   const members = new Set<ToolName>(
     offered.filter(
-      (tool) => tool === 'routine.run' || tool === 'screen.task' || tool === 'web.read' || tool === 'reminders.when' || tool === 'mail.follow_up',
+      (tool) =>
+        tool === 'routine.run' ||
+        tool === 'screen.task' ||
+        tool === 'web.read' ||
+        tool === 'reminders.when' ||
+        tool === 'mail.follow_up' ||
+        tool === 'expenses.monthly_pack',
     ),
   );
   for (const group of groups) {

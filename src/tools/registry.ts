@@ -50,6 +50,7 @@ import {
   webReadSlots,
   remindersWhenSlots,
   mailFollowUpSlots,
+  expensesMonthlyPackSlots,
   expensesAddSlots,
   expensesSummarySlots,
   expensesExportSlots,
@@ -150,6 +151,9 @@ export const TOOL_NAMES = [
   // Block L, L2 (2026-10-15): remind when nobody replied to a sent mail by a
   // deadline. Offered only in the app, when the words say "if they don't reply".
   'mail.follow_up',
+  // Block L, L4 (2026-10-15): last month's expenses and mail bills in one CSV.
+  // Offered only when the words ask for it, and never in a smart conversation.
+  'expenses.monthly_pack',
 ] as const;
 
 export type ToolName = (typeof TOOL_NAMES)[number];
@@ -784,6 +788,24 @@ export const REGISTRY: Readonly<Record<ToolName, ToolSpec>> = {
     implementedIn: 6,
     confirmation: 'card',
     autoRun: true,
+    needsCap: 'file',
+  },
+  'expenses.monthly_pack': {
+    name: 'expenses.monthly_pack',
+    // It carries bills from Gmail (senders, subjects) as well as expenses:
+    // mail is the stricter, once-only source. Not offered in a smart
+    // conversation at all (`smartOfferedTools`), so one consent never covers two.
+    dataSource: 'mail',
+    consent: 'always',
+    llmDescription:
+      'A bookkeeping file (spreadsheet) of one month: the user\u2019s expenses, totals by category, and the bills found in Gmail. month: 1-12, only if a month is named; otherwise last month.',
+    draftSchema: expensesMonthlyPackSlots,
+    // A card: the file is saved on the user's own phone, from the signed claim.
+    tier: 1,
+    scopes: [],
+    rateLimit: { perHour: 5, perDay: 10 },
+    implementedIn: 6,
+    confirmation: 'card',
     needsCap: 'file',
   },
   'drive.search': {

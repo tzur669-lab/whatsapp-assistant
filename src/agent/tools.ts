@@ -200,6 +200,8 @@ export type OfferOptions = {
   watch?: boolean;
   /** The app channel, and the words say "if they don't reply" (block L, L2): only then is `mail.follow_up` offered. */
   followUp?: boolean;
+  /** The words ask for the monthly bookkeeping file (block L, L4): only then is `expenses.monthly_pack` offered. */
+  monthly?: boolean;
 };
 
 export function agentToolNames(options: OfferOptions = { cards: false }): ToolName[] {
@@ -211,6 +213,7 @@ export function agentToolNames(options: OfferOptions = { cards: false }): ToolNa
     if (name === 'web.read') return options.webRead === true;
     if (name === 'reminders.when') return options.watch === true;
     if (name === 'mail.follow_up') return options.followUp === true && options.grants?.gmail === true;
+    if (name === 'expenses.monthly_pack') return options.monthly === true && options.cards && options.fileCards === true;
     if (name.startsWith('mail.')) return options.grants?.gmail === true;
     if (name.startsWith('tasks.')) return options.grants?.tasks === true;
     if (name.startsWith('drive.')) return options.grants?.drive === true;
@@ -245,6 +248,8 @@ export function smartOfferedTools(
   consent: { granted: readonly ConsentSource[]; ask: boolean } = { granted: [], ask: false },
 ): ToolName[] {
   return offered.filter((name) => {
+    // Bills and expenses in one file: never behind a single consent (block L, L4).
+    if (name === 'expenses.monthly_pack') return false;
     const source = consentNeededFor(name);
     if (source === null) return true;
     return consent.ask || consent.granted.includes(source);

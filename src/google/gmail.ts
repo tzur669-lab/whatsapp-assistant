@@ -195,20 +195,32 @@ export class GmailClient {
 
   /** Up to `max` messages matching a Gmail query that code built. Newest first. */
   async search(query: string, max: number): Promise<GoogleResult<MailSummary[]>> {
+    const counted = await this.searchCounted(query, max);
+    return counted.ok ? { ok: true, value: counted.value.mails } : counted;
+  }
+
+  /**
+   * `search`, also saying how many listed messages could not be read (block L,
+   * L4) and whether the list was cut at `max`: a monthly file must never
+   * present a partial scan as a complete one.
+   */
+  async searchCounted(query: string, max: number): Promise<GoogleResult<{ mails: MailSummary[]; skipped: number; more: boolean }>> {
     const list = await this.api.call(`${BASE}/messages?q=${encodeURIComponent(query)}&maxResults=${max}`);
     if (!list.ok) return list;
     const ids = ((list.value as { messages?: unknown }).messages ?? []) as Array<{ id?: unknown }>;
-    const out: MailSummary[] = [];
+    const more = typeof (list.value as { nextPageToken?: unknown }).nextPageToken === 'string';
+    const mails: MailSummary[] = [];
+    let skipped = 0;
     for (const entry of Array.isArray(ids) ? ids.slice(0, max) : []) {
       if (typeof entry.id !== 'string') continue;
       const message = await this.api.call(
         `${BASE}/messages/${encodeURIComponent(entry.id)}?format=metadata&metadataHeaders=From&metadataHeaders=Subject&metadataHeaders=Message-ID&metadataHeaders=To`,
       );
-      if (!message.ok) continue;
-      const summary = this.summaryOf(message.value);
-      if (summary) out.push(summary);
+      const summary = message.ok ? this.summaryOf(message.value) : null;
+      if (summary) mails.push(summary);
+      else skipped++;
     }
-    return { ok: true, value: out };
+    return { ok: true, value: { mails, skipped, more } };
   }
 
   /**

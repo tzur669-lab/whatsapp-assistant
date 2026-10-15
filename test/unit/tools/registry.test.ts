@@ -29,6 +29,7 @@ import { screenTask } from '../../../src/tools/screen.js';
 import { webRead } from '../../../src/tools/web-read.js';
 import { remindersWhen } from '../../../src/tools/watch.js';
 import { mailFollowUp } from '../../../src/tools/followup.js';
+import { expensesMonthlyPack } from '../../../src/tools/monthly-pack.js';
 import type { ToolDefinition } from '../../../src/tools/types.js';
 import { INTENT_NAMES } from '../../../src/nlu/intent-schema.js';
 
@@ -57,6 +58,7 @@ const IMPLEMENTATIONS: Record<string, ToolDefinition> = {
   'web.read': webRead,
   'reminders.when': remindersWhen,
   'mail.follow_up': mailFollowUp,
+  'expenses.monthly_pack': expensesMonthlyPack,
 };
 
 describe('every registered tool is real', () => {

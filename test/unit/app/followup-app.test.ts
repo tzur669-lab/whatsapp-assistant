@@ -10,6 +10,7 @@ import { createFakeDoState } from '../../integration/fake-do-state.js';
 import type { FakeDoState } from '../../integration/fake-do-state.js';
 import { FakePhone, createFakeGoogle, createServiceAccount, messageId } from '../../integration/fake-phone.js';
 import { FollowUpStore } from '../../../src/tools/followup-store.js';
+import { ExpenseStore } from '../../../src/tools/expense-store.js';
 import type { AppEnv } from '../../../src/core/env.js';
 
 const NOW = Date.parse('2026-10-15T09:00:00Z');
@@ -147,5 +148,24 @@ describe('mail follow-ups in the app', () => {
     expect((await say(phone, '/suggest on')).row?.text).toContain('פעילות');
     expect((await say(phone, '/suggest')).row?.text).toContain('פעילות');
     expect((await say(phone, '/suggest off')).row?.text).toContain('כבויות');
+  });
+
+  it('/monthly on: the 1st from 09:00 local, one card for last month however many ticks (block L, L4)', async () => {
+    const phone = await pair();
+    await say(phone, '/monthly on');
+    new ExpenseStore(fake.driver, () => Date.now()).add(principalOf(), { amountAgorot: 4000, category: 'food', description: null, spentOn: '2026-10-10' });
+    // 1 Nov 2026, 08:30 local (UTC+2 after the fall-back): too early.
+    vi.setSystemTime(Date.UTC(2026, 10, 1, 6, 30));
+    await tick();
+    expect((await outboxTexts(phone)).filter((t) => t.includes('קובץ הנהלת חשבונות'))).toHaveLength(0);
+    // 09:30 local: once, whatever the ticks.
+    vi.setSystemTime(Date.UTC(2026, 10, 1, 7, 30));
+    await Promise.all([tick(), tick()]);
+    await tick();
+    const texts = (await outboxTexts(phone)).filter((t) => t.includes('קובץ הנהלת חשבונות'));
+    expect(texts).toHaveLength(1);
+    expect(texts[0]).toContain('אוקטובר 2026');
+    expect(texts[0]).toContain('בלי חשבונות מהמייל');
+    expect(fake.driver.exec('SELECT month FROM monthly_exports').map((r) => r['month'])).toEqual(['2026-10']);
   });
 });

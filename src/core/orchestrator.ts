@@ -41,6 +41,7 @@ import { calcCompute } from '../tools/calc.js';
 import { webRead } from '../tools/web-read.js';
 import { remindersWhen } from '../tools/watch.js';
 import { mailFollowUp, toLineOf } from '../tools/followup.js';
+import { expensesMonthlyPack } from '../tools/monthly-pack.js';
 import { followUpText } from '../render/followups.js';
 import { suggestText } from '../render/suggestions.js';
 import { leaveInputFor } from '../tools/reminders.js';
@@ -182,6 +183,7 @@ const IMPLEMENTED: Partial<Record<ToolName, ToolDefinition>> = {
   'web.read': webRead,
   'reminders.when': remindersWhen,
   'mail.follow_up': mailFollowUp,
+  'expenses.monthly_pack': expensesMonthlyPack,
   ...TASK_TOOLS,
   ...MAIL_TOOLS,
   'drive.search': driveSearch,

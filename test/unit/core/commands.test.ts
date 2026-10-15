@@ -38,6 +38,7 @@ const INVOCATIONS: Record<Command['kind'], string> = {
   watches: '/watches',
   followups: '/followups',
   suggest: '/suggest on',
+  monthly: '/monthly on',
   connect_google: '/connect google',
   pair: '/pair',
   digest: '/digest',
@@ -66,6 +67,8 @@ const HIDDEN: ReadonlySet<Command['kind']> = new Set([
   'followups',
   // Calendar suggestions too: their notices go through the outbox (block L, L3).
   'suggest',
+  // The monthly file too: it is a card the app saves (block L, L4).
+  'monthly',
 ]);
 
 const helpText = stripIsolates(he.help);
@@ -104,6 +107,11 @@ describe('every command a user can see is documented', () => {
   it("lists /watches in the app's /help only (block J, J4)", () => {
     expect(stripIsolates(he.helpApp)).toContain('/watches');
     expect(helpText).not.toContain('/watches');
+  });
+
+  it("lists /monthly in the app's /help only (block L, L4)", () => {
+    expect(stripIsolates(he.helpApp)).toContain('/monthly');
+    expect(helpText).not.toContain('/monthly');
   });
 
   it("lists /suggest in the app's /help only (block L, L3)", () => {

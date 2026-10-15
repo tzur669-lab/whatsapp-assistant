@@ -14,6 +14,7 @@ export const LEAVE_DEFAULT_MAX = 120;
 const DIGEST_SENT_KEY = 'digest_sent_on';
 const REST_HOLD_KEY = 'rest_hold';
 const SUGGEST_KEY = 'suggest';
+const MONTHLY_KEY = 'monthly';
 const SUGGEST_RAN_KEY = 'suggest_ran_on';
 /** A durable counter: never reset, unlike the pruned table's rowid (§6.23). */
 const INBOUND_SEQ_KEY = 'inbound_seq';
@@ -382,6 +383,19 @@ export class Repository {
       return;
     }
     this.setSetting(SUGGEST_KEY, 'on');
+  }
+
+  /** The monthly bookkeeping file (`/monthly`, block L, L4). Off unless stored. */
+  monthlyEnabled(): boolean {
+    return this.getSetting(MONTHLY_KEY) === 'on';
+  }
+
+  setMonthly(on: boolean): void {
+    if (!on) {
+      this.sql.exec('DELETE FROM settings WHERE key = ?', MONTHLY_KEY);
+      return;
+    }
+    this.setSetting(MONTHLY_KEY, 'on');
   }
 
   /** The local day the suggestion job last finished, so one calendar read a day. */

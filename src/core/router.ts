@@ -37,6 +37,8 @@ export type Command =
   | { kind: 'followups' }
   /** `/suggest`, `/suggest on|off`: proactive calendar suggestions (block L, L3). Off by default. */
   | { kind: 'suggest'; set: boolean | null }
+  /** `/monthly`, `/monthly on|off`: the monthly bookkeeping file on the 1st (block L, L4). Off by default. */
+  | { kind: 'monthly'; set: boolean | null }
   /** `/learn`, `/learn on|off|forget`: the learning journal (block K, K1, PLAN §6.31). Off by default. */
   | { kind: 'learn'; action: LearnAction }
   /**
@@ -86,6 +88,9 @@ const COMMANDS: ReadonlyArray<readonly [RegExp, Command]> = [
   [/^\/suggest$/i, { kind: 'suggest', set: null }],
   [/^\/suggest\s+on$/i, { kind: 'suggest', set: true }],
   [/^\/suggest\s+off$/i, { kind: 'suggest', set: false }],
+  [/^\/monthly$/i, { kind: 'monthly', set: null }],
+  [/^\/monthly\s+on$/i, { kind: 'monthly', set: true }],
+  [/^\/monthly\s+off$/i, { kind: 'monthly', set: false }],
   [/^\/shabbat$/i, { kind: 'shabbat', set: null }],
   [/^\/shabbat\s+on$/i, { kind: 'shabbat', set: true }],
   [/^\/shabbat\s+off$/i, { kind: 'shabbat', set: false }],
@@ -238,6 +243,7 @@ export const COMMAND_KINDS = [
   'watches',
   'followups',
   'suggest',
+  'monthly',
   'learn',
   'leave',
   'connect_google',

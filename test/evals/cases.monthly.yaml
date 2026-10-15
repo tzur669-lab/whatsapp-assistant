@@ -1,0 +1,30 @@
+# Monthly bookkeeping file cases (block L, L4, 2026-10-15), run by
+# `pnpm eval:agent` only.
+#
+# Kept out of `fingerprintPhrases` on purpose: `expenses.monthly_pack` is
+# offered only when the words ask for it (`namesMonthlyPack`), so these
+# phrases change nothing any other case is offered, and the recorded Groq
+# fingerprints stay what was measured.
+
+- id: mp-001
+  now: "2026-10-15T10:00:00+03:00"
+  input: "תכין לי את הקובץ החודשי לרואה החשבון"
+  expect:
+    intent: expenses.monthly_pack
+    missing: []
+
+- id: mp-002
+  now: "2026-10-15T10:00:00+03:00"
+  input: "אני צריך דוח חודשי להנהלת חשבונות של ספטמבר"
+  expect:
+    intent: expenses.monthly_pack
+    slots:
+      month: 9
+    missing: []
+
+- id: mp-003
+  now: "2026-10-15T10:00:00+03:00"
+  input: "make me the monthly bookkeeping file for my accountant"
+  expect:
+    intent: expenses.monthly_pack
+    missing: []

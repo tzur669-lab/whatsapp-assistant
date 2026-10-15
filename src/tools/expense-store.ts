@@ -154,9 +154,9 @@ export function expensesCsv(
 }
 
 /** Without it Excel reads the file as the local code page, and the Hebrew breaks. */
-const BOM = String.fromCharCode(0xfeff);
+export const BOM = String.fromCharCode(0xfeff);
 
-function cell(value: string): string {
+export function cell(value: string): string {
   const guarded = /^[=+\-@\t\r]/.test(value) ? `'${value}` : value;
   return /[",\r\n]/.test(guarded) ? `"${guarded.replace(/"/g, '""')}"` : guarded;
 }
