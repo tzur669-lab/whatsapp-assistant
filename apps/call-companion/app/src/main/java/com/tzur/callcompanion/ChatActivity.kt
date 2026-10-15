@@ -486,24 +486,21 @@ class ChatActivity : Activity(), ChatEvents.Listener {
             })
         }
         inputRow.addView(input, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-        sendButton = Button(this).apply {
-            text = getString(R.string.chat_send)
-            isAllCaps = false
+        // Small round icons, so the field keeps most of the row.
+        sendButton = inputIcon(R.string.chat_send_icon, R.string.chat_send, HEADER, Color.WHITE).apply {
+            // The arrow points the way the text runs.
+            if (resources.configuration.layoutDirection == View.LAYOUT_DIRECTION_RTL) scaleX = -1f
             setOnClickListener { sendTyped() }
         }
-        inputRow.addView(sendButton)
-        micButton = Button(this).apply {
-            text = getString(R.string.chat_mic)
-            contentDescription = getString(R.string.chat_mic_description)
+        inputRow.addView(sendButton, inputIconParams())
+        micButton = inputIcon(R.string.chat_mic, R.string.chat_mic_description, INCOMING, TEXT).apply {
             setOnTouchListener { view, event -> onMicTouch(view, event) }
         }
-        inputRow.addView(micButton)
-        attachButton = Button(this).apply {
-            text = getString(R.string.chat_attach)
-            contentDescription = getString(R.string.chat_attach_description)
+        inputRow.addView(micButton, inputIconParams())
+        attachButton = inputIcon(R.string.chat_attach, R.string.chat_attach_description, INCOMING, TEXT).apply {
             setOnClickListener { pickImage() }
         }
-        inputRow.addView(attachButton)
+        inputRow.addView(attachButton, inputIconParams())
         root.addView(inputRow)
 
         slashPopup = ListPopupWindow(this).apply {
@@ -538,6 +535,31 @@ class ChatActivity : Activity(), ChatEvents.Listener {
 
         Ui.fitSystemBars(shell)
         return shell
+    }
+
+    private fun inputIcon(label: Int, description: Int, fill: Int, ink: Int) = Button(this).apply {
+        text = getString(label)
+        contentDescription = getString(description)
+        isAllCaps = false
+        textSize = 18f
+        setTextColor(ink)
+        includeFontPadding = false
+        setPadding(0, 0, 0, 0)
+        minWidth = 0
+        minimumWidth = 0
+        minHeight = 0
+        minimumHeight = 0
+        stateListAnimator = null
+        background = GradientDrawable().apply {
+            shape = GradientDrawable.OVAL
+            setColor(fill)
+            setStroke(1, DIVIDER)
+        }
+    }
+
+    private fun inputIconParams() = LinearLayout.LayoutParams(dp(44), dp(44)).apply {
+        marginStart = dp(4)
+        bottomMargin = dp(2)
     }
 
     private fun headerButton(label: Int, description: Int, onClick: () -> Unit) = Button(this).apply {
@@ -1061,6 +1083,7 @@ class ChatActivity : Activity(), ChatEvents.Listener {
         // Shared text and a picture go with a typed request only: a recording carries no second field.
         micButton.isEnabled = (!busy && pendingShared == null && pendingImage == null) || recorder.isRecording
         attachButton.isEnabled = !busy && !recorder.isRecording && !reminders
+        for (button in listOf(sendButton, micButton, attachButton)) button.alpha = if (button.isEnabled) 1f else 0.4f
         val armed = tapMode && !reminders && !busy
         status.visibility = if (busy || recorder.isRecording || armed) View.VISIBLE else View.GONE
         status.text = getString(

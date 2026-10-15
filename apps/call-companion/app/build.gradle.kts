@@ -16,8 +16,8 @@ android {
         applicationId = "com.tzur.callcompanion"
         minSdk = 26
         targetSdk = 35
-        versionCode = 38
-        versionName = "0.20.1"
+        versionCode = 39
+        versionName = "0.20.2"
         buildConfigField("String", "SERVER_URL", "\"$serverUrl\"")
     }
 

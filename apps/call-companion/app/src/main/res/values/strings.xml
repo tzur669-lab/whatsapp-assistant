@@ -7,6 +7,7 @@
     <string name="chat_settings">הגדרות</string>
     <string name="chat_hint">הודעה לעוזר</string>
     <string name="chat_send">שליחה</string>
+    <string name="chat_send_icon">➤</string>
     <string name="chat_mic">🎤</string>
     <string name="chat_mic_description">הקלטה: להחזיק את הכפתור ולדבר, לשחרר כדי לשלוח</string>
     <string name="chat_empty">אפשר לכתוב לעוזר או להקליט לו. למשל: תזכיר לי מחר ב־9 לשלם חשבון.</string>
