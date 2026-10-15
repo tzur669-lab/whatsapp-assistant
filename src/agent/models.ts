@@ -194,6 +194,16 @@ export const SCREEN_MODELS: readonly string[] = [QWEN, GPT_OSS_120B];
 export const SCREEN_SMART_MODELS: readonly string[] = [GEMINI_FLASH_LITE, GEMINI_FLASH];
 
 /**
+ * The models that draft a routine from the user's words and the app's first
+ * screen (docs/plans/routine-builder.md), by the conversation the draft was
+ * confirmed in, never crossing: Groq for a local one, Gemini Flash-Lite only
+ * for a smart one — never Flash, whose 20 a day are the screen agent's. Groq
+ * tokens count against the screen's day share (`SCREEN_GROQ_DAY_TOKENS`).
+ */
+export const DRAFT_MODELS: readonly string[] = [QWEN, GPT_OSS_120B];
+export const DRAFT_SMART_MODELS: readonly string[] = [GEMINI_FLASH_LITE];
+
+/**
  * The models that may read an image (PLAN §6.32), in every conversation. The
  * user's Groq key has no vision model, so the user chose (2026-10-14) that
  * Gemini reads every image, regular conversations included: only the image

@@ -21,9 +21,12 @@ it is the way it is; this file is only what to do.
 | `POST /app/image` | An image with the user's request (JSON, base64 JPEG/PNG/WebP ≤ 700,000 bytes, body ≤ 1 MB), signed. Read by Gemini (needs `GEMINI_API_KEY`, §6.32), then shared text. 20 an hour. `CHANNEL=app` only. |
 | `GET /app/outbox` | Every message the phone has not acked, 50 at a time, signed, plus `smart`: whether a smart conversation can run (agent on, `GEMINI_API_KEY` and `GROQ_API_KEY` set). `CHANNEL=app` only. |
 | `POST /app/outbox/ack` | The seqs the phone has stored, signed. `CHANNEL=app` only. |
-| `POST /app/routines` | The phone's routine list (id, name, app label, step hash; never steps), signed; replaces the server's copy and closes runs of a changed routine (PLAN §6.27). `CHANNEL=app` only. |
+| `POST /app/routines` | The phone's routine list (id, name, app label, step hash, optional `tested`; never steps), signed; replaces the server's copy and closes runs of a changed routine (PLAN §6.27). An untested routine (`tested: false`) cannot be scheduled. `CHANNEL=app` only. |
 | `POST /app/routine/claim` | The phone's one claim on a pushed run, signed: the routine's id and step hash, or why not. `CHANNEL=app` only. |
 | `POST /app/routine/result` | A run's outcome as codes, signed; settled once. `CHANNEL=app` only. |
+| `POST /app/routine/draft/claim` | The phone's one claim on a pushed routine draft (`docs/plans/routine-builder.md`), signed: the app's package and label and the approved inputs; 409 for anything but a pushed draft. `CHANNEL=app` only. |
+| `POST /app/routine/draft/screen` | The app's first screen (the screen step's schema, ≤ 80 elements), signed; one model call; answers the drafted steps (bindings, confirmed words, input numbers) in this response only, or `failed` with a code. A repeat post is 409: a lost answer is not retried. `CHANNEL=app` only. |
+| `POST /app/routine/draft/result` | What became of a draft, a closed code, signed: `locked`/`app_not_front`/`launch_confirm` before the screen post, `offered`/`build_failed`/`slot_busy` after; 409 otherwise. `CHANNEL=app` only. |
 | `POST /app/push-token` | The app sends its rotated FCM address, signed. |
 | `GET /device/dispatch/:id` | The app fetches a call request after the push wakes it, signed. |
 | `POST /device/report` | The app reports how a call ended: a count and an outcome, never a name or number. Signed. |

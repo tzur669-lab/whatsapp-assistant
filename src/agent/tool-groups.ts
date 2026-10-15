@@ -77,7 +77,9 @@ export const GROUPS: Readonly<Record<GroupName, readonly ToolName[]>> = {
   ],
   // Routines (§6.27): offered only when the message names a synced routine
   // (decision D4), and then kept whatever group the words select.
-  routine: ['routine.run'],
+  // A routine draft (docs/plans/routine-builder.md) is offered only when the
+  // words ask to build one; kept whatever group the words select, like these.
+  routine: ['routine.run', 'routine.draft'],
   // The screen agent (§6.28): offered only when the message names it or an app
   // on its list, and then kept whatever group the words select, like routines.
   screen: ['screen.task'],
@@ -225,11 +227,18 @@ export function selectTools(
   // "סוכן מסך תחפש בפיד" (found on the phone, 2026-10-12).
   if (named.length === 0 && offered.includes('routine.run')) {
     const withScreen = offered.includes('screen.task');
-    const members = new Set<ToolName>(['routine.run', ...GROUPS.time, ...(withScreen ? (['screen.task'] as const) : [])]);
+    const members = new Set<ToolName>(['routine.run', 'routine.draft', ...GROUPS.time, ...(withScreen ? (['screen.task'] as const) : [])]);
     return {
       tools: offered.filter((tool) => members.has(tool)),
       groups: withScreen ? ['time', 'routine', 'screen'] : ['time', 'routine'],
     };
+  }
+  // Asked to build a routine and nothing else named (no routine synced): the
+  // draft, the screen agent beside it ("do it now"), and the phone's tools.
+  if (named.length === 0 && offered.includes('routine.draft')) {
+    const withScreen = offered.includes('screen.task');
+    const members = new Set<ToolName>(['routine.draft', ...GROUPS.phone, ...(withScreen ? (['screen.task'] as const) : [])]);
+    return { tools: offered.filter((tool) => members.has(tool)), groups: withScreen ? ['phone', 'routine', 'screen'] : ['phone', 'routine'] };
   }
   // The screen agent named and nothing else: it, and the phone's tools
   // ("תפתח את פיד" may still mean only opening the app).
@@ -252,13 +261,15 @@ export function selectTools(
     if (available.filter((tool) => !RIDE_ALONG.has(tool)).length * 2 <= size) return full;
     for (const tool of available) members.add(tool);
   }
-  // The screen agent, when offered, rides along and is named in the selection.
-  return { tools: offered.filter((tool) => members.has(tool)), groups: members.has('screen.task') ? [...groups, 'screen'] : groups };
+  // The screen agent and a routine draft, when offered, ride along and are named in the selection.
+  const labelled: GroupName[] = [...groups, ...(members.has('routine.draft') ? (['routine'] as const) : []), ...(members.has('screen.task') ? (['screen'] as const) : [])];
+  return { tools: offered.filter((tool) => members.has(tool)), groups: labelled };
 }
 
 /** Tools offered only when named or linked: they ride along in any selection. */
 const RIDE_ALONG: ReadonlySet<ToolName> = new Set<ToolName>([
   'routine.run',
+  'routine.draft',
   'screen.task',
   'web.read',
   'reminders.when',

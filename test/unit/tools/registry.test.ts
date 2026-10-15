@@ -26,6 +26,7 @@ import { birthdaysUpcoming } from '../../../src/tools/birthdays.js';
 import { mailBills } from '../../../src/tools/bills.js';
 import { routineRun } from '../../../src/tools/routines.js';
 import { screenTask } from '../../../src/tools/screen.js';
+import { routineDraft } from '../../../src/tools/routine-draft.js';
 import { webRead } from '../../../src/tools/web-read.js';
 import { remindersWhen } from '../../../src/tools/watch.js';
 import { mailFollowUp } from '../../../src/tools/followup.js';
@@ -57,6 +58,7 @@ const IMPLEMENTATIONS: Record<string, ToolDefinition> = {
   'mail.bills': mailBills,
   'routine.run': routineRun,
   'screen.task': screenTask,
+  'routine.draft': routineDraft,
   'web.read': webRead,
   'reminders.when': remindersWhen,
   'mail.follow_up': mailFollowUp,

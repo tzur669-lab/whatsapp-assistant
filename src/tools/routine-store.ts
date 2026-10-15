@@ -63,6 +63,12 @@ export type RoutineName = {
   appLabel: string;
   /** Its place in the phone's list, from 1 (`names` only; 2026-10-12). */
   number?: number;
+  /**
+   * One attended full run passed for these steps (docs/plans/routine-builder.md).
+   * A recorded or model-drafted routine is synced untested and is never
+   * scheduled. Absent in a sync: tested; `names` always sets it.
+   */
+  tested?: boolean;
 };
 
 export type Run = {
@@ -102,7 +108,7 @@ export class RoutineStore {
     return this.sql
       .exec(
         // The phone's order; a row from before 0029 (no position yet) last.
-        `SELECT routine_id, name, step_hash, app_label FROM routine_names WHERE principal = ?
+        `SELECT routine_id, name, step_hash, app_label, tested FROM routine_names WHERE principal = ?
          ORDER BY position IS NULL, position, name LIMIT ?`,
         principal,
         MAX_ROUTINES,
@@ -113,6 +119,7 @@ export class RoutineStore {
         stepHash: String(row['step_hash']),
         appLabel: String(row['app_label']),
         number: index + 1,
+        tested: Number(row['tested'] ?? 1) !== 0,
       }));
   }
 
@@ -127,14 +134,15 @@ export class RoutineStore {
       this.sql.exec(`DELETE FROM routine_names WHERE principal = ?`, principal);
       list.slice(0, MAX_ROUTINES).forEach((item, position) => {
         this.sql.exec(
-          `INSERT OR REPLACE INTO routine_names (principal, routine_id, name, step_hash, app_label, position, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?)`,
+          `INSERT OR REPLACE INTO routine_names (principal, routine_id, name, step_hash, app_label, position, tested, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
           principal,
           item.routineId,
           item.name,
           item.stepHash,
           item.appLabel,
           position,
+          item.tested === false ? 0 : 1,
           now,
         );
       });

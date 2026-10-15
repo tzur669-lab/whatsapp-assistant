@@ -68,6 +68,7 @@ import {
   timerSetSlots,
   routineRunSlots,
   screenTaskSlots,
+  routineDraftSlots,
 } from '../nlu/slot-schemas.js';
 
 export const TOOL_NAMES = [
@@ -144,6 +145,10 @@ export const TOOL_NAMES = [
   // The screen agent (PLAN §6.28, 2026-10-12): one task inside one app the
   // user turned on, the phone's screen read as text. Offered only when named.
   'screen.task',
+  // The bot builds a routine draft (docs/plans/routine-builder.md, 2026-10-15):
+  // from the user's words and the app's first screen, saved only on the phone.
+  // Offered only when the words ask to build a routine and the app can.
+  'routine.draft',
   // Block J, J3 (2026-10-13): one public page the message links to. Offered
   // only when the message holds exactly one https link.
   'web.read',
@@ -347,6 +352,22 @@ export const REGISTRY: Readonly<Record<ToolName, ToolSpec>> = {
     draftSchema: screenTaskSlots,
     refusesTainted: true,
     // It acts inside another app: the request is confirmed first, always.
+    tier: 2,
+    scopes: [],
+    rateLimit: { perHour: 10, perDay: 10 },
+    implementedIn: 6,
+  },
+  'routine.draft': {
+    name: 'routine.draft',
+    // The goal, the words and the texts to type are the user's own, and the
+    // draft comes from their screen: nothing here returns to any model.
+    dataSource: 'private',
+    private: true,
+    llmDescription:
+      "Build a routine draft for the user to review and save on the phone: steps inside one phone app the user turned on for the screen agent, drafted from their words and the app's first screen. Nothing runs now. For \"build/create a routine\" (תבנה/תיצור שגרה), never for doing the task now (that is screen.task). app: the phone app, as named. goal: what the routine should do, in the user's words. words: every exact button name or screen text the user named, copied from the message. inputs: every exact text to type, copied from the message. Example: \"תבנה שגרה: באפליקציית הנוכחות ללחוץ כניסה\" is app \"נוכחות\", goal \"ללחוץ כניסה\", words [\"כניסה\"], inputs [].",
+    draftSchema: routineDraftSlots,
+    refusesTainted: true,
+    // It opens another app and reads its screen: confirmed first, always.
     tier: 2,
     scopes: [],
     rateLimit: { perHour: 10, perDay: 10 },

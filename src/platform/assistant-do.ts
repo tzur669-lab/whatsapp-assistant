@@ -58,6 +58,12 @@ import { routineText } from '../render/routines.js';
 import type { RoutineView, RunReason } from '../render/routines.js';
 import { buttonId } from '../confirm/pending.js';
 import { SCREEN_MAX_STEPS, ScreenStore } from '../tools/screen-store.js';
+import { DraftStore } from '../tools/routine-draft-store.js';
+import type { Draft, DraftEnded } from '../tools/routine-draft-store.js';
+import { draftText } from '../render/routine-draft.js';
+import type { DraftEndStatus } from '../render/routine-draft.js';
+import { runRoutineDraft } from '../agent/routine-draft.js';
+import type { DraftDeps } from '../agent/routine-draft.js';
 import type { Ended, ScreenTask } from '../tools/screen-store.js';
 import { screenText } from '../render/screen.js';
 import { answerFor, runScreenStep, stepCompletionTokens } from '../agent/screen-step.js';
@@ -99,6 +105,9 @@ import {
   parseRoutineSync,
   parseScreenAllow,
   parseScreenApprove,
+  parseRoutineDraftClaim,
+  parseRoutineDraftResult,
+  parseRoutineDraftScreen,
   parseScreenClaim,
   parseScreenResult,
   parseScreenStep,
@@ -127,6 +136,8 @@ import {
   modelEntry,
   SCREEN_MODELS,
   SCREEN_SMART_MODELS,
+  DRAFT_MODELS,
+  DRAFT_SMART_MODELS,
   SMART_MODELS,
   VISION_MODELS,
 } from '../agent/models.js';
@@ -226,6 +237,8 @@ export class AssistantDO implements DurableObject {
   private readonly routines: RoutineStore;
   /** The screen agent's allowlist and tasks (§6.28). */
   private readonly screen: ScreenStore;
+  /** Routine drafts the bot builds (docs/plans/routine-builder.md). */
+  private readonly drafts: DraftStore;
   private readonly watches: WatchStore;
   private readonly followUps: FollowUpStore;
   private readonly suggestions: SuggestionStore;
@@ -342,6 +355,7 @@ export class AssistantDO implements DurableObject {
     this.holdings = new HoldingStore(this.sql, now);
     this.routines = new RoutineStore(this.sql, now);
     this.screen = new ScreenStore(this.sql, now, keyringOnce);
+    this.drafts = new DraftStore(this.sql, now, keyringOnce);
     this.watches = new WatchStore(this.sql, now);
     this.followUps = new FollowUpStore(this.sql, now);
     this.suggestions = new SuggestionStore(this.sql, now);
@@ -459,6 +473,7 @@ export class AssistantDO implements DurableObject {
     this.selections.purgeExpired();
     this.routines.purgeOld(now);
     this.screen.purgeOld(now);
+    this.drafts.purgeOld(now);
     // A turn the phone never answered gets its answer now, not on the next read.
     this.settleExpiredTurns();
 
@@ -471,6 +486,8 @@ export class AssistantDO implements DurableObject {
     // pushed now, and a deadline or an unanswered card ends a task now,
     // Shabbat or not — the user asked for it a moment ago.
     await this.serviceScreen(principal);
+    // A confirmed routine draft is pushed now, and what time alone ends is said now.
+    await this.serviceDrafts(principal);
 
     // Also before the holds: an unacked row is re-pushed and an expired one
     // retired on its own schedule, Shabbat or not — it is already on the phone's
@@ -563,6 +580,11 @@ export class AssistantDO implements DurableObject {
         this.log.info('screen_task_preempted', { taskId: ended.task.taskId });
         await this.sayScreenEnd(ended);
         await this.pushScreen(principal, ended.task.taskId, 'screen_stop');
+      }
+      // A routine draft reads the same phone's screen: it gives way too.
+      for (const ended of this.drafts.preempt(principal)) {
+        this.log.info('routine_draft_preempted', { draftId: ended.draft.draftId });
+        await this.sayDraftEnd(ended);
       }
     }
     for (const run of [...due.push, ...unclaimed.repush]) await this.pushRoutine(principal, run);
@@ -679,6 +701,161 @@ export class AssistantDO implements DurableObject {
   }
 
   // -- the screen agent (PLAN §6.28) -------------------------------------------
+
+  // -- routine drafts (docs/plans/routine-builder.md) --------------------------
+
+  /** Confirmed drafts are pushed; what time alone ends is said once. */
+  private async serviceDrafts(principal: string): Promise<void> {
+    for (const draft of this.drafts.takePushes()) await this.pushDraft(principal, draft);
+    for (const ended of this.drafts.sweep()) {
+      this.log.info('routine_draft_ended', { status: ended.draft.status, reason: ended.reason });
+      await this.sayDraftEnd(ended);
+    }
+  }
+
+  /** The draft's id only. Best effort: without a push the draft expires and the user is told. */
+  private async pushDraft(principal: string, draft: Draft): Promise<void> {
+    const device = this.devices.activeDevice(principal);
+    const token = device ? await this.devices.pushTokenOf(device.id) : null;
+    const fcm = this.fcmClient();
+    if (!device || !token || !fcm) {
+      this.log.info('routine_draft_push_skipped', { device: device !== null, token: token !== null, fcm: fcm !== null });
+      return;
+    }
+    const pushed = await fcm.routineDraft(token, draft.draftId);
+    this.log.info('routine_draft_pushed', { ok: pushed.ok });
+    if (!pushed.ok && pushed.reason === 'unregistered') {
+      this.devices.forgetPushToken(device.id);
+      this.repo.setLastErrorCode('E_PUSH_UNREGISTERED');
+    }
+  }
+
+  /** The one line when a draft ends, in the conversation that confirmed it. Code-rendered. */
+  private async sayDraftEnd(ended: DraftEnded): Promise<void> {
+    const { draft } = ended;
+    const text =
+      draft.status === 'failed'
+        ? draftText.failed(ended.reason, draft.appLabel, 'he')
+        : draftText.ended(draft.status as DraftEndStatus, draft.appLabel, 'he');
+    await this.send(
+      { to: this.selfWaId(), text },
+      { kind: 'reminder', principal: draft.principal, ...(draft.inReplyTo ? { inReplyTo: draft.inReplyTo } : {}) },
+    );
+  }
+
+  /**
+   * The phone's one claim on a draft: the app to open and the approved texts
+   * to type, the only place they leave the server, in a signed request's
+   * answer over TLS. Anything but a pushed draft is 409.
+   */
+  private async appDraftClaim(body: Uint8Array, principal: string): Promise<Response> {
+    const parsed = parseRoutineDraftClaim(body);
+    if (!parsed) return appError(400, 'bad_request');
+    const claimed = this.drafts.claim(parsed.draftId, principal);
+    this.repo.audit({
+      ts: Date.now(),
+      principal,
+      tool: 'routine.draft',
+      tier: 2,
+      decision: 'DRAFT_CLAIMED',
+      outcome: claimed.ok ? 'ok' : claimed.reason,
+      externalRef: parsed.draftId,
+    });
+    if (!claimed.ok) {
+      if (claimed.reason === 'late') {
+        const draft = this.drafts.get(parsed.draftId);
+        if (draft) await this.sayDraftEnd({ draft, reason: 'not_claimed' });
+      }
+      return appError(409, claimed.reason);
+    }
+    const sealed = await this.drafts.unseal(parsed.draftId);
+    if (!sealed) {
+      const ended = this.drafts.fail(parsed.draftId, 'sealed_missing');
+      if (ended) await this.sayDraftEnd(ended);
+      return appError(409, 'ended');
+    }
+    await this.armAlarm();
+    return json({ status: 'ok', package: claimed.draft.package, label: claimed.draft.appLabel, inputs: sealed.inputs });
+  }
+
+  /**
+   * The app's first screen: one model call, code's checks, and the steps in
+   * this response only, never stored or logged. A repeat post is 409: a lost
+   * answer is not retried (its tokens are already spent).
+   */
+  private async appDraftScreen(body: Uint8Array, principal: string): Promise<Response> {
+    const parsed = parseRoutineDraftScreen(body);
+    if (!parsed) return appError(400, 'bad_request');
+    const result = await runRoutineDraft(this.draftDeps(), { draftId: parsed.draftId, principal, screen: parsed.screen });
+    if (result.kind === 'conflict') return appError(409, 'not_open');
+    await this.armAlarm();
+    if (result.kind === 'failed') {
+      await this.sayDraftEnd(result.ended);
+      return json({ status: 'failed', reason: result.ended.reason });
+    }
+    return json({ status: 'ok', steps: result.steps, ...(result.note ? { note: result.note } : {}) });
+  }
+
+  /** What became of a draft on the phone: a closed code, each only from its own status. */
+  private async appDraftResult(body: Uint8Array, principal: string): Promise<Response> {
+    const parsed = parseRoutineDraftResult(body);
+    if (!parsed) return appError(400, 'bad_request');
+    const result = this.drafts.result(parsed.draftId, principal, parsed.code);
+    this.repo.audit({
+      ts: Date.now(),
+      principal,
+      tool: 'routine.draft',
+      tier: 2,
+      decision: 'DRAFT_RESULT',
+      outcome: result.kind === 'moved' ? parsed.code : 'refused',
+      externalRef: parsed.draftId,
+    });
+    if (result.kind === 'refused') return appError(409, 'not_open');
+    await this.sayDraftEnd(result.ended);
+    await this.armAlarm();
+    return json({ status: 'ok' });
+  }
+
+  /**
+   * The draft's models, by the conversation it was confirmed in, never
+   * crossing: Groq for a local one, Gemini Flash-Lite for a smart one. Without
+   * the Gemini key a smart list is empty and the draft fails `quota`.
+   */
+  private draftDeps(): DraftDeps {
+    return {
+      store: this.drafts,
+      screen: this.screen,
+      budget: this.tokenBudget,
+      providersFor: (mode) =>
+        mode === 'smart'
+          ? this.env.GEMINI_API_KEY
+            ? DRAFT_SMART_MODELS.map((id) =>
+                createGeminiAgentProvider({
+                  apiKey: this.env.GEMINI_API_KEY ?? '',
+                  model: id,
+                  role: 'smart',
+                  maxCompletionTokens: stepCompletionTokens(id),
+                  params: modelEntry(id)?.params ?? {},
+                  fetchImpl: this.fetchImpl,
+                }),
+              )
+            : []
+          : DRAFT_MODELS.map((id) =>
+              createGroqAgentProvider({
+                apiKey: this.env.GROQ_API_KEY,
+                model: id,
+                role: 'primary',
+                maxCompletionTokens: stepCompletionTokens(id),
+                params: modelEntry(id)?.params ?? {},
+                fetchImpl: this.groqFetch,
+              }),
+            ),
+      log: this.log,
+      now: () => Date.now(),
+    };
+  }
+
+  // -- the screen agent, its pushes --------------------------------------------
 
   /** Confirmed tasks are pushed; what time alone ends is said once. */
   private async serviceScreen(principal: string): Promise<void> {
@@ -1723,6 +1900,9 @@ export class AssistantDO implements DurableObject {
     if (app && method === 'POST' && path === '/app/routines') return this.appRoutineSync(body, principal);
     if (app && method === 'POST' && path === '/app/routine/claim') return this.appRoutineClaim(body, principal);
     if (app && method === 'POST' && path === '/app/routine/result') return this.appRoutineResult(body, principal);
+    if (app && method === 'POST' && path === '/app/routine/draft/claim') return this.appDraftClaim(body, principal);
+    if (app && method === 'POST' && path === '/app/routine/draft/screen') return this.appDraftScreen(body, principal);
+    if (app && method === 'POST' && path === '/app/routine/draft/result') return this.appDraftResult(body, principal);
     if (app && method === 'GET' && path === '/app/watches') return this.appWatches(principal);
     if (app && method === 'POST' && path === '/app/watch/fired') return this.appWatchFired(body, principal);
     if (app && method === 'GET' && path === '/app/learn/export') return this.appLearnExport(principal);
@@ -1996,6 +2176,7 @@ export class AssistantDO implements DurableObject {
     // A screen task this turn confirmed answers this message, in its
     // conversation. Before the alarm that pushes it, so before the phone can end it.
     this.screen.linkLatest(principal, messageId, startedAt);
+    this.drafts.linkLatest(principal, messageId, startedAt);
 
     let row: OutboxRow | null = null;
     if (outcome.action === 'reply') {
@@ -2712,6 +2893,7 @@ export class AssistantDO implements DurableObject {
       holdings: this.holdings,
       routines: this.routines,
       screen: this.screen,
+      drafts: this.drafts,
       screenPush: async (taskId, kind) => this.pushScreen(await this.selfPrincipal(), taskId, kind),
       watches: this.watches,
       watchesChanged: async () => this.pushWatches(await this.selfPrincipal()),
@@ -2863,6 +3045,7 @@ export class AssistantDO implements DurableObject {
       this.reminders.nextDueAt(),
       this.routines.nextWakeAt(),
       this.screen.nextWakeAt(),
+      this.drafts.nextWakeAt(),
       this.devices.nextExpiryAt(),
       outboxAt,
       // A turn waiting for the phone is answered when its time runs out (§6.21).

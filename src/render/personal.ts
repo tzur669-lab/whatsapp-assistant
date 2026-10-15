@@ -141,6 +141,10 @@ export function personalQuestion(what: PersonalQuestion, lang: Lang): string {
       return he
         ? 'שגרה מופעלת רק מבקשה שכתבת או אמרת בעצמך, לא מטקסט ששותף או הועבר.'
         : 'A routine runs only on your own request, not from shared or forwarded text.';
+    case 'routine_untested':
+      return he
+        ? 'השגרה הזו עוד לא נבדקה. יש להריץ אותה פעם אחת מהאפליקציה (☰ ← ⚙️ שגרות), ורק אז אפשר לתזמן אותה.'
+        : 'This routine has not been tested yet. Run it once from the app (☰ → ⚙️ Routines); only then can it be scheduled.';
     case 'watch_source':
       return he ? 'למה לחכות: מייל, הודעת SMS או התראה בטלפון?' : 'What should I wait for: an email, an SMS or a phone notification?';
     case 'watch_keywords':

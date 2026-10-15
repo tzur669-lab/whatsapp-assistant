@@ -10,6 +10,11 @@ the user's wish of 2026-10-11). Reviewed: plan-review, rounds listed at the end.
    ran. Phone code turns the actions that actually ran into routine steps. The model
    never writes a step, a selector or a text: it only picked elements by index during
    the task, as today. Drafting a routine from words by a model is **out**.
+   *Amended 2026-10-15 (`docs/plans/routine-builder.md`, the user's decision): a model may now draft
+   a routine from the user's words and the app's first screen. Every text in it is an
+   element of the scan named by index or a word the user confirmed on the card, and a
+   drafted or recorded routine is schedulable only after one attended full run of its
+   `stepHash`. This plan's recording path is unchanged.*
 2. **The explanation is code.** The phone writes it from the steps with fixed
    sentences. No model, nothing leaves the phone.
 3. **The draft lives in memory only, 30 minutes** (the user's choice, after review
@@ -154,7 +159,8 @@ in the list. No server change, so no eval.
 - "Save as a routine" from a chat sentence: needs a server tool; the notification and
   list entry cover it. The server's end message is unchanged.
 - "Make it a routine" for an image (`docs/plans/image-input.md`).
-- Drafting from words by a model (declined).
+- Drafting from words by a model (declined). *Amended 2026-10-15: now planned in
+  `docs/plans/routine-builder.md` (the user's decision).*
 - Scroll or back in routines.
 
 ## Prerequisite

@@ -535,6 +535,20 @@ export const screenTaskSlots = z
   })
   .strict();
 
+/**
+ * A routine draft (docs/plans/routine-builder.md): the app as named, the goal
+ * in the user's words, `inputs` (texts to type) and `words` (button or screen
+ * texts the user named) — each copied from the message (code checks they are).
+ */
+export const routineDraftSlots = z
+  .object({
+    app: z.string().min(1).max(40).optional(),
+    goal: z.string().min(1).max(200).optional(),
+    inputs: z.array(z.string().min(1).max(60)).max(3).optional(),
+    words: z.array(z.string().min(1).max(60)).max(5).optional(),
+  })
+  .strict();
+
 export const EXPENSE_CATEGORY_SLOTS = [
   'food',
   'groceries',

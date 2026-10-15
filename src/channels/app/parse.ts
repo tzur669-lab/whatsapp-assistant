@@ -14,6 +14,7 @@ import type { ConversationMode, ImageMimeType } from '../types.js';
 import { MAX_APP_LABEL, MAX_ROUTINE_NAME, MAX_ROUTINES } from '../../tools/routine-store.js';
 import { RUN_REASONS } from '../../render/routines.js';
 import { MAX_SCREEN_APPS, MAX_SCREEN_LABEL } from '../../tools/screen-store.js';
+import { DRAFT_RESULT_CODES } from '../../tools/routine-draft-store.js';
 import { screenSchema, stepReportSchema } from '../../agent/screen-step.js';
 
 /** A client message id: a v4-shaped uuid, lowercase. */
@@ -175,9 +176,10 @@ export type PairRequest = z.infer<typeof pairSchema>;
  * What this build of the app can do. `cards`: runs action cards (§6.20).
  * `device_query`: answers phone reads (§6.21). `file`: saves the file a card
  * carries (2026-10-05). `calls_report`: answers the digest's ask for missed
- * calls (2026-10-06).
+ * calls (2026-10-06). `routine_draft`: builds a routine draft the bot asks
+ * for (docs/plans/routine-builder.md, 2026-10-15).
  */
-export const KNOWN_CAPS = ['cards', 'device_query', 'file', 'calls_report'] as const;
+export const KNOWN_CAPS = ['cards', 'device_query', 'file', 'calls_report', 'routine_draft'] as const;
 export type Cap = (typeof KNOWN_CAPS)[number];
 
 /**
@@ -295,6 +297,8 @@ const routineSyncSchema = z
             name: z.string().trim().min(1).max(MAX_ROUTINE_NAME),
             appLabel: z.string().trim().min(1).max(MAX_APP_LABEL),
             stepHash: z.string().regex(/^[0-9a-f]{64}$/),
+            /** One attended full run passed (docs/plans/routine-builder.md). Absent: tested. */
+            tested: z.boolean().optional(),
           })
           .strict(),
       )
@@ -426,6 +430,32 @@ const screenResultSchema = z
     report: stepReportSchema.optional(),
   })
   .strict();
+
+/**
+ * Routine drafts (docs/plans/routine-builder.md). The claim and the result
+ * name a draft by its opaque id; the result is a closed code. The screen post
+ * carries the app's first screen in the screen step's own schema — raw element
+ * text, in memory for this one request, never stored or logged.
+ */
+const routineDraftClaimSchema = z.object({ draftId: z.string().regex(SCREEN_ID) }).strict();
+
+const routineDraftScreenSchema = z.object({ draftId: z.string().regex(SCREEN_ID), screen: screenSchema }).strict();
+
+const routineDraftResultSchema = z
+  .object({ draftId: z.string().regex(SCREEN_ID), code: z.enum(DRAFT_RESULT_CODES) })
+  .strict();
+
+export function parseRoutineDraftClaim(body: Uint8Array): z.infer<typeof routineDraftClaimSchema> | null {
+  return parseWith(routineDraftClaimSchema, body);
+}
+
+export function parseRoutineDraftScreen(body: Uint8Array): z.infer<typeof routineDraftScreenSchema> | null {
+  return parseWith(routineDraftScreenSchema, body);
+}
+
+export function parseRoutineDraftResult(body: Uint8Array): z.infer<typeof routineDraftResultSchema> | null {
+  return parseWith(routineDraftResultSchema, body);
+}
 
 export function parseScreenAllow(body: Uint8Array): z.infer<typeof screenAllowSchema> | null {
   return parseWith(screenAllowSchema, body);

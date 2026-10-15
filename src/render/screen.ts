@@ -28,7 +28,15 @@ export type ScreenQuestion =
   | 'input_not_said'
   | 'daily_cap'
   | 'routine_soon'
-  | 'busy';
+  | 'busy'
+  /** A routine draft is being built (docs/plans/routine-builder.md): no task or second draft meanwhile. */
+  | 'draft_open'
+  /** `routine.draft`: a routine is due within 15 minutes. */
+  | 'draft_routine_soon'
+  /** `routine.draft`: what the routine should do. */
+  | 'goal'
+  /** `routine.draft`: a button name or screen text not said as is in the message. */
+  | 'word_not_said';
 
 export type ScreenCardView = { appLabel: string; task: string; inputs: readonly string[] };
 
@@ -303,6 +311,20 @@ export const screenText = {
         return he
           ? 'סוכן המסך כבר עובד על משימה. אפשר לעצור אותה, או לחכות שתסתיים.'
           : 'The screen agent is already on a task. Stop it, or wait for it to finish.';
+      case 'draft_open':
+        return he
+          ? 'כבר נבנית טיוטת שגרה. אפשר לבקש שוב כשהיא תסתיים.'
+          : 'A routine draft is being built. Ask again when it is done.';
+      case 'draft_routine_soon':
+        return he
+          ? `שגרה אמורה לרוץ בעוד פחות מ-${isolateLtr('15')} דקות, ולכן טיוטה חדשה לא תיבנה עכשיו.`
+          : 'A routine is due in less than 15 minutes, so a new draft will not be built now.';
+      case 'goal':
+        return he ? 'מה השגרה צריכה לעשות באפליקציה?' : 'What should the routine do in the app?';
+      case 'word_not_said':
+        return he
+          ? 'שם של כפתור או טקסט מהמסך חייב להופיע כמו שהוא בהודעה עצמה. אפשר לכתוב את הבקשה שוב, עם הטקסט המדויק.'
+          : 'A button name or screen text must appear as is in the message itself. Write the request again with the exact text.';
     }
   },
 };

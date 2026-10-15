@@ -58,7 +58,7 @@ const ALL_CAPS = ['cards', 'file', 'device_query'];
 // `routine.run` is offered only when the words name a routine (§6.27, D4), and `screen.task`
 // only when they name the screen agent or one of its apps (§6.28): never on these turns.
 const NO_CONSENT_TOOLS = TOOL_NAMES.filter((name) => {
-  if (name === 'routine.run' || name === 'screen.task' || name === 'web.read' || name === 'reminders.when') return false;
+  if (name === 'routine.run' || name === 'screen.task' || name === 'routine.draft' || name === 'web.read' || name === 'reminders.when') return false;
   const source = dataSourceOf(name);
   return source === 'public' || source === 'private' || consentRuleOf(name) === 'exempt-own-input';
 });

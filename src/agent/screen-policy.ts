@@ -87,6 +87,11 @@ function hasPrefixWord(text: string | undefined, words: readonly string[]): bool
   );
 }
 
+/** A sensitive word in a text with no element behind it: a routine draft's check, typed text or named word. */
+export function hasSensitiveWord(text: string): boolean {
+  return hasPrefixWord(text, SENSITIVE_WORDS);
+}
+
 function hasGenericWord(text: string | undefined): boolean {
   if (text === undefined) return false;
   const normalized = normalizeLabel(text);

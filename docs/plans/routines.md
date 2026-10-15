@@ -8,6 +8,9 @@ The user wants one instruction to run several steps, now or in the future.
 Example: "in 15 minutes open the attendance app (clockok2go2020) and tap כניסה".
 Answers: punch is tap-only (no GPS), phone lock is biometric + PIN, and at
 fire time the user wants **full automatic execution, no tap**.
+*Amended 2026-10-15 (`docs/plans/routine-builder.md`): a routine recorded on the phone or drafted by
+a model runs with no tap only after one attended full run of its steps passed
+(`tested`); until then `routine.run` refuses it.*
 
 Today:
 - Phone actions are closed cards run by `DeviceActions.kt` via intents; cards
@@ -34,6 +37,10 @@ it would need employer credentials in the Worker.
 The server schedules **one action** (`routine.run`) and authorizes **one run**.
 The steps live on the phone, written by the user in the app; never by the
 model, never sent by the server. Screen content never leaves the phone.
+*Amended 2026-10-15 (`docs/plans/routine-builder.md`, PLAN §6.27): steps may also come from phone code
+(a recorded run or a screen task) or a model draft from the user's words and the
+app's first screen, which crosses the server in memory in one response. The user still
+saves every routine on the phone, after a dry run; the server never does.*
 
 ### Phone (apps/call-companion) — app 0.13.0
 1. **`RoutineAccessibilityService`**: restricted at runtime

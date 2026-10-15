@@ -1,7 +1,10 @@
 # Routines — typing (app 0.13.0 → 0.13.1)
 
 Decision (the user, 2026-10-11): a routine may type text, and the text is **fixed in the
-user-built routine** — never from the model or the message. Target case: FID
+user-built routine** — never from the model or the message. *Amended 2026-10-15
+(`docs/plans/routine-builder.md`): a model draft's `TYPE_TEXT` names an approved input by its number —
+a text the user confirmed on the card, found as is in their message; the model never
+writes it.* Target case: FID
 (`cubbbixapps.fid` 139): EditText `display_message` (hint, clickable, editable), search
 ImageButton `button_search` (no text, no description). Routine: `TYPE_TEXT "סטימצקי"` →
 `TAP_ID button_search` → a check on the results (never the typed word itself, see 4).

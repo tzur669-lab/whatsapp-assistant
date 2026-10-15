@@ -194,6 +194,13 @@ export type OfferOptions = {
    * 2026-10-12): only then is `screen.task` offered.
    */
   screen?: boolean;
+  /**
+   * The words ask to build a routine (`namesRoutineBuild`), and the paired
+   * app advertised `routine_draft`: only with both is `routine.draft` offered
+   * (docs/plans/routine-builder.md).
+   */
+  routineBuild?: boolean;
+  routineDraftCap?: boolean;
   /** The message holds exactly one https link (block J, J3): only then is `web.read` offered. */
   webRead?: boolean;
   /** The app channel, and the words say "when … arrives" (block J, J4): only then is `reminders.when` offered. */
@@ -214,6 +221,7 @@ export function agentToolNames(options: OfferOptions = { cards: false }): ToolNa
     if (options.readOnly && (spec.tier !== 0 || spec.phoneRead || spec.confirmation === 'card')) return false;
     if (name === 'routine.run') return options.routines === true;
     if (name === 'screen.task') return options.screen === true;
+    if (name === 'routine.draft') return options.routineBuild === true && options.routineDraftCap === true;
     if (name === 'web.read') return options.webRead === true;
     if (name === 'reminders.when') return options.watch === true;
     if (name === 'mail.follow_up') return options.followUp === true && options.grants?.gmail === true;

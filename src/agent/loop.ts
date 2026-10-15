@@ -174,6 +174,9 @@ export type AgentTurnInput = {
   routines?: boolean;
   /** The message names the screen agent or an app on its list, so `screen.task` is offered (§6.28). */
   screen?: boolean;
+  /** The words ask to build a routine, and the app advertised `routine_draft` (docs/plans/routine-builder.md). */
+  routineBuild?: boolean;
+  routineDraftCap?: boolean;
   /** The message holds exactly one https link, so `web.read` is offered (block J, J3). */
   webRead?: boolean;
   /** The app channel, and the words say "when … arrives": `reminders.when` is offered (block J, J4). */
@@ -395,6 +398,8 @@ export async function runAgentTurn(input: AgentTurnInput, deps: AgentDeps): Prom
     ...(readOnly ? { readOnly } : {}),
     ...(input.routines ? { routines: true } : {}),
     ...(input.screen ? { screen: true } : {}),
+    ...(input.routineBuild ? { routineBuild: true } : {}),
+    ...(input.routineDraftCap ? { routineDraftCap: true } : {}),
     ...(input.webRead ? { webRead: true } : {}),
     ...(input.watch ? { watch: true } : {}),
     ...(input.followUp ? { followUp: true } : {}),

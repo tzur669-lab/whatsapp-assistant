@@ -71,6 +71,8 @@ export const routineRun: ToolDefinition = {
     const found = findRoutine(names, variants);
     if (found === 'none') return ask('routine_unknown');
     if (found === 'many') return ask('routine_ambiguous');
+    // Recorded or drafted, and never run in full while attended: not schedulable.
+    if (found.tested === false) return ask('routine_untested');
 
     const date = slots.success ? (slots.data.date as DateSpec | undefined) : undefined;
     const time = slots.success ? (slots.data.time as TimeSpec | undefined) : undefined;
@@ -116,6 +118,7 @@ export const routineRun: ToolDefinition = {
     if (!current || current.stepHash !== input.stepHash) {
       return { text: routineText.changed(input, ctx.lang) };
     }
+    if (current.tested === false) return { text: personalQuestion('routine_untested', ctx.lang) };
 
     const dueAtUtc = input.now ? ctx.nowMs : input.dueAtUtc;
     const { run } = store.schedule({

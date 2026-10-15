@@ -81,3 +81,55 @@
     slots:
       date: { kind: in_duration, minutes: 15 }
     missing: []
+
+# The bot builds a routine draft (docs/plans/routine-builder.md, 2026-10-15):
+# `routine.draft`, offered only when the words ask to build a routine (the
+# harness offers it as if the app advertised `routine_draft`). Pinned: the
+# tool, and `words` — the button or screen texts the user named, copied from
+# the message. "Do it now" stays the screen agent's.
+
+- id: rd-001
+  now: "2026-10-15T10:00:00+03:00"
+  input: "תבנה שגרה: באפליקציית הנוכחות ללחוץ כניסה"
+  expect:
+    intent: routine.draft
+    slots:
+      words: ["כניסה"]
+    missing: []
+
+- id: rd-002
+  now: "2026-10-15T10:00:00+03:00"
+  input: "תיצור לי שגרה שפותחת את פיד ומחפשת סטימצקי"
+  expect:
+    intent: routine.draft
+    slots:
+      inputs: ["סטימצקי"]
+    missing: []
+
+- id: rd-003
+  now: "2026-10-15T10:00:00+03:00"
+  input: "build a routine in FID that searches for coffee"
+  expect:
+    intent: routine.draft
+    slots:
+      inputs: ["coffee"]
+    missing: []
+
+- id: rd-004
+  now: "2026-10-15T10:00:00+03:00"
+  input: "תבנה שגרה ליציאה מהעבודה: באפליקציית הנוכחות ללחוץ יציאה ולחכות שיופיע נרשמה"
+  expect:
+    intent: routine.draft
+    slots:
+      words: ["יציאה", "נרשמה"]
+    missing: []
+
+# Not a draft: do it now, in the app (the screen agent).
+- id: rd-005
+  now: "2026-10-15T10:00:00+03:00"
+  input: "תחפש עכשיו בפיד סטימצקי, לא צריך שגרה"
+  expect:
+    intent: screen.task
+    slots:
+      inputs: ["סטימצקי"]
+    missing: []

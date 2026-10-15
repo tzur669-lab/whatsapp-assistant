@@ -154,6 +154,8 @@ function startBlocked(ctx: ToolContext): ScreenQuestion | null {
   if (store.countToday(ctx.principal) >= SCREEN_TASKS_PER_DAY) return 'daily_cap';
   const soon = (ctx.routines?.open(ctx.principal) ?? []).some((run) => run.dueAtUtc - ctx.nowMs < SCREEN_ROUTINE_GUARD_MS);
   if (soon) return 'routine_soon';
+  // A routine draft reads the same phone's screen (docs/plans/routine-builder.md).
+  if (ctx.drafts?.active(ctx.principal)) return 'draft_open';
   return null;
 }
 

@@ -5,7 +5,7 @@ system is, where things live, and what breaks easily, then links out. It does
 **not** repeat the rules in `CLAUDE.md` (always loaded) or the spec in
 `PLAN.md` (read by section, never whole).
 
-_Last updated: 2026-10-15 · server at migration 0040 · agent prompt a10 + smart note s2 + screen step s2 · parser prompt v6 · app 0.20.1 on the phone (image attach fix), 0.21.0 built (save a screen task as a routine) · smart model gemini-3.5-flash-lite · vision v1_
+_Last updated: 2026-10-15 · server at migration 0041 · agent prompt a10 + smart note s2 + screen step s2 + routine draft rd1 · parser prompt v6 · app 0.20.1 on the phone (image attach fix), 0.21.0 built (save a screen task as a routine) · smart model gemini-3.5-flash-lite · vision v1_
 
 ## 1. What this is
 
@@ -78,11 +78,11 @@ Full map with every module: [ARCHITECTURE.md](ARCHITECTURE.md).
 | anything a model can read | Pass it through `scrubForModel`; decide **taint** (text someone else wrote → every resulting write CONFIRMs). A `terminal` read or a card still taints through `TAINTING_TOOLS` / `Reply.tainting` (fixed 2026-10-06). A tool whose `resolveAsync` finds someone else's words (a calendar title in `reminders.leave`) sets `ResolveOutcome.tainting`, carried onto the reply (2026-10-06). Private tools (`notes.*`, `lists.*`, `portfolio.*`) never reach the model or history. Facts (`memory.*`) are the opposite on purpose: the model sees them every turn, so `containsPrivateData` must refuse anything it must not see (PLAN §6.26). |
 | `pipeline.ts` return paths, `core/exchanges.ts` | Only turns that reached a model write `last_exchange` (via `respondWithModels` and `resumeFromPhone`); commands, confirmations, answers and the busy reply must not. Never hand `ExchangeLog` to the agent (PLAN §6.23). |
 | time/date logic | Only `src/time/resolve.ts` (forward), `src/time/past-day.ts` (expenses, backward) or the calendar read windows in `src/time/range.ts` (either way, 2026-10-12). DST: next fall-back 2026-10-25. Never default a missing time. |
-| routines (`tools/routine*.ts`, `routine_runs`) | A run moves one way, one conditional `UPDATE` at a time; the claim is the only thing that lets the phone run it, once, on time, with the confirmed step hash. Never retry a claimed run. `routine.run` is offered only when `namesRoutine` says so — never add it to the full catalog. Reason codes are closed on both sides (`RUN_REASONS` ↔ the app's `RoutineRunner`). PLAN §6.27. |
+| routines (`tools/routine*.ts`, `routine_runs`) | A routine is saved only by the user on the phone after a dry run; a recorded or model-drafted one is synced `tested: false` and `routine.run` refuses it until one attended full run (PLAN §6.27, 2026-10-15). `routine.draft` (`routine-draft*.ts`, `agent/routine-draft.ts`): every text in a draft is a scanned element or a confirmed word (`checkDraft`); the steps cross in one response, never stored or logged; each draft status move is one conditional `UPDATE`; offered only with `namesRoutineBuild` and the `routine_draft` cap, never in the full catalog; a prompt change bumps `ROUTINE_DRAFT_PROMPT_VERSION` and is `pnpm eval:screen --draft`. A run moves one way, one conditional `UPDATE` at a time; the claim is the only thing that lets the phone run it, once, on time, with the confirmed step hash. Never retry a claimed run. `routine.run` is offered only when `namesRoutine` says so — never add it to the full catalog. Reason codes are closed on both sides (`RUN_REASONS` ↔ the app's `RoutineRunner`). PLAN §6.27. |
 | the learning journal (`core/learn-store.ts`, `/learn`, block K) | Never give `LearnStore` to the agent or a model. A proposal applies only through a command's own setter, in `answerProposal`'s one transaction; a new `PROPOSAL_KINDS` entry needs its command first (and the migration's CHECK). A new command kind goes into `router.ts` `COMMAND_KINDS` (it fails to compile otherwise), or it would count as a habit. The export only through `scrubForModel` and `fitRecords`' byte cap. A new kind needs a `KIND_SINCE` entry, a `LEARN_NOTICE_VERSION` bump and its notice line (`render/learn.ts`, tested): nothing is collected before its notice is delivered. Every computation reads from `startOf(feature)`, never earlier. Plan `docs/plans/block-k.md` (K1 build notes win). |
 | a migration | Add `migrations/00NN_*.sql` **and** register it in `src/platform/migrations.ts`. Backward-compatible for one version. |
 | the stored-PIN unlock (the app's `UnlockLogic.kt`, `UnlockStore.kt`) | Routines only, never a screen task. The PIN never leaves the phone; the claim comes before the unlock; one attempt until the PIN is saved again. `dispatchGesture` and `GLOBAL_ACTION_LOCK_SCREEN` live only in `press`/`relock` (`UnlockScanTest`). PLAN §6.27. |
-| the screen agent (`tools/screen*.ts`, `agent/screen-*.ts`, the app's `Screen*.kt`) | Read `docs/plans/screen-agent.md` first. The word lists live in code on both sides and must equal `test/fixtures/screen-policy.json` (a test on each side). Every status move is one conditional UPDATE; never retry an action — a `started` journal entry is `uncertain`. Screen text is never stored, logged or put in history, and goes only to the task's family: `SCREEN_MODELS` (Groq) for `mode: 'local'`, `SCREEN_SMART_MODELS` (Gemini) for `'smart'` — the mode rides in the confirmed input and the task row, never re-read from the turn. A Groq model's screen share is `SCREEN_GROQ_DAY_TOKENS`. `screen.task` is offered only when named: never add it to the full catalog. A step prompt change is `pnpm eval:screen`. Phase 3 (a task saved as a routine, app only): the draft stays in memory (`RoutineDrafts`), never in storage, and Save stays gated by a dry run of the same `stepHash`; a new spoil code goes into `RoutineRecording.SPOIL_REASONS` and `spoiledText` (tested). |
+| the screen agent (`tools/screen*.ts`, `agent/screen-*.ts`, the app's `Screen*.kt`) | Read `docs/plans/screen-agent.md` first. The word lists live in code on both sides and must equal `test/fixtures/screen-policy.json` (a test on each side). Every status move is one conditional UPDATE; never retry an action — a `started` journal entry is `uncertain`. Screen text is never stored, logged or put in history, and goes only to the task's family: `SCREEN_MODELS` (Groq) for `mode: 'local'`, `SCREEN_SMART_MODELS` (Gemini) for `'smart'` — the mode rides in the confirmed input and the task row, never re-read from the turn. A Groq model's screen share is `SCREEN_GROQ_DAY_TOKENS` (a routine draft's tokens count against it too). An open routine draft blocks a new task, and a due routine preempts a draft (`DraftStore.preempt`) beside the tasks. `screen.task` is offered only when named: never add it to the full catalog. A step prompt change is `pnpm eval:screen`. Phase 3 (a task saved as a routine, app only): the draft stays in memory (`RoutineDrafts`), never in storage, and Save stays gated by a dry run of the same `stepHash`; a new spoil code goes into `RoutineRecording.SPOIL_REASONS` and `spoiledText` (tested). |
 | images (`vision/read-image.ts`, `handleImage`, `/app/image`) | Read `docs/plans/image-input.md`. The read text goes only through `handleImage`'s synthetic text event (`forwarded: true`): never widen `respondToText` to take the image, never hand `data` past it. `VISION_MODELS` is Gemini only (the user's choice: no Groq vision model on the key), never Gemini Flash (the screen's 20 a day); without the Gemini key images are "not available", never Groq. Only the image goes to it, never the request. `MAX_IMAGE_BYTES` equals `Protocol.MAX_IMAGE_BYTES` in the app. The base64 check is a negated class on purpose (CPU). A prompt change bumps `VISION_PROMPT_VERSION`. |
 | `src/channels/app/parse.ts` or the wire protocol | The app has a matching `Protocol.kt` with test vectors. **Deploy the server before installing a new APK**, or the old server rejects the new app. |
 | a Tier 0–1 write's `execute` that calls Google (or the turn deadline) | The enumeration in `src/agent/limits.ts`: more sequential `GoogleApi.call`s than `MAX_WRITE_CALLS` means raising it, or the lock can expire under a running write. `TURN_DEADLINE_MS` is provisional (M6). |
@@ -110,9 +110,10 @@ Network on the hotspot: `NODE_OPTIONS=--dns-result-order=ipv4first` for wrangler
   (2026-10-11), 0.13.1 is on the phone. App 0.17.0 (2026-10-13, plan
   `docs/plans/routine-auto-unlock.md`): an opted-in routine unlocks a
   PIN-locked phone with a PIN stored on the phone only, then locks it
-  again; 0.17.3 is installed and passed the full run on the phone (2026-10-13). Next, a separate
-  plan: the bot builds a routine on request and explains it (the user's
-  wish, 2026-10-11 — it changes "never written by a model", PLAN §6.27): the
+  again; 0.17.3 is installed and passed the full run on the phone (2026-10-13). The bot
+  building a routine is now its own split plan, `docs/plans/routine-builder.md`
+  (the rule "never written by a model" was amended 2026-10-15, PLAN §6.27; see
+  below): the
   dry run passed on the real attendance app (exit, 2026-10-11). Server
   and app: staging is current (migration 0029); app 0.13.5 (field anchor, Batch 09) is built and waits for its phone check (M4); the phone has 0.13.4. Owed in PLAN §13: a first real
   scheduled run.
@@ -173,6 +174,16 @@ Network on the hotspot: `NODE_OPTIONS=--dns-result-order=ipv4first` for wrangler
   phone check (with `GEMINI_API_KEY` set on staging), the CPU of a full image
   in `wrangler dev`. "Make it a routine" waits for the plan where
   the bot builds a routine.
+- **The bot builds routines** (2026-10-15, plan `docs/plans/routine-builder.md`,
+  split: one part per session; PLAN §6.27 amended): watch me (the phone records
+  the user's taps) and tell the bot (a model drafts from the words and the
+  app's first screen). **Part 1 (server) done**: `routine.draft` (offered only
+  with the build words and the app's `routine_draft` cap), `routine_drafts`
+  (migration 0041), `/app/routine/draft/claim|screen|result`, prompt `rd1` on
+  `DRAFT_MODELS` / `DRAFT_SMART_MODELS`, and `tested` on the routine sync
+  (`routine.run` refuses an untested routine). Next: part 2 (watch me, app
+  0.22.0), then part 3 (tell the bot, app 0.23.0). Owed (PLAN §13):
+  `eval:screen --draft` on qwen and Flash-Lite, the CPU of a screen post.
 - **Block L** (2026-10-15, plan `docs/plans/block-l.md`, reviewed in many
   rounds; WhatsApp reading was removed from it by the user): five ideas from
   the Instinct comparison, L2–L6 in order, one commit each. **L2 done**: mail

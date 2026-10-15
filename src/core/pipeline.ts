@@ -22,6 +22,8 @@ import type { HoldingStore } from '../tools/holding-store.js';
 import type { RoutineStore } from '../tools/routine-store.js';
 import type { ScreenStore } from '../tools/screen-store.js';
 import { namesScreenTask } from '../tools/screen.js';
+import { namesRoutineBuild } from '../tools/routine-draft.js';
+import type { DraftStore } from '../tools/routine-draft-store.js';
 import { screenText } from '../render/screen.js';
 import { buttonId, parseButtonId } from '../confirm/pending.js';
 import { foldForMatch } from '../tools/match.js';
@@ -176,6 +178,8 @@ export type Services = {
   routines?: RoutineStore;
   /** The screen agent's allowlist and tasks (§6.28). */
   screen?: ScreenStore;
+  /** Routine drafts the bot builds (docs/plans/routine-builder.md). */
+  drafts?: DraftStore;
   /** Wakes the phone about a screen task: an approval decided, or the task stopped. */
   screenPush?: (taskId: string, kind: 'screen_release' | 'screen_stop') => Promise<void>;
   pending: PendingActions;
@@ -1223,6 +1227,10 @@ async function respondWithAgent(
           ...(deps.channel === 'app' && deps.services?.screen && namesScreenTask(text, deps.services.screen.allowed(principal))
             ? { screen: true }
             : {}),
+          // Only in the app, when the words ask to build a routine and the app can (docs/plans/routine-builder.md).
+          ...(deps.channel === 'app' && deps.services?.drafts && namesRoutineBuild(text)
+            ? { routineBuild: true, routineDraftCap: (deps.deviceCaps ?? []).includes('routine_draft') }
+            : {}),
         },
         {
           providers: readOnly ? (agent.fallbackProviders ?? []) : [...smartModels, ...agent.providers],
@@ -2135,6 +2143,7 @@ function turnOf(
       ...(services.expenses ? { expenses: services.expenses } : {}),
       ...(services.routines ? { routines: services.routines } : {}),
       ...(services.screen ? { screen: services.screen } : {}),
+      ...(services.drafts ? { drafts: services.drafts } : {}),
       ...(services.screenPush ? { screenPush: services.screenPush } : {}),
       // A smart conversation's own words, with its models here: a screen task
       // confirmed from it stays with Gemini (2026-10-13). Without them the

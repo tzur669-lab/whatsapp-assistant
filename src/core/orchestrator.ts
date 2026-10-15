@@ -31,6 +31,7 @@ import { LIST_TOOLS } from '../tools/lists.js';
 import { PORTFOLIO_TOOLS } from '../tools/portfolio.js';
 import { routineRun } from '../tools/routines.js';
 import { screenTask } from '../tools/screen.js';
+import { routineDraft } from '../tools/routine-draft.js';
 import { screenText } from '../render/screen.js';
 import { routineText } from '../render/routines.js';
 import { MEMORY_TOOLS } from '../tools/memory.js';
@@ -200,6 +201,7 @@ const IMPLEMENTED: Partial<Record<ToolName, ToolDefinition>> = {
   ...PORTFOLIO_TOOLS,
   'routine.run': routineRun,
   'screen.task': screenTask,
+  'routine.draft': routineDraft,
 };
 
 export type RunOptions = {

@@ -2,6 +2,29 @@
 
 Newest first. Read only when you need the history of a change; HANDOFF.md is the entry point.
 
+- 2026-10-15: The bot builds routines, part 1 (server; plan
+  `docs/plans/routine-builder.md`, copied from the reviewed plan with a status
+  table and an opening prompt per part). Migration 0041 (`routine_names.tested`,
+  `routine_drafts`). `routine.draft` (`tools/routine-draft.ts`, Tier 2, private,
+  refuses tainted turns, app only, 10 a day; offered only with
+  `namesRoutineBuild` and the `routine_draft` cap; in the `routine` group, rides
+  along). `DraftStore` (`tools/routine-draft-store.ts`): sealed request, one
+  conditional UPDATE per move, three 10-minute sweeps, its own `preempt`.
+  `agent/routine-draft.ts`: prompt `rd1`, the strict reply union, `checkDraft`
+  (no invented text, the screen policy, `hasSensitiveWord`), `DRAFT_MODELS` /
+  `DRAFT_SMART_MODELS`, tokens on `screen_model_day`. Routes
+  `/app/routine/draft/claim|screen|result`, FCM `routine_draft`, `KNOWN_CAPS`
+  `routine_draft`, `routine_untested`. `screen.task` waits for an open draft.
+  Evals: `eval:agent --filter rd-` on qwen 5/5 (no invented slots 100%);
+  `rt-`/`scr-` on qwen stopped at qwen's daily eval guard, run on
+  gpt-oss-120b instead: rt- 9/9 scored (2 network errors), scr- tool choice
+  8/8 but invented inputs on scr-003/005 (an old gpt-oss weakness; scr-
+  offers are unchanged by this part). `eval:screen --draft`: see PLAN §13
+  (Flash-Lite 6/7, 0 invented texts anywhere; qwen owed). Docs: PLAN §6.27 (rule amended),
+  §6.28, §7, §13, §14; CLAUDE.md inv. 2; ARCHITECTURE; HANDOFF; runbook;
+  dated amendments in routine-from-screen-task.md, routines.md,
+  routines-typing.md, screen-agent.md.
+
 - 2026-10-15: Screen agent phase 3, part 2 (plan
   `docs/plans/routine-from-screen-task.md`), app 0.21.0 (versionCode 40), no
   server change, no deploy. `RoutinesActivity` review mode (by draft id; app

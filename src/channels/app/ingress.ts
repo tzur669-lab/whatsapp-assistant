@@ -71,6 +71,11 @@ export const APP_ROUTES: readonly AppRoute[] = [
   { method: 'POST', pattern: /^\/app\/routines$/, maxBytes: 16_384, contentType: JSON_TYPE, channels: ['app'] },
   { method: 'POST', pattern: /^\/app\/routine\/claim$/, maxBytes: 1_024, contentType: JSON_TYPE, channels: ['app'] },
   { method: 'POST', pattern: /^\/app\/routine\/result$/, maxBytes: 1_024, contentType: JSON_TYPE, channels: ['app'] },
+  // A routine draft (docs/plans/routine-builder.md): the claim and the result
+  // are ids and codes; the screen post is one screen, capped like a step's.
+  { method: 'POST', pattern: /^\/app\/routine\/draft\/claim$/, maxBytes: 1_024, contentType: JSON_TYPE, channels: ['app'] },
+  { method: 'POST', pattern: /^\/app\/routine\/draft\/screen$/, maxBytes: 16_384, contentType: JSON_TYPE, channels: ['app'] },
+  { method: 'POST', pattern: /^\/app\/routine\/draft\/result$/, maxBytes: 1_024, contentType: JSON_TYPE, channels: ['app'] },
   // Event-triggered reminders (block J, J4): the phone's list of watches to
   // match, and a match — a watch id and a time, nothing of the event.
   { method: 'GET', pattern: /^\/app\/watches$/, maxBytes: 0, channels: ['app'] },

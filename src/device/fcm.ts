@@ -105,6 +105,14 @@ export class FcmClient {
   }
 
   /**
+   * A confirmed routine draft (docs/plans/routine-builder.md): its id only.
+   * The phone claims it, reads the app's first screen and asks for the steps.
+   */
+  routineDraft(pushToken: string, draftId: string): Promise<PushResult> {
+    return this.post(pushToken, { kind: 'routine_draft', draft_id: draftId }, ROUTINE_TTL);
+  }
+
+  /**
    * The watch list changed (block J, J4): the phone fetches it again, signed.
    * No ids, no words: only that something changed.
    */

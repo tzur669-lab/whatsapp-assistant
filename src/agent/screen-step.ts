@@ -168,7 +168,7 @@ Reply with exactly one JSON object and nothing else, one of:
 Rules: use only element numbers from the current list, with an action its kind allows: tap a button, type into and submit a field, scroll a list. A text cannot be tapped, and nothing can be typed into a button. If the task needs typing but the list has no field, tap the button that opens the search or the place to type (a search icon, a "from"/"to" box), or find the item itself in a list, scrolling it. Before acting, read the whole list: when the answer is already on the screen, say done. Steps so far are your own past actions: do not repeat one that changed nothing. Never invent text to type. Do not buy, pay, send, delete or confirm anything the task did not ask for; code will ask the user before such taps anyway. Never type an input again once a step says it was typed: submit the field, or go on. If the task cannot be done in this app, fail with off_task. Say "done" only from what the screen shows, never from what you expect.`;
 
 /** What the model is told an element is: the kind decides the actions it takes. */
-function kindOf(el: ScreenElement): string {
+export function kindOf(el: ScreenElement): string {
   return el.f.includes('e')
     ? 'field'
     : el.f.includes('s')
@@ -183,7 +183,7 @@ function kindOf(el: ScreenElement): string {
 }
 
 /** One element as the model reads it: every string scrubbed, never the binding. */
-function elementLine(el: ScreenElement): string {
+export function elementLine(el: ScreenElement): string {
   const parts = [`${el.i}`, kindOf(el)];
   if (el.t !== undefined && el.t.trim() !== '') parts.push(JSON.stringify(clean(el.t)));
   if (el.h !== undefined && el.h.trim() !== '') parts.push(`hint ${JSON.stringify(clean(el.h))}`);

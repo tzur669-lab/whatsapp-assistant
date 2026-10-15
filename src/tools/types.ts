@@ -44,6 +44,7 @@ import type { ContactsClient } from '../google/contacts.js';
 import type { BirthdayStore } from '../core/birthdays.js';
 import type { RoutineStore } from './routine-store.js';
 import type { ScreenStore } from './screen-store.js';
+import type { DraftStore } from './routine-draft-store.js';
 import type { ScreenQuestion } from '../render/screen.js';
 import type { PageText } from '../lookup/web-page.js';
 import type { WatchStore } from './watch-store.js';
@@ -136,6 +137,7 @@ export type PersonalQuestion =
   | 'routine_ambiguous'
   | 'routine_far'
   | 'routine_tainted'
+  | 'routine_untested'
   | 'watch_source'
   | 'watch_keywords'
   | 'watch_text'
@@ -252,6 +254,8 @@ export type ToolContext = {
   routines?: RoutineStore;
   /** The screen agent's allowlist and tasks (§6.28). */
   screen?: ScreenStore;
+  /** Routine drafts the bot builds (docs/plans/routine-builder.md). */
+  drafts?: DraftStore;
   /**
    * The message is a smart conversation's own words and its models are here
    * (2026-10-13): a screen task confirmed from it asks Gemini's screen models,
