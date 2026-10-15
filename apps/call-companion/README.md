@@ -322,6 +322,20 @@ phone is its eyes and hands and has the last word on every action.
 Nothing here logs screen text. **Deploy the server first**: an older one
 answers the new routes with 404 and never sends a `screen` push.
 
+**Save a task as a routine (0.21, plan `docs/plans/routine-from-screen-task.md`).**
+While a task runs, `RoutineRecording` turns each action that ran into a routine
+step (code picks the selector and the text; the model only picked elements). A
+clean finish keeps one draft in memory for 30 minutes (`RoutineDrafts`: never
+stored, sent or logged) and posts a private notification "לשמור כשגרה?"; a task
+that scrolled, went back or could not be recorded posts "can't be saved" with
+the reason. The notification, or the draft at the top of ⚙️ שגרות, opens the
+review screen: the steps (editable), the steps the user approved during the
+task marked, the explanation, and a name. **Save is enabled only after a dry
+run of exactly these steps** (the result carries the steps' hash); any edit
+needs a new one. A saved routine is an ordinary one: run from chat through the
+Tier 2 confirm. Every routine has "מה היא עושה?" — the explanation, built by
+code from the steps (`RoutineLogic.explain`).
+
 ## Watches (0.15, PLAN §6.30)
 
 "כשתגיע הודעת SMS עם המילה חבילה, תזכיר לי לאסוף אותה": the server keeps
@@ -432,7 +446,9 @@ recorder all come from the platform.
   ladder against the server's cap, the EXIF turn; `ProtocolTest` the body-size
   arithmetic.
 - **Matching rules**, for calls (`ContactMatcherTest`), cards (`CardLogicTest`)
-  routines (`RoutineLogicTest`: validation, the step hash, one exact target),
+  routines (`RoutineLogicTest`: validation, the step hash, one exact target,
+  the explanation and the dry-run gate; `RoutineRecordingTest`,
+  `RoutineDraftsTest`: a screen task recorded as a draft),
   the screen agent (`ScreenLogicTest`: elements and caps, the binding, the
   journal's every move; `ScreenPolicyFixtureTest`: the word lists and vectors
   shared with the server),

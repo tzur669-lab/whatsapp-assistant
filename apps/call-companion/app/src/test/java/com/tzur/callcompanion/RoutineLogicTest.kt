@@ -346,4 +346,62 @@ class RoutineLogicTest {
         assertEquals(Outcome.FAILED_BEFORE_TAP, RoutineLogic.failure(0, 1, "target_not_found").outcome)
         assertEquals(Outcome.FAILED_AFTER_TAP, RoutineLogic.failure(1, 2, "not_verified").outcome)
     }
+
+    // -- explain (screen agent phase 3, part 2) --
+
+    @Test fun explainsAVerifyingRoutine() {
+        val lines = RoutineLogic.explain(clockIn)
+        assertEquals(
+            listOf(
+                RoutineLogic.Line.Opens("Clock"),
+                RoutineLogic.Line.Does(1, clockIn.steps[0]),
+                RoutineLogic.Line.Does(2, clockIn.steps[1]),
+                RoutineLogic.Line.Does(3, clockIn.steps[2]),
+                RoutineLogic.Line.EndsChecked(clockIn.steps[2]),
+                RoutineLogic.Line.ConfirmFirst,
+            ),
+            lines,
+        )
+    }
+
+    @Test fun explainsARoutineWithoutACheck() {
+        val search = clockIn.copy(steps = listOf(Step(Kind.TAP_TEXT, "חיפוש"), Step(Kind.TYPE_TEXT, "סטימצקי"), Step(Kind.SUBMIT)))
+        val lines = RoutineLogic.explain(search)
+        assertEquals(RoutineLogic.Line.EndsUnchecked, lines[lines.size - 2])
+        assertEquals(RoutineLogic.Line.ConfirmFirst, lines.last())
+        assertEquals(3, lines.count { it is RoutineLogic.Line.Does })
+    }
+
+    @Test fun theFirstCheckIsTheOneNamed() {
+        val two = clockIn.copy(steps = listOf(Step(Kind.TAP_TEXT, "כניסה"), Step(Kind.EXPECT_DISABLED, "כניסה"), Step(Kind.EXPECT_TEXT, "נקלט")))
+        assertTrue(RoutineLogic.explain(two).contains(RoutineLogic.Line.EndsChecked(two.steps[1])))
+    }
+
+    @Test fun aMarkedStepGetsItsApprovalLineRightAfterIt() {
+        val lines = RoutineLogic.explain(clockIn, marked = setOf(1, 7))
+        val at = lines.indexOf(RoutineLogic.Line.Does(2, clockIn.steps[1]))
+        assertEquals(RoutineLogic.Line.Approved(2), lines[at + 1])
+        // An index past the steps names nothing.
+        assertEquals(1, lines.count { it is RoutineLogic.Line.Approved })
+    }
+
+    @Test fun anUnmarkedRoutineHasNoApprovalLine() {
+        assertFalse(RoutineLogic.explain(clockIn).any { it is RoutineLogic.Line.Approved })
+    }
+
+    @Test fun saveNeedsADryRunOfTheseExactSteps() {
+        val hash = RoutineLogic.stepHash(clockIn)
+        assertTrue(RoutineLogic.dryRunCovers(hash, clockIn))
+        // The name is not part of what runs.
+        assertTrue(RoutineLogic.dryRunCovers(hash, clockIn.copy(name = "אחר")))
+        assertFalse(RoutineLogic.dryRunCovers(null, clockIn))
+        assertFalse(RoutineLogic.dryRunCovers(hash, clockIn.copy(steps = clockIn.steps.drop(1))))
+        assertFalse(RoutineLogic.dryRunCovers(hash, clockIn.copy(packageName = "com.example.other")))
+    }
+
+    @Test fun removingAStepMovesTheLaterMarksUp() {
+        assertEquals(setOf(0, 2), RoutineLogic.marksAfterRemove(setOf(0, 2, 3), 2))
+        assertEquals(setOf(1), RoutineLogic.marksAfterRemove(setOf(2), 0))
+        assertEquals(emptySet<Int>(), RoutineLogic.marksAfterRemove(setOf(1), 1))
+    }
 }

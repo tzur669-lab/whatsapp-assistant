@@ -143,5 +143,27 @@ class RoutineRecording(private val packageName: String, private val inputs: List
     companion object {
         /** The model's `done` (`src/agent/screen-step.ts`): the only end that offers a draft. */
         const val CLEAN_FINISH = "completed_unverified"
+
+        /** Every [Result.Spoiled] reason; each has its own fixed sentence ([spoiledText]). */
+        val SPOIL_REASONS = setOf(
+            "not_accepted", "scrolled", "went_back", "error", "too_long", "no_selector",
+            "password", "typed_differs", "text", "not_field", "no_action", "replayed",
+        )
+
+        /** The "can't be saved as a routine" sentence for [reason]; an unknown code reads as an error. */
+        fun spoiledText(reason: String): Int = when (reason) {
+            "not_accepted" -> R.string.draft_spoiled_not_accepted
+            "scrolled" -> R.string.draft_spoiled_scrolled
+            "went_back" -> R.string.draft_spoiled_went_back
+            "too_long" -> R.string.draft_spoiled_too_long
+            "no_selector" -> R.string.draft_spoiled_no_selector
+            "password" -> R.string.draft_spoiled_password
+            "typed_differs" -> R.string.draft_spoiled_typed_differs
+            "text" -> R.string.draft_spoiled_text
+            "not_field" -> R.string.draft_spoiled_not_field
+            "no_action" -> R.string.draft_spoiled_no_action
+            "replayed" -> R.string.draft_spoiled_replayed
+            else -> R.string.draft_spoiled_error
+        }
     }
 }

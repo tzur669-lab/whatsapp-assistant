@@ -268,4 +268,28 @@ class RoutineRecordingTest {
         assertEquals(RoutineLogic.stepHash(routine), RoutineLogic.stepHash(routine.copy(id = "r2", steps = b.steps)))
         assertTrue(a.steps.filter { it.kind == Kind.TAP_TEXT }.all { it.seconds == RoutineLogic.DEFAULT_SECONDS })
     }
+
+    // -- part 2: every spoil reason has its own sentence --
+
+    private fun source(name: String): String = generateSequence(java.io.File("").absoluteFile) { it.parentFile }
+        .take(6)
+        .map { java.io.File(it, "app/src/main/java/com/tzur/callcompanion/$name") }
+        .plus(generateSequence(java.io.File("").absoluteFile) { it.parentFile }.take(6).map { java.io.File(it, "src/main/java/com/tzur/callcompanion/$name") })
+        .first { it.isFile }
+        .readText()
+
+    @Test fun everySpoilReasonInTheCodeIsListed() {
+        val recorder = source("RoutineRecording.kt").substringBefore("companion object")
+        val actionKinds = setOf("tap", "type", "submit", "wait", "scroll", "back")
+        val used = Regex(""""([a-z_]+)"""").findAll(recorder).map { it.groupValues[1] }.toSet() - actionKinds
+        val fromRun = Regex("""recording\.spoil\("([a-z_]+)"\)""").findAll(source("ScreenRun.kt")).map { it.groupValues[1] }.toSet()
+        assertTrue(fromRun.isNotEmpty())
+        assertEquals(emptySet<String>(), (used + fromRun) - RoutineRecording.SPOIL_REASONS)
+    }
+
+    @Test fun everySpoilReasonHasItsOwnSentence() {
+        val texts = RoutineRecording.SPOIL_REASONS.map { RoutineRecording.spoiledText(it) }
+        assertEquals(RoutineRecording.SPOIL_REASONS.size, texts.toSet().size)
+        assertEquals(R.string.draft_spoiled_error, RoutineRecording.spoiledText("unknown_code"))
+    }
 }

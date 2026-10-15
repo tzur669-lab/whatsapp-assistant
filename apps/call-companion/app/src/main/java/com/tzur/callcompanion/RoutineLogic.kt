@@ -387,6 +387,51 @@ object RoutineLogic {
     /** Where a failure happened and why, as codes. Never screen text. */
     data class Result(val outcome: Outcome, val step: Int = -1, val reason: String = "")
 
+    /**
+     * One line of a routine's explanation (plan `routine-from-screen-task.md`,
+     * "The explanation"): codes only, rendered by the screen with fixed
+     * strings. No model, nothing leaves the phone.
+     */
+    sealed class Line {
+        /** Opens [appLabel] fresh, on its first screen. */
+        data class Opens(val appLabel: String) : Line()
+        /** Step [number] (from 1) does [step]. */
+        data class Does(val number: Int, val step: Step) : Line()
+        /** Step [number] asked for the user's approval during the task; as a routine it will not ask. */
+        data class Approved(val number: Int) : Line()
+        /** Says "done" only if [check] (the first check step) passes. */
+        data class EndsChecked(val check: Step) : Line()
+        /** No check: it will say "tapped", never "done". */
+        object EndsUnchecked : Line()
+        /** Runs only after a confirmation in chat, up to 7 days ahead. */
+        object ConfirmFirst : Line()
+    }
+
+    /** What [routine] does, in order; [marked] are step indexes approved during a screen task. */
+    fun explain(routine: Routine, marked: Set<Int> = emptySet()): List<Line> {
+        val lines = ArrayList<Line>()
+        lines.add(Line.Opens(routine.appLabel))
+        routine.steps.forEachIndexed { index, step ->
+            lines.add(Line.Does(index + 1, step))
+            if (index in marked) lines.add(Line.Approved(index + 1))
+        }
+        val check = routine.steps.firstOrNull { it.isCheck }
+        lines.add(if (check != null) Line.EndsChecked(check) else Line.EndsUnchecked)
+        lines.add(Line.ConfirmFirst)
+        return lines
+    }
+
+    /**
+     * The review screen's Save gate: the last `DRY_RUN_OK` was for exactly
+     * these steps in this app. Any edit changes the hash and needs a new dry run.
+     */
+    fun dryRunCovers(dryOkHash: String?, routine: Routine): Boolean =
+        dryOkHash != null && dryOkHash == stepHash(routine)
+
+    /** The approval marks after step [removed] is taken out: later ones move up by one. */
+    fun marksAfterRemove(marked: Set<Int>, removed: Int): Set<Int> =
+        marked.filter { it != removed }.map { if (it > removed) it - 1 else it }.toSet()
+
     /** The outcome of a run that stopped at [reason] after [tapped] actions. */
     fun failure(tapped: Int, step: Int, reason: String): Result =
         Result(if (tapped > 0) Outcome.FAILED_AFTER_TAP else Outcome.FAILED_BEFORE_TAP, step, reason)

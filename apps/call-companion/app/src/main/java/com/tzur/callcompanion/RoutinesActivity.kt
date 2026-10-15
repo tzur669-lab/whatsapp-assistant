@@ -10,7 +10,9 @@ import android.graphics.drawable.GradientDrawable
 import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
+import android.text.Editable
 import android.text.InputType
+import android.text.TextWatcher
 import android.view.View
 import android.view.ViewGroup
 import android.widget.Button
@@ -26,13 +28,34 @@ import java.util.UUID
  * nothing, and a run now. Opened from the chat's menu. A run's result comes
  * back here through [onNewIntent], since the run leaves this screen for the
  * routine's app.
+ *
+ * Review mode (screen agent phase 3, plan `routine-from-screen-task.md`): a
+ * draft recorded from a screen task, opened by its id. Save is enabled only
+ * after a dry run of exactly the current steps; the working copy lives in
+ * [RoutineDrafts], never in storage, until Save.
  */
 class RoutinesActivity : Activity() {
 
     private lateinit var column: LinearLayout
 
+    // Review mode. The steps live in RoutineDrafts; these survive a recreated activity.
+    private var reviewId: String? = null
+    private var reviewName = ""
+    /** The step hash of the last DRY_RUN_OK while reviewing. */
+    private var dryOkHash: String? = null
+    /** A review dry run left for the app; its result reopens the review. */
+    private var awaitingDry = false
+    private var resultShowing = false
+    private var reviewDialog: AlertDialog? = null
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        savedInstanceState?.let {
+            reviewId = it.getString(STATE_REVIEW_ID)
+            reviewName = it.getString(STATE_REVIEW_NAME).orEmpty()
+            dryOkHash = it.getString(STATE_DRY_HASH)
+            awaitingDry = it.getBoolean(STATE_AWAITING_DRY)
+        }
         window.decorView.layoutDirection = View.LAYOUT_DIRECTION_RTL
         column = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -41,7 +64,7 @@ class RoutinesActivity : Activity() {
         val scroll = ScrollView(this).apply { addView(column) }
         Ui.fitSystemBars(scroll)
         setContentView(scroll)
-        showResult(intent)
+        handleIntent(intent)
     }
 
     override fun onResume() {
@@ -51,7 +74,28 @@ class RoutinesActivity : Activity() {
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
+        handleIntent(intent)
+    }
+
+    override fun onSaveInstanceState(outState: Bundle) {
+        super.onSaveInstanceState(outState)
+        outState.putString(STATE_REVIEW_ID, reviewId)
+        outState.putString(STATE_REVIEW_NAME, reviewName)
+        outState.putString(STATE_DRY_HASH, dryOkHash)
+        outState.putBoolean(STATE_AWAITING_DRY, awaitingDry)
+    }
+
+    override fun onDestroy() {
+        reviewDialog?.dismiss()
+        reviewDialog = null
+        super.onDestroy()
+    }
+
+    private fun handleIntent(intent: Intent?) {
         showResult(intent)
+        val draftId = intent?.getStringExtra(EXTRA_DRAFT_ID) ?: return
+        intent.removeExtra(EXTRA_DRAFT_ID)
+        startReview(draftId)
     }
 
     private fun dp(value: Int): Int = (value * resources.displayMetrics.density).toInt()
@@ -70,6 +114,7 @@ class RoutinesActivity : Activity() {
         }
 
         column.addView(heading(getString(R.string.routines_list_title), 18f))
+        RoutineDrafts.shared.current()?.let { column.addView(draftRow(it)) }
         val routines = RoutineStore.all(this)
         if (routines.isEmpty()) column.addView(paragraph(getString(R.string.routines_empty)))
         else column.addView(paragraph(getString(R.string.routines_numbers_note)).apply { textSize = 13f })
@@ -77,6 +122,7 @@ class RoutinesActivity : Activity() {
         routines.forEachIndexed { index, routine -> column.addView(routineRow(routine, index + 1)) }
         if (routines.size < RoutineLogic.MAX_ROUTINES) column.addView(button(getString(R.string.routines_new)) { edit(null) })
         unlockSection()
+        maybeOpenReview()
     }
 
     // --- Unlocking with the stored PIN (0.17) ---
@@ -203,6 +249,7 @@ class RoutinesActivity : Activity() {
         box.addView(runRow)
         val editRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
         editRow.addView(smallButton(getString(R.string.routine_edit)) { edit(routine) })
+        editRow.addView(smallButton(getString(R.string.routine_explain)) { showExplanation(routine) })
         editRow.addView(smallButton(getString(R.string.routine_delete)) { confirmDelete(routine) })
         box.addView(editRow)
         return LinearLayout(this).apply {
@@ -223,8 +270,9 @@ class RoutinesActivity : Activity() {
             .show()
     }
 
-    private fun run(routine: RoutineLogic.Routine, dryRun: Boolean) {
+    private fun run(routine: RoutineLogic.Routine, dryRun: Boolean, reviewing: Boolean = false) {
         val app = applicationContext
+        val hash = RoutineLogic.stepHash(routine)
         val started = RoutineAccessibilityService.run(routine, dryRun) { result ->
             // Back to this screen with the result; the run left it for the routine's app.
             val back = Intent(app, RoutinesActivity::class.java)
@@ -232,13 +280,17 @@ class RoutinesActivity : Activity() {
                 .putExtra(EXTRA_OUTCOME, result.outcome.name)
                 .putExtra(EXTRA_STEP, result.step)
                 .putExtra(EXTRA_REASON, result.reason)
+                // The steps this result is for: the review's Save gate compares it.
+                .putExtra(EXTRA_HASH, hash)
             app.startActivity(back)
         }
+        if (started && reviewing) awaitingDry = true
         if (!started) {
             AlertDialog.Builder(this)
                 .setMessage(R.string.routines_service_off)
                 .setPositiveButton(R.string.routines_service_open) { _, _ -> openAccessibilitySettings() }
                 .setNegativeButton(R.string.chat_keep, null)
+                .setOnDismissListener { maybeOpenReview() }
                 .show()
         }
     }
@@ -299,7 +351,12 @@ class RoutinesActivity : Activity() {
         val step = intent.getIntExtra(EXTRA_STEP, -1)
         val where = if (step < 0) getString(R.string.routine_where_open) else getString(R.string.routine_where_step, step + 1)
         val reason = reasonText(intent.getStringExtra(EXTRA_REASON).orEmpty())
-        val message = when (outcome) {
+        val forReview = awaitingDry && reviewId != null
+        if (forReview) {
+            awaitingDry = false
+            dryOkHash = if (outcome == RoutineLogic.Outcome.DRY_RUN_OK) intent.getStringExtra(EXTRA_HASH) else null
+        }
+        val base = when (outcome) {
             RoutineLogic.Outcome.VERIFIED -> getString(R.string.routine_result_verified)
             RoutineLogic.Outcome.TAPPED_UNVERIFIED -> getString(R.string.routine_result_unverified)
             RoutineLogic.Outcome.FAILED_BEFORE_TAP -> getString(R.string.routine_result_failed_before, where, reason)
@@ -307,10 +364,17 @@ class RoutinesActivity : Activity() {
             RoutineLogic.Outcome.DRY_RUN_OK -> getString(R.string.routine_result_dry_ok)
             RoutineLogic.Outcome.BLOCKED -> getString(R.string.routine_result_blocked)
         }
+        val failed = outcome == RoutineLogic.Outcome.FAILED_BEFORE_TAP || outcome == RoutineLogic.Outcome.FAILED_AFTER_TAP
+        val message = if (forReview && failed) base + "\n\n" + getString(R.string.draft_dry_failed_note) else base
+        resultShowing = true
         AlertDialog.Builder(this)
             .setTitle(R.string.routine_result_title)
             .setMessage(message)
             .setPositiveButton(android.R.string.ok, null)
+            .setOnDismissListener {
+                resultShowing = false
+                maybeOpenReview()
+            }
             .show()
     }
 
@@ -509,6 +573,291 @@ class RoutinesActivity : Activity() {
             .show()
     }
 
+    // --- Review: a draft recorded from a screen task (phase 3) ---
+
+    private fun startReview(draftId: String) {
+        if (RoutineDrafts.shared.get(draftId) == null) {
+            if (reviewId == draftId) reviewId = null
+            showStale()
+            return
+        }
+        if (draftId != reviewId) {
+            reviewDialog?.dismiss()
+            reviewDialog = null
+            reviewId = draftId
+            reviewName = ""
+            dryOkHash = null
+            awaitingDry = false
+        }
+    }
+
+    /** Opens the review dialog when one is due and nothing else is in the way. */
+    private fun maybeOpenReview() {
+        val id = reviewId ?: return
+        if (awaitingDry || resultShowing || reviewDialog != null || isFinishing) return
+        val draft = RoutineDrafts.shared.get(id)
+        if (draft == null) {
+            reviewId = null
+            showStale()
+            return
+        }
+        review(draft)
+    }
+
+    private fun showStale() {
+        AlertDialog.Builder(this)
+            .setMessage(R.string.draft_stale)
+            .setPositiveButton(android.R.string.ok, null)
+            .show()
+    }
+
+    /** The draft at the top of the list, while it lives. */
+    private fun draftRow(draft: RoutineDrafts.Draft): View {
+        val box = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(12), dp(8), dp(12), dp(8))
+            background = GradientDrawable().apply {
+                cornerRadius = dp(10).toFloat()
+                setColor(Color.rgb(0xE8, 0xF0, 0xFE))
+            }
+        }
+        box.addView(TextView(this).apply {
+            text = getString(R.string.draft_row_title)
+            textSize = 17f
+            setTypeface(typeface, Typeface.BOLD)
+        })
+        box.addView(TextView(this).apply {
+            text = resources.getQuantityString(R.plurals.routine_summary, draft.steps.size, Ui.isolate(draft.appLabel), draft.steps.size)
+            textSize = 14f
+        })
+        val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        row.addView(smallButton(getString(R.string.draft_review)) {
+            startReview(draft.id)
+            maybeOpenReview()
+        })
+        row.addView(smallButton(getString(R.string.draft_discard)) { confirmDiscard(draft.id) })
+        box.addView(row)
+        return LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(0, dp(4), 0, dp(4))
+            addView(box)
+        }
+    }
+
+    private fun confirmDiscard(draftId: String) {
+        AlertDialog.Builder(this)
+            .setTitle(R.string.draft_discard_title)
+            .setPositiveButton(R.string.draft_discard) { _, _ ->
+                RoutineDrafts.shared.drop(draftId)
+                ScreenNotifications.cancelDraft(this)
+                if (reviewId == draftId) {
+                    reviewId = null
+                    reviewDialog?.dismiss()
+                    reviewDialog = null
+                }
+                render()
+            }
+            .setNegativeButton(R.string.chat_keep, null)
+            .show()
+    }
+
+    /**
+     * The editor, pre-filled from [draft]: the app is fixed, the name starts
+     * empty, every edit is kept in [RoutineDrafts] under the draft's id, and
+     * Save waits for a dry run of exactly these steps.
+     */
+    private fun review(draft: RoutineDrafts.Draft) {
+        val id = draft.id
+        val steps = draft.steps.toMutableList()
+        var marked = draft.marked
+
+        val form = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            layoutDirection = View.LAYOUT_DIRECTION_RTL
+            setPadding(dp(20), dp(8), dp(20), dp(8))
+        }
+        form.addView(paragraph(getString(R.string.draft_banner, Ui.isolate(draft.appLabel))).apply {
+            textSize = 14f
+            setTextColor(Color.rgb(0x1A, 0x55, 0xC4))
+        })
+        val name = EditText(this).apply {
+            hint = getString(R.string.routine_name_hint)
+            setText(reviewName)
+            inputType = InputType.TYPE_CLASS_TEXT
+            textDirection = View.TEXT_DIRECTION_ANY_RTL
+        }
+        form.addView(name)
+        form.addView(paragraph(getString(R.string.routine_app_chosen, Ui.isolate(draft.appLabel))))
+        form.addView(heading(getString(R.string.routine_steps_title), 16f))
+        val stepList = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        form.addView(stepList)
+        val addButton = button(getString(R.string.routine_add_step)) {}
+        form.addView(addButton)
+        form.addView(heading(getString(R.string.routine_explain_title), 16f))
+        val explanation = paragraph("").apply { textSize = 14f }
+        form.addView(explanation)
+        val dryStatus = paragraph("").apply {
+            textSize = 14f
+            setTypeface(typeface, Typeface.BOLD)
+        }
+        form.addView(dryStatus)
+        form.addView(button(getString(R.string.draft_discard)) { confirmDiscard(id) })
+
+        val dialog = AlertDialog.Builder(this)
+            .setTitle(R.string.draft_review_title)
+            .setView(ScrollView(this).apply { addView(form) })
+            .setPositiveButton(R.string.button_save, null)
+            .setNeutralButton(R.string.routine_dry, null)
+            .setNegativeButton(R.string.draft_later, null)
+            .create()
+
+        fun current() = RoutineLogic.Routine(
+            id = id,
+            name = reviewName.trim(),
+            packageName = draft.packageName,
+            appLabel = draft.appLabel,
+            steps = steps.toList(),
+        )
+
+        fun refresh() {
+            stepList.removeAllViews()
+            steps.forEachIndexed { index, step ->
+                val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+                row.addView(TextView(this).apply {
+                    text = "${index + 1}. ${describe(step)}"
+                    textSize = 14f
+                    textDirection = View.TEXT_DIRECTION_ANY_RTL
+                }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+                row.addView(smallButton(getString(R.string.routine_step_remove)) {
+                    steps.removeAt(index)
+                    marked = RoutineLogic.marksAfterRemove(marked, index)
+                    if (keep(id, steps, marked, dialog)) refresh()
+                })
+                stepList.addView(row)
+                if (index in marked) {
+                    stepList.addView(TextView(this).apply {
+                        text = getString(R.string.draft_marked_step)
+                        textSize = 13f
+                        setTextColor(Color.rgb(0x8A, 0x5A, 0x00))
+                        textDirection = View.TEXT_DIRECTION_RTL
+                    })
+                }
+            }
+            explanation.text = explanationText(current(), marked)
+            val covered = RoutineLogic.dryRunCovers(dryOkHash, current())
+            dryStatus.text = getString(if (covered) R.string.draft_dry_done else R.string.draft_dry_needed)
+            dialog.getButton(AlertDialog.BUTTON_POSITIVE)?.isEnabled = covered
+        }
+
+        name.addTextChangedListener(object : TextWatcher {
+            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) = Unit
+            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) = Unit
+            override fun afterTextChanged(s: Editable?) {
+                reviewName = s?.toString().orEmpty()
+            }
+        })
+        addButton.setOnClickListener {
+            if (steps.size >= RoutineLogic.MAX_STEPS) return@setOnClickListener
+            addStep {
+                steps.add(it)
+                if (keep(id, steps, marked, dialog)) refresh()
+            }
+        }
+        dialog.setOnShowListener {
+            refresh()
+            dialog.getButton(AlertDialog.BUTTON_NEUTRAL).setOnClickListener {
+                // Leaves for the app; the result reopens this review from the draft holder.
+                reviewDialog = null
+                dialog.dismiss()
+                run(current(), dryRun = true, reviewing = true)
+            }
+            dialog.getButton(AlertDialog.BUTTON_NEGATIVE).setOnClickListener {
+                // The draft stays at the top of the list for its 30 minutes.
+                closeReview(dialog)
+            }
+            dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener { saveDraft(id, current(), dialog) }
+        }
+        dialog.setOnCancelListener {
+            reviewId = null
+            reviewDialog = null
+        }
+        reviewDialog = dialog
+        dialog.show()
+    }
+
+    private fun closeReview(dialog: AlertDialog) {
+        reviewId = null
+        reviewDialog = null
+        dialog.dismiss()
+        render()
+    }
+
+    /** Keeps the working copy under [id]. False: the draft is gone, and the review closes. */
+    private fun keep(id: String, steps: List<RoutineLogic.Step>, marked: Set<Int>, dialog: AlertDialog): Boolean {
+        if (RoutineDrafts.shared.update(id, steps, marked)) return true
+        closeReview(dialog)
+        showStale()
+        return false
+    }
+
+    private fun saveDraft(id: String, routine: RoutineLogic.Routine, dialog: AlertDialog) {
+        val problem = RoutineLogic.problem(routine)
+        if (problem != null) {
+            AlertDialog.Builder(this).setMessage(problemText(problem))
+                .setPositiveButton(android.R.string.ok, null).show()
+            return
+        }
+        if (!RoutineLogic.dryRunCovers(dryOkHash, routine)) {
+            AlertDialog.Builder(this).setMessage(R.string.draft_dry_needed)
+                .setPositiveButton(android.R.string.ok, null).show()
+            return
+        }
+        val save = {
+            // Only the draft this screen opened, and only once.
+            val taken = RoutineDrafts.shared.take(id)
+            closeReview(dialog)
+            if (taken == null) {
+                showStale()
+            } else {
+                // A new id: an ordinary routine from here on, the stored-PIN switch off.
+                RoutineStore.save(this, routine.copy(id = UUID.randomUUID().toString()))
+                ScreenNotifications.cancelDraft(this)
+                render()
+            }
+        }
+        if (routine.verifies) {
+            save()
+        } else {
+            AlertDialog.Builder(this)
+                .setMessage(R.string.routine_save_without_verify)
+                .setPositiveButton(R.string.button_save) { _, _ -> save() }
+                .setNegativeButton(R.string.chat_keep, null)
+                .show()
+        }
+    }
+
+    // --- The explanation: code and fixed sentences, nothing leaves the phone ---
+
+    private fun showExplanation(routine: RoutineLogic.Routine) {
+        AlertDialog.Builder(this)
+            .setTitle(R.string.routine_explain_title)
+            .setMessage(explanationText(routine, emptySet()))
+            .setPositiveButton(android.R.string.ok, null)
+            .show()
+    }
+
+    private fun explanationText(routine: RoutineLogic.Routine, marked: Set<Int>): String =
+        RoutineLogic.explain(routine, marked).joinToString("\n") { line ->
+            when (line) {
+                is RoutineLogic.Line.Opens -> getString(R.string.explain_opens, Ui.isolate(line.appLabel))
+                is RoutineLogic.Line.Does -> "${line.number}. ${describe(line.step)}"
+                is RoutineLogic.Line.Approved -> getString(R.string.explain_approved, line.number)
+                is RoutineLogic.Line.EndsChecked -> getString(R.string.explain_ends_checked, describe(line.check))
+                RoutineLogic.Line.EndsUnchecked -> getString(R.string.explain_ends_unchecked)
+                RoutineLogic.Line.ConfirmFirst -> getString(R.string.explain_confirm_first)
+            }
+        }
+
     private fun describe(step: RoutineLogic.Step): String = when (step.kind) {
         RoutineLogic.Kind.WAIT_FOR_TEXT -> getString(R.string.step_wait_for_text, quote(step.value), step.seconds)
         RoutineLogic.Kind.TAP_TEXT -> getString(R.string.step_tap_text, quote(step.value))
@@ -622,11 +971,18 @@ class RoutinesActivity : Activity() {
         setOnClickListener { onClick() }
     }
 
-    private companion object {
-        const val EXTRA_OUTCOME = "routine_outcome"
-        const val EXTRA_STEP = "routine_step"
-        const val EXTRA_REASON = "routine_reason"
-        const val EXTRA_SCAN = "routine_scan"
-        const val EXTRA_SCAN_OK = "routine_scan_ok"
+    companion object {
+        /** Opens review mode for this draft id (the "save as a routine?" notification). */
+        const val EXTRA_DRAFT_ID = "routine_draft_id"
+        private const val EXTRA_OUTCOME = "routine_outcome"
+        private const val EXTRA_STEP = "routine_step"
+        private const val EXTRA_REASON = "routine_reason"
+        private const val EXTRA_HASH = "routine_step_hash"
+        private const val EXTRA_SCAN = "routine_scan"
+        private const val EXTRA_SCAN_OK = "routine_scan_ok"
+        private const val STATE_REVIEW_ID = "review_id"
+        private const val STATE_REVIEW_NAME = "review_name"
+        private const val STATE_DRY_HASH = "review_dry_hash"
+        private const val STATE_AWAITING_DRY = "review_awaiting_dry"
     }
 }

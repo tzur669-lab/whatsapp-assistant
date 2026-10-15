@@ -222,7 +222,7 @@ These decisions amend invariants. Each amendment needs a dated PLAN §14 line an
 - **Inv. 2:** a new data path, the screen. It is scrubbed, capped, always tainted, sent to Groq only, and it is **not** a `DataSource`.
 - **Inv. 3/5:** the model picks an index into a code-built list. The phone resolves the target by its own binding, never by the index.
 - **Inv. 10:** one confirmed task becomes a capped multi-step run on the phone.
-- **PLAN §6.27:** "never written by a model" still holds for routines until phase 3.
+- **PLAN §6.27:** "never written by a model" still holds for routines until phase 3. *Amended 2026-10-15 by phase 3 (`docs/plans/routine-from-screen-task.md`): phone code may write a routine's steps from the actions a confirmed task ran; only the user saves it.*
 
 ## Design
 
@@ -368,7 +368,7 @@ Server statuses: `running`, `awaiting_approval`, `released`, final `stopped`, `p
 
 - **Phase 1, phone (app 0.14.0):** `ScreenLogic.kt`, `Node` + `snapshot()` fields, the service's binding resolution, `scroll()`/`back()`, allowlist in `applyPackages()`, `open(fresh)`, `screenTask(...)` on the one worker; `ScreenAgentRunner.kt`; the allowlist screen (☰ → ⚙️ סוכן מסך); `Protocol.kt` vectors.
 - **Phase 2, server:** migration `0030_screen_tasks.sql`; `src/tools/screen.ts` (`screen.task`, Tier 2, private, `refusesTainted`, offered only when named); `src/agent/screen-step.ts`; routes; `render/screen.ts`; evals `cases.screen.yaml` and `pnpm eval:screen`; CPU time of one `/step`.
-- **Phase 3, "save as a routine":** its own reviewed plan first.
+- **Phase 3, "save as a routine":** built 2026-10-15 (app 0.21.0, phone only), plan `docs/plans/routine-from-screen-task.md`.
 
 ## Verification
 

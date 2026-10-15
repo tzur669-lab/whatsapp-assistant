@@ -376,4 +376,42 @@
     <string name="screen_verdict_sent">ההחלטה נשלחה.</string>
     <string name="screen_verdict_already">כבר הוחלט.</string>
     <string name="screen_verdict_failed">ההחלטה לא נשלחה. אפשר לאשר או לדחות מהצ\'אט.</string>
+
+    <!-- Screen agent phase 3 (0.21): a routine recorded from a screen task. -->
+    <string name="channel_routine_draft">שגרות מתוך משימות מסך</string>
+    <string name="draft_notify_title">לשמור כשגרה?</string>
+    <string name="draft_notify_text">המשימה ב%1$s הסתיימה. אפשר לשמור את מה שבוצע כשגרה ולהפעיל אותה שוב בבקשה אחת.</string>
+    <string name="draft_notify_public">העוזר: טיוטה של שגרה</string>
+    <string name="draft_spoiled_title">את המשימה ב%1$s אי אפשר לשמור כשגרה</string>
+    <string name="draft_spoiled_not_accepted">אחת הפעולות לא התקבלה במסך.</string>
+    <string name="draft_spoiled_scrolled">במשימה הייתה גלילה, ושגרה לא גוללת.</string>
+    <string name="draft_spoiled_went_back">במשימה הייתה חזרה אחורה, ושגרה לא חוזרת אחורה.</string>
+    <string name="draft_spoiled_too_long">יצאו יותר מ־10 שלבים.</string>
+    <string name="draft_spoiled_no_selector">לאחד המקומות שנלחצו אין טקסט או מזהה שמוצאים אותו בוודאות.</string>
+    <string name="draft_spoiled_password">הייתה הקלדה בשדה סיסמה.</string>
+    <string name="draft_spoiled_typed_differs">הטקסט שהופיע בשדה לא היה זהה לטקסט שהוקלד.</string>
+    <string name="draft_spoiled_text">אחד הטקסטים שהוקלדו ריק או ארוך מ־60 תווים.</string>
+    <string name="draft_spoiled_not_field">הלחיצה על &#x2068;Enter&#x2069; לא הייתה באותו שדה שבו הוקלד הטקסט.</string>
+    <string name="draft_spoiled_no_action">במשימה לא בוצעו לחיצה או הקלדה.</string>
+    <string name="draft_spoiled_replayed">חלק מהפעולות בוצעו לפני שהמשימה התחדשה, ולכן ההקלטה לא שלמה.</string>
+    <string name="draft_spoiled_error">תקלה בהקלטה של המשימה.</string>
+    <string name="draft_review_title">שמירה כשגרה</string>
+    <string name="draft_banner">השלבים נבנו מהפעולות שבוצעו במשימה ב%1$s. יש לעבור עליהם, לתת שם, להריץ בדיקה יבשה ואז לשמור. הטיוטה נשמרת רק בזיכרון של הטלפון, ל־30 דקות.</string>
+    <string name="draft_later">אחר כך</string>
+    <string name="draft_review">סקירה ושמירה</string>
+    <string name="draft_discard">מחיקת הטיוטה</string>
+    <string name="draft_discard_title">למחוק את הטיוטה?</string>
+    <string name="draft_row_title">📝 טיוטה מתוך משימת מסך</string>
+    <string name="draft_stale">הטיוטה הזאת כבר לא זמינה: עברו 30 דקות, נוצרה טיוטה חדשה יותר, או שהאפליקציה נסגרה. שום דבר לא נשמר.</string>
+    <string name="draft_marked_step">↑ בזמן המשימה השלב הזה ביקש אישור. בשגרה הוא לא ישאל שוב, וכל הפעלה עדיין מאושרת בצ\'אט.</string>
+    <string name="draft_dry_needed">לפני השמירה צריך בדיקה יבשה של השלבים האלה בדיוק. כל שינוי בשלבים מחייב בדיקה חדשה.</string>
+    <string name="draft_dry_done">✓ הבדיקה היבשה עברה על השלבים האלה. אפשר לשמור.</string>
+    <string name="draft_dry_failed_note">ייתכן שהמשימה התחילה במסך אחר מהמסך הראשון של האפליקציה. שגרה תמיד פותחת את האפליקציה מההתחלה, ולכן אולי צריך להוסיף שלב שמגיע קודם למסך הנכון.</string>
+    <string name="routine_explain">מה היא עושה?</string>
+    <string name="routine_explain_title">מה השגרה עושה</string>
+    <string name="explain_opens">פותחת את %1$s מההתחלה, במסך הראשון שלה.</string>
+    <string name="explain_approved">   ↑ בזמן המשימה שלב %1$d ביקש אישור. בשגרה הוא לא ישאל שוב, וכל הפעלה עדיין מאושרת בצ\'אט.</string>
+    <string name="explain_ends_checked">בסוף היא תדווח שהפעולה בוצעה רק אם הבדיקה עוברת: %1$s.</string>
+    <string name="explain_ends_unchecked">אין בה שלב אימות, ולכן בסוף היא תדווח רק שהשלבים בוצעו, בלי לדעת אם הפעולה נקלטה. כדי לקבל אישור, אפשר להוסיף שלב אימות.</string>
+    <string name="explain_confirm_first">היא פועלת רק אחרי אישור בצ\'אט, ואפשר לתזמן אותה עד 7 ימים קדימה.</string>
 </resources>

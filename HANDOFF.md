@@ -5,7 +5,7 @@ system is, where things live, and what breaks easily, then links out. It does
 **not** repeat the rules in `CLAUDE.md` (always loaded) or the spec in
 `PLAN.md` (read by section, never whole).
 
-_Last updated: 2026-10-15 · server at migration 0040 · agent prompt a10 + smart note s2 + screen step s2 · parser prompt v6 · app 0.20.1 on the phone (image attach fix) · smart model gemini-3.5-flash-lite · vision v1_
+_Last updated: 2026-10-15 · server at migration 0040 · agent prompt a10 + smart note s2 + screen step s2 · parser prompt v6 · app 0.20.1 on the phone (image attach fix), 0.21.0 built (save a screen task as a routine) · smart model gemini-3.5-flash-lite · vision v1_
 
 ## 1. What this is
 
@@ -82,7 +82,7 @@ Full map with every module: [ARCHITECTURE.md](ARCHITECTURE.md).
 | the learning journal (`core/learn-store.ts`, `/learn`, block K) | Never give `LearnStore` to the agent or a model. A proposal applies only through a command's own setter, in `answerProposal`'s one transaction; a new `PROPOSAL_KINDS` entry needs its command first (and the migration's CHECK). A new command kind goes into `router.ts` `COMMAND_KINDS` (it fails to compile otherwise), or it would count as a habit. The export only through `scrubForModel` and `fitRecords`' byte cap. A new kind needs a `KIND_SINCE` entry, a `LEARN_NOTICE_VERSION` bump and its notice line (`render/learn.ts`, tested): nothing is collected before its notice is delivered. Every computation reads from `startOf(feature)`, never earlier. Plan `docs/plans/block-k.md` (K1 build notes win). |
 | a migration | Add `migrations/00NN_*.sql` **and** register it in `src/platform/migrations.ts`. Backward-compatible for one version. |
 | the stored-PIN unlock (the app's `UnlockLogic.kt`, `UnlockStore.kt`) | Routines only, never a screen task. The PIN never leaves the phone; the claim comes before the unlock; one attempt until the PIN is saved again. `dispatchGesture` and `GLOBAL_ACTION_LOCK_SCREEN` live only in `press`/`relock` (`UnlockScanTest`). PLAN §6.27. |
-| the screen agent (`tools/screen*.ts`, `agent/screen-*.ts`, the app's `Screen*.kt`) | Read `docs/plans/screen-agent.md` first. The word lists live in code on both sides and must equal `test/fixtures/screen-policy.json` (a test on each side). Every status move is one conditional UPDATE; never retry an action — a `started` journal entry is `uncertain`. Screen text is never stored, logged or put in history, and goes only to the task's family: `SCREEN_MODELS` (Groq) for `mode: 'local'`, `SCREEN_SMART_MODELS` (Gemini) for `'smart'` — the mode rides in the confirmed input and the task row, never re-read from the turn. A Groq model's screen share is `SCREEN_GROQ_DAY_TOKENS`. `screen.task` is offered only when named: never add it to the full catalog. A step prompt change is `pnpm eval:screen`. |
+| the screen agent (`tools/screen*.ts`, `agent/screen-*.ts`, the app's `Screen*.kt`) | Read `docs/plans/screen-agent.md` first. The word lists live in code on both sides and must equal `test/fixtures/screen-policy.json` (a test on each side). Every status move is one conditional UPDATE; never retry an action — a `started` journal entry is `uncertain`. Screen text is never stored, logged or put in history, and goes only to the task's family: `SCREEN_MODELS` (Groq) for `mode: 'local'`, `SCREEN_SMART_MODELS` (Gemini) for `'smart'` — the mode rides in the confirmed input and the task row, never re-read from the turn. A Groq model's screen share is `SCREEN_GROQ_DAY_TOKENS`. `screen.task` is offered only when named: never add it to the full catalog. A step prompt change is `pnpm eval:screen`. Phase 3 (a task saved as a routine, app only): the draft stays in memory (`RoutineDrafts`), never in storage, and Save stays gated by a dry run of the same `stepHash`; a new spoil code goes into `RoutineRecording.SPOIL_REASONS` and `spoiledText` (tested). |
 | images (`vision/read-image.ts`, `handleImage`, `/app/image`) | Read `docs/plans/image-input.md`. The read text goes only through `handleImage`'s synthetic text event (`forwarded: true`): never widen `respondToText` to take the image, never hand `data` past it. `VISION_MODELS` is Gemini only (the user's choice: no Groq vision model on the key), never Gemini Flash (the screen's 20 a day); without the Gemini key images are "not available", never Groq. Only the image goes to it, never the request. `MAX_IMAGE_BYTES` equals `Protocol.MAX_IMAGE_BYTES` in the app. The base64 check is a negated class on purpose (CPU). A prompt change bumps `VISION_PROMPT_VERSION`. |
 | `src/channels/app/parse.ts` or the wire protocol | The app has a matching `Protocol.kt` with test vectors. **Deploy the server before installing a new APK**, or the old server rejects the new app. |
 | a Tier 0–1 write's `execute` that calls Google (or the turn deadline) | The enumeration in `src/agent/limits.ts`: more sequential `GoogleApi.call`s than `MAX_WRITE_CALLS` means raising it, or the lock can expire under a running write. `TURN_DEADLINE_MS` is provisional (M6). |
@@ -135,10 +135,11 @@ Network on the hotspot: `NODE_OPTIONS=--dns-result-order=ipv4first` for wrangler
   deployed 2026-10-12 (9643484a). Owed, in order (PLAN §13): `pnpm eval:screen`
   and `eval:agent --filter scr-` on qwen with a human read, then the 0.14.0
   APK and the phone checks. Phase 3 (save a screen task as a routine, plan
-  `docs/plans/routine-from-screen-task.md`): **part 1 done** (2026-10-15, app
-  only, no version bump): `RoutineRecording`, `RoutineDrafts` (in memory, 30
-  min), capture in `ScreenRun`, `fire`'s type read-back. Next: part 2 (review
-  screen, dry-run gate, notifications, `explain`, APK).
+  `docs/plans/routine-from-screen-task.md`): **built** (2026-10-15, app
+  0.21.0, no server change; APK in Downloads): the recorder, the draft in
+  memory (30 min), the notifications, the review screen with the dry-run
+  `stepHash` gate, and "מה היא עושה?" for every routine. Owed (PLAN §13):
+  the phone check, after M4.
 - **Block J** (2026-10-13, plan `docs/plans/block-j.md`, ROADMAP block J):
   seven free ideas from OpenClaw, J1–J7, one commit each, in order. J1 done
   (a repeated refused call makes the next call text-only, Gemini only). J2

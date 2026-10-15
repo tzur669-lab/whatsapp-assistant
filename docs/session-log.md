@@ -2,6 +2,21 @@
 
 Newest first. Read only when you need the history of a change; HANDOFF.md is the entry point.
 
+- 2026-10-15: Screen agent phase 3, part 2 (plan
+  `docs/plans/routine-from-screen-task.md`), app 0.21.0 (versionCode 40), no
+  server change, no deploy. `RoutinesActivity` review mode (by draft id; app
+  fixed, name empty, working copy kept in `RoutineDrafts` after every edit,
+  marked steps, explanation; Save enabled only by `RoutineLogic.dryRunCovers`
+  — the run's result intent now carries `routine_step_hash`; a stale id saves
+  nothing; a failed review dry run adds the "started on another screen" note),
+  the draft at the top of the list, "מה היא עושה?" on every routine.
+  `ScreenNotifications.showDraft`/`showDraftSpoiled` (private, own channel,
+  one id), posted from `ScreenRun.offerDraft`. `RoutineLogic.explain` (`Line`
+  codes), `marksAfterRemove`; `RoutineRecording.SPOIL_REASONS`/`spoiledText`
+  (a source-scan test pins every code). Docs: PLAN §6.27 amendment, §6.28,
+  §13, §14; screen-agent.md; HANDOFF; ARCHITECTURE; app README. APK
+  `C:\Users\tzur6\Downloads\call-companion-0.21.0.apk`. Owed: the phone check
+  after M4.
 - 2026-10-15: Screen agent phase 3, part 1 (plan
   `docs/plans/routine-from-screen-task.md`): the recorder, app only. New
   `RoutineRecording.kt` (actions that ran → routine steps; selector order

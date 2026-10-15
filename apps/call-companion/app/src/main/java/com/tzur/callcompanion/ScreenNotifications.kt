@@ -20,6 +20,7 @@ import android.os.Build
  *   the lock screen; on Android 12+ its buttons need the phone unlocked
  *   (`setAuthenticationRequired`), and on older versions they open the app.
  * Cancelled on any outcome.
+ * - after a clean finish (phase 3), "save as a routine?" or "can't be saved".
  */
 object ScreenNotifications {
     private const val CHANNEL_APPROVAL = "screen_approval"
@@ -27,6 +28,10 @@ object ScreenNotifications {
     private const val TAG_APPROVAL = "screen"
     private const val TAG_RUNNING = "screen_run"
     private const val RUNNING_ID = 1
+    private const val CHANNEL_DRAFT = "routine_draft"
+    private const val TAG_DRAFT = "routine_draft"
+    /** One draft at a time, so one notification: a newer one replaces it. */
+    private const val DRAFT_ID = 1
 
     const val ACTION_APPROVE = "com.tzur.callcompanion.SCREEN_APPROVE"
     const val ACTION_REJECT = "com.tzur.callcompanion.SCREEN_REJECT"
@@ -146,6 +151,74 @@ object ScreenNotifications {
         val builder = Notification.Action.Builder(null, title, pending)
         if (Build.VERSION.SDK_INT >= 31) builder.setAuthenticationRequired(true)
         return builder.build()
+    }
+
+    // -- phase 3: a routine draft (plan routine-from-screen-task.md, "The user's flow") --
+
+    /**
+     * "Save as a routine?" for the draft [draftId]: opens the routines screen
+     * in review mode. Private on the lock screen: no step text, no app name.
+     */
+    fun showDraft(context: Context, draftId: String, appLabel: String) {
+        if (!canNotify(context)) return
+        ensureDraftChannel(context)
+        val open = PendingIntent.getActivity(
+            context,
+            0,
+            Intent(context, RoutinesActivity::class.java)
+                .setData(Uri.parse("assistant-routine-draft://review/$draftId"))
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+                .putExtra(RoutinesActivity.EXTRA_DRAFT_ID, draftId),
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+        )
+        val notification = Notification.Builder(context, CHANNEL_DRAFT)
+            .setSmallIcon(R.drawable.ic_assistant)
+            .setContentTitle(context.getString(R.string.draft_notify_title))
+            .setContentText(context.getString(R.string.draft_notify_text, Ui.isolate(appLabel)))
+            .setVisibility(Notification.VISIBILITY_PRIVATE)
+            .setPublicVersion(draftPublic(context))
+            .setContentIntent(open)
+            .setAutoCancel(true)
+            .setTimeoutAfter(RoutineDrafts.TTL_MS)
+            .build()
+        context.getSystemService(NotificationManager::class.java).notify(TAG_DRAFT, DRAFT_ID, notification)
+    }
+
+    /** A clean finish that cannot become a routine: one fixed sentence per [reason], no button. */
+    fun showDraftSpoiled(context: Context, appLabel: String, reason: String) {
+        if (!canNotify(context)) return
+        ensureDraftChannel(context)
+        val why = context.getString(RoutineRecording.spoiledText(reason))
+        val notification = Notification.Builder(context, CHANNEL_DRAFT)
+            .setSmallIcon(R.drawable.ic_assistant)
+            .setContentTitle(context.getString(R.string.draft_spoiled_title, Ui.isolate(appLabel)))
+            .setContentText(why)
+            .setStyle(Notification.BigTextStyle().bigText(why))
+            .setVisibility(Notification.VISIBILITY_PRIVATE)
+            .setPublicVersion(draftPublic(context))
+            .setAutoCancel(true)
+            .build()
+        context.getSystemService(NotificationManager::class.java).notify(TAG_DRAFT, DRAFT_ID, notification)
+    }
+
+    /** The draft is saved or discarded: its notification goes too. */
+    fun cancelDraft(context: Context) {
+        context.getSystemService(NotificationManager::class.java).cancel(TAG_DRAFT, DRAFT_ID)
+    }
+
+    private fun draftPublic(context: Context): Notification =
+        Notification.Builder(context, CHANNEL_DRAFT)
+            .setSmallIcon(R.drawable.ic_assistant)
+            .setContentTitle(context.getString(R.string.draft_notify_public))
+            .build()
+
+    private fun ensureDraftChannel(context: Context) {
+        val manager = context.getSystemService(NotificationManager::class.java)
+        if (manager.getNotificationChannel(CHANNEL_DRAFT) == null) {
+            manager.createNotificationChannel(
+                NotificationChannel(CHANNEL_DRAFT, context.getString(R.string.channel_routine_draft), NotificationManager.IMPORTANCE_DEFAULT),
+            )
+        }
     }
 
     private fun openChat(context: Context): PendingIntent = PendingIntent.getActivity(

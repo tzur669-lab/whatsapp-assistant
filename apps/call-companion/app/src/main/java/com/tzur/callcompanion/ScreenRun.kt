@@ -369,13 +369,17 @@ internal class ScreenRun(private val app: Context, private val task: ScreenAgent
 
     /**
      * The server ended the task: a clean finish with a clean recording keeps a
-     * draft in memory (part 2 posts the notifications). Never stored or sent.
+     * draft in memory and says so in a local notification; a spoiled one says
+     * why it can't be saved. Never stored or sent.
      */
     private fun offerDraft(outcome: String) {
         when (val result = recording.finish(outcome)) {
-            is RoutineRecording.Result.Draft ->
-                RoutineDrafts.shared.offer(task.packageName, task.label, result.steps, result.marked)
-            is RoutineRecording.Result.Spoiled, RoutineRecording.Result.None -> Unit
+            is RoutineRecording.Result.Draft -> {
+                val id = RoutineDrafts.shared.offer(task.packageName, task.label, result.steps, result.marked)
+                ScreenNotifications.showDraft(app, id, task.label)
+            }
+            is RoutineRecording.Result.Spoiled -> ScreenNotifications.showDraftSpoiled(app, task.label, result.reason)
+            RoutineRecording.Result.None -> Unit
         }
     }
 
