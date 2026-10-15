@@ -1,0 +1,30 @@
+# Mail cleanup cases (block L, L5, 2026-10-15), run by `pnpm eval:agent` only.
+#
+# Kept out of `fingerprintPhrases` on purpose: `mail.archive` is offered only
+# when the words say "archive" (`namesArchive`), so these phrases change
+# nothing any other case is offered. Senders are fake.
+
+- id: ma-001
+  now: "2026-10-15T10:00:00+03:00"
+  input: "תארכב את כל המיילים מאמזון"
+  expect:
+    intent: mail.archive
+    missing: []
+
+- id: ma-002
+  now: "2026-10-15T10:00:00+03:00"
+  input: "תארכב לי את כל הניוזלטרים שישנים יותר משבועיים"
+  expect:
+    intent: mail.archive
+    slots:
+      older_than_days: 14
+    missing: []
+
+- id: ma-003
+  now: "2026-10-15T10:00:00+03:00"
+  input: "archive every email from example-shop older than 30 days"
+  expect:
+    intent: mail.archive
+    slots:
+      older_than_days: 30
+    missing: []

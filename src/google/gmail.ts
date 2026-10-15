@@ -251,6 +251,80 @@ export class GmailClient {
     return { ok: true, value: messages.map(threadMessageOf) };
   }
 
+  /** Whether the grant holds `scope` (block L, L5): false when it cannot tell. */
+  hasScope(scope: string): boolean {
+    return this.api.grantedScopes?.().includes(scope) ?? false;
+  }
+
+  /**
+   * Message ids for a query, one page of at most `max` (≤ 500, Gmail's page
+   * size), and whether there are more (`nextPageToken`): "exactly `max`" and
+   * "more than `max`" are told apart (block L, L5). `labelIds` filters by a
+   * label's immutable id, not its name.
+   */
+  async listIdsBounded(query: string, max: number, labelIds: readonly string[] = []): Promise<GoogleResult<{ ids: string[]; more: boolean }>> {
+    const labels = labelIds.map((id) => `&labelIds=${encodeURIComponent(id)}`).join('');
+    const list = await this.api.call(`${BASE}/messages?q=${encodeURIComponent(query)}&maxResults=${Math.min(max, 500)}${labels}`);
+    if (!list.ok) return list;
+    const value = list.value as { messages?: unknown; nextPageToken?: unknown };
+    const ids = (Array.isArray(value.messages) ? value.messages : []).flatMap((entry: { id?: unknown }) =>
+      typeof entry.id === 'string' ? [entry.id] : [],
+    );
+    return { ok: true, value: { ids: ids.slice(0, max), more: typeof value.nextPageToken === 'string' || ids.length > max } };
+  }
+
+  /** A new user label; its immutable id (block L, L5). */
+  async createLabel(name: string): Promise<GoogleResult<string>> {
+    const result = await this.api.call(`${BASE}/labels`, {
+      method: 'POST',
+      body: JSON.stringify({ name, labelListVisibility: 'labelShow', messageListVisibility: 'show' }),
+    });
+    if (!result.ok) return result;
+    const id = (result.value as { id?: unknown }).id;
+    return typeof id === 'string' ? { ok: true, value: id } : { ok: false, error: { code: 'invalid_response' } };
+  }
+
+  /** A label's current name, by id (`not_found` when it was deleted). */
+  async labelName(id: string): Promise<GoogleResult<string>> {
+    const result = await this.api.call(`${BASE}/labels/${encodeURIComponent(id)}`);
+    if (!result.ok) return result;
+    const name = (result.value as { name?: unknown }).name;
+    return typeof name === 'string' ? { ok: true, value: name } : { ok: false, error: { code: 'invalid_response' } };
+  }
+
+  /** Every user label, id and name (one call): reconciling an uncertain create. */
+  async listLabels(): Promise<GoogleResult<Array<{ id: string; name: string }>>> {
+    const result = await this.api.call(`${BASE}/labels`);
+    if (!result.ok) return result;
+    const labels = (result.value as { labels?: unknown }).labels;
+    if (!Array.isArray(labels)) return { ok: false, error: { code: 'invalid_response' } };
+    return {
+      ok: true,
+      value: labels.flatMap((label: { id?: unknown; name?: unknown }) =>
+        typeof label.id === 'string' && typeof label.name === 'string' ? [{ id: label.id, name: label.name }] : [],
+      ),
+    };
+  }
+
+  /** Delete a label by id. Gone already is success: the state asked for. */
+  async deleteLabel(id: string): Promise<GoogleResult<true>> {
+    const result = await this.api.call(`${BASE}/labels/${encodeURIComponent(id)}`, { method: 'DELETE' });
+    if (!result.ok) return result.error.code === 'not_found' ? { ok: true, value: true } : result;
+    return { ok: true, value: true };
+  }
+
+  /**
+   * Add and remove labels on up to 1,000 messages, one call. Only `INBOX` and
+   * the bot's own `בוט/` labels are ever passed (the ban-list test).
+   */
+  async batchModify(ids: readonly string[], change: { add?: readonly string[]; remove?: readonly string[] }): Promise<GoogleResult<true>> {
+    const result = await this.api.call(`${BASE}/messages/batchModify`, {
+      method: 'POST',
+      body: JSON.stringify({ ids, addLabelIds: change.add ?? [], removeLabelIds: change.remove ?? [] }),
+    });
+    return result.ok ? { ok: true, value: true } : result;
+  }
+
   /** One message's text, for "what does it say". */
   async body(id: string): Promise<GoogleResult<string>> {
     const message = await this.api.call(`${BASE}/messages/${encodeURIComponent(id)}?format=full`);

@@ -57,6 +57,7 @@ object ChatLogic {
         Command("/monthly", "/monthly", "מצב הקובץ החודשי להנהלת חשבונות"),
         Command("/monthly on", "/monthly on", "קובץ הוצאות וחשבונות ב־1 לכל חודש"),
         Command("/monthly off", "/monthly off", "כיבוי הקובץ החודשי"),
+        Command("/unarchive", "/unarchive", "החזרת הארכוב האחרון של מיילים לתיבה, עד 7 ימים"),
         Command("/consents", "/consents", "בשיחה חכמה: הגישות שאושרו, עם ביטול"),
         Command("/birthday", "/birthday", "רשימת ימי ההולדת השמורים"),
         Command("/birthday <שם> <יום.חודש>", "/birthday ", "הוספת יום הולדת, למשל: דנה 14.3"),

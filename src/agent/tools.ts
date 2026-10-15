@@ -202,6 +202,8 @@ export type OfferOptions = {
   followUp?: boolean;
   /** The words ask for the monthly bookkeeping file (block L, L4): only then is `expenses.monthly_pack` offered. */
   monthly?: boolean;
+  /** The words say "archive" (block L, L5): only then is `mail.archive` offered. */
+  archive?: boolean;
 };
 
 export function agentToolNames(options: OfferOptions = { cards: false }): ToolName[] {
@@ -214,6 +216,7 @@ export function agentToolNames(options: OfferOptions = { cards: false }): ToolNa
     if (name === 'reminders.when') return options.watch === true;
     if (name === 'mail.follow_up') return options.followUp === true && options.grants?.gmail === true;
     if (name === 'expenses.monthly_pack') return options.monthly === true && options.cards && options.fileCards === true;
+    if (name === 'mail.archive') return options.archive === true && options.grants?.gmail === true;
     if (name.startsWith('mail.')) return options.grants?.gmail === true;
     if (name.startsWith('tasks.')) return options.grants?.tasks === true;
     if (name.startsWith('drive.')) return options.grants?.drive === true;

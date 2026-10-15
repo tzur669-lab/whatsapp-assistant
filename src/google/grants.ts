@@ -6,6 +6,9 @@
  * New scopes are a security decision (CLAUDE.md); these were approved by the
  * user on 2026-10-01 and recorded in PLAN §14. Nothing here sends mail, and
  * nothing writes to Drive. `contacts` was approved on 2026-10-06.
+ * `gmail.modify` was approved on 2026-10-14 for archiving only (block L, L5):
+ * it could also send, so `test/security/gmail-endpoints.test.ts` holds the
+ * Gmail client to reading, drafts, INBOX and the bot's own labels.
  */
 export const GRANT_NAMES = ['calendar', 'gmail', 'tasks', 'drive', 'contacts'] as const;
 export type GrantName = (typeof GRANT_NAMES)[number];
@@ -31,8 +34,13 @@ export const GRANTS: Readonly<Record<GrantName, GrantSpec>> = {
   },
   gmail: {
     account: 'gmail',
-    // Read, and write drafts. Never send: a draft is sent by the user, in Gmail.
-    scopes: ['https://www.googleapis.com/auth/gmail.readonly', 'https://www.googleapis.com/auth/gmail.compose'],
+    // Read, write drafts, and archive (block L, L5). Never send: a draft is sent
+    // by the user, in Gmail; never delete or trash.
+    scopes: [
+      'https://www.googleapis.com/auth/gmail.readonly',
+      'https://www.googleapis.com/auth/gmail.compose',
+      'https://www.googleapis.com/auth/gmail.modify',
+    ],
     command: 'gmail',
   },
   tasks: {

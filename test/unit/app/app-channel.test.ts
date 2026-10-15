@@ -971,7 +971,8 @@ describe('the app channel', () => {
       const started = await post('/do/oauth/start', { linkId });
       const redirect = new URL(started['redirectUrl']!);
       expect(redirect.searchParams.get('scope')).toBe(
-        'https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/gmail.compose',
+        // gmail.modify since 2026-10-14, for archiving only (block L, L5).
+        'https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/gmail.compose https://www.googleapis.com/auth/gmail.modify',
       );
 
       const finished = await post('/do/oauth/callback', { code: 'fake-code', state: redirect.searchParams.get('state') });

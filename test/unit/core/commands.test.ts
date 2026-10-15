@@ -39,6 +39,7 @@ const INVOCATIONS: Record<Command['kind'], string> = {
   followups: '/followups',
   suggest: '/suggest on',
   monthly: '/monthly on',
+  unarchive: '/unarchive',
   connect_google: '/connect google',
   pair: '/pair',
   digest: '/digest',

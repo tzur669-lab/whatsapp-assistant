@@ -96,6 +96,9 @@ import type { PageText } from '../lookup/web-page.js';
 import { namesWatch } from '../tools/watch.js';
 import { namesFollowUp } from '../tools/followup.js';
 import { namesMonthlyPack } from '../tools/monthly-pack.js';
+import { namesArchive } from '../tools/archive.js';
+import { restoreNewest } from './mail-archive.js';
+import { archiveText } from '../render/archive.js';
 import { watchText } from '../render/watches.js';
 import { followUpText } from '../render/followups.js';
 import { suggestText } from '../render/suggestions.js';
@@ -103,6 +106,7 @@ import { monthlyText } from '../render/monthly.js';
 import type { WatchStore } from '../tools/watch-store.js';
 import type { FollowUpStore } from '../tools/followup-store.js';
 import type { SuggestionStore } from '../tools/suggestion-store.js';
+import type { ArchiveStore } from '../tools/archive-store.js';
 import type { LastSelections } from '../agent/last-selection.js';
 import type { AgentResult, ConsentDecision } from '../agent/loop.js';
 import type { SuspendedTurns } from '../agent/turns.js';
@@ -216,6 +220,8 @@ export type Services = {
   followUps?: FollowUpStore;
   /** Calendar suggestions (block L, L3). */
   suggestions?: SuggestionStore;
+  /** Mail cleanup's batches (block L, L5). */
+  archives?: ArchiveStore;
   /** Reaches the paired phone (§6.17). Absent until calls are configured. */
   calls?: CallDispatcher;
   /** Pairing and unpairing the phone (§6.17). Absent without a device pepper. */
@@ -636,6 +642,13 @@ async function respondToText(
     }
     if (command.kind === 'watches') return watchesCommand(deps);
     if (command.kind === 'followups') return followUpsCommand(deps);
+    if (command.kind === 'unarchive') {
+      const archives = deps.services?.archives;
+      if (!archives) return { action: 'reply', text: archiveText.restore({ kind: 'none' }, 'he') };
+      const outcome = await restoreNewest({ store: archives, gmail: deps.services?.gmail ?? null, principal, nowMs: now });
+      repo.audit({ ts: now, principal, tool: 'mail.archive', tier: 2, decision: 'UNARCHIVE', outcome: outcome.kind });
+      return { action: 'reply', text: archiveText.restore(outcome, 'he') };
+    }
     if (command.kind === 'monthly') {
       if (deps.channel !== 'app') return { action: 'reply', text: personalQuestion('watch_app_only', 'he') };
       if (command.set !== null) repo.setMonthly(command.set);
@@ -1199,6 +1212,8 @@ async function respondWithAgent(
           ...(deps.channel === 'app' && deps.services?.followUps && namesFollowUp(text) ? { followUp: true } : {}),
           // Only when the words ask for the monthly bookkeeping file (block L, L4).
           ...(namesMonthlyPack(text) ? { monthly: true } : {}),
+          // Only when the words say "archive" (block L, L5).
+          ...(deps.services?.archives && namesArchive(text) ? { archive: true } : {}),
           // Only when the words name a synced routine (§6.27, decision D4).
           ...(deps.channel === 'app' && namesRoutine(text, deps.services?.routines, principal) ? { routines: true } : {}),
           // Only when the words name the screen agent or an app on its list (§6.28).
@@ -2100,6 +2115,7 @@ function turnOf(
       ...(services.watchesChanged ? { watchesChanged: services.watchesChanged } : {}),
       ...(services.followUps ? { followUps: services.followUps } : {}),
       ...(services.suggestions ? { suggestions: services.suggestions } : {}),
+      ...(services.archives ? { archives: services.archives } : {}),
       ...(event.location ? { location: event.location } : {}),
       ...(services.tasks ? { tasks: services.tasks } : {}),
       ...(services.gmail ? { gmail: services.gmail } : {}),

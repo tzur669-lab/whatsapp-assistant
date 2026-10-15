@@ -110,6 +110,16 @@ its first lines. On request: `expenses.monthly_pack` ("הקובץ החודשי �
 החשבון"), never in a smart conversation. The CSV lives in
 `pending_actions.input_json` until the card expires (2 h, the cap for any
 card) plus an hour; after that the file is asked for again.
+`/unarchive` (block L, L5) undoes the newest mail archive (`mail.archive`,
+Tier 2, needs `gmail.modify`: after the deploy the user runs `/connect gmail`
+once and the stored scopes must include it). It never moves on to an older
+batch. An archive writes its `mail_archives` row first, fenced for 5 minutes
+(`exec_until`); creates the batch label `בוט/ארכוב-<8 hex>`, labels the
+stored ids, and only then removes INBOX. `/unarchive` restores exactly the
+stored ids still archived under that label id. The hourly tick cleans the
+temporary labels (3 a tick; renamed by the user → kept, one notice; failures
+back off to daily, `label_cleanup_failing` at the tenth). Message ids are
+dropped at 7 days.
 
 **Smart conversations (PLAN §6.19, 2026-10-08).** A conversation is `smart`
 (Gemini first, then qwen) or `local`, fixed by its first message

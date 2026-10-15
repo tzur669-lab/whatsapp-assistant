@@ -49,6 +49,7 @@ import type { PageText } from '../lookup/web-page.js';
 import type { WatchStore } from './watch-store.js';
 import type { FollowUpStore } from './followup-store.js';
 import type { SuggestionStore } from './suggestion-store.js';
+import type { ArchiveStore } from './archive-store.js';
 
 /** One candidate when a description matched more than one thing. */
 export type TargetChoice = { id: string; label: string };
@@ -141,7 +142,10 @@ export type PersonalQuestion =
   | 'watches_full'
   | 'watch_app_only'
   | 'followup_far'
-  | 'followup_not_found';
+  | 'followup_not_found'
+  | 'archive_reconnect'
+  | 'archive_too_many'
+  | 'archive_none';
 
 export type ResolveOutcome = (
   | {
@@ -211,6 +215,8 @@ export type ToolContext = {
   followUps?: FollowUpStore;
   /** Calendar suggestions' rows (the `sg:` buttons, block L, L3). */
   suggestions?: SuggestionStore;
+  /** Mail cleanup's batches (`mail.archive`, block L, L5). */
+  archives?: ArchiveStore;
   /** Google Tasks, once its grant is connected (2026-10-01). */
   tasks?: TasksClient;
   /** Gmail, once its grant is connected (2026-10-01). */

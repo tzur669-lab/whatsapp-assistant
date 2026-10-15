@@ -59,7 +59,7 @@ export const GROUPS: Readonly<Record<GroupName, readonly ToolName[]>> = {
     'portfolio.show',
   ],
   info: ['info.lookup', 'calc.compute', 'web.read'],
-  mail: ['mail.search', 'mail.draft', 'mail.bills', 'mail.follow_up'],
+  mail: ['mail.search', 'mail.draft', 'mail.bills', 'mail.follow_up', 'mail.archive'],
   drive: ['drive.search'],
   phone: [
     'calls.place',
@@ -251,7 +251,8 @@ export function selectTools(
         tool === 'web.read' ||
         tool === 'reminders.when' ||
         tool === 'mail.follow_up' ||
-        tool === 'expenses.monthly_pack',
+        tool === 'expenses.monthly_pack' ||
+        tool === 'mail.archive',
     ),
   );
   for (const group of groups) {

@@ -280,13 +280,19 @@ describe('GoogleStore', () => {
       expect(GRANTS.gmail.scopes).toEqual([
         'https://www.googleapis.com/auth/gmail.readonly',
         'https://www.googleapis.com/auth/gmail.compose',
+        // Approved 2026-10-14 for archiving only (block L, L5; PLAN §14).
+        'https://www.googleapis.com/auth/gmail.modify',
       ]);
       expect(GRANTS.tasks.scopes).toEqual(['https://www.googleapis.com/auth/tasks']);
       expect(GRANTS.drive.scopes).toEqual(['https://www.googleapis.com/auth/drive.metadata.readonly']);
       expect(GRANTS.calendar.scopes).toContain('https://www.googleapis.com/auth/calendar.readonly');
       // Nothing that sends mail, and nothing with write access to Drive.
       const all = Object.values(GRANTS).flatMap((grant) => grant.scopes);
-      expect(all.some((scope) => /gmail\.send|gmail\.modify|mail\.google\.com|auth\/drive$|drive\.file/.test(scope))).toBe(false);
+      expect(all.some((scope) => /gmail\.send|mail\.google\.com|auth\/drive$|drive\.file/.test(scope))).toBe(false);
+      // gmail.modify (archiving, block L, L5; it could also send) only in the Gmail
+      // grant, and the client is held to its endpoints by test/security/gmail-endpoints.test.ts.
+      const modify = Object.entries(GRANTS).filter(([, grant]) => grant.scopes.some((scope) => scope.endsWith('/gmail.modify')));
+      expect(modify.map(([name]) => name)).toEqual(['gmail']);
     });
   });
 

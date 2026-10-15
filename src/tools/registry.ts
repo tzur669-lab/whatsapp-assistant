@@ -51,6 +51,7 @@ import {
   remindersWhenSlots,
   mailFollowUpSlots,
   expensesMonthlyPackSlots,
+  mailArchiveSlots,
   expensesAddSlots,
   expensesSummarySlots,
   expensesExportSlots,
@@ -154,6 +155,9 @@ export const TOOL_NAMES = [
   // Block L, L4 (2026-10-15): last month's expenses and mail bills in one CSV.
   // Offered only when the words ask for it, and never in a smart conversation.
   'expenses.monthly_pack',
+  // Block L, L5 (2026-10-15): archive inbox mail, confirmed; `/unarchive` for
+  // 7 days. Needs gmail.modify. Offered only when the words say "archive".
+  'mail.archive',
 ] as const;
 
 export type ToolName = (typeof TOOL_NAMES)[number];
@@ -807,6 +811,20 @@ export const REGISTRY: Readonly<Record<ToolName, ToolSpec>> = {
     implementedIn: 6,
     confirmation: 'card',
     needsCap: 'file',
+  },
+  'mail.archive': {
+    name: 'mail.archive',
+    // The card counts the user's own mail that matched: mail.
+    dataSource: 'mail',
+    consent: 'always',
+    llmDescription:
+      'Archive emails in the inbox (not delete): by sender, words, or older than N days. At least one of them. The user confirms the exact count first.',
+    draftSchema: mailArchiveSlots,
+    // Up to 50 of the user's emails move: always confirmed, with the count.
+    tier: 2,
+    scopes: [],
+    rateLimit: { perHour: 5, perDay: 20 },
+    implementedIn: 6,
   },
   'drive.search': {
     name: 'drive.search',

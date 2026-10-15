@@ -588,6 +588,18 @@ export const expensesSummarySlots = z
 /** "תייצא לי את ההוצאות לאקסל". Absent period: everything. */
 export const expensesExportSlots = z.object({ period: z.enum(EXPENSE_PERIODS).optional() }).strict();
 
+/**
+ * Mail cleanup (block L, L5): which inbox mail to archive. Code builds the
+ * query from these words; at least one is needed.
+ */
+export const mailArchiveSlots = z
+  .object({
+    sender: z.string().min(1).max(60).optional(),
+    about: z.string().min(1).max(100).optional(),
+    older_than_days: z.number().int().min(1).max(3650).optional(),
+  })
+  .strict();
+
 /** The monthly bookkeeping file (block L, L4): a month 1–12, the latest that ended; absent is last month. */
 export const expensesMonthlyPackSlots = z.object({ month: z.number().int().min(1).max(12).optional() }).strict();
 

@@ -42,6 +42,7 @@ import learnProposals0036 from '../../migrations/0036_learn_proposals.sql';
 import mailFollowups0037 from '../../migrations/0037_mail_followups.sql';
 import suggestions0038 from '../../migrations/0038_suggestions.sql';
 import monthlyExports0039 from '../../migrations/0039_monthly_exports.sql';
+import mailArchives0040 from '../../migrations/0040_mail_archives.sql';
 
 export const MIGRATIONS = [
   { id: 1, sql: init0001 },
@@ -83,4 +84,5 @@ export const MIGRATIONS = [
   { id: 37, sql: mailFollowups0037 },
   { id: 38, sql: suggestions0038 },
   { id: 39, sql: monthlyExports0039 },
+  { id: 40, sql: mailArchives0040 },
 ] as const;

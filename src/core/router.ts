@@ -39,6 +39,8 @@ export type Command =
   | { kind: 'suggest'; set: boolean | null }
   /** `/monthly`, `/monthly on|off`: the monthly bookkeeping file on the 1st (block L, L4). Off by default. */
   | { kind: 'monthly'; set: boolean | null }
+  /** `/unarchive`: undo the newest mail archive, within 7 days (block L, L5). */
+  | { kind: 'unarchive' }
   /** `/learn`, `/learn on|off|forget`: the learning journal (block K, K1, PLAN §6.31). Off by default. */
   | { kind: 'learn'; action: LearnAction }
   /**
@@ -91,6 +93,7 @@ const COMMANDS: ReadonlyArray<readonly [RegExp, Command]> = [
   [/^\/monthly$/i, { kind: 'monthly', set: null }],
   [/^\/monthly\s+on$/i, { kind: 'monthly', set: true }],
   [/^\/monthly\s+off$/i, { kind: 'monthly', set: false }],
+  [/^\/unarchive$/i, { kind: 'unarchive' }],
   [/^\/shabbat$/i, { kind: 'shabbat', set: null }],
   [/^\/shabbat\s+on$/i, { kind: 'shabbat', set: true }],
   [/^\/shabbat\s+off$/i, { kind: 'shabbat', set: false }],
@@ -244,6 +247,7 @@ export const COMMAND_KINDS = [
   'followups',
   'suggest',
   'monthly',
+  'unarchive',
   'learn',
   'leave',
   'connect_google',

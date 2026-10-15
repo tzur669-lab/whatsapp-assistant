@@ -35,6 +35,12 @@ export type GoogleResult<T> = { ok: true; value: T } | { ok: false; error: Googl
  */
 export interface GoogleCaller {
   call(url: string, init?: RequestInit): Promise<GoogleResult<unknown>>;
+  /**
+   * The scopes this grant actually holds, as Google returned them at the last
+   * consent (block L, L5): a user can untick one on the consent screen, so a
+   * tool that needs a scope checks for it rather than assuming.
+   */
+  grantedScopes?(): readonly string[];
 }
 
 /**
@@ -46,6 +52,7 @@ export function withSignal(api: GoogleCaller, signal: AbortSignal): GoogleCaller
   return {
     call: (url, init = { method: 'GET' }) =>
       api.call(url, { ...init, signal: init.signal ? AbortSignal.any([init.signal, signal]) : signal }),
+    ...(api.grantedScopes ? { grantedScopes: () => api.grantedScopes!() } : {}),
   };
 }
 
@@ -64,6 +71,10 @@ export class GoogleApi implements GoogleCaller {
   private accessToken: string | null = null;
   private expiresAt = 0;
   private readonly fetchImpl: typeof fetch;
+
+  grantedScopes(): readonly string[] {
+    return this.config.store.get()?.scopes ?? [];
+  }
 
   constructor(private readonly config: GoogleApiConfig) {
     // Through a closure: Workers' `fetch` called as a method of this object

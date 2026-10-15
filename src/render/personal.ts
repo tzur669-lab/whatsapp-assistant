@@ -155,6 +155,16 @@ export function personalQuestion(what: PersonalQuestion, lang: Lang): string {
       return he ? 'מעקב כזה עובד רק באפליקציה.' : 'A watch like this works only in the app.';
     case 'followup_far':
       return he ? 'אפשר לעקוב אחרי מייל עד חודשיים קדימה.' : 'A mail follow-up can wait up to two months.';
+    case 'archive_reconnect':
+      return he
+        ? `לארכוב צריך לחבר מחדש את ${isolate('Gmail')} ולאשר את כל ההרשאות: ${isolate('/connect gmail')}.`
+        : 'Archiving needs Gmail connected again, with every permission allowed: /connect gmail.';
+    case 'archive_too_many':
+      return he
+        ? 'יש יותר מ־50 מיילים כאלה. אפשר לצמצם: לפי שולח, מילים או תקופה.'
+        : 'More than 50 emails match. Narrow it: by sender, words or age.';
+    case 'archive_none':
+      return he ? 'אין מיילים כאלה בתיבת הדואר הנכנס.' : 'No such emails in the inbox.';
     case 'followup_not_found':
       return he
         ? 'לא מצאתי מייל כזה בדואר היוצא מהחודש האחרון. אפשר לנסות עם מילה מהנושא או שם הנמען.'
