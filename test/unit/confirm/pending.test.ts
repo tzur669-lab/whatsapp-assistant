@@ -262,4 +262,43 @@ describe('action cards (PLAN §6.20)', () => {
     const chat = pending.create({ tool: 'reminders.cancel', input: INPUT, summary: 's', tier: 2, principal: SENDER });
     expect(pending.confirm(chat.id, chat.nonce, SENDER, 'card')).toEqual({ ok: false, reason: 'not_found' });
   });
+
+});
+
+
+describe('PendingActions.supersede (block L, L2: a card re-sent after a lost reply)', () => {
+  let driver: TestSqlDriver;
+  let pending: PendingActions;
+  let now = NOW;
+
+  beforeEach(() => {
+    now = NOW;
+    driver = new TestSqlDriver();
+    new Repository(driver).migrate(MIGRATIONS);
+    pending = new PendingActions(driver, () => now);
+  });
+  afterEach(() => driver.close());
+
+  const create = () => pending.create({ tool: 'mail.draft', input: INPUT, summary: 's', tier: 2, principal: SENDER });
+
+  it('cancels a live action of the same principal, so its old card can no longer run', () => {
+    const action = create();
+    expect(pending.supersede(action.id, SENDER)).toBe(true);
+    expect(pending.confirm(action.id, action.nonce, SENDER)).toEqual({ ok: false, reason: 'not_pending' });
+  });
+
+  it("refuses another principal's action and leaves it live", () => {
+    const action = create();
+    expect(pending.supersede(action.id, OTHER)).toBe(false);
+    expect(pending.confirm(action.id, action.nonce, SENDER).ok).toBe(true);
+  });
+
+  it('reports false for an action already executed or expired: nothing to re-send', () => {
+    const done = create();
+    pending.confirm(done.id, done.nonce, SENDER);
+    expect(pending.supersede(done.id, SENDER)).toBe(false);
+    const stale = create();
+    now += 6 * 60 * 1000;
+    expect(pending.supersede(stale.id, SENDER)).toBe(false);
+  });
 });

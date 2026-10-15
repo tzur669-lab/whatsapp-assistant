@@ -80,6 +80,7 @@ import { DEFAULT_MAX_COMPLETION_TOKENS, modelEntry, SMART_MODELS } from '../../s
 import { selectTools } from '../../src/agent/tool-groups.js';
 import { singleHttpsUrl } from '../../src/lookup/web-page.js';
 import { namesWatch } from '../../src/tools/watch.js';
+import { namesFollowUp } from '../../src/tools/followup.js';
 import { EvalLedger } from './ledger.js';
 import { fingerprintFor, judgingHash, smartFingerprintFor } from './fingerprint.js';
 import type { FingerprintedEntry } from './fingerprint.js';
@@ -204,13 +205,13 @@ const EVAL_SCREEN_APPS: AllowedApp[] = [
   { package: 'com.attendance.app', label: 'נוכחות', askEveryTap: true },
 ];
 
-function offered(routines = false, screen = false, webRead = false, watch = false) {
+function offered(routines = false, screen = false, webRead = false, watch = false, followUp = false) {
   const grants = { gmail: true, tasks: true, drive: true };
   // A typed smart turn that may ask for consent: everything a local turn gets (slice 5; private tools since 2026-10-11).
-  if (smart) return smartOfferedTools(agentToolNames({ cards: true, fileCards: true, phoneReads: true, grants, routines, screen, webRead, watch }), { granted: [], ask: true });
+  if (smart) return smartOfferedTools(agentToolNames({ cards: true, fileCards: true, phoneReads: true, grants, routines, screen, webRead, watch, followUp }), { granted: [], ask: true });
   return readOnly
     ? agentToolNames({ cards: false, phoneReads: false, grants, readOnly: true })
-    : agentToolNames({ cards: true, fileCards: true, phoneReads: true, grants, routines, screen, webRead, watch });
+    : agentToolNames({ cards: true, fileCards: true, phoneReads: true, grants, routines, screen, webRead, watch, followUp });
 }
 
 /** The system prompt the loop sends this kind of turn. */
@@ -414,7 +415,7 @@ function promptLabel(): string {
 /** What the bot would offer this message: the full set, or narrowed by code with `--select-tools`. */
 function toolsFor(input: string): WireTool[] {
   // A smart turn has no selection: the whole smart catalog, as the loop offers it.
-  const tools = offered(namesEvalRoutine(input), namesScreenTask(input, EVAL_SCREEN_APPS), singleHttpsUrl(input) !== null, namesWatch(input));
+  const tools = offered(namesEvalRoutine(input), namesScreenTask(input, EVAL_SCREEN_APPS), singleHttpsUrl(input) !== null, namesWatch(input), namesFollowUp(input));
   if (smart) return wireTools(tools);
   // A local turn offered the full set gets the brief descriptions (block J, J2b).
   const selection = selecting ? selectTools(input, tools) : { tools, groups: [] };
@@ -444,7 +445,7 @@ async function ask(provider: AgentProvider, id: string, messages: AgentMessage[]
   const call = response.toolCalls[0];
   if (!call) return { id, draft: null, text: true, latencyMs, tokens, promptTokens, ...served };
 
-  const tool = fromWireName(call.name, offered(true, true));
+  const tool = fromWireName(call.name, offered(true, true, true, true, true));
   let slots: unknown = {};
   try {
     slots = stripNulls(JSON.parse(call.arguments));
@@ -671,7 +672,7 @@ function loadCases(filter: string | null): EvalCase[] {
   const cases: EvalCase[] = [];
   // The phone actions are scored as an app that runs cards would see them (§6.20).
   // `cases.routines.yaml` and `cases.screen.yaml` are outside the fingerprint (see their headers).
-  for (const file of ['cases.he.yaml', 'cases.en.yaml', 'cases.phone.yaml', 'cases.routines.yaml', 'cases.screen.yaml', 'cases.web.yaml', 'cases.watch.yaml']) {
+  for (const file of ['cases.he.yaml', 'cases.en.yaml', 'cases.phone.yaml', 'cases.routines.yaml', 'cases.screen.yaml', 'cases.web.yaml', 'cases.watch.yaml', 'cases.followup.yaml']) {
     const parsed = parseYaml(readFileSync(`${dir}${file}`, 'utf8')) as EvalCase[] | null;
     if (Array.isArray(parsed)) cases.push(...parsed);
   }

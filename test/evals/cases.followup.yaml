@@ -1,0 +1,34 @@
+# Mail follow-up cases (block L, L2, 2026-10-15), run by `pnpm eval:agent` only.
+#
+# Kept out of `fingerprintPhrases` on purpose: `mail.follow_up` is offered only
+# in the app when the words say "if they don't reply" (`namesFollowUp`), so
+# these phrases change nothing any other case is offered, and the recorded
+# Groq fingerprints stay what was measured. Names and subjects are fake.
+
+- id: fu-001
+  now: "2026-10-15T10:00:00+03:00"
+  input: "תזכיר לי אם לא ענו לי על המייל לדני עד יום חמישי ב-9 בבוקר"
+  expect:
+    intent: mail.follow_up
+    missing: []
+
+- id: fu-002
+  now: "2026-10-15T10:00:00+03:00"
+  input: "אם עד מחר ב-12 אין תשובה על המייל של ההצעת מחיר, תזכיר לי"
+  expect:
+    intent: mail.follow_up
+    missing: []
+
+- id: fu-003
+  now: "2026-10-15T10:00:00+03:00"
+  input: "remind me if nobody replies to my email about the invoice by Friday at 10"
+  expect:
+    intent: mail.follow_up
+    missing: []
+
+- id: fu-004
+  now: "2026-10-15T10:00:00+03:00"
+  input: "תזכיר לי אם לא יענו על המייל לרואה החשבון"
+  expect:
+    intent: mail.follow_up
+    missing: [time]

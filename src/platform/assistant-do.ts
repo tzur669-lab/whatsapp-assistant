@@ -146,6 +146,8 @@ import { SuspendedTurns } from '../agent/turns.js';
 import { LastSelections } from '../agent/last-selection.js';
 import { htmlText } from './html-text.js';
 import { checkMailWatches, WatchStore } from '../tools/watch-store.js';
+import { FollowUpStore } from '../tools/followup-store.js';
+import { checkFollowUps } from '../core/followup-tick.js';
 import { ConversationConsents } from '../agent/consents.js';
 import { defangLinks } from '../security/scrub.js';
 import { DurableObjectSqlDriver } from './sql-repo.js';
@@ -212,6 +214,7 @@ export class AssistantDO implements DurableObject {
   /** The screen agent's allowlist and tasks (§6.28). */
   private readonly screen: ScreenStore;
   private readonly watches: WatchStore;
+  private readonly followUps: FollowUpStore;
   private readonly quotes: QuoteSources;
   private readonly missedCalls: MissedCallStore;
   private readonly expenses: ExpenseStore;
@@ -325,6 +328,7 @@ export class AssistantDO implements DurableObject {
     this.routines = new RoutineStore(this.sql, now);
     this.screen = new ScreenStore(this.sql, now, keyringOnce);
     this.watches = new WatchStore(this.sql, now);
+    this.followUps = new FollowUpStore(this.sql, now);
     // The key only in a header, inside `lookup/quotes.ts`; never logged (§6.24).
     this.quotes = createQuoteSources(this.fetchImpl, this.env.QUOTES_API_KEY, now);
     this.agentLock = new AgentLock(this.sql, now);
@@ -379,6 +383,11 @@ export class AssistantDO implements DurableObject {
         await this.checkMailWatches();
       } catch (error) {
         this.log.warn('watch_mail_tick_failed', { errorCode: error instanceof Error ? error.name : 'E_UNKNOWN' });
+      }
+      try {
+        await this.checkFollowUps();
+      } catch (error) {
+        this.log.warn('followup_tick_failed', { errorCode: error instanceof Error ? error.name : 'E_UNKNOWN' });
       }
       await this.maybeSendDigest();
       try {
@@ -723,6 +732,32 @@ export class AssistantDO implements DurableObject {
       onListFailed: (errorCode) => this.log.info('watch_mail_list_failed', { errorCode }),
     });
     if (fired > 0) await this.armAlarm();
+  }
+
+  /**
+   * The hourly tick's mail follow-ups (block L, L2): read each due thread
+   * first, then move its row and queue its notice in one transaction. App
+   * only: the notices go through the outbox and its push retries.
+   */
+  private async checkFollowUps(): Promise<void> {
+    if (this.channel() !== 'app') return;
+    const principal = await this.selfPrincipal();
+    if (this.followUps.due(principal).length === 0) return;
+    const api = this.googleApi('gmail');
+    let queued = 0;
+    const result = await checkFollowUps({
+      principal,
+      store: this.followUps,
+      gmail: api ? new GmailClient(api) : null,
+      notify: (notice) => {
+        this.outbox.accept({ kind: 'notice', text: notice.text, principal, ...(notice.buttons ? { buttons: notice.buttons } : {}) });
+        queued++;
+      },
+      day: Repository.dayKey(Date.now()),
+      onError: (errorCode) => this.log.info('followup_thread_failed', { errorCode }),
+    });
+    this.log.info('followups_checked', { settled: result.settled, queued });
+    if (queued > 0) await this.pushOutbox();
   }
 
   private async pushWatches(principal: string): Promise<void> {
@@ -1085,7 +1120,10 @@ export class AssistantDO implements DurableObject {
     const settled = this.reminders.purgeSettledBefore(Date.now() - SETTLED_RETENTION_MS);
     const audited = this.repo.purgeAuditBefore(Date.now() - AUDIT_RETENTION_MS);
     const watched = this.watches.purge();
-    if (settled + audited + watched > 0) this.log.info('retention_purged', { reminders: settled, audit: audited, watches: watched });
+    const followed = this.followUps.purge();
+    if (settled + audited + watched + followed > 0) {
+      this.log.info('retention_purged', { reminders: settled, audit: audited, watches: watched, followups: followed });
+    }
     this.pending.expireStale();
     this.pending.purgeOld();
     this.history.purgeExpired();
@@ -2507,6 +2545,7 @@ export class AssistantDO implements DurableObject {
       screenPush: async (taskId, kind) => this.pushScreen(await this.selfPrincipal(), taskId, kind),
       watches: this.watches,
       watchesChanged: async () => this.pushWatches(await this.selfPrincipal()),
+      followUps: this.followUps,
       quotes: this.quotes,
       expenses: this.expenses,
       pending: this.pending,

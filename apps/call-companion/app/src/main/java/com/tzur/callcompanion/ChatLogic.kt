@@ -50,6 +50,7 @@ object ChatLogic {
         Command("/leave <דקות>", "/leave ", "קביעת זמן הנסיעה, למשל 20 (בין 10 ל־120)"),
         Command("/leave off", "/leave off", "חזרה לברירת המחדל: חצי שעה"),
         Command("/watches", "/watches", "תזכורות שמחכות שמשהו יגיע (מייל, הודעה), עם ביטול"),
+        Command("/followups", "/followups", "מיילים ששלחת ומחכים לתשובה, עם ביטול"),
         Command("/consents", "/consents", "בשיחה חכמה: הגישות שאושרו, עם ביטול"),
         Command("/birthday", "/birthday", "רשימת ימי ההולדת השמורים"),
         Command("/birthday <שם> <יום.חודש>", "/birthday ", "הוספת יום הולדת, למשל: דנה 14.3"),

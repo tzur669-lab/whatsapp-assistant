@@ -36,6 +36,7 @@ const INVOCATIONS: Record<Command['kind'], string> = {
   forget_memory: '/forget memory',
   consents: '/consents',
   watches: '/watches',
+  followups: '/followups',
   connect_google: '/connect google',
   pair: '/pair',
   digest: '/digest',
@@ -60,6 +61,8 @@ const HIDDEN: ReadonlySet<Command['kind']> = new Set([
   'consents',
   // Watches too: there is no outbox on WhatsApp (block J, J4).
   'watches',
+  // Mail follow-ups too: their notices go through the outbox (block L, L2).
+  'followups',
 ]);
 
 const helpText = stripIsolates(he.help);
@@ -98,6 +101,11 @@ describe('every command a user can see is documented', () => {
   it("lists /watches in the app's /help only (block J, J4)", () => {
     expect(stripIsolates(he.helpApp)).toContain('/watches');
     expect(helpText).not.toContain('/watches');
+  });
+
+  it("lists /followups in the app's /help only (block L, L2)", () => {
+    expect(stripIsolates(he.helpApp)).toContain('/followups');
+    expect(helpText).not.toContain('/followups');
   });
 
   it('offers nothing in /help that is not a command', () => {

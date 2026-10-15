@@ -47,6 +47,7 @@ import type { ScreenStore } from './screen-store.js';
 import type { ScreenQuestion } from '../render/screen.js';
 import type { PageText } from '../lookup/web-page.js';
 import type { WatchStore } from './watch-store.js';
+import type { FollowUpStore } from './followup-store.js';
 
 /** One candidate when a description matched more than one thing. */
 export type TargetChoice = { id: string; label: string };
@@ -137,7 +138,9 @@ export type PersonalQuestion =
   | 'watch_keywords'
   | 'watch_text'
   | 'watches_full'
-  | 'watch_app_only';
+  | 'watch_app_only'
+  | 'followup_far'
+  | 'followup_not_found';
 
 export type ResolveOutcome = (
   | {
@@ -203,6 +206,8 @@ export type ToolContext = {
   watches?: WatchStore;
   /** Tells the phone its watch list changed. Best effort. */
   watchesChanged?: () => Promise<void>;
+  /** Mail follow-ups (`mail.follow_up`, block L, L2). */
+  followUps?: FollowUpStore;
   /** Google Tasks, once its grant is connected (2026-10-01). */
   tasks?: TasksClient;
   /** Gmail, once its grant is connected (2026-10-01). */

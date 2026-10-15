@@ -689,6 +689,19 @@ export const mailDraftSlots = z
   })
   .strict();
 
+/**
+ * "תזכיר לי אם לא ענו לי על המייל לדני עד יום חמישי ב-9" (block L, L2): the
+ * sent mail by words code searches for in the sent folder (a recipient's name
+ * or subject words), and the deadline as a day and time code resolves.
+ */
+export const mailFollowUpSlots = z
+  .object({
+    mail: queryVariantsSchema.optional(),
+    date: dateSpecSchema.optional(),
+    time: timeSpecSchema.optional(),
+  })
+  .strict();
+
 // -- Google Drive (2026-10-01) ---------------------------------------------------
 
 export const driveSearchSlots = z

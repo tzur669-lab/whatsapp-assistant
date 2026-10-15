@@ -33,6 +33,8 @@ export type Command =
   | { kind: 'consents' }
   /** `/watches`: the active event-triggered reminders, each cancellable (block J, J4). */
   | { kind: 'watches' }
+  /** `/followups`: the mail follow-ups still waiting, each cancellable (block L, L2). */
+  | { kind: 'followups' }
   /** `/learn`, `/learn on|off|forget`: the learning journal (block K, K1, PLAN §6.31). Off by default. */
   | { kind: 'learn'; action: LearnAction }
   /**
@@ -78,6 +80,7 @@ const COMMANDS: ReadonlyArray<readonly [RegExp, Command]> = [
   [/^\/memory$/i, { kind: 'memory' }],
   [/^\/consents$/i, { kind: 'consents' }],
   [/^\/watches$/i, { kind: 'watches' }],
+  [/^\/followups$/i, { kind: 'followups' }],
   [/^\/shabbat$/i, { kind: 'shabbat', set: null }],
   [/^\/shabbat\s+on$/i, { kind: 'shabbat', set: true }],
   [/^\/shabbat\s+off$/i, { kind: 'shabbat', set: false }],
@@ -228,6 +231,7 @@ export const COMMAND_KINDS = [
   'forget_memory',
   'consents',
   'watches',
+  'followups',
   'learn',
   'leave',
   'connect_google',

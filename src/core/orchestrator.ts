@@ -40,6 +40,8 @@ import { infoLookup } from '../tools/lookup.js';
 import { calcCompute } from '../tools/calc.js';
 import { webRead } from '../tools/web-read.js';
 import { remindersWhen } from '../tools/watch.js';
+import { mailFollowUp, toLineOf } from '../tools/followup.js';
+import { followUpText } from '../render/followups.js';
 import { calendarFreeTime } from '../tools/free-time.js';
 import { TASK_TOOLS } from '../tools/tasks.js';
 import { MAIL_TOOLS } from '../tools/mail.js';
@@ -177,6 +179,7 @@ const IMPLEMENTED: Partial<Record<ToolName, ToolDefinition>> = {
   'calc.compute': calcCompute,
   'web.read': webRead,
   'reminders.when': remindersWhen,
+  'mail.follow_up': mailFollowUp,
   ...TASK_TOOLS,
   ...MAIL_TOOLS,
   'drive.search': driveSearch,
@@ -608,6 +611,60 @@ export async function runButton(raw: string, turn: TurnContext): Promise<Reply> 
     case 'lp':
       // The pipeline answers these before a turn exists (block K, K2).
       return { text: statusText.confirmNotFound };
+    case 'fu':
+      return parsed.verb === 'ok' || parsed.verb === 'no'
+        ? answerFollowUp(parsed.id, parsed.nonce, parsed.verb === 'ok', turn)
+        : { text: statusText.confirmNotFound };
+  }
+}
+
+/**
+ * A mail follow-up's notice button (block L, L2). `ok` issues the reminder
+ * draft's confirmation card — code wrote every word of it, and it still goes
+ * through the ordinary confirm, executed once; `no` closes the follow-up. The
+ * store checks nonce, owner and age and writes the row and the card in one
+ * transaction; a re-tap after a lost reply replaces a live card, never adds one.
+ */
+function answerFollowUp(id: string, nonce: string, draft: boolean, turn: TurnContext): Reply {
+  const ctx = turn.tool;
+  const store = ctx.followUps;
+  const tool = IMPLEMENTED['mail.draft'];
+  if (!store || !tool) return { text: followUpText.gone(ctx.lang) };
+  const outcome = store.tap({
+    principal: ctx.principal,
+    id,
+    nonce,
+    verb: draft ? 'draft' : 'no',
+    issue: (row) => {
+      const subject = /^re:/i.test(row.subject) ? row.subject : `Re: ${row.subject}`;
+      const input = {
+        to: toLineOf(row.toHeader),
+        toName: null,
+        subject: subject.slice(0, 200),
+        body: followUpText.draftBody(ctx.lang),
+        threadId: row.threadId,
+        inReplyTo: row.sentMessageId,
+      };
+      const summary = tool.preview(input, ctx.lang);
+      const action = turn.pending.create({ tool: 'mail.draft', input, summary, tier: REGISTRY['mail.draft'].tier, principal: ctx.principal });
+      return { pendingId: action.id, nonce: action.nonce, summary };
+    },
+    supersede: (pendingId) => turn.pending.supersede(pendingId, ctx.principal),
+  });
+  audit(turn, 'mail.follow_up', null, 'BUTTON', outcome.kind, id);
+  switch (outcome.kind) {
+    case 'card':
+      return {
+        text: statusText.confirmPrompt(outcome.card.summary),
+        buttons: [
+          { id: buttonId('pa', outcome.card.pendingId, outcome.card.nonce, 'ok'), title: buttonLabels.confirm(ctx.lang) },
+          { id: buttonId('pa', outcome.card.pendingId, outcome.card.nonce, 'no'), title: buttonLabels.cancel(ctx.lang) },
+        ],
+      };
+    case 'dismissed':
+      return { text: followUpText.dismissed(ctx.lang) };
+    case 'gone':
+      return { text: followUpText.gone(ctx.lang) };
   }
 }
 

@@ -153,6 +153,12 @@ export function personalQuestion(what: PersonalQuestion, lang: Lang): string {
         : 'There are already 10 active watches. Cancel one with /watches.';
     case 'watch_app_only':
       return he ? 'מעקב כזה עובד רק באפליקציה.' : 'A watch like this works only in the app.';
+    case 'followup_far':
+      return he ? 'אפשר לעקוב אחרי מייל עד חודשיים קדימה.' : 'A mail follow-up can wait up to two months.';
+    case 'followup_not_found':
+      return he
+        ? 'לא מצאתי מייל כזה בדואר היוצא מהחודש האחרון. אפשר לנסות עם מילה מהנושא או שם הנמען.'
+        : "I couldn't find that mail in your sent mail from the last month. Try a word from the subject or the recipient's name.";
   }
 }
 

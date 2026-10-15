@@ -198,6 +198,8 @@ export type OfferOptions = {
   webRead?: boolean;
   /** The app channel, and the words say "when … arrives" (block J, J4): only then is `reminders.when` offered. */
   watch?: boolean;
+  /** The app channel, and the words say "if they don't reply" (block L, L2): only then is `mail.follow_up` offered. */
+  followUp?: boolean;
 };
 
 export function agentToolNames(options: OfferOptions = { cards: false }): ToolName[] {
@@ -208,6 +210,7 @@ export function agentToolNames(options: OfferOptions = { cards: false }): ToolNa
     if (name === 'screen.task') return options.screen === true;
     if (name === 'web.read') return options.webRead === true;
     if (name === 'reminders.when') return options.watch === true;
+    if (name === 'mail.follow_up') return options.followUp === true && options.grants?.gmail === true;
     if (name.startsWith('mail.')) return options.grants?.gmail === true;
     if (name.startsWith('tasks.')) return options.grants?.tasks === true;
     if (name.startsWith('drive.')) return options.grants?.drive === true;

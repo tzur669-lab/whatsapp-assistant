@@ -49,6 +49,7 @@ import {
   portfolioShowSlots,
   webReadSlots,
   remindersWhenSlots,
+  mailFollowUpSlots,
   expensesAddSlots,
   expensesSummarySlots,
   expensesExportSlots,
@@ -146,6 +147,9 @@ export const TOOL_NAMES = [
   // Block J, J4 (2026-10-13): a reminder when a mail, SMS or notification with
   // given words arrives. Offered only in the app, when the words say so.
   'reminders.when',
+  // Block L, L2 (2026-10-15): remind when nobody replied to a sent mail by a
+  // deadline. Offered only in the app, when the words say "if they don't reply".
+  'mail.follow_up',
 ] as const;
 
 export type ToolName = (typeof TOOL_NAMES)[number];
@@ -956,6 +960,20 @@ export const REGISTRY: Readonly<Record<ToolName, ToolSpec>> = {
     llmDescription:
       'A reminder that fires when a mail, SMS or phone notification arrives whose text holds ALL the keywords (whole words). source: mail, sms or notification; keywords: 1-3 words from the message; text: the reminder; sender: a mail sender, if said; days: how long to wait, if said; repeat only if said "every time". SMS works only when the SMS app shows a notification.',
     draftSchema: remindersWhenSlots,
+    tier: 1,
+    scopes: [],
+    rateLimit: { perHour: 10, perDay: 30 },
+    implementedIn: 6,
+  },
+  'mail.follow_up': {
+    name: 'mail.follow_up',
+    // Its replies name a sent mail's subject that code found: the user's mail.
+    dataSource: 'mail',
+    consent: 'always',
+    llmDescription:
+      'Remind the user if nobody replies to an email they SENT by a deadline. mail: words that find the sent email (the recipient name or subject words); date and time: the deadline. It can only tell whether anyone replied in the thread.',
+    draftSchema: mailFollowUpSlots,
+    // It only starts waiting; Undo cancels. A tainted turn confirms (policy).
     tier: 1,
     scopes: [],
     rateLimit: { perHour: 10, perDay: 30 },

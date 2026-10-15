@@ -83,6 +83,14 @@ one-shot Undo offer, 24 h). The phone fetches its watches signed
 only the watch's id (`POST /app/watch/fired`); mail watches are checked on
 the hourly tick before the digest (`watch_mail_list_failed` in the log means
 Gmail refused that tick; the next one looks further back).
+`/followups` (app only, block L, L2) lists the mail follow-ups still waiting
+("תזכיר לי אם לא ענו לי על המייל לדני עד יום חמישי ב־9"), each with a cancel
+button (a one-shot Undo offer, 24 h). The hourly tick reads up to 5 due
+threads (metadata only), then moves each row and queues its notice in one
+transaction: `answered` is silent; `notified` offers a reminder draft (`fu:`
+buttons, 48 h); `bounced`, `unsure` and "could not check" (Gmail not
+connected, once a day) are notices. `followup_thread_failed` in the log is a
+Gmail failure; three in a row make the follow-up `unsure`.
 
 **Smart conversations (PLAN §6.19, 2026-10-08).** A conversation is `smart`
 (Gemini first, then qwen) or `local`, fixed by its first message

@@ -55,6 +55,7 @@ import {
   portfolioShowSlots,
   webReadSlots,
   remindersWhenSlots,
+  mailFollowUpSlots,
   expensesAddSlots,
   expensesSummarySlots,
   expensesExportSlots,
@@ -186,6 +187,7 @@ export const intentDraftSchema = z.discriminatedUnion('intent', [
   z.object({ intent: z.literal('portfolio.show'), slots: portfolioShowSlots, ...common }).strict(),
   z.object({ intent: z.literal('web.read'), slots: webReadSlots, ...common }).strict(),
   z.object({ intent: z.literal('reminders.when'), slots: remindersWhenSlots, ...common }).strict(),
+  z.object({ intent: z.literal('mail.follow_up'), slots: mailFollowUpSlots, ...common }).strict(),
   z.object({ intent: z.literal('expenses.summary'), slots: expensesSummarySlots, ...common }).strict(),
   z.object({ intent: z.literal('expenses.export'), slots: expensesExportSlots, ...common }).strict(),
   // Google Tasks (2026-10-01). Agent-only.

@@ -211,6 +211,7 @@ describe('mail.bills', () => {
     fromAddress: 'billing@example.com',
     subject,
     messageId: null,
+    toHeader: null,
     at,
     snippet: '',
     unread: true,

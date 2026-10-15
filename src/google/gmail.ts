@@ -23,6 +23,8 @@ export type MailSummary = {
   subject: string;
   /** The RFC 822 Message-ID, for a reply's In-Reply-To. */
   messageId: string | null;
+  /** The To header, for a follow-up's draft (block L, L2). Never rendered. */
+  toHeader: string | null;
   at: number;
   snippet: string;
   unread: boolean;
@@ -138,6 +140,51 @@ export function draftRaw(draft: { to: string | null; subject: string; body: stri
   return bytesToBase64Url(new TextEncoder().encode(lines.join('\r\n')));
 }
 
+/** The headers `thread` asks for: enough to tell a reply from a bounce or an auto-reply. */
+const THREAD_HEADERS = ['From', 'Auto-Submitted', 'Precedence', 'Content-Type', 'List-Id', 'X-Failed-Recipients'] as const;
+
+/**
+ * One message of a thread, as `classifyThread` reads it. `labelIds` and
+ * `internalDate` are null when Gmail left them out: the follow-up is then
+ * unsure, never "no reply". Header values are lower-cased and trimmed; `from`
+ * is the sender address's local part only.
+ */
+export type ThreadMessage = {
+  id: string | null;
+  labelIds: string[] | null;
+  internalDate: number | null;
+  fromLocal: string | null;
+  autoSubmitted: string | null;
+  precedence: string | null;
+  contentType: string | null;
+  listId: boolean;
+  failedRecipients: boolean;
+};
+
+function threadMessageOf(raw: unknown): ThreadMessage {
+  const record = (typeof raw === 'object' && raw !== null ? raw : {}) as {
+    id?: unknown;
+    labelIds?: unknown;
+    internalDate?: unknown;
+    payload?: { headers?: unknown };
+  };
+  const headers = record.payload?.headers;
+  const lower = (name: string) => header(headers, name)?.trim().toLowerCase() || null;
+  const date = Number(record.internalDate);
+  const from = parseFrom(header(headers, 'From') ?? '');
+  return {
+    id: typeof record.id === 'string' ? record.id : null,
+    labelIds: Array.isArray(record.labelIds) ? record.labelIds.filter((label): label is string => typeof label === 'string') : null,
+    internalDate: record.internalDate !== undefined && Number.isFinite(date) && date > 0 ? date : null,
+    fromLocal: from.address ? from.address.split('@')[0]!.trim().toLowerCase() : null,
+    autoSubmitted: lower('Auto-Submitted'),
+    precedence: lower('Precedence'),
+    contentType: lower('Content-Type'),
+    listId: header(headers, 'List-Id') !== null,
+    failedRecipients: header(headers, 'X-Failed-Recipients') !== null,
+  };
+}
+
 export class GmailClient {
   constructor(private readonly api: GoogleCaller) {}
 
@@ -155,7 +202,7 @@ export class GmailClient {
     for (const entry of Array.isArray(ids) ? ids.slice(0, max) : []) {
       if (typeof entry.id !== 'string') continue;
       const message = await this.api.call(
-        `${BASE}/messages/${encodeURIComponent(entry.id)}?format=metadata&metadataHeaders=From&metadataHeaders=Subject&metadataHeaders=Message-ID`,
+        `${BASE}/messages/${encodeURIComponent(entry.id)}?format=metadata&metadataHeaders=From&metadataHeaders=Subject&metadataHeaders=Message-ID&metadataHeaders=To`,
       );
       if (!message.ok) continue;
       const summary = this.summaryOf(message.value);
@@ -176,6 +223,20 @@ export class GmailClient {
       ok: true,
       value: (Array.isArray(ids) ? ids : []).flatMap((entry) => (typeof entry.id === 'string' ? [entry.id] : [])).slice(0, max),
     };
+  }
+
+  /**
+   * A conversation's messages as metadata only (block L, L2): labels, the
+   * internal date and the headers that tell a person's reply from a machine's.
+   * No bodies, no addresses kept: `From` is read for its local part only.
+   */
+  async thread(id: string): Promise<GoogleResult<ThreadMessage[]>> {
+    const headers = THREAD_HEADERS.map((name) => `metadataHeaders=${encodeURIComponent(name)}`).join('&');
+    const result = await this.api.call(`${BASE}/threads/${encodeURIComponent(id)}?format=metadata&${headers}`);
+    if (!result.ok) return result;
+    const messages = (result.value as { messages?: unknown }).messages;
+    if (!Array.isArray(messages)) return { ok: false, error: { code: 'invalid_response' } };
+    return { ok: true, value: messages.map(threadMessageOf) };
   }
 
   /** One message's text, for "what does it say". */
@@ -222,6 +283,7 @@ export class GmailClient {
       fromAddress: from.address,
       subject: decodeMimeWords(header(record.payload?.headers, 'Subject') ?? '').slice(0, 200) || '(ללא נושא)',
       messageId: header(record.payload?.headers, 'Message-ID'),
+      toHeader: header(record.payload?.headers, 'To'),
       at: Number.isFinite(at) ? at : 0,
       snippet: decodeEntities(typeof record.snippet === 'string' ? record.snippet : '').slice(0, 300),
       unread: Array.isArray(record.labelIds) && record.labelIds.includes('UNREAD'),

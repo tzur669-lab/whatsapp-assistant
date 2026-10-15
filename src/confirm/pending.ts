@@ -208,6 +208,26 @@ export class PendingActions {
     return { ok: true, id: ids[0]! };
   }
 
+  /**
+   * Cancel a live action this principal owns, by id alone (block L, L2). For a
+   * card that is about to be issued again because its first reply may have
+   * been lost: the old card stops working in the same transaction that makes
+   * the new one, so at most one can ever run. True only when the action was
+   * still pending and unexpired — there was something to replace.
+   */
+  supersede(id: string, principal: string): boolean {
+    return (
+      this.sql.exec(
+        `UPDATE pending_actions SET status = 'cancelled'
+         WHERE id = ? AND principal = ? AND status = 'pending' AND expires_at > ?
+         RETURNING id`,
+        id,
+        principal,
+        this.now(),
+      ).length === 1
+    );
+  }
+
   /** The tier of a stored action, or 0 when there is no such row. */
   tierOf(id: string): number {
     const row = this.sql.exec('SELECT tier FROM pending_actions WHERE id = ?', id)[0];
@@ -293,12 +313,13 @@ export class PendingActions {
  * `rt`: cancel a scheduled routine run (§6.27), only with `no`. The screen
  * agent (§6.28): `sa` answers an approval card (`ok` / `no`), `ss` stops a task.
  * `lp`: a weekly-review proposal or question answer (block K, K2), handled
- * in the pipeline by the learning store.
+ * in the pipeline by the learning store. `fu`: a mail follow-up's notice
+ * (block L, L2): `ok` prepares a reminder draft's confirmation, `no` closes it.
  */
-export type ButtonKind = 'pa' | 'undo' | 'snooze' | 'rt' | 'sa' | 'ss' | 'lp';
+export type ButtonKind = 'pa' | 'undo' | 'snooze' | 'rt' | 'sa' | 'ss' | 'lp' | 'fu';
 export type ButtonVerb = 'ok' | 'no' | 'done' | 'm10' | 'h1';
 
-const BUTTON_KINDS = new Set<string>(['pa', 'undo', 'snooze', 'rt', 'sa', 'ss', 'lp']);
+const BUTTON_KINDS = new Set<string>(['pa', 'undo', 'snooze', 'rt', 'sa', 'ss', 'lp', 'fu']);
 const BUTTON_VERBS = new Set<string>(['ok', 'no', 'done', 'm10', 'h1']);
 
 /** `pa:<id>:<nonce>:ok` — the format WhatsApp echoes back verbatim. */

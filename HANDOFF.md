@@ -5,7 +5,7 @@ system is, where things live, and what breaks easily, then links out. It does
 **not** repeat the rules in `CLAUDE.md` (always loaded) or the spec in
 `PLAN.md` (read by section, never whole).
 
-_Last updated: 2026-10-14 · server at migration 0036 · agent prompt a10 + smart note s2 + screen step s2 · parser prompt v6 · app 0.19.0 built (0.18.2 on the phone) · smart model gemini-3.5-flash-lite · vision v1_
+_Last updated: 2026-10-15 · server at migration 0037 · agent prompt a10 + smart note s2 + screen step s2 · parser prompt v6 · app 0.20.0 in progress (0.19.0 built, 0.18.2 on the phone) · smart model gemini-3.5-flash-lite · vision v1_
 
 ## 1. What this is
 
@@ -168,6 +168,17 @@ Network on the hotspot: `NODE_OPTIONS=--dns-result-order=ipv4first` for wrangler
   phone check (with `GEMINI_API_KEY` set on staging), the CPU of a full image
   in `wrangler dev`. "Make it a routine" waits for the plan where
   the bot builds a routine.
+- **Block L** (2026-10-15, plan `docs/plans/block-l.md`, reviewed in many
+  rounds; WhatsApp reading was removed from it by the user): five ideas from
+  the Instinct comparison, L2–L6 in order, one commit each. **L2 done**: mail
+  follow-ups (`mail.follow_up`, PLAN §6.33, migration 0037, `/followups`,
+  `fu:` buttons). Next: L3 (calendar suggestions, `/suggest`), L4 (monthly
+  file, `/monthly`), L5 (archive + `/unarchive`, new scope `gmail.modify`:
+  the user reconnects Gmail), L6 (`docs.create`, new scope `drive.file`).
+  The plan's two shared rules (scheduled notices: read, then row + outbox in
+  one transaction; taps: row + card in one transaction) bind L2–L4. App
+  0.20.0 (command list, later the Markdown file card) is built once at the
+  end of the block. Owed: `eval:agent --filter fu-`.
 - **Next work:** [ROADMAP.md](ROADMAP.md) (Hebrew) — block H (2026-10-07):
   a smarter bot. Parts 15 (notes), 16 ("לא הבנת" capture), 17 (tool
   unions, calibrated token estimate, history fitter, named lists) and 18
@@ -208,6 +219,14 @@ Network on the hotspot: `NODE_OPTIONS=--dns-result-order=ipv4first` for wrangler
 | [SETUP.md](SETUP.md) | Setting up a new copy from zero: accounts, Groq key, models, secrets, deploy, app, AI agent. |
 
 ## 8. Session log (docs)
+
+- 2026-10-15: Block L planned (`docs/plans/block-l.md`); L2 built: mail
+  follow-ups — new `tools/followup.ts`, `tools/followup-store.ts`,
+  `core/followup-check.ts`, `core/followup-tick.ts`, `render/followups.ts`,
+  migration 0037 (`mail_followups`), `/followups`, button kind `fu`,
+  `GmailClient.thread`, `MailSummary.toHeader`, `PendingActions.supersede`,
+  the `followUp` offer flag. The eval runner's decoder now knows `web.read`,
+  `reminders.when` and `mail.follow_up` (it decoded only routines and screen).
 
 - 2026-10-14: Images (PLAN §6.32): new `src/vision/read-image.ts`,
   `InboundImage`, route `POST /app/image`, `handleImage` in
