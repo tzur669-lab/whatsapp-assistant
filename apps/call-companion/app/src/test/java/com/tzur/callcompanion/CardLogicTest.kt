@@ -53,6 +53,18 @@ class CardLogicTest {
         assertEquals("expenses-2026-10-05.csv", file?.name)
     }
 
+    @Test fun aMarkdownDocumentCardPasses() {
+        val file = CardLogic.fileCard("file", "doc-2026-10-15-a1b2c3.md", "text/markdown", "# Title")
+        assertEquals("text/markdown", file?.mime)
+        assertEquals("doc-2026-10-15-a1b2c3.md", file?.name)
+    }
+
+    @Test fun aNameMustEndInItsOwnType() {
+        assertNull(CardLogic.fileCard("file", "doc.md", "text/csv", "x"))
+        assertNull(CardLogic.fileCard("file", "a.csv", "text/markdown", "x"))
+        assertNull(CardLogic.fileCard("file", "a.html", "text/html", "x"))
+    }
+
     @Test fun aFileCardWithAPathOrAnotherTypeIsRefused() {
         assertNull(CardLogic.fileCard("file", "../evil.csv", "text/csv", "x"))
         assertNull(CardLogic.fileCard("file", "Expenses.csv", "text/csv", "x"))

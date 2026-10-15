@@ -60,7 +60,7 @@ export const GROUPS: Readonly<Record<GroupName, readonly ToolName[]>> = {
   ],
   info: ['info.lookup', 'calc.compute', 'web.read'],
   mail: ['mail.search', 'mail.draft', 'mail.bills', 'mail.follow_up', 'mail.archive'],
-  drive: ['drive.search'],
+  drive: ['drive.search', 'docs.create'],
   phone: [
     'calls.place',
     'alarm.set',
@@ -243,26 +243,30 @@ export function selectTools(
       : named;
   if (groups.length === 0 || groups.length > MAX_UNION_GROUPS) return full;
   // Offered only when named or linked, these ride along in any selection.
-  const members = new Set<ToolName>(
-    offered.filter(
-      (tool) =>
-        tool === 'routine.run' ||
-        tool === 'screen.task' ||
-        tool === 'web.read' ||
-        tool === 'reminders.when' ||
-        tool === 'mail.follow_up' ||
-        tool === 'expenses.monthly_pack' ||
-        tool === 'mail.archive',
-    ),
-  );
+  const members = new Set<ToolName>(offered.filter((tool) => RIDE_ALONG.has(tool)));
   for (const group of groups) {
     const available = GROUPS[group].filter((tool) => offered.includes(tool));
-    if (available.length * 2 <= GROUPS[group].length) return full;
+    // A group's size leaves out its named-only tools, which are usually not
+    // offered: `drive` is `drive.search` alone unless a document is asked for.
+    const size = GROUPS[group].filter((tool) => !RIDE_ALONG.has(tool)).length;
+    if (available.filter((tool) => !RIDE_ALONG.has(tool)).length * 2 <= size) return full;
     for (const tool of available) members.add(tool);
   }
   // The screen agent, when offered, rides along and is named in the selection.
   return { tools: offered.filter((tool) => members.has(tool)), groups: members.has('screen.task') ? [...groups, 'screen'] : groups };
 }
+
+/** Tools offered only when named or linked: they ride along in any selection. */
+const RIDE_ALONG: ReadonlySet<ToolName> = new Set<ToolName>([
+  'routine.run',
+  'screen.task',
+  'web.read',
+  'reminders.when',
+  'mail.follow_up',
+  'expenses.monthly_pack',
+  'mail.archive',
+  'docs.create',
+]);
 
 /** A selection as one word, for logs and the benchmark: `time`, `time+mail`, `full`. */
 export function selectionLabel(selection: Selection): string {

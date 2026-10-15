@@ -600,6 +600,14 @@ export const mailArchiveSlots = z
   })
   .strict();
 
+/** Documents (block L, L6): a title and the body the model wrote; both display text only, capped. */
+export const docsCreateSlots = z
+  .object({
+    title: z.string().min(1).max(100).optional(),
+    body: z.string().min(1).max(8_000).optional(),
+  })
+  .strict();
+
 /** The monthly bookkeeping file (block L, L4): a month 1–12, the latest that ended; absent is last month. */
 export const expensesMonthlyPackSlots = z.object({ month: z.number().int().min(1).max(12).optional() }).strict();
 

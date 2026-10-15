@@ -43,6 +43,7 @@ import { remindersWhen } from '../tools/watch.js';
 import { mailFollowUp, toLineOf } from '../tools/followup.js';
 import { expensesMonthlyPack } from '../tools/monthly-pack.js';
 import { mailArchive } from '../tools/archive.js';
+import { docsCreate } from '../tools/docs.js';
 import { followUpText } from '../render/followups.js';
 import { suggestText } from '../render/suggestions.js';
 import { leaveInputFor } from '../tools/reminders.js';
@@ -186,6 +187,7 @@ const IMPLEMENTED: Partial<Record<ToolName, ToolDefinition>> = {
   'mail.follow_up': mailFollowUp,
   'expenses.monthly_pack': expensesMonthlyPack,
   'mail.archive': mailArchive,
+  'docs.create': docsCreate,
   ...TASK_TOOLS,
   ...MAIL_TOOLS,
   'drive.search': driveSearch,
@@ -557,6 +559,9 @@ async function execute(
     };
   }
 
+  const withFile = fileCardReply(tool.name, result, turn);
+  if (withFile) return withFile;
+
   return {
     text: result.text,
     ...(result.rescheduleAlarm ? { rescheduleAlarm: true } : {}),
@@ -852,7 +857,7 @@ async function runConfirmed(
     const result = await tool.execute(checked.action.input, ctx);
     audit(turn, tool.name, null, 'CONFIRMED', 'ok', checked.action.id);
     turn.learn?.signals.push({ kind: 'executed', tool: tool.name, input: checked.action.input });
-    return { text: result.text, ...(result.rescheduleAlarm ? { rescheduleAlarm: true } : {}) };
+    return fileCardReply(tool.name, result, turn) ?? { text: result.text, ...(result.rescheduleAlarm ? { rescheduleAlarm: true } : {}) };
   } catch (error) {
     ctx.log.error('confirmed_execute_failed', {
       tool: checked.action.tool,
@@ -861,6 +866,23 @@ async function runConfirmed(
     audit(turn, tool.name, null, 'CONFIRMED', 'error', checked.action.id);
     return { text: he.internalError };
   }
+}
+
+/**
+ * A file for the phone after a write ran (block L, L6): a card of its own,
+ * claimed once by the app. Null when the result has none or the app on the
+ * other end does not save files.
+ */
+function fileCardReply(toolName: string, result: ExecuteResult, turn: TurnContext): Reply | null {
+  const ctx = turn.tool;
+  if (!result.fileCard || ctx.fileCards !== true) return null;
+  const input = { type: 'file' as const, ...result.fileCard };
+  const card = turn.pending.create({ tool: toolName, input, summary: result.fileCard.preview, tier: 1, principal: ctx.principal, channel: 'card' });
+  return {
+    text: result.text,
+    card: { actionId: card.id, nonce: card.nonce, type: 'file', preview: result.fileCard.preview, autoRun: false },
+    ...(result.rescheduleAlarm ? { rescheduleAlarm: true } : {}),
+  };
 }
 
 function cancelPending(id: string, nonce: string, turn: TurnContext): Reply {

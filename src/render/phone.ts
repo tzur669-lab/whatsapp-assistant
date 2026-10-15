@@ -42,7 +42,7 @@ export type CardInput =
   | { type: 'message'; channel: 'sms' | 'whatsapp'; queries: string[]; text: string }
   | { type: 'media'; app: 'youtube' | 'youtube_music' | 'spotify'; query: string; mode: 'background' | 'fullscreen' }
   /** The expenses export (2026-10-05). `preview` is rendered by its tool; never the content. */
-  | { type: 'file'; name: string; mime: 'text/csv'; content: string; preview: string };
+  | { type: 'file'; name: string; mime: 'text/csv' | 'text/markdown'; content: string; preview: string };
 
 const pad = (n: number) => String(n).padStart(2, '0');
 

@@ -165,6 +165,14 @@ export function personalQuestion(what: PersonalQuestion, lang: Lang): string {
         : 'More than 50 emails match. Narrow it: by sender, words or age.';
     case 'archive_none':
       return he ? 'אין מיילים כאלה בתיבת הדואר הנכנס.' : 'No such emails in the inbox.';
+    case 'docs_tainted':
+      return he
+        ? 'מסמך נוצר רק מבקשה שכתבת או אמרת בעצמך, לא מטקסט ששותף או הועבר.'
+        : 'A document is made only on your own request, not from shared or forwarded text.';
+    case 'docs_nowhere':
+      return he
+        ? `אין לאן לשמור: ${isolate('Google Drive')} לא מחובר עם הרשאת קבצים, והאפליקציה לא שומרת קבצים. אפשר ${isolate('/connect drive')}.`
+        : 'Nowhere to save it: Google Drive is not connected with file access, and this app does not save files. Try /connect drive.';
     case 'followup_not_found':
       return he
         ? 'לא מצאתי מייל כזה בדואר היוצא מהחודש האחרון. אפשר לנסות עם מילה מהנושא או שם הנמען.'

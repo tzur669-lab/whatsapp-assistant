@@ -31,6 +31,7 @@ import { remindersWhen } from '../../../src/tools/watch.js';
 import { mailFollowUp } from '../../../src/tools/followup.js';
 import { expensesMonthlyPack } from '../../../src/tools/monthly-pack.js';
 import { mailArchive } from '../../../src/tools/archive.js';
+import { docsCreate } from '../../../src/tools/docs.js';
 import type { ToolDefinition } from '../../../src/tools/types.js';
 import { INTENT_NAMES } from '../../../src/nlu/intent-schema.js';
 
@@ -61,6 +62,7 @@ const IMPLEMENTATIONS: Record<string, ToolDefinition> = {
   'mail.follow_up': mailFollowUp,
   'expenses.monthly_pack': expensesMonthlyPack,
   'mail.archive': mailArchive,
+  'docs.create': docsCreate,
 };
 
 describe('every registered tool is real', () => {

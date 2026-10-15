@@ -184,6 +184,8 @@ export type AgentTurnInput = {
   monthly?: boolean;
   /** The words say "archive": `mail.archive` is offered (block L, L5). */
   archive?: boolean;
+  /** The words ask for a document: `docs.create` is offered (block L, L6). */
+  document?: boolean;
   /**
    * The consent sources of the history entries replayed in full (2026-10-12,
    * `replayByConsent`). A smart turn that pauses keeps them, so a resume can
@@ -398,6 +400,7 @@ export async function runAgentTurn(input: AgentTurnInput, deps: AgentDeps): Prom
     ...(input.followUp ? { followUp: true } : {}),
     ...(input.monthly ? { monthly: true } : {}),
     ...(input.archive ? { archive: true } : {}),
+    ...(input.document ? { document: true } : {}),
   });
   // A smart conversation's turn is offered the same tools whichever model takes
   // it: consent belongs to the conversation (2026-10-08). Those that never ask

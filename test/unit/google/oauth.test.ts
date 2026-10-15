@@ -284,11 +284,12 @@ describe('GoogleStore', () => {
         'https://www.googleapis.com/auth/gmail.modify',
       ]);
       expect(GRANTS.tasks.scopes).toEqual(['https://www.googleapis.com/auth/tasks']);
-      expect(GRANTS.drive.scopes).toEqual(['https://www.googleapis.com/auth/drive.metadata.readonly']);
+      // drive.file since 2026-10-14, for docs.create only (block L, L6): the bot's own files.
+      expect(GRANTS.drive.scopes).toEqual(['https://www.googleapis.com/auth/drive.metadata.readonly', 'https://www.googleapis.com/auth/drive.file']);
       expect(GRANTS.calendar.scopes).toContain('https://www.googleapis.com/auth/calendar.readonly');
       // Nothing that sends mail, and nothing with write access to Drive.
       const all = Object.values(GRANTS).flatMap((grant) => grant.scopes);
-      expect(all.some((scope) => /gmail\.send|mail\.google\.com|auth\/drive$|drive\.file/.test(scope))).toBe(false);
+      expect(all.some((scope) => /gmail\.send|mail\.google\.com|auth\/drive$/.test(scope))).toBe(false);
       // gmail.modify (archiving, block L, L5; it could also send) only in the Gmail
       // grant, and the client is held to its endpoints by test/security/gmail-endpoints.test.ts.
       const modify = Object.entries(GRANTS).filter(([, grant]) => grant.scopes.some((scope) => scope.endsWith('/gmail.modify')));

@@ -5,7 +5,7 @@ system is, where things live, and what breaks easily, then links out. It does
 **not** repeat the rules in `CLAUDE.md` (always loaded) or the spec in
 `PLAN.md` (read by section, never whole).
 
-_Last updated: 2026-10-15 · server at migration 0040 · agent prompt a10 + smart note s2 + screen step s2 · parser prompt v6 · app 0.20.0 in progress (0.19.0 built, 0.18.2 on the phone) · smart model gemini-3.5-flash-lite · vision v1_
+_Last updated: 2026-10-15 · server at migration 0040 · agent prompt a10 + smart note s2 + screen step s2 · parser prompt v6 · app 0.20.0 (built, not installed; 0.18.2 on the phone) · smart model gemini-3.5-flash-lite · vision v1_
 
 ## 1. What this is
 
@@ -177,12 +177,16 @@ Network on the hotspot: `NODE_OPTIONS=--dns-result-order=ipv4first` for wrangler
   the monthly file (PLAN §6.35, migration 0039, `expenses.monthly_pack`,
   `/monthly on|off`). **L5 done**: mail cleanup (PLAN §6.36, migration 0040,
   `mail.archive`, `/unarchive`, scope `gmail.modify`: after the deploy the
-  user runs `/connect gmail` once). Next: L6 (`docs.create`, new scope
-  `drive.file`).
+  user runs `/connect gmail` once). **L6 done**: documents (`docs.create`,
+  PLAN §6.37, scope `drive.file`, a Markdown file card; after the deploy the
+  user runs `/connect drive` once). **Block L is built.**
   The plan's two shared rules (scheduled notices: read, then row + outbox in
   one transaction; taps: row + card in one transaction) bind L2–L4. App
-  0.20.0 (command list, later the Markdown file card) is built once at the
-  end of the block. Owed: `eval:agent --filter fu-`, `mp-` and `ma-`; `/connect gmail` for `gmail.modify`; the staging deploys (L2–L4).
+  0.20.0 (the four commands and the Markdown file card) — **server first**.
+  Owed: the staging deploy of L2–L6 (wrangler's Cloudflare login expired:
+  the user runs `wrangler login`), then the APK; `eval:agent --filter fu-`,
+  `mp-`, `ma-` and `doc-`; `/connect gmail` and `/connect drive` for the new
+  scopes; the staging check that a created Doc holds its body.
 - **Next work:** [ROADMAP.md](ROADMAP.md) (Hebrew) — block H (2026-10-07):
   a smarter bot. Parts 15 (notes), 16 ("לא הבנת" capture), 17 (tool
   unions, calibrated token estimate, history fitter, named lists) and 18
@@ -223,6 +227,13 @@ Network on the hotspot: `NODE_OPTIONS=--dns-result-order=ipv4first` for wrangler
 | [SETUP.md](SETUP.md) | Setting up a new copy from zero: accounts, Groq key, models, secrets, deploy, app, AI agent. |
 
 ## 8. Session log (docs)
+
+- 2026-10-15: Block L, L6: documents — new `tools/docs.ts`, `render/docs.ts`,
+  `DriveClient.createDoc`/`findByOp`/`sourceMime`/`hasScope`, the `drive.file`
+  scope, `ExecuteResult.fileCard` and the orchestrator's `fileCardReply`,
+  `ToolContext.fileCards`, the `document` offer flag, `RIDE_ALONG` in
+  `agent/tool-groups.ts`; app 0.20.0 (`CardLogic.FileCard.mime`, Markdown).
+  No migration. Not deployed (wrangler login).
 
 - 2026-10-15: Block L, L5: mail cleanup — new `tools/archive.ts`,
   `tools/archive-store.ts`, `core/mail-archive.ts`, `render/archive.ts`,

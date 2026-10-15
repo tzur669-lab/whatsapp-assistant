@@ -58,6 +58,7 @@ import {
   mailFollowUpSlots,
   expensesMonthlyPackSlots,
   mailArchiveSlots,
+  docsCreateSlots,
   expensesAddSlots,
   expensesSummarySlots,
   expensesExportSlots,
@@ -192,6 +193,7 @@ export const intentDraftSchema = z.discriminatedUnion('intent', [
   z.object({ intent: z.literal('mail.follow_up'), slots: mailFollowUpSlots, ...common }).strict(),
   z.object({ intent: z.literal('expenses.monthly_pack'), slots: expensesMonthlyPackSlots, ...common }).strict(),
   z.object({ intent: z.literal('mail.archive'), slots: mailArchiveSlots, ...common }).strict(),
+  z.object({ intent: z.literal('docs.create'), slots: docsCreateSlots, ...common }).strict(),
   z.object({ intent: z.literal('expenses.summary'), slots: expensesSummarySlots, ...common }).strict(),
   z.object({ intent: z.literal('expenses.export'), slots: expensesExportSlots, ...common }).strict(),
   // Google Tasks (2026-10-01). Agent-only.

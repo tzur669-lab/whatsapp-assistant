@@ -372,7 +372,7 @@ object DeviceActions {
 
         val values = ContentValues().apply {
             put(MediaStore.Downloads.DISPLAY_NAME, file.name)
-            put(MediaStore.Downloads.MIME_TYPE, "text/csv")
+            put(MediaStore.Downloads.MIME_TYPE, file.mime)
             put(MediaStore.Downloads.IS_PENDING, 1)
         }
         val resolver = activity.contentResolver
@@ -389,12 +389,12 @@ object DeviceActions {
         }
 
         val open = Intent(Intent.ACTION_VIEW)
-            .setDataAndType(uri, "text/csv")
+            .setDataAndType(uri, file.mime)
             .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
         try {
             activity.startActivity(open)
         } catch (_: ActivityNotFoundException) {
-            // Saved all the same; there is just nothing here that opens a CSV.
+            // Saved all the same; there is just nothing here that opens this type.
         }
         toast(activity, R.string.card_file_saved)
         done("done")

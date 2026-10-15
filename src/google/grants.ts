@@ -9,6 +9,7 @@
  * `gmail.modify` was approved on 2026-10-14 for archiving only (block L, L5):
  * it could also send, so `test/security/gmail-endpoints.test.ts` holds the
  * Gmail client to reading, drafts, INBOX and the bot's own labels.
+ * `drive.file` was approved on 2026-10-14 for `docs.create` (block L, L6).
  */
 export const GRANT_NAMES = ['calendar', 'gmail', 'tasks', 'drive', 'contacts'] as const;
 export type GrantName = (typeof GRANT_NAMES)[number];
@@ -50,8 +51,9 @@ export const GRANTS: Readonly<Record<GrantName, GrantSpec>> = {
   },
   drive: {
     account: 'drive',
-    // File names and dates only, never contents.
-    scopes: ['https://www.googleapis.com/auth/drive.metadata.readonly'],
+    // File names and dates; and, since 2026-10-14 (block L, L6), creating
+    // Docs: `drive.file` sees only the files the bot itself made.
+    scopes: ['https://www.googleapis.com/auth/drive.metadata.readonly', 'https://www.googleapis.com/auth/drive.file'],
     command: 'drive',
   },
   contacts: {

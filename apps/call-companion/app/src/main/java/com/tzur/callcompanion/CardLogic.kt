@@ -49,21 +49,26 @@ object CardLogic {
         return international.takeIf { it.length in 8..15 }
     }
 
-    /** A file a card may save (2026-10-05, the expenses export). */
-    data class FileCard(val name: String, val content: String)
+    /** A file a card may save (2026-10-05, the expenses export; Markdown documents since 0.20.0, block L, L6). */
+    data class FileCard(val name: String, val mime: String, val content: String)
 
-    private val FILE_NAME = Regex("^[a-z0-9-]{1,48}\\.csv$")
+    /** The only pairs: a CSV export, or a Markdown document. Each name must end in its own type. */
+    private val FILE_NAMES = mapOf(
+        "text/csv" to Regex("^[a-z0-9-]{1,48}\\.csv$"),
+        "text/markdown" to Regex("^[a-z0-9-]{1,48}\\.md$"),
+    )
     const val MAX_FILE_CHARS = 150_000
 
     /**
      * The checks the server already made, made again here: a plain lowercase
-     * name ending in .csv (no path, nothing to escape a folder with), CSV only,
-     * and a bounded size. Null for anything else.
+     * name ending in the type's own extension (no path, nothing to escape a
+     * folder with), CSV or Markdown only, and a bounded size. Null for anything else.
      */
     fun fileCard(type: String, name: String?, mime: String?, content: String?): FileCard? {
-        if (type != "file" || mime != "text/csv") return null
-        if (name == null || !FILE_NAME.matches(name)) return null
+        if (type != "file" || mime == null) return null
+        val pattern = FILE_NAMES[mime] ?: return null
+        if (name == null || !pattern.matches(name)) return null
         if (content == null || content.isEmpty() || content.length > MAX_FILE_CHARS) return null
-        return FileCard(name, content)
+        return FileCard(name, mime, content)
     }
 }

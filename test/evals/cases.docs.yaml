@@ -1,0 +1,19 @@
+# Document cases (block L, L6, 2026-10-15), run by `pnpm eval:agent` only.
+#
+# Kept out of `fingerprintPhrases` on purpose: `docs.create` is offered only
+# when the words ask for a document (`namesDocument`), so these phrases change
+# nothing any other case is offered.
+
+- id: doc-001
+  now: "2026-10-15T10:00:00+03:00"
+  input: "תכין לי מסמך עם רשימת דברים לארוז לטיול בצפון"
+  expect:
+    intent: docs.create
+    missing: []
+
+- id: doc-002
+  now: "2026-10-15T10:00:00+03:00"
+  input: "create a document comparing renting and buying a car, short"
+  expect:
+    intent: docs.create
+    missing: []

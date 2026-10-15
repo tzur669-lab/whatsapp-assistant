@@ -36,7 +36,7 @@ class ChatLogicTest {
     /** The full check, against the router itself, is `bot/test/unit/core/app-commands.test.ts`. */
     @Test fun `every command is one the server's router knows`() {
         val known = Regex(
-            "^/(help|status|forget|memory|missed|misses|learn|leave|watches|consents|digest|birthday|shabbat|ical|" +
+            "^/(help|status|forget|memory|missed|misses|learn|leave|watches|followups|suggest|monthly|unarchive|consents|digest|birthday|shabbat|ical|" +
                 "connect (google|gmail|tasks|drive)|city|pause|resume|ping|pair off)( |$)",
         )
         for (command in ChatLogic.COMMANDS) assertTrue(command.insert, known.containsMatchIn(command.insert))

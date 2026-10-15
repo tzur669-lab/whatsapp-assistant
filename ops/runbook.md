@@ -120,6 +120,12 @@ stored ids still archived under that label id. The hourly tick cleans the
 temporary labels (3 a tick; renamed by the user → kept, one notice; failures
 back off to daily, `label_cleanup_failing` at the tenth). Message ids are
 dropped at 7 days.
+Documents (block L, L6, `docs.create`, Tier 2): "תכין לי מסמך…" saves a
+Markdown file on the phone (a card, app 0.20.0) and, with `drive.file`, a
+Google Doc. After the deploy the user runs `/connect drive` once. An
+uncertain Drive create is looked up once by its `appProperties.op` id; the
+reply then says created or "not clear" — never failed on a guess, never a
+second create. Staging check: the created Doc holds the body.
 
 **Smart conversations (PLAN §6.19, 2026-10-08).** A conversation is `smart`
 (Gemini first, then qwen) or `local`, fixed by its first message

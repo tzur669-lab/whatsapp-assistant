@@ -52,6 +52,7 @@ import {
   mailFollowUpSlots,
   expensesMonthlyPackSlots,
   mailArchiveSlots,
+  docsCreateSlots,
   expensesAddSlots,
   expensesSummarySlots,
   expensesExportSlots,
@@ -158,6 +159,9 @@ export const TOOL_NAMES = [
   // Block L, L5 (2026-10-15): archive inbox mail, confirmed; `/unarchive` for
   // 7 days. Needs gmail.modify. Offered only when the words say "archive".
   'mail.archive',
+  // Block L, L6 (2026-10-15): a document the model writes, to Google Drive
+  // (drive.file) and the phone. Offered only when the words ask for one.
+  'docs.create',
 ] as const;
 
 export type ToolName = (typeof TOOL_NAMES)[number];
@@ -822,6 +826,22 @@ export const REGISTRY: Readonly<Record<ToolName, ToolSpec>> = {
     draftSchema: mailArchiveSlots,
     // Up to 50 of the user's emails move: always confirmed, with the count.
     tier: 2,
+    scopes: [],
+    rateLimit: { perHour: 5, perDay: 20 },
+    implementedIn: 6,
+  },
+  'docs.create': {
+    name: 'docs.create',
+    // The body may sum up data read earlier in the turn: not exempt (D1, the
+    // plan's recommendation; the card shows what goes where).
+    dataSource: 'drive',
+    consent: 'always',
+    llmDescription:
+      'Create a document (a summary, comparison, plan or list) the user asked for: saved on the phone and, when connected, as a Google Doc. title: short; body: the whole text, Markdown allowed.',
+    draftSchema: docsCreateSlots,
+    // Model-written text that leaves for Drive: always confirmed, never from someone else's text.
+    tier: 2,
+    refusesTainted: true,
     scopes: [],
     rateLimit: { perHour: 5, perDay: 20 },
     implementedIn: 6,

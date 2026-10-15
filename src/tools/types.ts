@@ -145,7 +145,9 @@ export type PersonalQuestion =
   | 'followup_not_found'
   | 'archive_reconnect'
   | 'archive_too_many'
-  | 'archive_none';
+  | 'archive_none'
+  | 'docs_tainted'
+  | 'docs_nowhere';
 
 export type ResolveOutcome = (
   | {
@@ -217,6 +219,8 @@ export type ToolContext = {
   suggestions?: SuggestionStore;
   /** Mail cleanup's batches (`mail.archive`, block L, L5). */
   archives?: ArchiveStore;
+  /** The app on the other end saves file cards (`docs.create`, block L, L6). */
+  fileCards?: boolean;
   /** Google Tasks, once its grant is connected (2026-10-01). */
   tasks?: TasksClient;
   /** Gmail, once its grant is connected (2026-10-01). */
@@ -298,6 +302,11 @@ export type ExecuteResult = {
    * the phone has still to place (§6.17). `text` is then empty and unsent.
    */
   replyLater?: true;
+  /**
+   * A file for the phone to save, after the write itself ran (block L, L6):
+   * issued as a card of its own, claimed once by the app. Never content for a model.
+   */
+  fileCard?: { name: string; mime: 'text/markdown'; content: string; preview: string };
 };
 
 export interface ToolDefinition {

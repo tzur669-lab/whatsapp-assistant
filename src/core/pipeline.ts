@@ -97,6 +97,7 @@ import { namesWatch } from '../tools/watch.js';
 import { namesFollowUp } from '../tools/followup.js';
 import { namesMonthlyPack } from '../tools/monthly-pack.js';
 import { namesArchive } from '../tools/archive.js';
+import { namesDocument } from '../tools/docs.js';
 import { restoreNewest } from './mail-archive.js';
 import { archiveText } from '../render/archive.js';
 import { watchText } from '../render/watches.js';
@@ -1214,6 +1215,8 @@ async function respondWithAgent(
           ...(namesMonthlyPack(text) ? { monthly: true } : {}),
           // Only when the words say "archive" (block L, L5).
           ...(deps.services?.archives && namesArchive(text) ? { archive: true } : {}),
+          // Only when the words ask for a document (block L, L6).
+          ...(namesDocument(text) ? { document: true } : {}),
           // Only when the words name a synced routine (§6.27, decision D4).
           ...(deps.channel === 'app' && namesRoutine(text, deps.services?.routines, principal) ? { routines: true } : {}),
           // Only when the words name the screen agent or an app on its list (§6.28).
@@ -2116,6 +2119,7 @@ function turnOf(
       ...(services.followUps ? { followUps: services.followUps } : {}),
       ...(services.suggestions ? { suggestions: services.suggestions } : {}),
       ...(services.archives ? { archives: services.archives } : {}),
+      ...(deps.channel === 'app' && (deps.deviceCaps ?? []).includes('file') ? { fileCards: true } : {}),
       ...(event.location ? { location: event.location } : {}),
       ...(services.tasks ? { tasks: services.tasks } : {}),
       ...(services.gmail ? { gmail: services.gmail } : {}),
